@@ -169,17 +169,6 @@ pub(crate) async fn start_for_panel(
         host,
     });
     tokio::pin!(work);
-    tokio::select! {
-        result = &mut work => {
-            drop(prepared.lock);
-            return result;
-        }
-        _ = token.cancelled() => {}
-    }
-    // Do not release the run lock while an episode or source future is still
-    // owned by the drive. If cancellation arrived before the engine acquired
-    // a lifecycle sink, settle the durable fallback only after that drive
-    // future has returned.
     let result = work.await;
     if token.reason() != Some(saya_agent::CancellationReason::User) {
         drop(prepared.lock);
@@ -191,8 +180,11 @@ pub(crate) async fn start_for_panel(
     match outcome {
         super::cancel::CancelOutcome::Recorded => Ok(130),
         super::cancel::CancelOutcome::AlreadyFinished(
-            saya_harness::engine::RunState::Cancelled | saya_harness::engine::RunState::Paused,
-        ) => result,
+            saya_harness::engine::RunState::Cancelled,
+        ) => Ok(130),
+        super::cancel::CancelOutcome::AlreadyFinished(saya_harness::engine::RunState::Paused) => {
+            result
+        }
         _ => result,
     }
 }

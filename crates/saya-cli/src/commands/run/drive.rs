@@ -288,6 +288,35 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             &run_id,
             format,
         ),
+        Err(error @ saya_harness::engine::EpisodeError::OwnerFailureDiagnostic { .. })
+        | Err(error @ saya_harness::engine::EpisodeError::SinkDiagnostic { .. }) => {
+            crate::commands::output::failure_message(
+                3,
+                format!("run {run_id} stopped after an owner error: {error}"),
+                format,
+            )
+        }
+        Err(error @ saya_harness::engine::EpisodeError::BudgetStoppedDiagnostic { .. }) => {
+            crate::commands::output::failure_message(
+                6,
+                format!("run {run_id} paused after its stop settled: {error}"),
+                format,
+            )
+        }
+        Err(error)
+            if matches!(
+                sink.state(),
+                saya_harness::engine::RunState::Planned
+                    | saya_harness::engine::RunState::Approved
+                    | saya_harness::engine::RunState::Executing
+            ) =>
+        {
+            crate::commands::output::failure_message(
+                3,
+                format!("run {run_id} could not settle: {error}"),
+                format,
+            )
+        }
         Err(error) => exit::settle(
             Settled {
                 state: sink.state(),

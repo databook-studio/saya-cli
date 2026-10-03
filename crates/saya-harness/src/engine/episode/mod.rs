@@ -67,6 +67,9 @@ impl<'a> EpisodeDriver<'a> {
     /// with `StepFailedAfterRetry` when a step's attempts are spent,
     /// `Cancel` when the user stops the episode.
     ///
+    /// A controlled deadline and terminal ownership apply when the sink is
+    /// attached to this same collaborator cancellation token. Standalone
+    /// callers with an unattached legacy sink retain tick-based behavior.
     /// Gate refusals (brief, journal, store, machine) are never retried and
     /// never silent: they return immediately, with the run's state as the
     /// sink last advanced it. Retryable means the episode itself failed;
@@ -78,9 +81,33 @@ impl<'a> EpisodeDriver<'a> {
         step: usize,
         workspace: &Workspace,
     ) -> Result<(), EpisodeError> {
-        let remaining = sink.time_remaining();
+        let remaining = match sink.time_remaining() {
+            Ok(remaining) => remaining,
+            Err(source) if sink.state() == RunState::Approved => {
+                return Err(EpisodeError::SinkDiagnostic { source });
+            }
+            Err(source) => {
+                sink.request_owner_failure();
+                return self
+                    .run_step_inner(sink, plan, step, workspace)
+                    .await
+                    .map_err(|error| match error {
+                        EpisodeError::OwnerFailure { step }
+                        | EpisodeError::OwnerFailureDiagnostic { step, .. } => {
+                            EpisodeError::OwnerFailureDiagnostic {
+                                step,
+                                diagnostic: source,
+                            }
+                        }
+                        other => other,
+                    });
+            }
+        };
         let active = self.run_step_inner(sink, plan, step, workspace);
         tokio::pin!(active);
+        if !sink.has_cancellation() {
+            return active.await;
+        }
         if remaining.is_some_and(|remaining| remaining.is_zero()) {
             self.collaborators
                 .cancellation
@@ -193,6 +220,9 @@ impl<'a> EpisodeDriver<'a> {
                 Err(retry::AttemptError::Gate(gate)) => return Err(gate),
                 Err(retry::AttemptError::Episode(source)) => {
                     retry::mark_failed(&self.run, step).await?;
+                    if let Some(reason) = self.collaborators.cancellation.reason() {
+                        return self.settle_stop(sink, step, reason).await;
+                    }
                     if attempt >= MAX_EPISODE_ATTEMPTS {
                         sink.record(TransitionEvent::Pause(PauseReason::StepFailedAfterRetry))
                             .await
@@ -230,9 +260,33 @@ impl<'a> EpisodeDriver<'a> {
                 sink.record(TransitionEvent::Pause(reason))
                     .await
                     .map_err(|source| EpisodeError::Transition { source })?;
-                Err(EpisodeError::BudgetStopped { step, reason })
+                match sink.take_diagnostic() {
+                    Some(diagnostic) => Err(EpisodeError::BudgetStoppedDiagnostic {
+                        step,
+                        reason,
+                        diagnostic,
+                    }),
+                    None => Err(EpisodeError::BudgetStopped { step, reason }),
+                }
             }
-            CancellationReason::OwnerFailure => Err(EpisodeError::OwnerFailure { step }),
+            CancellationReason::OwnerFailure => {
+                let diagnostic = sink.take_diagnostic();
+                if diagnostic.as_deref().is_some_and(|error| {
+                    matches!(error, super::sink::EngineSinkError::Store { .. })
+                }) && sink.state() == RunState::Executing
+                    && let Err(error) = sink
+                        .record(TransitionEvent::Pause(PauseReason::StoreUnavailable))
+                        .await
+                {
+                    sink.hold_diagnostic(error);
+                }
+                match diagnostic.or_else(|| sink.take_diagnostic()) {
+                    Some(diagnostic) => {
+                        Err(EpisodeError::OwnerFailureDiagnostic { step, diagnostic })
+                    }
+                    None => Err(EpisodeError::OwnerFailure { step }),
+                }
+            }
         }
     }
 }

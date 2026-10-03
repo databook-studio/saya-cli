@@ -39,10 +39,30 @@ pub enum EpisodeError {
     #[error("run paused during step {step}: {reason:?}")]
     BudgetStopped { step: usize, reason: PauseReason },
 
+    /// A budget pause that also retained an independent clock/store diagnostic.
+    #[error("run paused during step {step}: {reason:?}; diagnostic: {diagnostic}")]
+    BudgetStoppedDiagnostic {
+        step: usize,
+        reason: PauseReason,
+        diagnostic: Arc<EngineSinkError>,
+    },
+
     /// An internal owner stopped the active episode; no user or budget
     /// lifecycle reason can be inferred from that signal.
     #[error("run owner failed during step {step}")]
     OwnerFailure { step: usize },
+
+    /// An owner failure with the concrete first sink diagnostic retained.
+    #[error("run owner failed during step {step}: {diagnostic}")]
+    OwnerFailureDiagnostic {
+        step: usize,
+        diagnostic: Arc<EngineSinkError>,
+    },
+
+    /// The authoritative elapsed-clock observation failed before an episode
+    /// could safely begin.
+    #[error("run clock or sink observation failed before work: {source}")]
+    SinkDiagnostic { source: Arc<EngineSinkError> },
 
     /// The run cannot begin a step in its current state: `planned` has no
     /// approval to run under, a later step cannot begin an unstarted run,

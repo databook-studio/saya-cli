@@ -73,7 +73,10 @@ pub(super) async fn resume(
     tokio::pin!(work);
     match tokio::select! {
         result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); return Ok(130); }
+        _ = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            work.await
+        }
     } {
         Ok(exit) => Ok(exit),
         Err(error) => Err(error),
@@ -230,6 +233,32 @@ async fn continue_run(
             // on where the run ended — the same mapping a fresh run uses.
             let journal = Journal::open(&dir);
             let (tail_state, code) = super::journal_tail(&journal);
+            if matches!(
+                &error,
+                saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::BudgetStoppedDiagnostic { .. }
+                }
+            ) {
+                return crate::commands::output::failure_message(
+                    6,
+                    format!("run {run_id} paused after its stop settled: {error}"),
+                    format,
+                );
+            }
+            if matches!(
+                &error,
+                saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::OwnerFailureDiagnostic { .. }
+                } | saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::SinkDiagnostic { .. }
+                }
+            ) {
+                return crate::commands::output::failure_message(
+                    3,
+                    format!("run {run_id} stopped after an owner error: {error}"),
+                    format,
+                );
+            }
             match tail_state {
                 RunState::Completed | RunState::Failed | RunState::Cancelled | RunState::Paused => {
                     settle(

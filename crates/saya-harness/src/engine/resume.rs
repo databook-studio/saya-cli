@@ -124,7 +124,8 @@ pub async fn resume(
             carried_usage: UsageTotals::from_journal(&events),
         },
         std::time::Instant::now,
-    );
+    )
+    .with_cancellation(resumed.collaborators.cancellation.clone());
     let sink = match &resumed.agent_stream {
         Some(stream) => sink.with_agent_stream(Arc::clone(stream)),
         None => sink,

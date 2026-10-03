@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use saya_agent::BudgetDimension;
 use saya_types::PauseReason;
@@ -12,18 +12,39 @@ impl EngineEventSink {
     /// Remaining time from the sink's authoritative clock. Observing before
     /// reading makes the driver's independent timer include time with no
     /// provider events.
-    pub(in crate::engine) fn time_remaining(&self) -> Option<Duration> {
+    pub(in crate::engine) fn time_remaining(
+        &self,
+    ) -> Result<Option<Duration>, Arc<EngineSinkError>> {
+        let mut stopped = false;
+        if self.has_cancellation() {
+            stopped = self.cancellation_reason().is_some();
+            if !stopped && self.tokens_exhausted() {
+                self.request_budget_stop(BudgetDimension::ReportedTokens);
+                stopped = true;
+            }
+            if !stopped && self.downloads_exhausted() {
+                self.request_budget_stop(BudgetDimension::DownloadBytes);
+                stopped = true;
+            }
+        }
         if let Err(error) = self.observe_elapsed_clock(false) {
-            self.hold_diagnostic(error);
-            self.request_budget_stop(BudgetDimension::ElapsedTime);
-            return Some(Duration::ZERO);
+            let error = Arc::new(error);
+            self.hold_diagnostic_arc(Arc::clone(&error));
+            if stopped || self.cancellation_reason().is_some() {
+                return Ok(Some(Duration::ZERO));
+            }
+            return Err(error);
+        }
+        if stopped {
+            return Ok(Some(Duration::ZERO));
         }
         let elapsed = self.elapsed_clock.lock().expect("engine sink clock lock");
         if let Some(clock) = elapsed.as_ref() {
-            return Some(clock.remaining());
+            return Ok(Some(clock.remaining()));
         }
-        self.deadline
-            .map(|deadline| deadline.saturating_duration_since((self.clock)()))
+        Ok(self
+            .deadline
+            .map(|deadline| deadline.saturating_duration_since((self.clock)())))
     }
 
     pub(super) fn observe_elapsed_clock(&self, force: bool) -> Result<bool, EngineSinkError> {
@@ -71,9 +92,6 @@ impl EngineEventSink {
             Ok(expired) => expired,
             Err(error) => {
                 self.hold_diagnostic(error);
-                if self.request_budget_stop(BudgetDimension::ElapsedTime) {
-                    return;
-                }
                 true
             }
         };
@@ -101,7 +119,6 @@ impl EngineEventSink {
         }
         if let Err(error) = self.record(TransitionEvent::Pause(reason)).await {
             self.hold_diagnostic(error);
-            self.set_state(RunState::Paused);
         }
     }
 
@@ -109,7 +126,7 @@ impl EngineEventSink {
     /// latch a download trip sets on every refused claim. `None` (the run
     /// did not approve fetch) leaves the check inert, exactly like an unset
     /// token ceiling.
-    fn downloads_exhausted(&self) -> bool {
+    pub(super) fn downloads_exhausted(&self) -> bool {
         self.download_budget
             .as_ref()
             .is_some_and(|budget| budget.tripped())
@@ -122,7 +139,7 @@ impl EngineEventSink {
     /// and a ceiling that counted only one half would be a ceiling on
     /// nothing in particular. Figures no call reported stay out of the sum
     /// rather than counting as zero.
-    fn tokens_exhausted(&self) -> bool {
+    pub(super) fn tokens_exhausted(&self) -> bool {
         let Some(ceiling) = self.token_ceiling else {
             return false;
         };

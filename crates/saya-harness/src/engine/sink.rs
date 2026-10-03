@@ -159,6 +159,22 @@ impl EngineEventSink {
         })
     }
 
+    pub(in crate::engine) fn has_cancellation(&self) -> bool {
+        self.cancellation.is_some()
+    }
+
+    pub(in crate::engine) fn request_owner_failure(&self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
+        }
+    }
+
+    pub(in crate::engine) fn cancellation_reason(&self) -> Option<CancellationReason> {
+        self.cancellation
+            .as_ref()
+            .and_then(CancellationToken::reason)
+    }
+
     /// Attaches the downstream sink every agent event forwards to.
     pub fn with_agent_stream(mut self, stream: Arc<dyn AgentEventSink>) -> Self {
         self.agent_stream = Some(stream);
@@ -185,8 +201,15 @@ impl EngineEventSink {
             .take()
     }
 
-    fn hold_diagnostic(&self, error: EngineSinkError) {
-        *self.diagnostic.lock().expect("engine sink diagnostic lock") = Some(Arc::new(error));
+    pub(in crate::engine) fn hold_diagnostic(&self, error: EngineSinkError) {
+        self.hold_diagnostic_arc(Arc::new(error));
+    }
+
+    pub(in crate::engine) fn hold_diagnostic_arc(&self, error: Arc<EngineSinkError>) {
+        let mut diagnostic = self.diagnostic.lock().expect("engine sink diagnostic lock");
+        if diagnostic.is_none() {
+            *diagnostic = Some(error);
+        }
     }
 
     fn set_state(&self, state: RunState) {
@@ -208,30 +231,84 @@ impl AgentEventSink for EngineEventSink {
                 .lock()
                 .expect("engine sink usage lock")
                 .fold(usage);
-            self.journal_usage(usage);
+            if let Err(error) = self.journal_usage(usage) {
+                self.hold_diagnostic(error);
+                self.request_owner_failure();
+                return;
+            }
         }
-        self.journal_downloads();
-        let mut clock_boundary_failed = false;
+        if let Err(error) = self.journal_downloads() {
+            self.hold_diagnostic(error);
+            self.request_owner_failure();
+            return;
+        }
+        let mut clock_error = None;
         if matches!(
             &event,
             AgentEvent::TurnStarted | AgentEvent::ToolRequested { .. }
         ) && let Err(error) = self.observe_elapsed_clock(true)
         {
-            self.hold_diagnostic(error);
-            clock_boundary_failed = true;
+            clock_error = Some(error);
         }
-        if clock_boundary_failed
-            && !self.request_budget_stop(BudgetDimension::ElapsedTime)
-            && let Err(error) = self
-                .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
-                .await
-        {
+        if let Some(error) = clock_error {
             self.hold_diagnostic(error);
-            self.set_state(RunState::Paused);
+            if self.cancellation.is_none()
+                && self.state() == RunState::Executing
+                && let Err(error) = self
+                    .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
+                    .await
+            {
+                self.hold_diagnostic(error);
+            }
         }
+        self.observe_stop_before_display();
         if let Some(stream) = &self.agent_stream {
             stream.emit(event).await;
         }
         self.tick().await;
+    }
+}
+
+impl EngineEventSink {
+    fn observe_stop_before_display(&self) {
+        if self.state() != RunState::Executing {
+            return;
+        }
+        let already_stopped = self.cancellation_reason().is_some();
+        let dimension = if already_stopped {
+            None
+        } else if self.tokens_exhausted() {
+            Some(BudgetDimension::ReportedTokens)
+        } else if self.downloads_exhausted() {
+            Some(BudgetDimension::DownloadBytes)
+        } else {
+            None
+        };
+        if let Some(dimension) = dimension {
+            self.request_budget_stop(dimension);
+        }
+        match self.observe_elapsed_clock(false) {
+            Ok(true) => {
+                if !already_stopped && dimension.is_none() {
+                    self.request_budget_stop(BudgetDimension::ElapsedTime);
+                }
+            }
+            Ok(false) => {
+                if self
+                    .deadline
+                    .is_some_and(|deadline| (self.clock)() >= deadline)
+                    && !already_stopped
+                    && dimension.is_none()
+                {
+                    self.request_budget_stop(BudgetDimension::ElapsedTime);
+                }
+            }
+            Err(error) => {
+                self.hold_diagnostic(error);
+                if !already_stopped && dimension.is_none() {
+                    self.request_owner_failure();
+                }
+            }
+        }
     }
 }

@@ -216,22 +216,14 @@ async fn panel_start_keeps_run_lock_until_cancelled_plan_source_returns() {
     let address = listener.local_addr().unwrap();
     let (request_tx, request_rx) = oneshot::channel();
     let (release_tx, release_rx) = oneshot::channel();
-    let plan = RunPlan::new(vec![
-        StepSpec::new("observe", Capabilities::default(), None, Vec::new(), None).unwrap(),
-    ])
-    .unwrap();
-    let plan_content = serde_json::to_string(&plan).unwrap();
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let request = read_http_request(&mut socket).await;
         let _ = request_tx.send(request);
         release_rx.await.unwrap();
-        let body = format!(
-            "{}\n",
-            serde_json::json!({"message": {"content": plan_content}, "done": true})
-        );
+        let body = "source failed after the panel stop";
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
             body
         );
