@@ -2,11 +2,15 @@
 //! `agent_loop.rs` integration suite) the mid-stream retry policy.
 
 use super::*;
-use crate::{ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
-use crate::{ProviderError, ProviderEvent};
+use crate::{
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
+    ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat, ToolCall, ToolError,
+    ToolExecutor, run_agent_with_sink,
+};
+use crate::{ProviderError, ProviderEvent, ProviderRecoveryReason, TokenUsage};
 use async_trait::async_trait;
 use futures_util::stream;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// A provider that records the one `ChatRequest` the main loop sent and
 /// returns a minimal valid stream (a single text delta + Done).
@@ -78,4 +82,181 @@ async fn main_loop_request_does_not_set_json_mode() {
         ReasoningEffort::Default,
         "the main loop must not request less effort"
     );
+}
+
+struct OverflowProvider {
+    calls: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl ChatProvider for OverflowProvider {
+    fn name(&self) -> &str {
+        "overflow"
+    }
+
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        unreachable!("the loop streams")
+    }
+
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, ProviderError> {
+        *self.calls.lock().unwrap() += 1;
+        let call = |id| ToolCall {
+            id: format!("call-{id}"),
+            name: "schema_discovery".into(),
+            arguments: serde_json::json!({}),
+        };
+        let events = vec![
+            Ok(ProviderEvent::Usage(TokenUsage::new(5, 8))),
+            Ok(ProviderEvent::ToolCalls((0..128).map(call).collect())),
+            Ok(ProviderEvent::ToolCalls((128..257).map(call).collect())),
+            Ok(ProviderEvent::Done),
+        ];
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+struct CountingTools(Arc<Mutex<usize>>);
+
+#[async_trait]
+impl ToolExecutor for CountingTools {
+    async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        *self.0.lock().unwrap() += 1;
+        Ok(serde_json::json!({}))
+    }
+}
+
+struct Events(Arc<Mutex<Vec<AgentEvent>>>);
+
+#[async_trait]
+impl AgentEventSink for Events {
+    async fn emit(&self, event: AgentEvent) {
+        self.0.lock().unwrap().push(event);
+    }
+}
+
+#[tokio::test]
+async fn collection_limit_is_terminal_before_any_tool_effect() {
+    let provider_calls = Arc::new(Mutex::new(0));
+    let tool_calls = Arc::new(Mutex::new(0));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let error = run_agent_with_sink(
+        &OverflowProvider {
+            calls: provider_calls.clone(),
+        },
+        &CountingTools(tool_calls.clone()),
+        AgentRequest {
+            prompt: "hello".into(),
+            profile_names: Vec::new(),
+            model: "m".into(),
+            system_prompt: None,
+            history: Vec::new(),
+            context_blocks: Vec::new(),
+        },
+        Vec::new(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &Events(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        AgentError::Provider(ProviderError::ToolCollectionLimit)
+    ));
+    assert_eq!(
+        *provider_calls.lock().unwrap(),
+        1,
+        "collection failure is terminal"
+    );
+    assert_eq!(
+        *tool_calls.lock().unwrap(),
+        0,
+        "no tool effect precedes rejection"
+    );
+    assert!(events.lock().unwrap().iter().any(|event| {
+        matches!(event, AgentEvent::FailedAttemptUsage { usage } if *usage == TokenUsage::new(5, 8))
+    }));
+    assert!(events.lock().unwrap().iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::ProviderRecovery {
+                reason: ProviderRecoveryReason::ToolCollectionLimit,
+                ..
+            }
+        )
+    }));
+}
+
+struct OversizedArgumentsProvider {
+    calls: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl ChatProvider for OversizedArgumentsProvider {
+    fn name(&self) -> &str {
+        "oversized-arguments"
+    }
+
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        unreachable!("the loop streams")
+    }
+
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, ProviderError> {
+        *self.calls.lock().unwrap() += 1;
+        let events = vec![
+            Ok(ProviderEvent::Usage(TokenUsage::new(3, 2))),
+            Ok(ProviderEvent::ToolCalls(vec![ToolCall {
+                id: "call-oversized".into(),
+                name: "schema_discovery".into(),
+                arguments: serde_json::Value::String("x".repeat(crate::MAX_STREAM_BYTES)),
+            }])),
+        ];
+        Ok(Box::pin(stream::iter(events)))
+    }
+}
+
+#[tokio::test]
+async fn oversized_tool_arguments_are_terminal_before_any_tool_effect() {
+    let provider_calls = Arc::new(Mutex::new(0));
+    let tool_calls = Arc::new(Mutex::new(0));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let error = run_agent_with_sink(
+        &OversizedArgumentsProvider {
+            calls: provider_calls.clone(),
+        },
+        &CountingTools(tool_calls.clone()),
+        AgentRequest {
+            prompt: "hello".into(),
+            profile_names: Vec::new(),
+            model: "m".into(),
+            system_prompt: None,
+            history: Vec::new(),
+            context_blocks: Vec::new(),
+        },
+        Vec::new(),
+        AgentLimits::default(),
+        &AllowReadOnlyApproval,
+        &Events(events.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        AgentError::Provider(ProviderError::ToolCollectionLimit)
+    ));
+    assert_eq!(*provider_calls.lock().unwrap(), 1);
+    assert_eq!(*tool_calls.lock().unwrap(), 0);
+    assert!(events.lock().unwrap().iter().any(|event| {
+        matches!(event, AgentEvent::FailedAttemptUsage { usage } if *usage == TokenUsage::new(3, 2))
+    }));
 }
