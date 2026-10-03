@@ -11,6 +11,7 @@ mod error;
 mod event;
 mod knowledge;
 mod learning;
+mod recovery;
 mod session_policy;
 mod tool;
 mod usage;
@@ -32,6 +33,7 @@ pub use knowledge::{
     KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
 };
 pub use learning::LearningSkipReason;
+pub use recovery::{ProviderRecoveryPhase, ProviderRecoveryReason};
 pub use session_policy::{ApprovalChoice, ApprovalDecision, SessionGrants, SessionPolicy};
 pub use tool::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolExecutor};
 pub use usage::UsageCall;

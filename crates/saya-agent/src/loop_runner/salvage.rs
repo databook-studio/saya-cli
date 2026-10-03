@@ -1,7 +1,7 @@
 //! Salvaging an agent run that hit a turn or tool-call ceiling: answer from
 //! work already done instead of discarding it.
 
-use super::{emit, receive, sum_reported, tools};
+use super::{add_usage, emit, receive, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentOutput, CancellationToken, ChatProvider,
     ProviderError, TokenUsage,
@@ -61,14 +61,26 @@ pub(super) async fn salvage(
         Ok((assistant, turn_usage, _)) => (assistant, turn_usage),
         // A cancellation surfacing from the salvage call is the user stopping
         // the run, not a salvage failure to route around — it must propagate.
-        Err(error @ (AgentError::Cancelled | AgentError::Provider(ProviderError::Cancelled))) => {
-            return Err(error);
+        Err(
+            failure @ super::attempt::ReceiveFailure {
+                error: AgentError::Cancelled | AgentError::Provider(ProviderError::Cancelled),
+                ..
+            },
+        ) => {
+            add_usage(usage, failure.usage);
+            return Err(failure.error);
         }
         // The final call failing must not discard the work already done: tools
         // executed, events gathered, usage billed. Degrade to the structured
         // truncated result, keeping everything accumulated — and invent
         // nothing: the failed call produced no prose, so the answer is empty.
-        Err(AgentError::Provider(_)) => {
+        Err(
+            failure @ super::attempt::ReceiveFailure {
+                error: AgentError::Provider(_),
+                ..
+            },
+        ) => {
+            add_usage(usage, failure.usage);
             emit(events, sink, AgentEvent::Complete).await;
             return Ok(AgentOutput {
                 answer: String::new(),
@@ -81,19 +93,9 @@ pub(super) async fn salvage(
                 answer_sql: designated_or_best_sql,
             });
         }
-        Err(error) => return Err(error),
+        Err(failure) => return Err(failure.error),
     };
-    usage.input_tokens += turn_usage.input_tokens;
-    usage.output_tokens += turn_usage.output_tokens;
-    sum_reported(
-        &mut usage.cached_input_tokens,
-        turn_usage.cached_input_tokens,
-    );
-    sum_reported(
-        &mut usage.cache_creation_input_tokens,
-        turn_usage.cache_creation_input_tokens,
-    );
-    sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
+    add_usage(usage, turn_usage);
     emit(events, sink, AgentEvent::Complete).await;
     // When the run ended because a budget ran out rather than by the model
     // finishing, surface the best available answer if the model never nominated

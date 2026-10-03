@@ -2663,8 +2663,15 @@ async fn dropped_stream_retries_the_turn_and_the_sink_saw_reset_then_full_text()
         .position(|event| matches!(event, AgentEvent::TurnReset))
         .expect("the sink saw a TurnReset before the retry");
     assert!(
-        matches!(seen.get(split + 1), Some(AgentEvent::TurnStarted)),
-        "the retried attempt announces its own boundary right after the reset"
+        matches!(
+            seen.get(split + 1),
+            Some(AgentEvent::ProviderRecovery { .. })
+        ),
+        "the reset clears discarded text before typed retry progress"
+    );
+    assert!(
+        matches!(seen.get(split + 2), Some(AgentEvent::TurnStarted)),
+        "the retried attempt announces its own boundary after recovery progress"
     );
     let partial: String = seen[..split]
         .iter()
