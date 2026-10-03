@@ -6,6 +6,10 @@ use super::{ElapsedClock, ElapsedClockError, ElapsedClockMark, system_time_ms};
 
 impl ElapsedClock {
     /// Resume only when the repaired journal has one consistent clock history.
+    ///
+    /// The explicit UTC and monotonic inputs must be a matched sample, with
+    /// `now` sampled no earlier than `now_unix_ms`; production callers use
+    /// [`Self::resume_now`].
     pub fn resume(
         events: &[RunEvent],
         ceiling: Duration,
@@ -68,12 +72,10 @@ impl ElapsedClock {
         })
     }
 
-    /// Resume using the production UTC clock.
-    pub fn resume_now(
-        events: &[RunEvent],
-        ceiling: Duration,
-        now: Instant,
-    ) -> Result<Self, ElapsedClockError> {
-        Self::resume(events, ceiling, system_time_ms()?, now)
+    /// Resume using production clocks, sampling UTC before the monotonic baseline.
+    pub fn resume_now(events: &[RunEvent], ceiling: Duration) -> Result<Self, ElapsedClockError> {
+        let now_unix_ms = system_time_ms()?;
+        let now = Instant::now();
+        Self::resume(events, ceiling, now_unix_ms, now)
     }
 }

@@ -106,7 +106,7 @@ pub async fn resume(
     let elapsed = resumed
         .wall_clock
         .filter(|_| first_step.is_some() && uncertain.is_none())
-        .map(|ceiling| ElapsedClock::resume_now(&events, ceiling, std::time::Instant::now()));
+        .map(|ceiling| ElapsedClock::resume_now(&events, ceiling));
     let carried_wall_clock = match &elapsed {
         Some(Ok(clock)) => Some(clock.remaining()),
         Some(Err(_)) => None,
