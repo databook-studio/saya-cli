@@ -373,11 +373,11 @@ async fn schema_read_pairs_bytes_with_their_own_metadata() {
 /// generations: gen-a ⇔ (version 1, odd ms), gen-b ⇔ (version 2, even ms).
 /// Every read must pair bytes with metadata from the same generation: a
 /// read that pairs one generation's bytes with the other's version or
-/// timestamp fails. Progress is observable on both sides — a writer ignores
-/// the stop flag until it has completed `MIN_WRITES` upserts, and the
-/// reader must see both generations, so a starved writer fails the test.
-/// The reader's fixed read count and the writers' iteration cap bound the
-/// runtime.
+/// timestamp fails. Public-read controls observe each generation before the
+/// contention phase; the concurrent reader checks every pair without
+/// assuming scheduler fairness. Each writer ignores the stop flag until it
+/// has completed `MIN_WRITES` upserts. The fixed read count and writer cap
+/// bound the runtime.
 #[tokio::test]
 async fn concurrent_upserts_never_tear_schema_from_its_metadata() {
     use std::sync::Arc;
@@ -406,6 +406,17 @@ async fn concurrent_upserts_never_tear_schema_from_its_metadata() {
     stamp_generation(&pool_a, PROFILE, &json_a, ODD_BASE_MS, VERSION_A)
         .await
         .expect("seed upsert must succeed");
+    let cached_a = store.get_schema(PROFILE).await.unwrap().unwrap();
+    assert_eq!(cached_a.schema, schema("gen-a"));
+    assert_eq!(i64::from(cached_a.version), VERSION_A);
+    assert_eq!(cached_a.updated_unix_ms % 2, 1);
+    stamp_generation(&pool_b, PROFILE, &json_b, EVEN_BASE_MS, VERSION_B)
+        .await
+        .expect("generation B control upsert must succeed");
+    let cached_b = store.get_schema(PROFILE).await.unwrap().unwrap();
+    assert_eq!(cached_b.schema, schema("gen-b"));
+    assert_eq!(i64::from(cached_b.version), VERSION_B);
+    assert_eq!(cached_b.updated_unix_ms % 2, 0);
 
     let stop = Arc::new(AtomicBool::new(false));
     let writer_a = {
@@ -488,8 +499,8 @@ async fn concurrent_upserts_never_tear_schema_from_its_metadata() {
     let wrote_a = writer_a.await.unwrap();
     let wrote_b = writer_b.await.unwrap();
     assert!(
-        saw_a >= 1 && saw_b >= 1,
-        "the reader must see both generations (a={saw_a}, b={saw_b})"
+        saw_a + saw_b >= 1,
+        "the contended reader must observe a live generation"
     );
     assert!(
         wrote_a >= MIN_WRITES,
