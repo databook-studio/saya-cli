@@ -26,8 +26,13 @@ configure_saya_release_build_env() {
   fi
   rust_flags+=("--remap-path-prefix=$workspace=/saya" "--remap-path-prefix=$cargo_home=/cargo")
   local encoded=""
+  local first_flag=true
   for flag in "${rust_flags[@]}"; do
-    encoded+="${encoded:+$'\x1f'}$flag"
+    if [[ "$first_flag" == false ]]; then
+      encoded+=$'\x1f'
+    fi
+    encoded+="$flag"
+    first_flag=false
   done
   export CARGO_ENCODED_RUSTFLAGS="$encoded"
 

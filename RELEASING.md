@@ -80,6 +80,14 @@ limits each GNU/PAX metadata body to 1 MiB and all such bodies to 16 MiB, and
 limits decompressed TAR reads to 512 MiB + 16 MiB + 20,000 KiB + 1 KiB. The
 binary scanner reads in 64 KiB chunks and rejects binaries over 256 MiB.
 
+The artifact scanners require Python 3.12 or newer. The release workflow uses
+moving GitHub-hosted runner labels rather than pinning Python; current runner
+image documentation lists Python 3.12 on Ubuntu and Windows and Python 3.14 on
+macOS. TAR streaming uses CPython `tarfile`'s private `TarInfo` hooks
+(`_fromtarfile` and `_proc_*`), confirmed in CPython 3.12 and 3.13 source and
+locally with Python 3.14.6. Recheck those hooks when upgrading runner images or
+the supported Python floor.
+
 Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
 because a channel is not set up. Job 6 honors that contract: with
 `HOMEBREW_TAP_TOKEN` unset it downgrades a stale tap to a `::warning`; with the

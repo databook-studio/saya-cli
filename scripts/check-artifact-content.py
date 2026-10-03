@@ -150,6 +150,18 @@ def tar_entries(path: str):
             budget.metadata(self.size)
             return super()._proc_gnulong(archive)
 
+        def _proc_sparse(self, archive):
+            raise Rejected("GNU sparse TAR entries are not supported")
+
+        def _proc_gnusparse_00(self, next_item, raw_headers):
+            raise Rejected("GNU PAX sparse entries are not supported")
+
+        def _proc_gnusparse_01(self, next_item, pax_headers):
+            raise Rejected("GNU PAX sparse entries are not supported")
+
+        def _proc_gnusparse_10(self, next_item, pax_headers, archive):
+            raise Rejected("GNU PAX sparse entries are not supported")
+
     with open(path, "rb") as raw:
         with gzip.GzipFile(fileobj=raw) as compressed:
             expanded = ExpandedReader(compressed)
