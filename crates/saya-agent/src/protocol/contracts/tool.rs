@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::ToolError;
+use crate::protocol::streaming::CancellationToken;
 
 /// What local state a tool may touch — contracts, the schema cache, run
 /// workspaces, anything persisted on the user's machine. Declared per tool so
@@ -82,6 +83,13 @@ pub struct ToolDefinition {
     pub completion: Option<String>,
 }
 
+/// Per-call limits and cancellation state supplied by the agent loop.
+#[derive(Clone)]
+pub struct ToolExecutionContext {
+    pub result_cap: usize,
+    pub cancellation: CancellationToken,
+}
+
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     async fn execute(
@@ -100,5 +108,17 @@ pub trait ToolExecutor: Send + Sync {
         _result_cap: usize,
     ) -> Result<serde_json::Value, ToolError> {
         self.execute(name, arguments).await
+    }
+
+    /// Executes with the exact loop-assigned result cap and cancellation token.
+    /// Existing cap-aware executors stay compatible through the default.
+    async fn execute_with_context(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        context: ToolExecutionContext,
+    ) -> Result<serde_json::Value, ToolError> {
+        self.execute_with_result_cap(name, arguments, context.result_cap)
+            .await
     }
 }

@@ -1,4 +1,6 @@
-use crate::{ToolCall, ToolDefinition, ToolExecutor};
+#[cfg(test)]
+use crate::CancellationToken;
+use crate::{ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutor};
 use saya_types::redact;
 #[cfg(test)]
 use saya_types::redact_counted;
@@ -168,14 +170,35 @@ fn completion_detail(
 /// the tool's *declaration*, not its name (see [`completion_summaries`]). The
 /// The typed outcome returned beside the summary drives turn-tool status and
 /// failure memory; summary text remains model-facing only.
+#[cfg(test)]
 pub(super) async fn execute(
     tools: &dyn ToolExecutor,
     name: &str,
     arguments: Value,
     definition: Option<&ToolDefinition>,
 ) -> (Value, String) {
+    execute_with_context(
+        tools,
+        name,
+        arguments,
+        definition,
+        ToolExecutionContext {
+            result_cap: MAX_TOOL_MESSAGE_BYTES,
+            cancellation: CancellationToken::new(),
+        },
+    )
+    .await
+}
+
+pub(super) async fn execute_with_context(
+    tools: &dyn ToolExecutor,
+    name: &str,
+    arguments: Value,
+    definition: Option<&ToolDefinition>,
+    context: ToolExecutionContext,
+) -> (Value, String) {
     let (result, summary, _) =
-        execute_with_outcome(tools, name, arguments, definition, MAX_TOOL_MESSAGE_BYTES).await;
+        execute_with_outcome(tools, name, arguments, definition, context).await;
     (result, summary)
 }
 
@@ -184,10 +207,10 @@ pub(super) async fn execute_with_outcome(
     name: &str,
     arguments: Value,
     definition: Option<&ToolDefinition>,
-    result_cap: usize,
+    context: ToolExecutionContext,
 ) -> (Value, String, bool) {
     match tools
-        .execute_with_result_cap(name, arguments.clone(), result_cap)
+        .execute_with_context(name, arguments.clone(), context)
         .await
     {
         Ok(value) => {
