@@ -76,7 +76,7 @@ pub(super) async fn salvage(
         // nothing: the failed call produced no prose, so the answer is empty.
         Err(
             failure @ super::attempt::ReceiveFailure {
-                error: AgentError::Provider(_),
+                error: AgentError::Provider(_) | AgentError::InvalidToolCall,
                 ..
             },
         ) => {

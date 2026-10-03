@@ -12,6 +12,7 @@ mod receive_stream;
 mod salvage;
 mod tool_batch;
 mod tool_policy;
+mod tool_protocol;
 mod tool_record;
 mod tool_shape;
 mod tools;

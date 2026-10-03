@@ -526,6 +526,7 @@ fn recovery_reason(reason: ProviderRecoveryReason) -> &'static str {
         ProviderRecoveryReason::EmptyResponse => "empty response",
         ProviderRecoveryReason::StreamEnded => "stream ended",
         ProviderRecoveryReason::StreamByteLimit => "stream byte limit",
+        ProviderRecoveryReason::ToolCallProtocol => "invalid tool-call identifiers",
         ProviderRecoveryReason::OutputTruncated => "output truncated",
         ProviderRecoveryReason::ProviderFailure => "provider failure",
         ProviderRecoveryReason::Cancelled => "cancelled",
@@ -704,6 +705,24 @@ mod tests {
         assert_eq!(
             text_rendered_col.stdout,
             "replaced column-role for pagila.public.rental (col: rental_date): \"timestamp\" -> \"event_time\"\n"
+        );
+    }
+
+    #[test]
+    fn provider_recovery_renders_the_fixed_tool_protocol_reason() {
+        let rendered = render_event(
+            &TerminalEvent::ProviderRecovery {
+                phase: ProviderRecoveryPhase::NotRetried,
+                reason: ProviderRecoveryReason::ToolCallProtocol,
+                attempt: 1,
+                limit: 4,
+            },
+            RenderFormat::Text,
+        );
+
+        assert_eq!(
+            rendered.stdout,
+            "provider recovery: not retried attempt 1 of 4 (invalid tool-call identifiers)\n"
         );
     }
 }
