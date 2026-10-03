@@ -1,5 +1,4 @@
-//! Tests for `receive` — the single-attempt request shape and (via the
-//! `agent_loop.rs` integration suite) the mid-stream retry policy.
+//! Tests for `receive`'s main-loop request shape.
 
 use super::*;
 use crate::{ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
@@ -36,12 +35,9 @@ impl ChatProvider for RecordingProvider {
     }
 }
 
-/// The main loop's request must NOT carry JSON
-/// mode — a prose answer stays prose. `receive` builds the request with
-/// `..Default::default()`, so `response_format` is `Text` and
-/// `reasoning_effort` is `Default` (send nothing): the main loop keeps real
-/// reasoning, leaving effort to the endpoint — only mechanical call sites
-/// request less.
+/// The main loop's request must NOT carry JSON mode — a prose answer stays
+/// prose. `receive` builds the request with `..Default::default()`, so
+/// response format is `Text` and reasoning effort is `Default`.
 #[tokio::test]
 async fn main_loop_request_does_not_set_json_mode() {
     let provider = RecordingProvider {
@@ -68,14 +64,6 @@ async fn main_loop_request_does_not_set_json_mode() {
         .unwrap()
         .take()
         .expect("a request was sent");
-    assert_eq!(
-        sent.response_format,
-        ResponseFormat::Text,
-        "the main loop must not set JSON mode (invariant 1)"
-    );
-    assert_eq!(
-        sent.reasoning_effort,
-        ReasoningEffort::Default,
-        "the main loop must not request less effort"
-    );
+    assert_eq!(sent.response_format, ResponseFormat::Text);
+    assert_eq!(sent.reasoning_effort, ReasoningEffort::Default);
 }

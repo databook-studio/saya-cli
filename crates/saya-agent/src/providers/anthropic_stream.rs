@@ -1,13 +1,7 @@
-use super::framing::whitespace;
-use crate::{
-    CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage, ToolCall,
-};
+use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
-use std::{
-    collections::{BTreeMap, VecDeque},
-    time::Duration,
-};
+use std::{collections::VecDeque, time::Duration};
 
 pub(super) fn parse(
     response: Response,
@@ -82,35 +76,31 @@ where
 }
 
 #[derive(Default)]
-struct ToolUseBlock {
-    id: String,
-    name: String,
-    json: String,
-}
-
-#[derive(Default)]
-struct State {
-    bytes: Vec<u8>,
-    pending: VecDeque<ProviderEvent>,
-    tools: BTreeMap<usize, ToolUseBlock>,
-    usage: TokenUsage,
-    done: bool,
-    assembled_bytes: usize,
+pub(super) struct State {
+    pub(super) bytes: Vec<u8>,
+    pub(super) pending: VecDeque<ProviderEvent>,
+    pub(super) tools: super::tool_assembly::ToolAssembly,
+    pub(super) usage: TokenUsage,
+    pub(super) done: bool,
+    pub(super) assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
-    text: String,
+    pub(super) text: String,
     /// The `stop_reason` the final `message_delta` reported, checked at
     /// `message_stop`. A capped response reports `"max_tokens"`.
-    stop_reason: Option<String>,
+    pub(super) stop_reason: Option<String>,
 }
 
 impl State {
-    fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
+    pub(super) fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
         let next = self
             .assembled_bytes
             .checked_add(bytes)
             .ok_or_else(size_error)?;
-        if next > crate::MAX_STREAM_BYTES {
+        if next
+            .checked_add(self.tools.bytes())
+            .is_none_or(|total| total > crate::MAX_STREAM_BYTES)
+        {
             return Err(size_error());
         }
         self.assembled_bytes = next;
@@ -118,179 +108,15 @@ impl State {
     }
 
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
-        if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
-            return Err(ProviderError::Request(
-                "provider stream exceeded size limit".into(),
-            ));
-        }
-        self.bytes.extend_from_slice(chunk);
-        while let Some((end, skip)) = boundary(&self.bytes) {
-            let frame = String::from_utf8(self.bytes[..end].to_vec())
-                .map_err(|_| ProviderError::InvalidResponse)?;
-            self.bytes.drain(..end + skip);
-            let data = frame
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if data.is_empty() {
-                continue;
-            }
-            let json: serde_json::Value =
-                serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
-
-            let event_type = json["type"]
-                .as_str()
-                .ok_or(ProviderError::InvalidResponse)?;
-            match event_type {
-                "content_block_start" => {
-                    let index = json["index"]
-                        .as_u64()
-                        .ok_or(ProviderError::InvalidResponse)?
-                        as usize;
-                    let cb_type = json["content_block"]["type"]
-                        .as_str()
-                        .ok_or(ProviderError::InvalidResponse)?;
-                    if cb_type == "tool_use" {
-                        let id = json["content_block"]["id"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        let name = json["content_block"]["name"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        self.reserve(id.len().saturating_add(name.len()))?;
-                        self.tools.insert(
-                            index,
-                            ToolUseBlock {
-                                id,
-                                name,
-                                json: String::new(),
-                            },
-                        );
-                    } else if cb_type == "thinking" {
-                        // A `thinking` content block can carry its initial text
-                        // inline on `content_block_start` (the model-I/O design "whole"
-                        // spelling). Emit it as reasoning; the subsequent
-                        // `thinking_delta`s append to it.
-                        if let Some(thinking) = json["content_block"]["thinking"]
-                            .as_str()
-                            .filter(|text| !text.is_empty())
-                        {
-                            self.reserve(thinking.len())?;
-                            self.pending
-                                .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
-                        }
-                    }
-                }
-                "content_block_delta" => {
-                    let index = json["index"]
-                        .as_u64()
-                        .ok_or(ProviderError::InvalidResponse)?
-                        as usize;
-                    let delta_type = json["delta"]["type"]
-                        .as_str()
-                        .ok_or(ProviderError::InvalidResponse)?;
-                    if delta_type == "text_delta" {
-                        let text = json["delta"]["text"]
-                            .as_str()
-                            .ok_or(ProviderError::InvalidResponse)?;
-                        self.reserve(text.len())?;
-                        self.text.push_str(text);
-                        self.pending
-                            .push_back(ProviderEvent::TextDelta(text.to_string()));
-                    } else if delta_type == "thinking_delta" {
-                        // The streamed reasoning increment. Forwarded as a
-                        // `ReasoningDelta` for `collect()` to accumulate.
-                        let thinking = json["delta"]["thinking"]
-                            .as_str()
-                            .ok_or(ProviderError::InvalidResponse)?;
-                        self.reserve(thinking.len())?;
-                        if !thinking.is_empty() {
-                            self.pending
-                                .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
-                        }
-                    } else if delta_type == "input_json_delta" {
-                        let partial = json["delta"]["partial_json"]
-                            .as_str()
-                            .ok_or(ProviderError::InvalidResponse)?;
-                        self.reserve(partial.len())?;
-                        if let Some(block) = self.tools.get_mut(&index) {
-                            block.json.push_str(partial);
-                        } else {
-                            return Err(ProviderError::InvalidResponse);
-                        }
-                    }
-                }
-                "message_stop" => {
-                    if self.stop_reason.as_deref() == Some("max_tokens") {
-                        return Err(ProviderError::output_truncated(
-                            std::mem::take(&mut self.text),
-                            self.tools
-                                .values()
-                                .map(|block| block.json.clone())
-                                .collect(),
-                        ));
-                    }
-                    let mut calls = Vec::new();
-                    for (_index, block) in std::mem::take(&mut self.tools) {
-                        let arguments = if block.json.trim().is_empty() {
-                            serde_json::json!({})
-                        } else {
-                            serde_json::from_str(&block.json)
-                                .map_err(|_| ProviderError::InvalidResponse)?
-                        };
-                        calls.push(ToolCall {
-                            id: block.id,
-                            name: block.name,
-                            arguments,
-                        });
-                    }
-                    if !calls.is_empty() {
-                        self.pending.push_back(ProviderEvent::ToolCalls(calls));
-                    }
-                    self.pending.push_back(ProviderEvent::Done);
-                    self.done = true;
-                    break;
-                }
-                "message_start" => {
-                    let usage = &json["message"]["usage"];
-                    if apply_usage(&mut self.usage, usage) {
-                        self.pending.push_back(ProviderEvent::Usage(self.usage));
-                    }
-                }
-                "message_delta" => {
-                    let usage = &json["usage"];
-                    if apply_usage(&mut self.usage, usage) {
-                        self.pending.push_back(ProviderEvent::Usage(self.usage));
-                    }
-                    if let Some(reason) = json["delta"]["stop_reason"].as_str() {
-                        self.stop_reason = Some(reason.to_string());
-                    }
-                }
-                "error" => {
-                    return Err(ProviderError::InvalidResponse);
-                }
-                "ping" | "content_block_stop" => {}
-                _ => {}
-            }
-        }
-        if self.done {
-            if !whitespace(&self.bytes) {
-                return Err(ProviderError::InvalidResponse);
-            }
-            self.bytes.clear();
-        }
-        Ok(())
+        super::anthropic_events::push(self, chunk)
     }
 }
 
-fn size_error() -> ProviderError {
+pub(super) fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
 }
 
-fn boundary(value: &[u8]) -> Option<(usize, usize)> {
+pub(super) fn boundary(value: &[u8]) -> Option<(usize, usize)> {
     value
         .windows(4)
         .position(|part| part == b"\r\n\r\n")
@@ -311,7 +137,7 @@ fn boundary(value: &[u8]) -> Option<(usize, usize)> {
 /// whether anything was reported, so the caller only emits a `Usage` event when
 /// the object actually carried counts. A reported `0` stays `Some(0)`; an
 /// omitted field stays `None` (absent is not zero).
-fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Value) -> bool {
+pub(super) fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Value) -> bool {
     let mut changed = false;
     if let Some(input) = usage["input_tokens"].as_u64() {
         accumulated.input_tokens = input;

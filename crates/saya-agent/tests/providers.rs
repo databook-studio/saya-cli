@@ -328,6 +328,112 @@ async fn openai_sse_assembles_fragmented_tool_calls() {
 }
 
 #[tokio::test]
+async fn anthropic_stream_refuses_more_than_256_sparse_tool_blocks_before_emitting_calls() {
+    use saya_agent::{AnthropicProvider, ProviderEvent};
+
+    let mut body = Vec::new();
+    for index in 0..257_u64 {
+        writeln!(
+            body,
+            "event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":{},\"content_block\":{{\"type\":\"tool_use\",\"id\":\"x\",\"name\":\"y\"}}}}\n",
+            index * 1_000_000,
+        )
+        .unwrap();
+    }
+    let (base, handle) = byte_server(vec![body]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let mut emitted_calls = false;
+    let error = loop {
+        match stream.next().await.expect("stream settles") {
+            Ok(ProviderEvent::ToolCalls(_)) => emitted_calls = true,
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    handle.join().unwrap();
+    assert!(matches!(error, ProviderError::ToolCollectionLimit));
+    assert!(
+        !emitted_calls,
+        "the oversized batch must not become tool calls"
+    );
+}
+
+#[tokio::test]
+async fn anthropic_stream_keeps_sparse_indexes_below_the_call_cap() {
+    use saya_agent::AnthropicProvider;
+
+    let body = b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"one\",\"name\":\"schema_discovery\"}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1000000,\"content_block\":{\"type\":\"tool_use\",\"id\":\"two\",\"name\":\"schema_discovery\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let (base, handle) = byte_server(vec![body.to_vec()]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let response = provider.complete(request()).await.unwrap();
+    handle.join().unwrap();
+    assert_eq!(response.message.tool_calls.len(), 2);
+    assert_eq!(response.message.tool_calls[0].id, "one");
+    assert_eq!(response.message.tool_calls[1].id, "two");
+}
+
+#[tokio::test]
+async fn anthropic_stream_keeps_a_valid_id_with_non_object_arguments() {
+    use saya_agent::{AnthropicProvider, ProviderEvent};
+
+    let body = b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"call-1\",\"name\":\"schema_discovery\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"not-an-object\\\"\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let (base, handle) = byte_server(vec![body.to_vec()]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let calls = loop {
+        if let ProviderEvent::ToolCalls(calls) = stream
+            .next()
+            .await
+            .expect("stream settles")
+            .expect("provider accepts call")
+        {
+            break calls;
+        }
+    };
+    handle.join().unwrap();
+    assert_eq!(calls[0].id, "call-1");
+    assert_eq!(calls[0].arguments, serde_json::json!("not-an-object"));
+}
+
+#[tokio::test]
+async fn anthropic_stream_refuses_tool_identifiers_over_the_byte_limit() {
+    use saya_agent::AnthropicProvider;
+
+    let id = "x".repeat(saya_agent::MAX_STREAM_BYTES / 2 + 1);
+    let first = format!(
+        "event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"{id}\",\"name\":\"x\"}}}}\n\n"
+    );
+    let second = format!(
+        "event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":1000000,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"{id}\",\"name\":\"x\"}}}}\n\n"
+    );
+    let (base, handle) = byte_server(vec![first.into_bytes(), second.into_bytes()]);
+    let provider =
+        AnthropicProvider::new(ProviderSettings::new("m", Some(base)), Some("k")).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let error = loop {
+        match stream.next().await.expect("stream settles") {
+            Ok(_) => {}
+            Err(error) => break error,
+        }
+    };
+    handle.join().unwrap();
+    assert!(matches!(error, ProviderError::ToolCollectionLimit));
+}
+
+#[tokio::test]
 async fn ollama_ndjson_handles_fragmentation_and_requires_done() {
     let (base, requests, handle) = server(vec![Reply {
         status: 200,

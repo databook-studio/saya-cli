@@ -24,6 +24,7 @@ pub enum ProviderRecoveryReason {
     EmptyResponse,
     StreamEnded,
     StreamByteLimit,
+    ToolCollectionLimit,
     OutputTruncated,
     ProviderFailure,
     Cancelled,

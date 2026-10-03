@@ -15,6 +15,49 @@ struct PartialCall {
 }
 
 impl ToolAssembly {
+    pub(super) fn start(
+        &mut self,
+        index: usize,
+        id: &str,
+        name: &str,
+    ) -> Result<(), ProviderError> {
+        if self.calls.contains_key(&index) {
+            return Err(ProviderError::InvalidResponse);
+        }
+        if self.calls.len() >= crate::MAX_TOOL_CALLS_PER_RESPONSE {
+            return Err(ProviderError::ToolCollectionLimit);
+        }
+        self.reserve(
+            id.len()
+                .checked_add(name.len())
+                .ok_or(ProviderError::ToolCollectionLimit)?,
+        )?;
+        self.calls.insert(
+            index,
+            PartialCall {
+                id: Some(id.into()),
+                name: name.into(),
+                arguments: String::new(),
+            },
+        );
+        Ok(())
+    }
+
+    pub(super) fn append_arguments(
+        &mut self,
+        index: usize,
+        arguments: &str,
+    ) -> Result<(), ProviderError> {
+        if !self.calls.contains_key(&index) {
+            return Err(ProviderError::InvalidResponse);
+        }
+        self.reserve(arguments.len())?;
+        if let Some(call) = self.calls.get_mut(&index) {
+            call.arguments.push_str(arguments);
+        }
+        Ok(())
+    }
+
     pub(super) fn push(
         &mut self,
         index: usize,
@@ -22,8 +65,10 @@ impl ToolAssembly {
         name: Option<&str>,
         arguments: Option<&str>,
     ) -> Result<(), ProviderError> {
-        if !self.calls.contains_key(&index) && self.calls.len() >= 256 {
-            return Err(size_error());
+        if !self.calls.contains_key(&index)
+            && self.calls.len() >= crate::MAX_TOOL_CALLS_PER_RESPONSE
+        {
+            return Err(ProviderError::ToolCollectionLimit);
         }
         if let Some(id) = id {
             if let Some(previous) = self.calls.get(&index).and_then(|call| call.id.as_deref()) {
@@ -61,9 +106,12 @@ impl ToolAssembly {
     }
 
     fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
-        let next = self.bytes.checked_add(bytes).ok_or_else(size_error)?;
+        let next = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or(ProviderError::ToolCollectionLimit)?;
         if next > crate::MAX_STREAM_BYTES {
-            return Err(size_error());
+            return Err(ProviderError::ToolCollectionLimit);
         }
         self.bytes = next;
         Ok(())
@@ -78,6 +126,25 @@ impl ToolAssembly {
                 if call.name.is_empty() || !arguments.is_object() {
                     return Err(ProviderError::InvalidResponse);
                 }
+                Ok(ToolCall {
+                    id: call.id.unwrap_or_else(|| format!("call-{index}")),
+                    name: call.name,
+                    arguments,
+                })
+            })
+            .collect()
+    }
+
+    pub(super) fn finish_anthropic(self) -> Result<Vec<ToolCall>, ProviderError> {
+        self.calls
+            .into_iter()
+            .map(|(index, call)| {
+                let arguments = if call.arguments.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str(&call.arguments)
+                        .map_err(|_| ProviderError::InvalidResponse)?
+                };
                 Ok(ToolCall {
                     id: call.id.unwrap_or_else(|| format!("call-{index}")),
                     name: call.name,
@@ -106,10 +173,6 @@ impl ToolAssembly {
     }
 }
 
-fn size_error() -> ProviderError {
-    ProviderError::Request("provider stream exceeded size limit".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::ToolAssembly;
@@ -123,6 +186,6 @@ mod tests {
             .push(0, None, Some("tool"), Some(&fragment))
             .unwrap();
         let error = assembly.push(0, None, None, Some(&fragment)).unwrap_err();
-        assert!(error.to_string().contains("size limit"));
+        assert!(matches!(error, crate::ProviderError::ToolCollectionLimit));
     }
 }

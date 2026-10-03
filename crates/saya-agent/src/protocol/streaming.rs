@@ -1,3 +1,4 @@
+use super::tool_collection::admit_tool_calls;
 use crate::{ChatMessage, ChatRequest, ChatResponse, ProviderError, ToolCall};
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
@@ -14,6 +15,8 @@ use tokio::sync::Notify;
 /// Ceiling on one provider response's accumulated bytes. A misbehaving or
 /// hostile endpoint must not be able to stream unbounded data into memory.
 pub const MAX_STREAM_BYTES: usize = 2 * 1024 * 1024;
+/// Maximum distinct tool calls accepted from one assistant response.
+pub const MAX_TOOL_CALLS_PER_RESPONSE: usize = 256;
 
 /// Token counts reported by a provider for one response. Providers that do
 /// not report usage simply never emit it.
@@ -198,6 +201,7 @@ pub trait ChatProvider: Send + Sync {
         let mut stream = self.stream(request, CancellationToken::new()).await?;
         let (mut content, mut tool_calls, mut complete) = (String::new(), Vec::new(), false);
         let mut assembled_bytes = 0usize;
+        let mut tool_call_bytes = 0usize;
         // Reasoning is accumulated alongside content: a single string
         // per turn, no ordering relative to text. The bound covers reasoning
         // too — a hostile endpoint streaming unbounded "thinking" must not
@@ -238,14 +242,14 @@ pub trait ChatProvider: Send + Sync {
                     accumulated.push_str(&value);
                 }
                 ProviderEvent::ToolCalls(calls) => {
-                    let bytes = calls.iter().map(tool_call_bytes).sum::<usize>();
-                    if assembled_bytes.saturating_add(bytes) > MAX_STREAM_BYTES {
-                        return Err(ProviderError::Request(
-                            "provider stream exceeded size limit".into(),
-                        ));
-                    }
+                    let non_tool_bytes = assembled_bytes.saturating_sub(tool_call_bytes);
+                    let bytes = admit_tool_calls(
+                        &mut tool_calls,
+                        &mut tool_call_bytes,
+                        calls,
+                        MAX_STREAM_BYTES.saturating_sub(non_tool_bytes),
+                    )?;
                     assembled_bytes += bytes;
-                    tool_calls.extend(calls);
                 }
                 ProviderEvent::Usage(reported) => usage = Some(reported),
                 ProviderEvent::Done => complete = true,
@@ -265,12 +269,6 @@ pub trait ChatProvider: Send + Sync {
             usage,
         })
     }
-}
-
-fn tool_call_bytes(call: &ToolCall) -> usize {
-    call.id.len()
-        + call.name.len()
-        + serde_json::to_string(&call.arguments).map_or(0, |value| value.len())
 }
 
 #[cfg(test)]
