@@ -568,7 +568,7 @@ async fn actual_runtime_request_prefix_is_stable_and_last_sql_stays_in_the_user_
 }
 
 /// The configured C3 request wallet belongs at the CLI runtime composition
-/// boundary: after a real database tool call, a provider's second answering
+/// boundary: after a test connector tool call, a provider's second answering
 /// request must be refused rather than inheriting the legacy unbounded loop.
 struct ToolThenAnswer {
     calls: Arc<Mutex<usize>>,
@@ -659,6 +659,7 @@ async fn runtime_uses_configured_request_wallet_after_real_sql_tool() {
 
 struct TwoSqlCallsThenAnswer {
     calls: Arc<Mutex<usize>>,
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 #[async_trait]
@@ -667,7 +668,11 @@ impl ChatProvider for TwoSqlCallsThenAnswer {
         "two-sql-calls-then-answer"
     }
 
-    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+    async fn complete(
+        &self,
+        request: ChatRequest,
+    ) -> Result<ChatResponse, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
         let mut calls = self.calls.lock().unwrap();
         *calls += 1;
         if *calls == 1 {
@@ -693,6 +698,29 @@ impl ChatProvider for TwoSqlCallsThenAnswer {
     }
 }
 
+fn successful_sql_results(requests: &[ChatRequest], expected: usize) {
+    let follow_up = requests
+        .get(1)
+        .expect("successful SQL calls produce one paired provider request");
+    let results: Vec<QueryResult> = follow_up
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .map(|message| serde_json::from_str(&message.content).expect("tool result is JSON"))
+        .collect();
+    assert_eq!(
+        results.len(),
+        expected,
+        "one successful result per SQL call"
+    );
+    assert!(results.iter().all(|result| {
+        result.row_count == 1
+            && !result.truncated
+            && result.rows == vec![serde_json::json!([1])]
+            && result.executed_sql.contains("orders")
+    }));
+}
+
 #[tokio::test]
 async fn runtime_composes_requested_tool_limit_with_production_sqlite_tools() {
     for (requested_tool_calls, executed) in [(1, 0), (3, 2)] {
@@ -703,10 +731,12 @@ async fn runtime_composes_requested_tool_limit_with_production_sqlite_tools() {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create SQLite budget root");
         let calls = Arc::new(Mutex::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let inputs = TurnInputs {
             ai: test_ai(16 * 1024),
             provider: Box::new(TwoSqlCallsThenAnswer {
                 calls: Arc::clone(&calls),
+                requests: Arc::clone(&requests),
             }),
             registry: sqlite_registry(&root).await,
             failures: Vec::new(),
@@ -750,6 +780,13 @@ async fn runtime_composes_requested_tool_limit_with_production_sqlite_tools() {
                     dimension: saya_agent::BudgetDimension::RequestedToolCalls
                 }
             )));
+            assert_eq!(
+                requests.lock().unwrap().len(),
+                1,
+                "no paired SQL result is sent"
+            );
+        } else {
+            successful_sql_results(&requests.lock().unwrap(), executed);
         }
         let _ = std::fs::remove_dir_all(root);
     }
@@ -757,6 +794,7 @@ async fn runtime_composes_requested_tool_limit_with_production_sqlite_tools() {
 
 struct ReportedUsageThenSql {
     calls: Arc<Mutex<usize>>,
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 #[async_trait]
@@ -765,7 +803,11 @@ impl ChatProvider for ReportedUsageThenSql {
         "reported-usage-then-sql"
     }
 
-    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, saya_agent::ProviderError> {
+    async fn complete(
+        &self,
+        request: ChatRequest,
+    ) -> Result<ChatResponse, saya_agent::ProviderError> {
+        self.requests.lock().unwrap().push(request);
         let mut calls = self.calls.lock().unwrap();
         *calls += 1;
         if *calls == 1 {
@@ -796,10 +838,12 @@ async fn runtime_composes_reported_token_limit_with_production_sqlite_tools() {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("create SQLite token budget root");
         let calls = Arc::new(Mutex::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         let inputs = TurnInputs {
             ai: test_ai(16 * 1024),
             provider: Box::new(ReportedUsageThenSql {
                 calls: Arc::clone(&calls),
+                requests: Arc::clone(&requests),
             }),
             registry: sqlite_registry(&root).await,
             failures: Vec::new(),
@@ -843,6 +887,13 @@ async fn runtime_composes_reported_token_limit_with_production_sqlite_tools() {
                     dimension: saya_agent::BudgetDimension::ReportedTokens
                 }
             )));
+            assert_eq!(
+                requests.lock().unwrap().len(),
+                1,
+                "no paired SQL result is sent"
+            );
+        } else {
+            successful_sql_results(&requests.lock().unwrap(), executed);
         }
         let _ = std::fs::remove_dir_all(root);
     }

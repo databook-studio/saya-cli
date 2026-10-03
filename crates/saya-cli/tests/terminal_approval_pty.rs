@@ -11,9 +11,9 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::{
     fs,
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -247,7 +247,6 @@ fn run_approval_key(label: &str, input: &[u8], allowed: bool) {
     command.env("SAYA_MODEL", "mock");
     command.env("SAYA_PROVIDER_BASE_URL", format!("{}/v1", provider.address));
     command.env("SAYA_API_KEY", "test-only");
-    let mut child = pair.slave.spawn_command(command).expect("saya starts");
     let raw_fd = pair
         .master
         .as_raw_fd()
@@ -255,14 +254,15 @@ fn run_approval_key(label: &str, input: &[u8], allowed: bool) {
     let mut reader = pair.master.try_clone_reader().expect("pty reader");
     let mut writer = pair.master.take_writer().expect("pty writer");
     let (tx, rx) = std::sync::mpsc::channel();
-    thread::spawn(move || {
+    let reader_thread = PtyReader::new(thread::spawn(move || {
         let mut bytes = [0_u8; 4096];
         while let Ok(count) = reader.read(&mut bytes) {
             if count == 0 || tx.send(bytes[..count].to_vec()).is_err() {
                 break;
             }
         }
-    });
+    }));
+    let mut child = OwnedChild::new(pair.slave.spawn_command(command).expect("saya starts"));
     let started = Instant::now();
     let mut terminal = String::new();
     while !terminal.contains("[a] allow once") {
@@ -307,29 +307,38 @@ fn run_approval_key(label: &str, input: &[u8], allowed: bool) {
         0,
         "approval run succeeds"
     );
+    child.disarm();
     let follow_up = provider.join_follow_up();
     assert_eq!(
         provider.requests(),
         2,
         "tool result returns to the provider exactly once"
     );
+    let paired = paired_tool_result(&follow_up);
     if allowed {
-        assert!(
-            follow_up.contains("SELECT 1"),
-            "plain a returns the real SQL result: {follow_up}"
-        );
-        assert!(!follow_up.contains("tool call denied by approval policy"));
+        let result: saya_types::QueryResult =
+            serde_json::from_str(&paired).expect("plain a returns a structured SQL result");
+        assert_eq!(result.rows, vec![serde_json::json!([1])]);
+        assert_eq!(result.row_count, 1);
+        assert!(!result.truncated);
+        assert!(result.executed_sql.contains("SELECT 1"));
     } else {
-        assert!(
-            follow_up.contains("tool call denied by approval policy"),
-            "modified input denies: {follow_up}"
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&paired)
+                .expect("modified input returns a structured denial")["error"],
+            "tool call denied by approval policy",
+            "modified input denies the paired tool call"
         );
     }
+    drop(writer);
+    drop(pair);
+    reader_thread.join();
 }
 
 struct MockProvider {
     address: String,
     requests: Arc<Mutex<usize>>,
+    stop: mpsc::Sender<()>,
     thread: Option<thread::JoinHandle<Option<String>>>,
 }
 
@@ -347,37 +356,64 @@ impl MockProvider {
         let address = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(0));
         let recorded = Arc::clone(&requests);
+        let (stop, stopped) = mpsc::channel();
         let thread = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("provider receives request");
+            listener
+                .set_nonblocking(true)
+                .expect("provider listener becomes nonblocking");
+            let Ok(mut stream) = accept_request(&listener, &stopped) else {
+                return None;
+            };
             drain_request(&mut stream);
             *recorded.lock().unwrap() += 1;
+            if stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .is_err()
+            {
+                return None;
+            }
             let response = tool_response();
-            write!(
+            if write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{response}",
                 response.len()
             )
-            .unwrap();
-            stream.flush().unwrap();
+            .is_err()
+                || stream.flush().is_err()
+            {
+                return None;
+            }
             if !follow_up {
                 return None;
             }
-            let (mut stream, _) = listener.accept().expect("provider receives tool result");
+            let Ok(mut stream) = accept_request(&listener, &stopped) else {
+                return None;
+            };
             let request = drain_request(&mut stream);
             *recorded.lock().unwrap() += 1;
+            if stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .is_err()
+            {
+                return None;
+            }
             let response = answer_response();
-            write!(
+            if write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{response}",
                 response.len()
             )
-            .unwrap();
-            stream.flush().unwrap();
+            .is_err()
+                || stream.flush().is_err()
+            {
+                return None;
+            }
             Some(request)
         });
         Self {
             address,
             requests,
+            stop,
             thread: Some(thread),
         }
     }
@@ -387,10 +423,12 @@ impl MockProvider {
     }
 
     fn join(&mut self) {
+        let _ = self.stop.send(());
         assert!(self.thread.take().unwrap().join().unwrap().is_none());
     }
 
     fn join_follow_up(&mut self) -> String {
+        let _ = self.stop.send(());
         self.thread
             .take()
             .unwrap()
@@ -400,7 +438,41 @@ impl MockProvider {
     }
 }
 
+impl Drop for MockProvider {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn accept_request(listener: &TcpListener, stop: &mpsc::Receiver<()>) -> std::io::Result<TcpStream> {
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if stop.try_recv().is_ok() {
+                    return Err(std::io::Error::other("provider stopped"));
+                }
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "provider request deadline elapsed",
+                    ));
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn drain_request(stream: &mut std::net::TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("provider request read timeout");
     let mut bytes = Vec::new();
     let mut chunk = [0_u8; 4096];
     loop {
@@ -447,6 +519,22 @@ fn answer_response() -> String {
     "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\ndata: [DONE]\n\n".into()
 }
 
+fn paired_tool_result(request: &str) -> String {
+    let request: serde_json::Value =
+        serde_json::from_str(request).expect("provider request is JSON");
+    let results: Vec<_> = request["messages"]
+        .as_array()
+        .expect("provider request carries messages")
+        .iter()
+        .filter(|message| message["role"] == "tool" && message["tool_call_id"] == "call-1")
+        .collect();
+    assert_eq!(results.len(), 1, "one paired tool result for call-1");
+    results[0]["content"]
+        .as_str()
+        .expect("paired tool result content is text")
+        .to_owned()
+}
+
 fn scratch_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "saya-terminal-approval-pty-{label}-{}",
@@ -462,5 +550,57 @@ struct RootGuard(PathBuf);
 impl Drop for RootGuard {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct OwnedChild(Option<Box<dyn portable_pty::Child + Send + Sync>>);
+
+impl OwnedChild {
+    fn new(child: Box<dyn portable_pty::Child + Send + Sync>) -> Self {
+        Self(Some(child))
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+        self.0
+            .as_mut()
+            .expect("owned child remains live")
+            .try_wait()
+    }
+
+    fn disarm(&mut self) {
+        self.0.take();
+    }
+}
+
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+struct PtyReader(Option<thread::JoinHandle<()>>);
+
+impl PtyReader {
+    fn new(thread: thread::JoinHandle<()>) -> Self {
+        Self(Some(thread))
+    }
+
+    fn join(mut self) {
+        self.0
+            .take()
+            .expect("PTY reader remains live")
+            .join()
+            .expect("PTY reader joins after its owner closes");
+    }
+}
+
+impl Drop for PtyReader {
+    fn drop(&mut self) {
+        if let Some(thread) = self.0.take() {
+            let _ = thread.join();
+        }
     }
 }
