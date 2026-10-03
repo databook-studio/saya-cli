@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::engine::clock::ElapsedClockError;
 use crate::engine::state::RunTransitionError;
 use saya_store::StoreError;
 
@@ -11,6 +12,13 @@ use crate::{HarnessError, fetch::DownloadBudget};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum EngineSinkError {
+    /// The first-party elapsed clock could not be safely observed.
+    #[error("run elapsed clock failed closed: {source}")]
+    ElapsedClock {
+        #[source]
+        source: ElapsedClockError,
+    },
+
     /// The state machine refused the transition.
     #[error("run transition refused: {source}")]
     Transition {
@@ -42,10 +50,10 @@ pub enum EngineSinkError {
 /// so a caller cannot arm a ceiling without stating what is already spent.
 #[derive(Debug, Clone)]
 pub struct SinkBudgets {
-    /// The run's declared wall-clock ceiling, measured against the sink's
-    /// clock. A ceiling so large it cannot be added to the current instant
-    /// arms as already expired: a budget that cannot be honored trips
-    /// rather than runs unbounded.
+    /// The invocation's wall-clock ceiling, measured against the sink's
+    /// monotonic clock. A ceiling so large it cannot be added to the current
+    /// instant arms as already expired. Whole-run carry requires attaching an
+    /// [`ElapsedClock`](crate::engine::ElapsedClock) to the sink.
     pub wall_clock: Option<Duration>,
     /// The run's declared token ceiling, summed across input and output.
     ///

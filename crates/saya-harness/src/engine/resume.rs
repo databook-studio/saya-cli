@@ -147,10 +147,11 @@ pub async fn resume(
         return Err(ResumeError::ElapsedClock { source: *source });
     }
     let (sink, clock_exhausted) = match elapsed {
-        Some(Ok(clock)) => {
+        Some(Ok(mut clock)) => {
             journal
                 .append(&clock.event())
                 .map_err(|source| ResumeError::Journal { source })?;
+            clock.mark_persisted(std::time::Instant::now());
             let exhausted = clock.remaining().is_zero();
             (sink.with_elapsed_clock(clock), exhausted)
         }

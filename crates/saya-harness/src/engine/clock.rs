@@ -4,6 +4,10 @@ use std::time::{Duration, Instant};
 
 use saya_types::RunEvent;
 
+mod replay;
+
+const JOURNAL_CADENCE: Duration = Duration::from_secs(1);
+
 /// An invalid or unavailable first-party clock cannot grant more budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -35,6 +39,9 @@ pub struct ElapsedClock {
     elapsed_at_start: Duration,
     elapsed: Duration,
     started: Instant,
+    last_journaled_high_water: u64,
+    last_journaled_at: Instant,
+    needs_journal: bool,
 }
 
 impl ElapsedClock {
@@ -56,82 +63,15 @@ impl ElapsedClock {
             elapsed_at_start: Duration::ZERO,
             elapsed: Duration::ZERO,
             started: now,
+            last_journaled_high_water: now_unix_ms,
+            last_journaled_at: now,
+            needs_journal: true,
         })
     }
 
     /// Arm using the production UTC clock.
     pub fn arm_now(ceiling: Duration, now: Instant) -> Result<Self, ElapsedClockError> {
         Self::arm(ceiling, system_time_ms()?, now)
-    }
-
-    /// Resume only when the repaired journal has one consistent clock history.
-    pub fn resume(
-        events: &[RunEvent],
-        ceiling: Duration,
-        now_unix_ms: u64,
-        now: Instant,
-    ) -> Result<Self, ElapsedClockError> {
-        let mut mark = None;
-        let mut started = false;
-        let mut approved = false;
-        for event in events {
-            match event {
-                RunEvent::RunStarted => started = true,
-                RunEvent::PlanApproved { .. } if started => approved = true,
-                RunEvent::WallClockObserved { .. } if !started || !approved => {
-                    return Err(ElapsedClockError::InvalidJournal);
-                }
-                _ => {}
-            }
-            let RunEvent::WallClockObserved {
-                origin_unix_ms,
-                high_water_unix_ms,
-            } = event
-            else {
-                continue;
-            };
-            if *origin_unix_ms == 0
-                || *high_water_unix_ms < *origin_unix_ms
-                || mark.is_some_and(|previous: ElapsedClockMark| {
-                    previous.origin_unix_ms != *origin_unix_ms
-                        || *high_water_unix_ms < previous.high_water_unix_ms
-                })
-            {
-                return Err(ElapsedClockError::InvalidJournal);
-            }
-            mark = Some(ElapsedClockMark {
-                origin_unix_ms: *origin_unix_ms,
-                high_water_unix_ms: *high_water_unix_ms,
-            });
-        }
-        let mark = mark.ok_or(ElapsedClockError::MissingOrigin)?;
-        if now_unix_ms < mark.origin_unix_ms {
-            return Err(ElapsedClockError::FutureOrigin);
-        }
-        if now_unix_ms < mark.high_water_unix_ms {
-            return Err(ElapsedClockError::Backwards);
-        }
-        let elapsed_ms = now_unix_ms.saturating_sub(mark.origin_unix_ms);
-        let elapsed_at_start = Duration::from_millis(elapsed_ms);
-        Ok(Self {
-            mark: ElapsedClockMark {
-                high_water_unix_ms: now_unix_ms,
-                ..mark
-            },
-            ceiling,
-            elapsed_at_start,
-            elapsed: elapsed_at_start,
-            started: now,
-        })
-    }
-
-    /// Resume using the production UTC clock.
-    pub fn resume_now(
-        events: &[RunEvent],
-        ceiling: Duration,
-        now: Instant,
-    ) -> Result<Self, ElapsedClockError> {
-        Self::resume(events, ceiling, system_time_ms()?, now)
     }
 
     pub fn remaining(&self) -> Duration {
@@ -147,21 +87,46 @@ impl ElapsedClock {
 
     /// Raise the mark using both UTC and invocation-local monotonic time.
     pub fn observe(&mut self, now_unix_ms: u64, now: Instant) -> Result<bool, ElapsedClockError> {
+        let monotonic_elapsed = self
+            .elapsed_at_start
+            .saturating_add(now.saturating_duration_since(self.started));
+        self.elapsed = self.elapsed.max(monotonic_elapsed);
+        self.elapsed = self.elapsed.max(Duration::from_millis(
+            now_unix_ms.saturating_sub(self.mark.origin_unix_ms),
+        ));
         if now_unix_ms < self.mark.high_water_unix_ms {
             return Err(ElapsedClockError::Backwards);
         }
-        let elapsed = self
-            .elapsed_at_start
-            .saturating_add(now.saturating_duration_since(self.started));
-        let monotonic_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
-        let monotonic_high = self.mark.origin_unix_ms.saturating_add(monotonic_ms);
+        let monotonic_ms = u64::try_from(monotonic_elapsed.as_millis())
+            .map_err(|_| ElapsedClockError::Unavailable)?;
+        let monotonic_high = self
+            .mark
+            .origin_unix_ms
+            .checked_add(monotonic_ms)
+            .ok_or(ElapsedClockError::Unavailable)?;
+        let previous_high_water = self.mark.high_water_unix_ms;
         let high_water = now_unix_ms.max(monotonic_high);
-        let changed = high_water > self.mark.high_water_unix_ms;
         self.mark.high_water_unix_ms = high_water;
         self.elapsed = self.elapsed.max(Duration::from_millis(
             high_water.saturating_sub(self.mark.origin_unix_ms),
         ));
-        Ok(changed)
+        Ok(high_water > previous_high_water)
+    }
+
+    pub(crate) fn observation_due(&self, now: Instant, force: bool) -> bool {
+        if self.needs_journal {
+            return true;
+        }
+        if self.mark.high_water_unix_ms <= self.last_journaled_high_water {
+            return false;
+        }
+        force || now.saturating_duration_since(self.last_journaled_at) >= JOURNAL_CADENCE
+    }
+
+    pub(crate) fn mark_persisted(&mut self, now: Instant) {
+        self.last_journaled_high_water = self.mark.high_water_unix_ms;
+        self.last_journaled_at = now;
+        self.needs_journal = false;
     }
 }
 

@@ -505,8 +505,42 @@ fn a_run_paused_by_its_wall_clock_does_not_recharge_on_resume() {
         !fast_called.load(Ordering::SeqCst),
         "an exhausted resume must not invoke the provider"
     );
+    let (fast_again, fast_again_called) = mock(vec![Scripted {
+        body: sse("another remaining step answer"),
+        delay_ms: 0,
+    }]);
+    let resumed_again = saya(&env, &["run", "resume", &id], &fast_again);
+    assert_eq!(
+        resumed_again.status.code(),
+        Some(6),
+        "the same exhausted whole-run clock keeps a second resume paused; stderr: {}",
+        stderr(&resumed_again)
+    );
+    assert!(
+        !fast_again_called.load(Ordering::SeqCst),
+        "a second exhausted resume must not invoke the provider"
+    );
     let journal = fs::read_to_string(env.runs.join(&id).join("events.ndjson")).unwrap();
-    assert!(journal.contains("wall_clock_observed"));
+    let clock_marks: Vec<(u64, u64)> = json_lines(&journal, "run journal")
+        .iter()
+        .filter(|event| event["type"] == "wall_clock_observed")
+        .map(|event| {
+            (
+                event["origin_unix_ms"].as_u64().unwrap(),
+                event["high_water_unix_ms"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert!(
+        clock_marks.len() >= 3,
+        "both resumes must persist an observation: {clock_marks:?}"
+    );
+    assert!(
+        clock_marks
+            .iter()
+            .all(|(origin, _)| *origin == clock_marks[0].0)
+    );
+    assert!(clock_marks.windows(2).all(|pair| pair[1].1 >= pair[0].1));
     assert!(journal.contains("wall_clock_exceeded"));
     let _ = fs::remove_dir_all(&env.root);
 }

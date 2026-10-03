@@ -31,18 +31,18 @@ use std::{
 use async_trait::async_trait;
 use saya_agent::{AgentEvent, AgentEventSink};
 use saya_store::RunStore;
-use saya_types::{PauseReason, RunEvent, RunId};
+use saya_types::{PauseReason, RunId};
 
 use crate::fetch::DownloadBudget;
 use crate::journal::Journal;
 
 use super::clock::ElapsedClock;
-use super::state::{RunState, transition};
-use super::transitions::TransitionEvent;
 use super::usage::UsageTotals;
+use super::{state::RunState, transitions::TransitionEvent};
 
 mod accounting;
 mod enforcement;
+mod lifecycle;
 mod types;
 
 /// The wall clock the sink reads. Production passes `Instant::now`; tests
@@ -91,7 +91,9 @@ impl EngineEventSink {
     /// `budgets` carries the run's declared ceilings and the spend already
     /// behind them — the seeding a resume does, so the token ceiling
     /// measures the run's whole spend; a fresh run carries
-    /// [`UsageTotals::default`].
+    /// [`UsageTotals::default`]. Its `wall_clock` remains an invocation-local
+    /// monotonic deadline. Callers that need whole-run elapsed carry attach
+    /// an [`ElapsedClock`] with [`Self::with_elapsed_clock`].
     pub fn new(
         run_id: RunId,
         initial: RunState,
@@ -169,56 +171,6 @@ impl EngineEventSink {
     fn set_state(&self, state: RunState) {
         *self.state.lock().expect("engine sink state lock") = state;
     }
-
-    /// Records one lifecycle transition: the machine advances, the journal
-    /// event is appended, the store is mirrored — the durable record always
-    /// precedes the mirror, so a refused transition, a failed journal write,
-    /// or a refused mirror returns an error and leaves the state as it was.
-    ///
-    /// The exception is the store fail-safe: a mirror the store refuses
-    /// while the run is mid-flight (now `Executing`) pauses the run instead
-    /// of continuing unmirrored — journaled first, then the state advances.
-    pub async fn record(&self, event: TransitionEvent) -> Result<RunState, EngineSinkError> {
-        let (machine, journal_event, status, code) = event.record();
-        let current = self.state();
-        let next = transition(current, machine)
-            .map_err(|source| EngineSinkError::Transition { source })?;
-        let approved = matches!(&journal_event, Some(RunEvent::PlanApproved { .. }));
-        if let Some(event) = journal_event {
-            self.journal
-                .append(&event)
-                .map_err(|source| EngineSinkError::Journal { source })?;
-        }
-        if approved
-            && let Some(clock) = self
-                .elapsed_clock
-                .lock()
-                .expect("engine sink clock lock")
-                .as_ref()
-        {
-            self.journal
-                .append(&clock.event())
-                .map_err(|source| EngineSinkError::Journal { source })?;
-        }
-        if let Err(source) = self.store.set_run_status(&self.run_id, status, code).await {
-            self.hold_diagnostic(EngineSinkError::Store {
-                source: source.clone(),
-            });
-            if next == RunState::Executing {
-                self.journal
-                    .append(&RunEvent::Paused {
-                        reason: PauseReason::StoreUnavailable,
-                    })
-                    .map_err(|source| EngineSinkError::Journal { source })?;
-                self.set_state(RunState::Paused);
-            } else {
-                self.set_state(next);
-            }
-            return Err(EngineSinkError::Store { source });
-        }
-        self.set_state(next);
-        Ok(next)
-    }
 }
 
 #[async_trait]
@@ -238,6 +190,23 @@ impl AgentEventSink for EngineEventSink {
             self.journal_usage(usage);
         }
         self.journal_downloads();
+        let mut clock_boundary_failed = false;
+        if matches!(
+            &event,
+            AgentEvent::TurnStarted | AgentEvent::ToolRequested { .. }
+        ) && let Err(error) = self.observe_elapsed_clock(true)
+        {
+            self.hold_diagnostic(error);
+            clock_boundary_failed = true;
+        }
+        if clock_boundary_failed
+            && let Err(error) = self
+                .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
+                .await
+        {
+            self.hold_diagnostic(error);
+            self.set_state(RunState::Paused);
+        }
         if let Some(stream) = &self.agent_stream {
             stream.emit(event).await;
         }

@@ -119,5 +119,23 @@ fn observation_earlier_than_the_high_water_refuses_to_recharge() {
         clock.observe(1_199, now + Duration::from_secs(1)),
         Err(ElapsedClockError::Backwards)
     );
-    assert_eq!(clock.remaining(), Duration::from_millis(4_750));
+    assert_eq!(clock.remaining(), Duration::from_millis(3_750));
+}
+
+#[test]
+fn monotonic_submillisecond_elapsed_is_not_refunded_and_unrepresentable_high_water_fails_closed() {
+    let now = Instant::now();
+    let mut precise = ElapsedClock::arm(Duration::from_millis(2), 5_000, now).unwrap();
+    precise
+        .observe(5_000, now + Duration::from_micros(1_500))
+        .unwrap();
+    assert_eq!(precise.remaining(), Duration::from_micros(500));
+
+    let origin = u64::MAX - 1;
+    let mut overflowing = ElapsedClock::arm(Duration::from_millis(5), origin, now).unwrap();
+    assert_eq!(
+        overflowing.observe(origin, now + Duration::from_millis(5)),
+        Err(ElapsedClockError::Unavailable)
+    );
+    assert!(overflowing.remaining().is_zero());
 }
