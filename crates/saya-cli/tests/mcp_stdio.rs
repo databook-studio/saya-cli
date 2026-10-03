@@ -835,10 +835,21 @@ fn mcp_cancellation_and_concurrency_are_bounded() {
     server.send(r#"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":20,"reason":"client moved on"}}"#);
     server.expect_no_response_for(20, 2500);
 
-    // The server keeps serving.
-    server.send(r#"{"jsonrpc":"2.0","id":21,"method":"ping"}"#);
+    // Cancellation does not kill the server; another database request works.
+    server.send(r#"{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"query","arguments":{"profile":"local","sql":"SELECT 1 AS still_running"}}}"#);
+    let query = server.next_json(10);
+    assert_eq!(query["id"], 21);
+    assert_eq!(query["result"]["isError"], false, "{query}");
+    assert_eq!(query["result"]["structuredContent"]["row_count"], 1);
+    assert_eq!(
+        query["result"]["structuredContent"]["columns"],
+        serde_json::json!(["still_running"])
+    );
+
+    // The server also answers protocol traffic after cancellation.
+    server.send(r#"{"jsonrpc":"2.0","id":22,"method":"ping"}"#);
     let ping = server.next_json(10);
-    assert_eq!(ping["id"], 21);
+    assert_eq!(ping["id"], 22);
     assert!(ping["result"].is_object());
 
     server.close_and_expect_exit(0);

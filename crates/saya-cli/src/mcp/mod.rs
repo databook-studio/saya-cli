@@ -12,6 +12,7 @@ mod context;
 mod context_tools;
 mod line_gate;
 mod policy;
+mod query_cancellation;
 mod query_tool;
 mod replay_tools;
 mod schema_tool;

@@ -57,13 +57,15 @@ impl ServerHandler for SayaServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        // A cancellation notification stops the wait and drops the call's
-        // future; any late response is discarded by the service itself. The
-        // body also races the same token around its own connector calls so a
-        // supporting connector is cancelled server-side.
-        tokio::select! {
-            _ = context.ct.cancelled() => Err(cancelled()),
-            response = self.run_tool(request, &context) => response,
+        if matches!(request.name.as_ref(), "query" | "schema") {
+            // Database operations retain their owning future after a cancel or
+            // deadline request; RMCP suppresses the cancelled request's reply.
+            self.run_tool(request, &context).await
+        } else {
+            tokio::select! {
+                _ = context.ct.cancelled() => Err(cancelled()),
+                response = self.run_tool(request, &context) => response,
+            }
         }
     }
 }
@@ -82,13 +84,15 @@ impl SayaServer {
     }
 
     /// One bounded tool call: acquire an in-flight slot (refused as busy, as a
-    /// tool result, past the cap), refuse an oversized request, run the body
-    /// under the call timeout.
+    /// tool result, past the cap), refuse an oversized request, then run its
+    /// body. Database bodies own cancellation and their settlement deadline.
     async fn run_tool(
         &self,
         request: CallToolRequestParams,
         request_context: &RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
+        let database_operation = matches!(request.name.as_ref(), "query" | "schema");
+        let request_deadline = tokio::time::Instant::now() + self.policy.call_timeout();
         let _slot = match self.acquire_in_flight() {
             Ok(slot) => slot,
             Err(error) => return Ok(tools::error_result(error.message)),
@@ -107,18 +111,24 @@ impl SayaServer {
                 ));
             }
         }
-        match tokio::time::timeout(
-            self.policy.call_timeout(),
-            tools::run(&self.policy, &self.context, &request, request_context),
-        )
-        .await
-        {
-            Ok(response) => response,
-            Err(_) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "the tool call exceeded the {}-second bound",
-                self.policy.call_timeout().as_secs()
-            ))])
-            .into()),
+        let run = tools::run(
+            &self.policy,
+            &self.context,
+            &request,
+            request_context,
+            request_deadline,
+        );
+        if database_operation {
+            run.await
+        } else {
+            match tokio::time::timeout(self.policy.call_timeout(), run).await {
+                Ok(response) => response,
+                Err(_) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "the tool call exceeded the {}-second bound",
+                    self.policy.call_timeout().as_secs()
+                ))])
+                .into()),
+            }
         }
     }
 
