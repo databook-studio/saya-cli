@@ -60,6 +60,8 @@ pub enum ConfigError {
         min: usize,
         max: usize,
     },
+    #[error("setting ai.{field} must be a positive integer or the literal `unlimited`")]
+    InvalidInvestigationBudget { field: &'static str },
     /// An endpoint's model or base URL is too long to carry safely through
     /// provider construction and diagnostics. The source field is carried so
     /// an inherited `[ai]` value is distinguished from an endpoint override.

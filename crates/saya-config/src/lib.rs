@@ -6,6 +6,7 @@ mod endpoints;
 mod env_file;
 mod error;
 mod input;
+mod investigation_budget;
 mod jobs;
 mod layers;
 mod memory;
@@ -22,6 +23,7 @@ pub use endpoints::{MAX_ENDPOINT_STRING_CHARS, ORCHESTRATOR_ROLE, ResolvedEndpoi
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};
+pub use investigation_budget::{BudgetLimit, ResolvedInvestigationBudgets};
 pub use jobs::{
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs,
     ResolvedRunnerJobs, ResolvedSessionDeny,
