@@ -18,6 +18,48 @@ use saya_agent::{
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
+pub(crate) struct SinkPrompt<'a> {
+    pub(crate) runtime: &'a RuntimeConfig,
+    pub(crate) prompt: &'a str,
+    pub(crate) approval: ApprovalPolicy,
+    pub(crate) can_prompt: bool,
+    pub(crate) can_obtain_approval: bool,
+    pub(crate) overrides: PromptOverrides,
+    pub(crate) history: Vec<ChatMessage>,
+    pub(crate) sink: &'a dyn AgentEventSink,
+    pub(crate) cancellation: CancellationToken,
+    pub(crate) state_db: Option<SqliteStateStore>,
+    pub(crate) decider: Option<Arc<dyn ApprovalDecider>>,
+    pub(crate) last_sql: Option<String>,
+    pub(crate) session: Option<Arc<SessionUniverse>>,
+    pub(crate) agent_mode: AgentMode,
+    pub(crate) capture: Option<tools::CaptureHook>,
+    pub(crate) prior_tool_outcomes:
+        Option<crate::interactive::session_continuation::PriorToolOutcomes>,
+    pub(crate) compaction_summary: Option<String>,
+}
+
+pub(crate) struct TurnPrompt<'a> {
+    pub(crate) runtime: &'a RuntimeConfig,
+    pub(crate) inputs: TurnInputs,
+    pub(crate) prompt: &'a str,
+    pub(crate) approval: ApprovalPolicy,
+    pub(crate) can_prompt: bool,
+    pub(crate) can_obtain_approval: bool,
+    pub(crate) history: Vec<ChatMessage>,
+    pub(crate) sink: &'a dyn AgentEventSink,
+    pub(crate) cancellation: CancellationToken,
+    pub(crate) state_db: Option<SqliteStateStore>,
+    pub(crate) decider: Option<Arc<dyn ApprovalDecider>>,
+    pub(crate) last_sql: Option<String>,
+    pub(crate) session: Option<Arc<SessionUniverse>>,
+    pub(crate) agent_mode: AgentMode,
+    pub(crate) capture: Option<tools::CaptureHook>,
+    pub(crate) prior_tool_outcomes:
+        Option<crate::interactive::session_continuation::PriorToolOutcomes>,
+    pub(crate) compaction_summary: Option<String>,
+}
+
 /// Production entry point: builds provider + registry from config and executes the turn.
 ///
 /// `can_prompt` means "this surface may read stdin" — it feeds the
@@ -54,10 +96,54 @@ pub(crate) async fn run_prompt_with_sink(
     // headless paths pass `None` and the tools never capture (C1/C2).
     capture: Option<tools::CaptureHook>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
+    run_prompt_with_sink_and_outcomes(SinkPrompt {
+        runtime,
+        prompt,
+        approval,
+        can_prompt,
+        can_obtain_approval,
+        overrides,
+        history,
+        sink,
+        cancellation,
+        state_db,
+        decider,
+        last_sql,
+        session,
+        agent_mode,
+        capture,
+        prior_tool_outcomes: None,
+        compaction_summary: None,
+    })
+    .await
+}
+
+pub(crate) async fn run_prompt_with_sink_and_outcomes(
+    request: SinkPrompt<'_>,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    let SinkPrompt {
+        runtime,
+        prompt,
+        approval,
+        can_prompt,
+        can_obtain_approval,
+        overrides,
+        history,
+        sink,
+        cancellation,
+        state_db,
+        decider,
+        last_sql,
+        session,
+        agent_mode,
+        capture,
+        prior_tool_outcomes,
+        compaction_summary,
+    } = request;
     let inputs = prepare_turn(runtime, &overrides, can_prompt)
         .await
         .map_err(with_next_step)?;
-    run_prompt_with_inputs(
+    run_prompt_with_continuation_inputs(TurnPrompt {
         runtime,
         inputs,
         prompt,
@@ -73,11 +159,14 @@ pub(crate) async fn run_prompt_with_sink(
         session,
         agent_mode,
         capture,
-    )
+        prior_tool_outcomes,
+        compaction_summary,
+    })
     .await
 }
 
 /// The turn body, injectable for tests via [`TurnInputs`].
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_prompt_with_inputs(
     runtime: &RuntimeConfig,
@@ -101,6 +190,50 @@ pub(crate) async fn run_prompt_with_inputs(
     // The TUI's capture hook (C1); `None` for every headless caller.
     capture: Option<tools::CaptureHook>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
+    run_prompt_with_continuation_inputs(TurnPrompt {
+        runtime,
+        inputs,
+        prompt,
+        approval,
+        can_prompt,
+        can_obtain_approval,
+        history,
+        sink,
+        cancellation,
+        state_db,
+        decider,
+        last_sql,
+        session,
+        agent_mode,
+        capture,
+        prior_tool_outcomes: None,
+        compaction_summary: None,
+    })
+    .await
+}
+
+pub(crate) async fn run_prompt_with_continuation_inputs(
+    turn: TurnPrompt<'_>,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    let TurnPrompt {
+        runtime,
+        inputs,
+        prompt,
+        approval,
+        can_prompt,
+        can_obtain_approval,
+        history,
+        sink,
+        cancellation,
+        state_db,
+        decider,
+        last_sql,
+        session,
+        agent_mode,
+        capture,
+        prior_tool_outcomes,
+        compaction_summary,
+    } = turn;
     let ai = inputs.ai;
     let provider = inputs.provider;
     let registry = inputs.registry;
@@ -217,6 +350,31 @@ pub(crate) async fn run_prompt_with_inputs(
         )
     {
         context_blocks.push(block);
+    }
+    let task_list = session
+        .as_ref()
+        .map(|universe| universe.tasks().current())
+        .unwrap_or_default();
+    if session.is_some() {
+        if let Some(summary) = compaction_summary.as_deref()
+            && let Some(block) = crate::interactive::session_continuation::render_summary_block(
+                summary,
+                ai.context_byte_budget,
+            )
+        {
+            context_blocks.push(block);
+        }
+        if let Some(block) = crate::interactive::session_continuation::render_block(
+            prompt,
+            registry.primary().is_some(),
+            registry.dialects(),
+            &receipt,
+            &task_list,
+            prior_tool_outcomes.as_ref(),
+            ai.context_byte_budget,
+        ) {
+            context_blocks.push(block);
+        }
     }
     sink.emit(knowledge_supplied_event(&receipt)).await;
     let receipt = Arc::new(receipt);
