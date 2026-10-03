@@ -356,7 +356,6 @@ async fn capture_repeated_requests() -> Vec<RequestMeasurement> {
     let mut measurements = Vec::new();
     for _ in 0..5 {
         let sink = TimedSink::new();
-        let started = Instant::now();
         let (result, counters) = run_turn_with_request(
             16 * 1024,
             "orders by month",
@@ -373,7 +372,7 @@ async fn capture_repeated_requests() -> Vec<RequestMeasurement> {
             request_count: counters.request_count(),
             tool_calls: sink.event_count(|event| matches!(event, AgentEvent::ToolRequested { .. })),
             retries: sink.event_count(|event| matches!(event, AgentEvent::TurnReset)),
-            elapsed: started.elapsed(),
+            elapsed: sink.started.elapsed(),
             first_assistant_text: sink.first_assistant_text(),
         });
     }
@@ -426,100 +425,6 @@ async fn config_context_byte_budget_bounds_the_history_the_loop_sends() {
 
 #[tokio::test]
 async fn actual_runtime_request_prefix_is_stable_and_last_sql_stays_in_the_user_tail() {
-    let first = record_first_request("orders by month", Some("SELECT id FROM orders")).await;
-    let repeated = record_first_request("orders by month", Some("SELECT id FROM orders")).await;
-    let changed = record_first_request(
-        "orders by customer",
-        Some("SELECT missing FROM missing_table"),
-    )
-    .await;
-    let non_ascii = record_first_request("orders in München 😀", None).await;
-    let profile_changed = record_first_request_for(
-        "orders by month",
-        None,
-        test_ai(16 * 1024),
-        "warehouse",
-        &NoopEventSink,
-    )
-    .await;
-    let mut private_ai = test_ai(16 * 1024);
-    private_ai.provider = AiProvider::Anthropic;
-    private_ai.allow_data_sharing = false;
-    let privacy_changed = record_first_request_for(
-        "orders by month",
-        None,
-        private_ai,
-        "analytics",
-        &NoopEventSink,
-    )
-    .await;
-
-    assert_eq!(
-        serde_json::to_vec(&first).unwrap(),
-        serde_json::to_vec(&repeated).unwrap(),
-        "identical runtime inputs must yield the same complete serialized request"
-    );
-    assert_eq!(
-        serde_json::to_vec(&first.tools).unwrap(),
-        serde_json::to_vec(&changed.tools).unwrap(),
-        "question and last SQL cannot reorder or alter tool schemas"
-    );
-    assert_eq!(
-        first.messages[0], changed.messages[0],
-        "per-turn inputs must not alter the system prefix"
-    );
-    assert!(
-        changed
-            .messages
-            .last()
-            .unwrap()
-            .content
-            .contains("orders by customer")
-    );
-    assert!(
-        changed
-            .messages
-            .last()
-            .unwrap()
-            .content
-            .contains("SELECT missing FROM missing_table")
-    );
-    assert_eq!(
-        first.tools.len(),
-        non_ascii.tools.len(),
-        "the full tool set stays attached"
-    );
-    assert!(
-        non_ascii
-            .messages
-            .last()
-            .unwrap()
-            .content
-            .contains("München 😀")
-    );
-    assert_ne!(
-        first.messages[0], profile_changed.messages[0],
-        "the selected profile changes the production-built session context"
-    );
-    assert!(profile_changed.messages[0].content.contains("warehouse"));
-    assert!(
-        !privacy_changed
-            .tools
-            .iter()
-            .any(|tool| tool.name == "bounded_sql_query"),
-        "a closed data-sharing gate must remove query-data tools from the actual request"
-    );
-    assert!(
-        privacy_changed
-            .tools
-            .iter()
-            .any(|tool| tool.name == "schema_discovery"),
-        "privacy must retain no-data schema discovery in the actual request"
-    );
-}
-
-#[tokio::test]
-async fn repeated_runtime_request_measurement_is_deterministic() {
     let measurements = capture_repeated_requests().await;
     assert_eq!(measurements.len(), 5, "five fixed local runs were captured");
     let first = &measurements[0];
@@ -554,6 +459,63 @@ async fn repeated_runtime_request_measurement_is_deterministic() {
             .all(|measurement| measurement.first_assistant_text.is_some()),
         "each fixed run emitted nonempty assistant text through the event sink"
     );
+    let changed = record_first_request(
+        "orders by customer",
+        Some("SELECT missing FROM missing_table"),
+    )
+    .await;
+    let non_ascii = record_first_request("orders in München 😀", None).await;
+    let profile_changed = record_first_request_for(
+        "orders by month",
+        None,
+        test_ai(16 * 1024),
+        "warehouse",
+        &NoopEventSink,
+    )
+    .await;
+    assert_eq!(
+        serde_json::to_vec(&first.request.tools).unwrap(),
+        serde_json::to_vec(&changed.tools).unwrap(),
+        "question and last SQL cannot reorder or alter tool schemas"
+    );
+    assert_eq!(
+        first.request.messages[0], changed.messages[0],
+        "per-turn inputs must not alter the system prefix"
+    );
+    assert!(
+        changed
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("orders by customer")
+    );
+    assert!(
+        changed
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("SELECT missing FROM missing_table")
+    );
+    assert_eq!(
+        first.request.tools.len(),
+        non_ascii.tools.len(),
+        "the full tool set stays attached"
+    );
+    assert!(
+        non_ascii
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("München 😀")
+    );
+    assert_ne!(
+        first.request.messages[0], profile_changed.messages[0],
+        "the selected profile changes the production-built session context"
+    );
+    assert!(profile_changed.messages[0].content.contains("warehouse"));
     let elapsed = measurements.iter().map(|measurement| measurement.elapsed);
     let first_text = measurements
         .iter()

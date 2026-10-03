@@ -1033,6 +1033,12 @@ async fn recalled_claim_is_user_context_and_privacy_gate_removes_it_from_actual_
         }),
         "the planted claim reached the user-side recall block: {turn:?}"
     );
+    assert!(
+        turn.tools
+            .iter()
+            .any(|tool| tool.name == "bounded_sql_query"),
+        "the open sharing baseline advertises query-data tools"
+    );
     // The non-negotiable: no system-role message of ANY request carries the
     // claim — neither the turn's assembled prompt nor the extractor's.
     for request in &seen {

@@ -15,11 +15,10 @@ and the actual ordered tool definitions and parameter schemas; it does not
 reimplement request assembly. The provider returns a fixed local text response,
 uses no network, and reports no usage.
 
-The repeated_runtime_request_measurement_is_deterministic test keeps this
-capture runnable: it executes five identical fixed-provider local turns and
-reports request/component bytes, request/tool/retry counts, total local elapsed
-range, and first nonempty assistant-text latency from an AgentEventSink
-collector.
+The complete-request characterization test keeps this capture runnable: it
+executes five identical fixed-provider local turns and reports request/component
+bytes, request/tool/retry counts, total local elapsed range, and first nonempty
+assistant-text latency from an AgentEventSink collector.
 
 The initial request in that fixture (one synthetic DuckDB profile, memory off,
 no history, question plus last-SQL hint) measured:
@@ -35,7 +34,7 @@ Run the retained diagnostic with:
 
 ```sh
 cargo test -p saya-cli --locked \
-  repeated_runtime_request_measurement_is_deterministic -- --nocapture
+  actual_runtime_request_prefix_is_stable_and_last_sql_stays_in_the_user_tail -- --nocapture
 ```
 
 These byte figures overlap by design: the complete JSON request includes JSON
