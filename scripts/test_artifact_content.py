@@ -57,6 +57,43 @@ def valid_crate(path: Path, extra: dict[str, bytes | None] | None = None) -> Non
     tar_gz(path, entries)
 
 
+def sparse_crate(path: Path, *, pax_parser: str | None) -> None:
+    root = path.name.removesuffix(".crate")
+    with tarfile.open(
+        path,
+        "w:gz",
+        format=tarfile.PAX_FORMAT if pax_parser else tarfile.GNU_FORMAT,
+    ) as archive:
+        for name, content in (("Cargo.toml", b'[package]\nlicense = "Apache-2.0"'), ("LICENSE", b"license")):
+            info = tarfile.TarInfo(f"{root}/{name}")
+            info.size = len(content)
+            archive.addfile(info, io.BytesIO(content))
+        info = tarfile.TarInfo(f"{root}/src/lib.rs")
+        info.size = 1
+        if pax_parser:
+            info.pax_headers = {
+                "_proc_gnusparse_00": {"GNU.sparse.size": "1"},
+                "_proc_gnusparse_01": {"GNU.sparse.map": "0,1"},
+                "_proc_gnusparse_10": {"GNU.sparse.major": "1", "GNU.sparse.minor": "0"},
+            }[pax_parser]
+            archive.addfile(info, io.BytesIO(b"x"))
+            return
+        archive.addfile(info, io.BytesIO(b"x"))
+
+    if not pax_parser:
+        import gzip
+
+        with gzip.open(path, "rb") as compressed:
+            payload = bytearray(compressed.read())
+        header = payload.index(f"{root}/src/lib.rs".encode()) // 512 * 512
+        payload[header + 148 : header + 156] = b"        "
+        payload[header + 156] = ord("S")
+        checksum = sum(payload[header : header + 512])
+        payload[header + 148 : header + 156] = f"{checksum:06o}\0 ".encode()
+        with gzip.open(path, "wb") as compressed:
+            compressed.write(payload)
+
+
 class ArtifactContentTests(unittest.TestCase):
     def check(self, kind: str, path: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -108,6 +145,22 @@ class ArtifactContentTests(unittest.TestCase):
             )
             self.assertEqual(self.check("archive", windows).returncode, 0)
             self.assertEqual(self.check("crate", crate).returncode, 0)
+
+    def test_sparse_tar_forms_are_rejected_before_stdlib_sparse_parsers(self) -> None:
+        cases = (
+            ("old GNU", None, "_proc_sparse"),
+            ("PAX 0.0", "_proc_gnusparse_00", "_proc_gnusparse_00"),
+            ("PAX 0.1", "_proc_gnusparse_01", "_proc_gnusparse_01"),
+            ("PAX 1.0", "_proc_gnusparse_10", "_proc_gnusparse_10"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, pax_parser, parser in cases:
+                with self.subTest(label=label):
+                    crate = Path(tmp) / f"saya-types-0.4.2-{label.replace(' ', '-')}.crate"
+                    sparse_crate(crate, pax_parser=pax_parser)
+                    with mock.patch.object(tarfile.TarInfo, parser, side_effect=AssertionError("sparse parser entered")):
+                        with self.assertRaisesRegex(GATE_MODULE.Rejected, "sparse"):
+                            GATE_MODULE.scan_archive(str(crate), "crate")
 
     def test_both_binary_names_are_rejected_even_when_only_alternate_leaks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -185,7 +238,6 @@ class ArtifactContentTests(unittest.TestCase):
             path = Path(tmp) / "saya-0.4.2-test.zip"
             zip_file(path, {"root/first": b"1234", "root/second": b"5678"})
             gate = GATE_MODULE
-            gate.MAX_ARCHIVE_BYTES = 4
             original_open = zipfile.ZipFile.open
 
             def guarded_open(archive, name, *args, **kwargs):
@@ -194,9 +246,10 @@ class ArtifactContentTests(unittest.TestCase):
                     raise AssertionError("over-budget payload was opened")
                 return original_open(archive, name, *args, **kwargs)
 
-            with mock.patch.object(zipfile.ZipFile, "open", guarded_open):
-                with self.assertRaisesRegex(gate.Rejected, "size limit"):
-                    gate.scan_archive(str(path), "archive")
+            with mock.patch.object(gate, "MAX_ARCHIVE_BYTES", 4):
+                with mock.patch.object(zipfile.ZipFile, "open", guarded_open):
+                    with self.assertRaisesRegex(gate.Rejected, "size limit"):
+                        gate.scan_archive(str(path), "archive")
 
     def test_archive_input_limit_rejects_before_opening_the_container(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -434,12 +487,12 @@ class ReleaseScriptIntegrationTests(unittest.TestCase):
         ])
 
         encoded_env = dict(base)
-        encoded_env["CARGO_ENCODED_RUSTFLAGS"] = "--cfg\x1ffeature=custom build\x1f"
+        encoded_env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f--cfg\x1ffeature=custom build\x1f"
         encoded_env["RUSTFLAGS"] = "-C opt-level=3\n-C debuginfo=0"
         encoded = subprocess.run(["bash", "-c", command], cwd=ROOT, env=encoded_env, capture_output=True, check=False)
         self.assertEqual(encoded.returncode, 0, encoded.stderr.decode())
         self.assertEqual(encoded.stdout.decode().split("\x1f"), [
-            "--cfg", "feature=custom build", "",
+            "", "--cfg", "feature=custom build", "",
             "--remap-path-prefix=/tmp/saya workspace=/saya",
             "--remap-path-prefix=/tmp/cargo home=/cargo",
         ])
