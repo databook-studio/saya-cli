@@ -890,7 +890,7 @@ fn knowledge_supplied_round_trips_through_serde_with_type_tag() {
 // ===========================================================================
 
 #[tokio::test]
-async fn recalled_claim_rides_the_user_block_and_never_any_system_message() {
+async fn recalled_claim_is_user_context_and_privacy_gate_removes_it_from_actual_request() {
     let root = temp_root("ta04_sentinel");
     let db = root.join("state.sqlite3");
     let identity = identity_for("analytics");
@@ -1033,6 +1033,12 @@ async fn recalled_claim_rides_the_user_block_and_never_any_system_message() {
         }),
         "the planted claim reached the user-side recall block: {turn:?}"
     );
+    assert!(
+        turn.tools
+            .iter()
+            .any(|tool| tool.name == "bounded_sql_query"),
+        "the open sharing baseline advertises query-data tools"
+    );
     // The non-negotiable: no system-role message of ANY request carries the
     // claim — neither the turn's assembled prompt nor the extractor's.
     for request in &seen {
@@ -1044,6 +1050,78 @@ async fn recalled_claim_rides_the_user_block_and_never_any_system_message() {
             );
         }
     }
+
+    let closed_seen = Arc::new(Mutex::new(Vec::new()));
+    let closed_provider = AnswerProvider {
+        answer: "done",
+        log: Arc::new(Mutex::new(Vec::new())),
+        seen_requests: Arc::clone(&closed_seen),
+    };
+    let closed_inputs = TurnInputs {
+        ai: ResolvedAi {
+            provider: AiProvider::Anthropic,
+            model: "test-model".into(),
+            base_url: None,
+            api_key: None,
+            allow_data_sharing: false,
+            temperature: 0.0,
+            timeout_seconds: 60,
+            idle_timeout_seconds: 90,
+            max_output_tokens: 4096,
+            max_output_tokens_is_default: true,
+            context_byte_budget: 256 * 1024,
+            context_window_tokens: None,
+            show_thinking: false,
+            compaction: saya_config::CompactionMode::Auto,
+            retry_delays_ms: vec![250, 500, 1000],
+        },
+        provider: Box::new(closed_provider),
+        registry: registry_for("analytics", &identity),
+        failures: Vec::new(),
+    };
+    run_prompt_with_inputs(
+        &runtime,
+        closed_inputs,
+        "orders by month",
+        saya_agent::ApprovalPolicy::ReadOnly,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        Some(SqliteStateStore::new(&db)),
+        None,
+        None,
+        None,
+        saya_agent::AgentMode::Build,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let closed = closed_seen.lock().unwrap();
+    let closed_turn = closed.first().expect("privacy-gated request was sent");
+    assert!(
+        !closed_turn
+            .messages
+            .iter()
+            .any(|message| message.content.contains(&sentinel)),
+        "privacy-gated request must not contain recalled data: {closed_turn:?}"
+    );
+    assert!(
+        !closed_turn
+            .tools
+            .iter()
+            .any(|tool| tool.name == "bounded_sql_query"),
+        "privacy-gated request must omit query-data tools"
+    );
+    assert!(
+        closed_turn
+            .tools
+            .iter()
+            .any(|tool| tool.name == "schema_discovery"),
+        "privacy-gated request retains no-data schema discovery"
+    );
     let _ = fs::remove_dir_all(root);
 }
 
