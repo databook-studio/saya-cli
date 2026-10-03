@@ -117,6 +117,17 @@ class ExpandedReader:
 
 
 def tar_entries(path: str):
+    required_hooks = (
+        "_fromtarfile", "_proc_pax", "_proc_gnulong", "_proc_sparse",
+        "_proc_gnusparse_00", "_proc_gnusparse_01", "_proc_gnusparse_10",
+    )
+    missing_hook = next(
+        (hook for hook in required_hooks if not callable(getattr(tarfile.TarInfo, hook, None))),
+        None,
+    )
+    if missing_hook:
+        raise Rejected(f"unsupported Python tarfile: required tarfile hook {missing_hook} is unavailable")
+
     class MetadataBudget:
         def __init__(self):
             self.bytes = 0

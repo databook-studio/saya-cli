@@ -108,6 +108,19 @@ class ArtifactContentTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("artifact content check failed:", result.stderr)
 
+    def test_missing_tar_header_hook_is_rejected_before_parser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            crate = Path(tmp) / "saya-types-0.4.2.crate"
+            valid_crate(crate)
+            for missing_mode in ("noncallable", "absent"):
+                with self.subTest(missing_mode=missing_mode):
+                    with mock.patch.object(tarfile, "open", side_effect=AssertionError("TAR parser entered")):
+                        with mock.patch.object(tarfile.TarInfo, "_fromtarfile", new=None):
+                            if missing_mode == "absent":
+                                delattr(tarfile.TarInfo, "_fromtarfile")
+                            with self.assertRaisesRegex(GATE_MODULE.Rejected, "required tarfile hook"):
+                                GATE_MODULE.scan_archive(str(crate), "crate")
+
     def test_intended_release_archive_and_crate_are_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
