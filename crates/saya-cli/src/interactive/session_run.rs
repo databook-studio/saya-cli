@@ -222,7 +222,10 @@ pub(crate) enum RunTail {
     Manage(crate::cli::RunCommand),
     /// `resume` — the resume drive streams to the real stdout, which the TUI
     /// does not own while the alternate screen is up; a shell hosts it.
-    Resume(String),
+    Resume {
+        run_id: String,
+        retry_incomplete: bool,
+    },
 }
 
 /// Parses a `/run <tail>` tail through the child's own grammar. The TUI
@@ -240,7 +243,13 @@ pub(crate) fn parse_run_tail(tail: &str) -> Result<RunTail, String> {
                 budget,
                 command,
             }) => match command {
-                Some(crate::cli::RunCommand::Resume { run_id }) => Ok(RunTail::Resume(run_id)),
+                Some(crate::cli::RunCommand::Resume {
+                    run_id,
+                    retry_incomplete,
+                }) => Ok(RunTail::Resume {
+                    run_id,
+                    retry_incomplete,
+                }),
                 Some(other) => Ok(RunTail::Manage(other)),
                 None => Ok(RunTail::Start {
                     goal: prompt,
@@ -324,6 +333,24 @@ mod tests {
         assert_eq!(child_argv("list").unwrap(), ["list"]);
     }
 
+    #[test]
+    fn retry_authorization_is_forwarded_only_when_explicit_in_the_tui_tail() {
+        assert!(matches!(
+            parse_run_tail("resume r-1 --retry-incomplete"),
+            Ok(RunTail::Resume {
+                run_id,
+                retry_incomplete: true,
+            }) if run_id == "r-1"
+        ));
+        assert!(matches!(
+            parse_run_tail("resume r-1"),
+            Ok(RunTail::Resume {
+                retry_incomplete: false,
+                ..
+            })
+        ));
+    }
+
     /// The panel path parses the tail through the same grammar the child
     /// gets: a goal tail becomes one positional plus flags, a management
     /// subcommand maps to the shared `RunCommand`, and `resume` is surfaced
@@ -355,7 +382,10 @@ mod tests {
             other => panic!("a log tail parses to Manage, got {other:?}"),
         }
         match parse_run_tail("resume r-1") {
-            Ok(RunTail::Resume(run_id)) => assert_eq!(run_id, "r-1"),
+            Ok(RunTail::Resume {
+                run_id,
+                retry_incomplete: false,
+            }) => assert_eq!(run_id, "r-1"),
             other => panic!("a resume tail parses to Resume, got {other:?}"),
         }
         // The parser is the authority: an unknown flag fails the way the

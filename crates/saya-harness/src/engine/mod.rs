@@ -21,7 +21,7 @@ pub use episode::{
 pub use plan::{
     MAX_PLAN_ATTEMPTS, PlanDriver, PlanError, PlanParseFailure, PlanRejection, PlanRequest,
 };
-pub use resume::{ResumeError, ResumeOutcome, ResumeRun, resume};
+pub use resume::{IncompletePolicy, ResumeEffect, ResumeError, ResumeOutcome, ResumeRun, resume};
 pub use sink::{EngineEventSink, EngineSinkError, SinkBudgets};
 pub use state::{RunState, RunTransition, RunTransitionError, transition};
 pub use transitions::TransitionEvent;

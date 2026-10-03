@@ -85,13 +85,21 @@ fn apply_run(
             dispatch_runs::run_management_command(transcript, runtime, state_db, format, command);
             Some(Dispatch::Handled)
         }
-        Ok(RunTail::Resume(run_id)) => {
+        Ok(RunTail::Resume {
+            run_id,
+            retry_incomplete,
+        }) => {
+            let retry = if retry_incomplete {
+                " --retry-incomplete"
+            } else {
+                ""
+            };
             transcript.push(
                 BlockKind::System,
                 format!(
                     "Resuming run {run_id} streams to the real terminal, which \
                      the TUI does not own while the panel is up — resume it \
-                     from a shell: `saya run resume {run_id}`."
+                     from a shell: `saya run resume {run_id}{retry}`."
                 ),
             );
             Some(Dispatch::Handled)

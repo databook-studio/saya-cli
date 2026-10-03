@@ -16,7 +16,8 @@ use crate::render_run;
 use crate::stream_render::TerminalSink;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_harness::engine::{
-    EpisodeCollaborators, EpisodeRequest, ResumeRun, RunState, resume as engine_resume,
+    EpisodeCollaborators, EpisodeRequest, IncompletePolicy, ResumeOutcome, ResumeRun, RunState,
+    resume as engine_resume,
 };
 use saya_harness::journal::Journal;
 use saya_harness::workspace::Workspace;
@@ -29,6 +30,7 @@ pub(super) async fn resume(
     format: RenderFormat,
     approval: ApprovalPolicy,
     state: &SqliteStateStore,
+    retry_incomplete: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let run_id = parse_run_id(raw_id)?;
     // The entry guard, shared with every other entry point into a run
@@ -64,7 +66,14 @@ pub(super) async fn resume(
         dir,
         state,
     };
-    let work = continue_run(runtime, inputs, format, approval, cancellation.clone());
+    let work = continue_run(
+        runtime,
+        inputs,
+        format,
+        approval,
+        cancellation.clone(),
+        retry_incomplete,
+    );
     tokio::pin!(work);
     match tokio::select! {
         result = &mut work => result,
@@ -94,6 +103,7 @@ async fn continue_run(
     format: RenderFormat,
     approval: RunApproval,
     cancellation: CancellationToken,
+    retry_incomplete: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let ResumeInputs {
         spec,
@@ -160,6 +170,11 @@ async fn continue_run(
         run_id: run_id.clone(),
         store: store.clone(),
         plan: plan.clone(),
+        incomplete_policy: if retry_incomplete {
+            IncompletePolicy::Retry
+        } else {
+            IncompletePolicy::Conservative
+        },
         workspace: (*workspace).clone(),
         collaborators: EpisodeCollaborators {
             provider: &*pieces.provider,
@@ -189,8 +204,7 @@ async fn continue_run(
     };
     match engine_resume(&dir, resumed).await {
         Ok(outcome) => match outcome {
-            saya_harness::engine::ResumeOutcome::Resumed { state, .. }
-            | saya_harness::engine::ResumeOutcome::Settled { state } => {
+            ResumeOutcome::Resumed { state, .. } | ResumeOutcome::Settled { state } => {
                 // The outcome's state is authoritative; the journal tail
                 // supplies only the typed cause of a terminal failure.
                 let code = match state {
@@ -199,16 +213,34 @@ async fn continue_run(
                 };
                 settle(Settled { state, code }, &run_id, format)
             }
-            outcome @ (saya_harness::engine::ResumeOutcome::Unapproved
-            | saya_harness::engine::ResumeOutcome::NoRun) => {
+            outcome @ (ResumeOutcome::Unapproved | ResumeOutcome::NoRun) => {
                 let why = match outcome {
-                    saya_harness::engine::ResumeOutcome::Unapproved => {
+                    ResumeOutcome::Unapproved => {
                         "was never approved, so there is nothing to resume; start a new run \
                          with `saya run`"
                     }
                     _ => "holds no recorded run",
                 };
                 crate::commands::output::failure_message(2, format!("run {run_id} {why}"), format)
+            }
+            ResumeOutcome::IncompleteEffects {
+                step,
+                goal,
+                effects,
+            } => {
+                let effects = effects
+                    .iter()
+                    .map(|effect| effect.description())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                crate::commands::output::failure_message(
+                    6,
+                    format!(
+                        "run {run_id} paused: step {} ({goal}) may have produced {effects} before completion was journaled. Inspect and reconcile those effects, then opt in with `saya run resume {run_id} --retry-incomplete`; retry may repeat effects and does not add approved scopes.",
+                        step + 1
+                    ),
+                    format,
+                )
             }
         },
         Err(error) => {
