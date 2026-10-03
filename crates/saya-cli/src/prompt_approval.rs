@@ -35,23 +35,6 @@ pub(crate) struct TerminalApproval {
 }
 
 impl TerminalApproval {
-    #[cfg(test)]
-    pub(crate) fn new(
-        policy: ApprovalPolicy,
-        can_prompt: bool,
-        primary: TurnPrimary,
-        facts: ApprovalFacts,
-    ) -> Self {
-        Self {
-            policy: SessionPolicy::new(policy),
-            can_prompt,
-            primary,
-            facts,
-            journal: None,
-            cancellation: CancellationToken::new(),
-        }
-    }
-
     pub(crate) fn with_cancellation(
         policy: ApprovalPolicy,
         can_prompt: bool,
@@ -104,24 +87,6 @@ impl TerminalApproval {
     /// facts — what this decider's prompts may state about the session. The
     /// session's journal rides along: a `[s]` answer's new grant is written
     /// there before this call is allowed to run.
-    #[cfg(test)]
-    pub(crate) fn from_session(
-        policy: SessionPolicy,
-        can_prompt: bool,
-        primary: TurnPrimary,
-        facts: ApprovalFacts,
-        journal: Option<Arc<SessionJournal>>,
-    ) -> Self {
-        Self {
-            policy,
-            can_prompt,
-            primary,
-            facts,
-            journal,
-            cancellation: CancellationToken::new(),
-        }
-    }
-
     pub(crate) fn from_session_with_cancellation(
         policy: SessionPolicy,
         can_prompt: bool,

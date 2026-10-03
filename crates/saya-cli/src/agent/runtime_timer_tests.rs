@@ -40,6 +40,9 @@ fn timer_source(
     seen: Arc<Mutex<Vec<RequestKind>>>,
 ) -> (String, thread::JoinHandle<Result<(), String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind timer source");
+    listener
+        .set_nonblocking(true)
+        .expect("timer source listener becomes nonblocking");
     let address = listener.local_addr().expect("timer source address");
     let handle = thread::spawn(move || {
         let mut extraction_started = Some(extraction_started);
@@ -48,7 +51,22 @@ fn timer_source(
             RequestKind::Answer,
             RequestKind::Extraction,
         ] {
-            let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+            let accept_deadline = std::time::Instant::now() + Duration::from_secs(4);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if release.try_recv().is_ok() {
+                            return Err("timer source released before request".into());
+                        }
+                        if std::time::Instant::now() >= accept_deadline {
+                            return Err("timer source timed out waiting for request".into());
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            };
             let body = read_request(&mut stream)?;
             let kind = classify_request(&body)?;
             if kind != expected {
@@ -235,6 +253,166 @@ fn temp_root() -> std::path::PathBuf {
     root
 }
 
+fn postgres_setup_source(
+    setup_started: tokio::sync::oneshot::Sender<()>,
+    release: mpsc::Receiver<()>,
+) -> (u16, thread::JoinHandle<Result<(), String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind PostgreSQL setup source");
+    let port = listener
+        .local_addr()
+        .expect("PostgreSQL source address")
+        .port();
+    let source = thread::spawn(move || {
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| error.to_string())?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if release.try_recv().is_ok() {
+                        return Err("setup source released before startup".into());
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err("setup source timed out waiting for startup".into());
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .map_err(|error| error.to_string())?;
+        let mut startup = [0_u8; 32];
+        let bytes = stream
+            .read(&mut startup)
+            .map_err(|error| error.to_string())?;
+        if bytes == 0 {
+            return Err("PostgreSQL client closed before startup bytes".into());
+        }
+        setup_started
+            .send(())
+            .map_err(|_| "runtime stopped before setup observation".to_string())?;
+        release
+            .recv_timeout(Duration::from_secs(4))
+            .map_err(|_| "test did not release PostgreSQL setup".to_string())?;
+        Ok(())
+    });
+    (port, source)
+}
+
+async fn runtime_for_postgres_setup(root: &std::path::Path, port: u16) -> RuntimeConfig {
+    let profile = DatabaseProfile::Postgres {
+        host: "127.0.0.1".into(),
+        port: Some(port),
+        database: "synthetic".into(),
+        user: "saya".into(),
+        ssl_mode: Some(saya_types::PostgresSslMode::Disable),
+        password: None,
+    };
+    let mut runtime = test_runtime(assisted_memory());
+    runtime.resolved.profile_name = Some("setup".into());
+    runtime.resolved.profile = Some(profile.clone());
+    runtime.resolved.investigation_budgets = ResolvedInvestigationBudgets {
+        logical_answering_requests: finite(8),
+        requested_tool_calls: finite(8),
+        elapsed_seconds: finite(1),
+        known_reported_tokens: finite(100),
+    };
+    runtime.resolved.query_timeout_seconds = 4;
+    runtime.connections = ConnectionsFile {
+        profiles: BTreeMap::from([("setup".into(), profile)]),
+    };
+    runtime.connections_path = Some(root.join("connections.toml"));
+    runtime.cache_scope = root.to_path_buf();
+    runtime.investigations_root = root.join("investigations");
+    runtime
+}
+
+#[tokio::test]
+async fn answering_deadline_starts_before_postgres_setup_and_awaits_the_source() {
+    let root = temp_root();
+    let (setup_started_tx, setup_started) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (port, source) = postgres_setup_source(setup_started_tx, release_rx);
+    let runtime = runtime_for_postgres_setup(&root, port).await;
+    let cancellation = CancellationToken::new();
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+        knowledge_log: Arc::new(Mutex::new(Vec::new())),
+    };
+    let work = run_prompt_with_sink_and_outcomes(SinkPrompt {
+        runtime: &runtime,
+        prompt: "count rows",
+        approval: ApprovalPolicy::ReadOnly,
+        can_prompt: false,
+        can_obtain_approval: false,
+        overrides: PromptOverrides::default(),
+        history: Vec::new(),
+        sink: &sink,
+        cancellation: cancellation.clone(),
+        state_db: None,
+        decider: None,
+        last_sql: None,
+        session: None,
+        agent_mode: AgentMode::Build,
+        capture: None,
+        prior_tool_outcomes: None,
+        compaction_summary: None,
+    });
+    tokio::pin!(work);
+    let setup_wait = tokio::time::timeout(Duration::from_secs(3), setup_started);
+    tokio::pin!(setup_wait);
+    tokio::select! {
+        setup = &mut setup_wait => match setup {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => panic!("runtime stopped before PostgreSQL setup observation"),
+            Err(_) => {
+                let _ = release_tx.send(());
+                panic!(
+                    "the production PostgreSQL connector did not send startup bytes: {:?}",
+                    source.join().expect("PostgreSQL setup source thread joins")
+                );
+            }
+        },
+        result = &mut work => panic!("runtime settled before PostgreSQL setup observation: {result:?}"),
+    }
+
+    tokio::select! {
+        _ = tokio::time::sleep(Duration::from_millis(1200)) => {}
+        result = &mut work => panic!("runtime settled before setup source release: {result:?}"),
+    }
+    assert_eq!(
+        cancellation.reason(),
+        Some(saya_agent::CancellationReason::Budget(
+            BudgetDimension::ElapsedTime
+        )),
+        "the supplied token latches while prepare_turn is still in PostgreSQL setup"
+    );
+    assert!(
+        sink.events.lock().expect("event log lock").is_empty(),
+        "setup cancellation reaches no provider or tool event"
+    );
+
+    release_tx
+        .send(())
+        .expect("release PostgreSQL setup source");
+    let result = tokio::time::timeout(Duration::from_secs(3), &mut work)
+        .await
+        .expect("runtime awaits source settlement after cancellation");
+    assert!(
+        result.is_err(),
+        "the released synthetic setup must fail the exact runtime"
+    );
+    source
+        .join()
+        .expect("PostgreSQL setup source thread joins")
+        .expect("PostgreSQL setup source observed and released one startup");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[tokio::test]
 async fn answering_deadline_disarms_before_source_observed_extraction() {
     let root = temp_root();
@@ -276,15 +454,11 @@ async fn answering_deadline_disarms_before_source_observed_extraction() {
     tokio::select! {
         source_wait = &mut extraction_wait => match source_wait {
             Ok(Ok(())) => {}
-            Ok(Err(_)) => panic!(
-                "timer source stopped before extraction observation: {:?}",
-                source.join().expect("timer source thread joins")
-            ),
+            Ok(Err(_)) => panic!("timer source stopped before extraction observation"),
             Err(_) => panic!("real extraction request did not reach the local source"),
         },
         result = &mut work => panic!(
-            "runtime settled before source-observed extraction: {result:?}; source: {:?}; events: {:?}",
-            source.join().expect("timer source thread joins"),
+            "runtime settled before source-observed extraction: {result:?}; events: {:?}",
             events.lock().expect("event log lock")
         ),
     }

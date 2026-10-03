@@ -6,7 +6,8 @@ use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::TurnPrimary;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::{
-    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, SessionPolicy,
+    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, CancellationToken,
+    SessionPolicy,
 };
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -32,12 +33,13 @@ async fn a_denied_name_preempts_a_held_grant_without_asking() {
             "the held grant resolves Allow under {mode:?}: deny preempts after the engine"
         );
         // The terminal decider refuses without prompting.
-        let terminal = TerminalApproval::from_session(
+        let terminal = TerminalApproval::from_session_with_cancellation(
             policy.clone(),
             mode == ApprovalPolicy::Ask,
             TurnPrimary::default(),
             facts.clone(),
             None,
+            CancellationToken::new(),
         );
         assert!(
             !terminal.approve(&tool, &arguments).await,
@@ -54,12 +56,13 @@ async fn a_denied_name_preempts_a_held_grant_without_asking() {
         // ask would deny, and the preemption answers before any ask renders.
         let (tx, rx) = unbounded_channel();
         drop(rx);
-        let channel = ChannelApproval::new(
+        let channel = ChannelApproval::with_cancellation(
             tx,
             policy.clone(),
             TurnPrimary::default(),
             facts.clone(),
             None,
+            CancellationToken::new(),
         );
         assert!(
             !channel.approve(&tool, &arguments).await,
@@ -87,11 +90,12 @@ async fn the_stdin_gate_still_denies_without_reading_stdin() {
     let arguments = serde_json::json!({});
     // `can_prompt = false` is the TUI's stdin answer too: deny, and deny
     // without touching stdin (this test would block on a read if it did).
-    let no_stdin = TerminalApproval::new(
+    let no_stdin = TerminalApproval::with_cancellation(
         ApprovalPolicy::Ask,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     assert!(
         !no_stdin.approve(&tool, &arguments).await,
@@ -100,11 +104,12 @@ async fn the_stdin_gate_still_denies_without_reading_stdin() {
     // The mode denials never reach the gate: `never` and `read-only` deny
     // before any surface question arises.
     for mode in [ApprovalPolicy::Never, ApprovalPolicy::ReadOnly] {
-        let decider = TerminalApproval::new(
+        let decider = TerminalApproval::with_cancellation(
             mode,
             false,
             TurnPrimary::default(),
             ApprovalFacts::default(),
+            CancellationToken::new(),
         );
         assert!(
             !decider.approve(&tool, &arguments).await,
@@ -130,12 +135,13 @@ async fn a_prompted_grant_journals_once_before_the_call_it_allowed_runs() {
     std::fs::create_dir_all(&dir).expect("state dir creates");
     let journal = std::sync::Arc::new(saya_store::SessionJournal::open(&dir));
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
         composed_facts(),
         Some(journal.clone()),
+        CancellationToken::new(),
     );
     let tool = crate::interactive::session_definitions::workspace_write();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});
@@ -189,12 +195,13 @@ async fn a_failed_journal_write_says_so_and_does_not_take_the_call_down() {
     std::fs::create_dir_all(dir.join("journal.ndjson")).expect("the block is made");
     let journal = std::sync::Arc::new(saya_store::SessionJournal::open(&dir));
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
         composed_facts(),
         Some(journal),
+        CancellationToken::new(),
     );
     let tool = crate::interactive::session_definitions::workspace_write();
     let arguments = serde_json::json!({"path": "notes.md", "content": "hello"});

@@ -165,12 +165,13 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
     facts.denied_programs = vec!["curl".to_owned()];
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let channel = ChannelApproval::new(
+    let channel = ChannelApproval::with_cancellation(
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
         facts.clone(),
         None,
+        CancellationToken::new(),
     );
     let (events, text, requests) = drive(&channel).await;
     let denied_reason = events
@@ -225,11 +226,12 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
     );
     // And a mode denial with no decider wording keeps the generic denial
     // byte-identical: the loop appends nothing it was not given.
-    let bare = TerminalApproval::new(
+    let bare = TerminalApproval::with_cancellation(
         ApprovalPolicy::Never,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     let bare_tool = session_definitions::run_command();
     let bare_arguments = serde_json::json!({"program": "make"});

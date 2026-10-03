@@ -54,24 +54,6 @@ pub(crate) struct ChannelApproval {
 }
 
 impl ChannelApproval {
-    #[cfg(test)]
-    pub(crate) fn new(
-        tx: UnboundedSender<StreamMsg>,
-        policy: SessionPolicy,
-        primary: TurnPrimary,
-        facts: ApprovalFacts,
-        journal: Option<Arc<saya_store::SessionJournal>>,
-    ) -> Self {
-        Self {
-            tx,
-            policy,
-            primary,
-            facts,
-            journal,
-            cancellation: CancellationToken::new(),
-        }
-    }
-
     pub(crate) fn with_cancellation(
         tx: UnboundedSender<StreamMsg>,
         policy: SessionPolicy,
