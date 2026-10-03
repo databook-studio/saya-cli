@@ -6,8 +6,8 @@
 //! Seven guarantees:
 //! 1. A headless `saya run` without `--allow` refuses before anything exists
 //!    — no run directory, no prompt.
-//! 2. A run paused by its budget exits 6, and `saya run resume <id>`
-//!    continues it to completion.
+//! 2. A run paused by its wall-clock budget exits 6, and a later resume
+//!    carries the same elapsed interval without invoking the provider again.
 //! 3. Ctrl-C cancels a run and exits 130.
 //! 4. `saya run list` and `saya run show <id>` render a run that exists; an
 //!    unknown id fails cleanly, never a panic.
@@ -421,13 +421,11 @@ fn a_plan_asking_for_more_than_allow_granted_is_refused_naming_the_scope() {
     let _ = fs::remove_dir_all(&env.root);
 }
 
-/// A run paused by its budget exits 6, and `saya run resume <id>` continues
-/// it. The budget is the wall clock: the plan binds fast, then the first
-/// episode's response arrives after the ceiling, so the engine pauses —
-/// never a silent incomplete run — and a resume with a fast provider
-/// finishes the remaining step.
+/// A wall-clock pause carries across invocations: the slow first episode
+/// consumes the whole ceiling, and a later resume stays paused without a
+/// fresh provider call.
 #[test]
-fn a_run_paused_by_its_budget_exits_6_and_resume_continues_it() {
+fn a_run_paused_by_its_wall_clock_does_not_recharge_on_resume() {
     let env = test_root("paused-budget");
     let (slow, _slow_ready) = mock(vec![
         Scripted {
@@ -472,25 +470,44 @@ fn a_run_paused_by_its_budget_exits_6_and_resume_continues_it() {
         "the listing must show the paused status: {}",
         stdout(&listing)
     );
+    let journal = fs::read_to_string(env.runs.join(&id).join("events.ndjson")).unwrap();
+    let journal_lines = json_lines(&journal, "run journal");
+    let journal_tags = type_tags(&journal_lines);
+    let approved = journal_tags
+        .iter()
+        .position(|tag| *tag == "plan_approved")
+        .unwrap();
+    let clock = journal_tags
+        .iter()
+        .position(|tag| *tag == "wall_clock_observed")
+        .unwrap();
+    let step = journal_tags
+        .iter()
+        .position(|tag| *tag == "step_started")
+        .unwrap();
+    assert!(
+        approved < clock && clock < step,
+        "clock must be durable after approval and before step work: {journal_tags:?}"
+    );
 
-    // The resume points at a fast provider: the run continues at the first
-    // incomplete step and completes.
-    let (fast, _fast_ready) = mock(vec![Scripted {
+    let (fast, fast_called) = mock(vec![Scripted {
         body: sse("remaining step answer"),
         delay_ms: 0,
     }]);
     let resumed = saya(&env, &["run", "resume", &id], &fast);
     assert_eq!(
         resumed.status.code(),
-        Some(0),
-        "a resumed run must continue and complete; stderr: {}",
+        Some(6),
+        "the exhausted whole-run clock keeps resume paused; stderr: {}",
         stderr(&resumed)
     );
-    let journal = fs::read_to_string(env.runs.join(&id).join("events.ndjson")).unwrap();
     assert!(
-        journal.contains("\"completed\""),
-        "the resumed run must record its completion: {journal}"
+        !fast_called.load(Ordering::SeqCst),
+        "an exhausted resume must not invoke the provider"
     );
+    let journal = fs::read_to_string(env.runs.join(&id).join("events.ndjson")).unwrap();
+    assert!(journal.contains("wall_clock_observed"));
+    assert!(journal.contains("wall_clock_exceeded"));
     let _ = fs::remove_dir_all(&env.root);
 }
 
@@ -838,12 +855,9 @@ fn an_ndjson_run_stream_parses_as_one_json_object_per_line_when_paused() {
     let resumed_lines = json_lines(&stdout(&resumed), "resumed stdout");
     json_lines(&stderr(&resumed), "resumed stderr");
     let resumed_tags = type_tags(&resumed_lines);
-    // The pause landed mid-episode, so the journal's step is already
-    // complete when the resume replays it: resume records the death pause and
-    // the completion the crash had left unwritten — the machine's own story.
     assert!(
         resumed_tags.contains(&"paused") && resumed_tags.contains(&"completed"),
-        "the resume carries its lifecycle to completion: {resumed_lines:?}"
+        "the journal proves the step completed before pause, so resume settles the run: {resumed_lines:?}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }

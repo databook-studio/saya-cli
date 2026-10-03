@@ -82,6 +82,14 @@ pub enum RunEvent {
         #[serde(default)]
         cache_creation_input_tokens: Option<u64>,
     },
+    /// A durable observation of the run's first-party elapsed clock. The
+    /// origin is written once when execution is approved; later observations
+    /// preserve that origin and raise the high-water mark monotonically.
+    /// Legacy journals may have no such event.
+    WallClockObserved {
+        origin_unix_ms: u64,
+        high_water_unix_ms: u64,
+    },
     /// The download wallet's consumed level — every byte the run's downloads
     /// had claimed when the engine journaled this, including claims a failed
     /// download kept (claims are never refunded). Journalled when the sink
