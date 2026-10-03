@@ -4,7 +4,7 @@
 
 use super::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, ToolEffect, UsageCall,
+    ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, ToolEffect, UsageCall,
 };
 use crate::AgentEvent;
 use crate::protocol::streaming::TokenUsage;
@@ -37,6 +37,21 @@ impl AgentEvent {
     /// flight.
     pub fn turn_started() -> Self {
         Self::TurnStarted
+    }
+
+    /// Builds typed, nonterminal provider-attempt recovery progress.
+    pub fn provider_recovery(
+        phase: ProviderRecoveryPhase,
+        reason: ProviderRecoveryReason,
+        attempt: u8,
+        limit: u8,
+    ) -> Self {
+        Self::ProviderRecovery {
+            phase,
+            reason,
+            attempt,
+            limit,
+        }
     }
 
     /// Builds the per-call request event. `effect` is the tool's **declared
@@ -125,6 +140,11 @@ impl AgentEvent {
     /// consumer can tell the answer's cost from the extraction's.
     pub fn usage(call: UsageCall, usage: TokenUsage) -> Self {
         Self::Usage { call, usage }
+    }
+
+    /// Builds usage from an attempt that settled without a usable response.
+    pub fn failed_attempt_usage(usage: TokenUsage) -> Self {
+        Self::FailedAttemptUsage { usage }
     }
 
     /// Builds the terminal `AnswerDesignated` event carrying the SQL the model
