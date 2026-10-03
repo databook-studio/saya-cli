@@ -102,7 +102,10 @@ and the run pauses when a declared budget trips rather than overrunning.
 execution, including pauses and time between resume invocations. Its origin
 and observed high-water mark live in the run journal. A configured resume
 refuses when a legacy journal has no valid origin; start a newly approved
-run to obtain a new clock. Forward clock jumps may expire early, and
+run to obtain a new clock. Outside forced boundaries, raised observations
+persist at a one-second cadence; writes are forced at approval, resume,
+provider turns, tool requests, and lifecycle transitions. Forward clock jumps
+may expire early, and
 backward changes are refused when an observation detects them. Changes
 between observations may not be detectable. This is not CPU time; a separate
 timer for stalled operations is planned independently. `tokens_per_endpoint` is

@@ -2,22 +2,26 @@ use saya_types::PauseReason;
 
 use super::EngineEventSink;
 use crate::engine::{
-    clock::{ElapsedClockError, system_time_ms},
-    state::RunState,
-    transitions::TransitionEvent,
+    clock::system_time_ms, sink::EngineSinkError, state::RunState, transitions::TransitionEvent,
 };
 
 impl EngineEventSink {
-    fn observe_elapsed_clock(&self) -> Result<bool, ElapsedClockError> {
+    pub(super) fn observe_elapsed_clock(&self, force: bool) -> Result<bool, EngineSinkError> {
         let mut clock = self.elapsed_clock.lock().expect("engine sink clock lock");
         let Some(clock) = clock.as_mut() else {
             return Ok(false);
         };
-        let changed = clock.observe(system_time_ms()?, (self.clock)())?;
-        if changed {
+        let now = (self.clock)();
+        let now_unix_ms =
+            system_time_ms().map_err(|source| EngineSinkError::ElapsedClock { source })?;
+        clock
+            .observe(now_unix_ms, now)
+            .map_err(|source| EngineSinkError::ElapsedClock { source })?;
+        if clock.observation_due(now, force) {
             self.journal
                 .append(&clock.event())
-                .map_err(|_| ElapsedClockError::InvalidJournal)?;
+                .map_err(|source| EngineSinkError::Journal { source })?;
+            clock.mark_persisted(now);
         }
         Ok(clock.remaining().is_zero())
     }
@@ -44,7 +48,13 @@ impl EngineEventSink {
         if self.state() != RunState::Executing {
             return;
         }
-        let clock_expired = self.observe_elapsed_clock().unwrap_or(true);
+        let clock_expired = match self.observe_elapsed_clock(false) {
+            Ok(expired) => expired,
+            Err(error) => {
+                self.hold_diagnostic(error);
+                true
+            }
+        };
         let reason = if self.tokens_exhausted() || self.downloads_exhausted() {
             PauseReason::BudgetExhausted
         } else if clock_expired
@@ -58,6 +68,7 @@ impl EngineEventSink {
         };
         if let Err(error) = self.record(TransitionEvent::Pause(reason)).await {
             self.hold_diagnostic(error);
+            self.set_state(RunState::Paused);
         }
     }
 

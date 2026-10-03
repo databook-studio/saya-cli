@@ -118,8 +118,13 @@ async fn a_torn_elapsed_origin_is_repaired_then_refused_as_missing() {
         .append(true)
         .open(run.run_dir.join("events.ndjson"))
         .unwrap();
+    let serialized = serde_json::to_vec(&RunEvent::WallClockObserved {
+        origin_unix_ms: 1_000,
+        high_water_unix_ms: 1_000,
+    })
+    .unwrap();
     journal_file
-        .write_all(b"{\\\"type\\\":\\\"wall_clock_observed\\\"")
+        .write_all(&serialized[..serialized.len() / 2])
         .unwrap();
     let mut inputs = run.inputs();
     inputs.wall_clock = Some(Duration::from_secs(30));

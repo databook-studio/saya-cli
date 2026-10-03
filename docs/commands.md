@@ -813,9 +813,12 @@ output), so the display and the budget that stopped the run agree.
 ceiling carries from journaled usage, and the download wallet carries from
 journaled claims. The wall-clock ceiling also carries: Saya journals the UTC
 origin after approval and raises a durable high-water observation while the
-run emits events. Resume uses the repaired journal to calculate the remaining
-interval, so pause and offline time count and another invocation cannot
-recharge the ceiling. A configured resume refuses with a bounded clock
+run emits events. Outside forced boundaries, high-water marks persist at a
+one-second cadence. Writes are forced when a run arms or resumes, before
+provider turns and tool requests, and at lifecycle transitions. Resume uses
+the repaired journal to calculate the remaining interval, so pause and
+offline time count and another invocation cannot recharge the ceiling. A
+configured resume refuses with a bounded clock
 explanation when a legacy or torn journal has no valid origin; start a newly
 approved run to obtain a new clock. With no wall-clock ceiling configured,
 this clock remains inactive. A forward system-clock jump can expire a run
