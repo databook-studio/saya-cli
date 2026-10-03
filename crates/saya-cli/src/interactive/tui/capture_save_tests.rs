@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use saya_agent::ApprovalPolicy;
@@ -17,6 +18,7 @@ use saya_types::DatabaseProfile;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
+use crate::interactive::sql_operation;
 use crate::interactive::tui::application::SecondSqlDecision;
 use crate::interactive::tui::dispatch::{Dispatch, dispatch};
 use crate::interactive::tui::loop_tick::workers::tick_workers;
@@ -28,6 +30,7 @@ use crate::interactive::tui::worker_permits::test_permit_lock;
 use crate::render::RenderFormat;
 
 const SESSION_ID: &str = "capture-save-test";
+static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 /// The row-only sentinel: unique per run, and never written into the input
 /// SQL — only into the table cell the query returns.
@@ -69,6 +72,10 @@ fn seed_sqlite(path: &Path, value: &str) {
             .execute(&pool)
             .await
             .expect("seed row");
+        sqlx::query("INSERT INTO t (value) VALUES ('second-row')")
+            .execute(&pool)
+            .await
+            .expect("seed second row");
         pool.close().await;
     });
 }
@@ -91,10 +98,7 @@ impl SaveRoundTripFixture {
         let root = std::env::temp_dir().join(format!(
             "saya-capture-save-{SESSION_ID}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
+            FIXTURE_ID.fetch_add(1, Ordering::Relaxed),
         ));
         std::fs::create_dir_all(&root).expect("save-round-trip test root");
         let db = root.join("capture.sqlite3");
@@ -107,6 +111,7 @@ impl SaveRoundTripFixture {
                 read_only: true,
             },
         );
+        config.resolved.max_rows = 1;
         let runtime = Arc::new(config);
         let mut app = empty_app();
         app.runtime = Arc::clone(&runtime);
@@ -250,5 +255,162 @@ fn a_captured_sql_result_never_reaches_the_saved_session() {
     assert!(
         !saved.contains(&sentinel),
         "captured result rows reached the saved session: {saved}"
+    );
+}
+
+/// The headless SQL boundary and the real TUI worker execute the same bounded
+/// operation against the same SQLite database and produce the same rows.
+#[test]
+fn direct_sql_operation_matches_the_tui_worker_result() {
+    let mut fx = SaveRoundTripFixture::build();
+    let sql = "SELECT * FROM t";
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+    let plain_result = runtime
+        .block_on(sql_operation::execute(
+            &fx.runtime,
+            Some("analytics"),
+            sql,
+            false,
+        ))
+        .expect("the shared SQL operation succeeds");
+
+    assert!(matches!(
+        fx.dispatch_line("/connect analytics"),
+        Dispatch::Handled
+    ));
+    let Dispatch::SqlTask(task) = fx.dispatch_line(&format!("/sql {sql}")) else {
+        panic!("/sql dispatches its worker task");
+    };
+    let _pool = test_permit_lock();
+    match fx.app.admit_second_sql() {
+        SecondSqlDecision::Start(permit) => {
+            let started = Instant::now();
+            fx.app.sql_task = Some((
+                sql_task::spawn(permit, Arc::clone(&fx.runtime), task.clone()),
+                task,
+                started,
+            ));
+            fx.app.request.started = Some(started);
+            fx.app.request.activity = Some("query".into());
+        }
+        SecondSqlDecision::Reject(message) => panic!("admission refused the query: {message}"),
+    }
+    tick_until(
+        &mut fx,
+        |fx| fx.app.captured.is_some(),
+        "the /sql worker never completed into the capture",
+    );
+
+    let tui_result = &fx
+        .app
+        .captured
+        .as_ref()
+        .expect("successful query is captured")
+        .result;
+    assert_eq!(plain_result.columns, tui_result.columns);
+    assert_eq!(plain_result.rows, tui_result.rows);
+    assert_eq!(plain_result.row_count, tui_result.row_count);
+    assert_eq!(plain_result.truncated, tui_result.truncated);
+    assert_eq!(
+        plain_result.row_count, 1,
+        "the configured row cap is applied"
+    );
+    assert!(
+        plain_result.truncated,
+        "the cap reports more rows were available"
+    );
+}
+
+#[test]
+fn direct_sql_operation_preserves_profile_and_read_only_errors() {
+    let fx = SaveRoundTripFixture::build();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+
+    let no_profile = runtime
+        .block_on(sql_operation::execute(&fx.runtime, None, "SELECT 1", false))
+        .expect_err("a missing active profile is refused");
+    assert_eq!(
+        no_profile.to_string(),
+        "No active profile. Use /connect <profile> first."
+    );
+    let no_profile_event = runtime.block_on(crate::interactive::tui::exec::run_sql(
+        &fx.runtime,
+        None,
+        "SELECT 1",
+    ));
+    assert!(matches!(
+        no_profile_event,
+        crate::render::TerminalEvent::Error { message }
+            if message == no_profile.to_string()
+    ));
+    let invalid_profile = runtime
+        .block_on(sql_operation::execute(
+            &fx.runtime,
+            Some("missing"),
+            "SELECT 1",
+            false,
+        ))
+        .expect_err("an unknown profile is refused");
+    assert!(invalid_profile.to_string().contains("not found"));
+    let invalid_event = runtime.block_on(crate::interactive::tui::exec::run_sql(
+        &fx.runtime,
+        Some("missing"),
+        "SELECT 1",
+    ));
+    assert!(matches!(
+        invalid_event,
+        crate::render::TerminalEvent::Error { message }
+            if message == invalid_profile.to_string()
+    ));
+
+    let sql = "DELETE FROM t";
+    let operation_error = runtime
+        .block_on(sql_operation::execute(
+            &fx.runtime,
+            Some("analytics"),
+            sql,
+            false,
+        ))
+        .expect_err("direct SQL cannot write");
+    let event = runtime.block_on(crate::interactive::tui::exec::run_sql(
+        &fx.runtime,
+        Some("analytics"),
+        sql,
+    ));
+    let crate::render::TerminalEvent::Error { message } = event else {
+        panic!("an unsafe query is rendered as an error");
+    };
+    assert_eq!(message, operation_error.to_string());
+}
+
+#[test]
+fn direct_sql_operation_uses_the_configured_query_timeout() {
+    const SLOW_QUERY: &str = "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt \
+        WHERE x < 500000000) SELECT count(*) FROM cnt";
+    let mut fx = SaveRoundTripFixture::build();
+    std::sync::Arc::make_mut(&mut fx.runtime)
+        .resolved
+        .query_timeout_seconds = 1;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+    let error = runtime
+        .block_on(sql_operation::execute(
+            &fx.runtime,
+            Some("analytics"),
+            SLOW_QUERY,
+            false,
+        ))
+        .expect_err("the configured one-second deadline interrupts the query");
+    assert!(
+        error.to_string().to_lowercase().contains("timed out"),
+        "the operation preserves timeout errors: {error}"
     );
 }
