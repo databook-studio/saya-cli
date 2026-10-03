@@ -236,6 +236,7 @@ impl RunProgram {
                 requires_approval: false,
                 local_state: LocalStateEffect::WriteWorkspace,
             },
+            concurrency: saya_agent::ToolConcurrency::Serial,
             completion: Some("program ran".into()),
         }
     }

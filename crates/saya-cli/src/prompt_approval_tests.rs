@@ -25,6 +25,7 @@ fn side_effecting_tool() -> ToolDefinition {
             requires_approval: true,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }

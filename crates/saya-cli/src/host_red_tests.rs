@@ -207,6 +207,7 @@ fn run_program_s_prompt_gains_the_integrity_line_after_any_host_call() {
             requires_approval: false,
             local_state: saya_agent::LocalStateEffect::WriteWorkspace,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     });
     let arguments = json!({"program": "bench"});

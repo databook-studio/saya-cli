@@ -220,6 +220,7 @@ fn def(name: &str, local_state: LocalStateEffect) -> ToolDefinition {
             requires_approval: false,
             local_state,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }

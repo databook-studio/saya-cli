@@ -19,6 +19,7 @@ fn definition(effect: ToolEffect) -> ToolDefinition {
         read_only: true,
         parameters: serde_json::json!({"type": "object"}),
         effect,
+        concurrency: saya_agent::ToolConcurrency::Serial,
         // The matrix is about effects, not completion wording.
         completion: None,
     }
