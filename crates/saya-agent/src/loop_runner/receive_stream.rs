@@ -1,4 +1,5 @@
 use super::{attempt, emit};
+use crate::protocol::streaming::admit_tool_calls;
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
     ProviderError, ProviderEvent, ProviderRecoveryReason, TokenUsage,
@@ -22,6 +23,7 @@ pub(super) async fn stream_attempt(
     };
     let (mut content, mut calls, mut complete, mut usage, mut reasoning) =
         (String::new(), Vec::new(), false, None, None);
+    let mut tool_call_bytes = 0usize;
     loop {
         let next = tokio::select! {
             _ = cancellation.cancelled() => return failed(attempt::AttemptError::Cancelled, usage),
@@ -47,7 +49,16 @@ pub(super) async fn stream_attempt(
                 }
                 accumulated.push_str(&text);
             }
-            ProviderEvent::ToolCalls(value) => calls.extend(value),
+            ProviderEvent::ToolCalls(value) => {
+                if let Err(error) = admit_tool_calls(
+                    &mut calls,
+                    &mut tool_call_bytes,
+                    value,
+                    crate::MAX_STREAM_BYTES,
+                ) {
+                    return failed(provider_failure(error), usage);
+                }
+            }
             ProviderEvent::Usage(counts) => usage = Some(counts),
             ProviderEvent::Done => complete = true,
         }
@@ -94,6 +105,10 @@ fn provider_failure(error: ProviderError) -> attempt::AttemptError {
         error @ ProviderError::OutputTruncated { .. } => {
             terminal(error, ProviderRecoveryReason::OutputTruncated)
         }
+        ProviderError::ToolCollectionLimit => terminal(
+            ProviderError::ToolCollectionLimit,
+            ProviderRecoveryReason::ToolCollectionLimit,
+        ),
         ProviderError::Cancelled => attempt::AttemptError::Cancelled,
         error => retryable(error, ProviderRecoveryReason::ProviderFailure),
     }

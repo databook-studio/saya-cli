@@ -1,4 +1,5 @@
 mod anthropic;
+mod anthropic_events;
 mod anthropic_request;
 mod anthropic_stream;
 mod framing;
