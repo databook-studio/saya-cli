@@ -244,6 +244,26 @@ fn last_block(transcript: &Transcript, kind: BlockKind) -> Option<String> {
         .map(|block| block.text.clone())
 }
 
+#[test]
+fn run_resume_dispatch_keeps_ordinary_and_explicit_retry_shell_commands_distinct() {
+    let mut ordinary = ChainFixture::build("resume-ordinary");
+    assert!(matches!(
+        dispatch_line("/run resume run-ordinary", &mut ordinary),
+        Dispatch::Handled
+    ));
+    let ordinary_hint = last_block(&ordinary.app.transcript, BlockKind::System).unwrap();
+    assert!(ordinary_hint.contains("saya run resume run-ordinary`"));
+    assert!(!ordinary_hint.contains("--retry-incomplete"));
+
+    let mut retry = ChainFixture::build("resume-retry");
+    assert!(matches!(
+        dispatch_line("/run resume run-retry --retry-incomplete", &mut retry),
+        Dispatch::Handled
+    ));
+    let retry_hint = last_block(&retry.app.transcript, BlockKind::System).unwrap();
+    assert!(retry_hint.contains("saya run resume run-retry --retry-incomplete`"));
+}
+
 /// `/sql` (its task returned untouched) then `/export --snapshot`: the
 /// snapshot writes the captured result through the real dispatch, with no
 /// query dispatched at all.
