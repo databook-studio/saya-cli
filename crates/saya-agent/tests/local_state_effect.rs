@@ -10,8 +10,8 @@
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval, ApprovalDecider,
-    ChatProvider, ChatRequest, ChatResponse, LocalStateEffect, ToolCall, ToolDefinition,
-    ToolEffect, ToolError, ToolExecutor, run_agent_with_sink,
+    ChatProvider, ChatRequest, ChatResponse, LocalStateEffect, ToolCall, ToolConcurrency,
+    ToolDefinition, ToolEffect, ToolError, ToolExecutor, run_agent_with_sink,
 };
 use std::sync::{Arc, Mutex};
 
@@ -193,14 +193,14 @@ fn request() -> AgentRequest {
     }
 }
 
-fn policy_tool(effect: ToolEffect) -> ToolDefinition {
+fn policy_tool(effect: ToolEffect, concurrency: ToolConcurrency) -> ToolDefinition {
     ToolDefinition {
         name: "policy_tool".into(),
         description: "policy matrix tool".into(),
         read_only: true,
         parameters: serde_json::json!({"type": "object"}),
         effect,
-        concurrency: saya_agent::ToolConcurrency::Serial,
+        concurrency,
         completion: None,
     }
 }
@@ -208,6 +208,7 @@ fn policy_tool(effect: ToolEffect) -> ToolDefinition {
 async fn run_policy_turn(
     call_count: usize,
     effect: ToolEffect,
+    concurrency: ToolConcurrency,
     limits: AgentLimits,
     approval: &dyn ApprovalDecider,
 ) -> (usize, Vec<String>, Vec<String>) {
@@ -229,7 +230,7 @@ async fn run_policy_turn(
             calls: calls.clone(),
         },
         request(),
-        vec![policy_tool(effect)],
+        vec![policy_tool(effect, concurrency)],
         limits,
         approval,
         &RecordingSink {
@@ -472,7 +473,9 @@ fn expected_policy(
 
 /// Every execution route consumes the same effect, permit, and approval
 /// policy: denied calls never reach the executor, while allowed calls run
-/// once each in both one-call and multi-call turns.
+/// once each in both one-call and multi-call turns. Each case runs with serial
+/// and explicitly concurrent metadata, so the P1 policy parity also covers
+/// the scheduler's batch-eligibility decision.
 #[tokio::test]
 async fn policy_matrix_matches_single_and_multi_call_execution() {
     for local_state in [
@@ -505,29 +508,39 @@ async fn policy_matrix_matches_single_and_multi_call_execution() {
                             } else {
                                 &DenyApproval
                             };
-                            for call_count in [1, 2] {
-                                let (executed, reasons, statuses) =
-                                    run_policy_turn(call_count, effect, limits, approval).await;
-                                assert_eq!(
-                                    executed,
-                                    if denial.is_some() { 0 } else { call_count },
-                                    "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
-                                );
-                                assert_eq!(
-                                    statuses,
-                                    vec![status; call_count],
-                                    "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
-                                );
-                                match denial {
-                                    Some(reason) => assert_eq!(
-                                        reasons,
-                                        vec![reason; call_count],
-                                        "{effect:?}, permits={permits}, approved={approved}, {call_count} calls"
-                                    ),
-                                    None => assert!(
-                                        reasons.is_empty(),
-                                        "{effect:?}, permits={permits}, approved={approved}, {call_count} calls: {reasons:?}"
-                                    ),
+                            for concurrency in
+                                [ToolConcurrency::Serial, ToolConcurrency::Concurrent]
+                            {
+                                for call_count in [1, 2] {
+                                    let (executed, reasons, statuses) = run_policy_turn(
+                                        call_count,
+                                        effect,
+                                        concurrency,
+                                        limits,
+                                        approval,
+                                    )
+                                    .await;
+                                    assert_eq!(
+                                        executed,
+                                        if denial.is_some() { 0 } else { call_count },
+                                        "{effect:?}, {concurrency:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                    );
+                                    assert_eq!(
+                                        statuses,
+                                        vec![status; call_count],
+                                        "{effect:?}, {concurrency:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                    );
+                                    match denial {
+                                        Some(reason) => assert_eq!(
+                                            reasons,
+                                            vec![reason; call_count],
+                                            "{effect:?}, {concurrency:?}, permits={permits}, approved={approved}, {call_count} calls"
+                                        ),
+                                        None => assert!(
+                                            reasons.is_empty(),
+                                            "{effect:?}, {concurrency:?}, permits={permits}, approved={approved}, {call_count} calls: {reasons:?}"
+                                        ),
+                                    }
                                 }
                             }
                         }

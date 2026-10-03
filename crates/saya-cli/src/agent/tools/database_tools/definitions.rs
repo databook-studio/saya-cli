@@ -66,7 +66,7 @@ impl DatabaseTools {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
-            concurrency: ToolConcurrency::Concurrent,
+            concurrency: ToolConcurrency::Serial,
             completion: None,
         }];
         // The clarification ask (B3c) is unconditional, like `schema_discovery`:
@@ -407,7 +407,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
-                concurrency: ToolConcurrency::Concurrent,
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -436,7 +436,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
-                concurrency: ToolConcurrency::Concurrent,
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -466,7 +466,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
-                concurrency: ToolConcurrency::Concurrent,
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -498,7 +498,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
-                concurrency: ToolConcurrency::Concurrent,
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             tools.push(ToolDefinition {
@@ -531,7 +531,7 @@ impl DatabaseTools {
                     requires_approval: true,
                     local_state: LocalStateEffect::None,
                 },
-                concurrency: ToolConcurrency::Concurrent,
+                concurrency: ToolConcurrency::Serial,
                 completion: None,
             });
             // `render_chart` declares `external_side_effect: true` — it writes
@@ -726,4 +726,31 @@ pub(super) fn validate_arguments(
         return Err(ToolError::CaseInsensitiveNotBool);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SQL operations share turn-scoped cancellation, observation, and capture
+    /// state. Their advertised definitions must therefore stay serial even
+    /// though the SQL safety layer admits read-only statements.
+    #[test]
+    fn query_definitions_stay_serial() {
+        let definitions = DatabaseTools::definitions(true, false, false, false, true);
+        for name in [
+            "schema_discovery",
+            "bounded_sql_query",
+            "bounded_sql_query_all",
+            "result_shape",
+            "column_health",
+            "join_check",
+        ] {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == name)
+                .unwrap_or_else(|| panic!("{name} is advertised"));
+            assert_eq!(definition.concurrency, ToolConcurrency::Serial, "{name}");
+        }
+    }
 }
