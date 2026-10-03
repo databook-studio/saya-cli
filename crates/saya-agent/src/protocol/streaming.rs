@@ -229,6 +229,11 @@ pub trait ChatProvider: Send + Sync {
         // A provider that reported no usage emits no `Usage` event, so absence
         // keeps meaning "unknown".
         let mut events = Vec::with_capacity(5);
+        // `complete()` has already settled, so preserve its paid usage before
+        // any content consumer can stop early (for example on invalid JSON).
+        if let Some(usage) = response.usage {
+            events.push(ProviderEvent::Usage(usage));
+        }
         if !response.message.content.is_empty() {
             events.push(ProviderEvent::TextDelta(response.message.content));
         }
@@ -237,9 +242,6 @@ pub trait ChatProvider: Send + Sync {
         }
         if !response.message.tool_calls.is_empty() {
             events.push(ProviderEvent::ToolCalls(response.message.tool_calls));
-        }
-        if let Some(usage) = response.usage {
-            events.push(ProviderEvent::Usage(usage));
         }
         events.push(ProviderEvent::Done);
         Ok(Box::pin(futures_util::stream::iter(
@@ -590,13 +592,13 @@ mod tests {
         assert_eq!(
             events,
             vec![
+                ProviderEvent::Usage(response.usage.expect("reported usage")),
                 ProviderEvent::TextDelta("The result is 42.".into()),
                 ProviderEvent::ReasoningDelta(String::new()),
                 ProviderEvent::ToolCalls(response.message.tool_calls.clone()),
-                ProviderEvent::Usage(response.usage.expect("reported usage")),
                 ProviderEvent::Done,
             ],
-            "the complete response reaches the stream exactly once, with Done last"
+            "settled usage leads the full-field stream, with every field once and Done last"
         );
 
         let collected = with_response
