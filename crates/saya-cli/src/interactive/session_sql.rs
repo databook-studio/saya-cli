@@ -1,9 +1,8 @@
 use crate::{
     config::runtime::RuntimeConfig,
+    interactive::sql_operation,
     render::{RenderFormat, TerminalEvent, render_event},
 };
-use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
-use saya_types::QueryRequest;
 
 /// Executes a raw SQL query against the session's currently-active profile.
 pub(crate) async fn run(
@@ -13,72 +12,7 @@ pub(crate) async fn run(
     can_prompt: bool,
     format: RenderFormat,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let Some(name) = profile_name else {
-        emit(
-            TerminalEvent::Error {
-                message: "No active profile. Use /connect <profile> first.".into(),
-            },
-            format,
-        );
-        return Ok(());
-    };
-
-    let profile = match runtime.named_profile(name) {
-        Ok(profile) => profile,
-        Err(error) => {
-            emit(
-                TerminalEvent::Error {
-                    message: error.to_string(),
-                },
-                format,
-            );
-            return Ok(());
-        }
-    };
-
-    let settings = ConnectorOptions {
-        query_timeout_seconds: runtime.resolved.query_timeout_seconds,
-        read_only: runtime.resolved.read_only,
-        ..Default::default()
-    };
-
-    let connector = match build_connector_with_prompt(
-        profile,
-        &runtime.secret_resolver(),
-        settings,
-        can_prompt,
-    )
-    .await
-    {
-        Ok(connector) => connector,
-        Err(error) => {
-            emit(
-                TerminalEvent::Error {
-                    message: error.to_string(),
-                },
-                format,
-            );
-            return Ok(());
-        }
-    };
-
-    if let Err(error) = connector.connect().await {
-        emit(
-            TerminalEvent::Error {
-                message: error.to_string(),
-            },
-            format,
-        );
-        return Ok(());
-    }
-
-    match connector
-        .execute(QueryRequest::new(
-            sql.to_string(),
-            runtime.resolved.max_rows,
-        ))
-        .await
-    {
+    match sql_operation::execute(runtime, profile_name, sql, can_prompt).await {
         Ok(result) => emit(TerminalEvent::QueryResult { result }, format),
         Err(error) => emit(
             TerminalEvent::Error {
@@ -87,7 +21,6 @@ pub(crate) async fn run(
             format,
         ),
     }
-
     Ok(())
 }
 
