@@ -531,6 +531,24 @@ fn shaping_never_exceeds_its_cap_for_tiny_unicode_and_redacted_results() {
     }
 }
 
+/// A serializer may offer an entire JSON string in one write. The bounded
+/// writer still preserves the useful prefix of that one write, rather than
+/// keeping only structural JSON fragments before the truncation marker.
+#[test]
+fn a_single_large_unicode_write_keeps_a_visible_prefix() {
+    let shaped = shape_tool_result(&Value::String("星".repeat(256)), 64);
+    assert!(shaped.truncated, "the oversized value must be marked cut");
+    assert!(
+        shaped.text.contains('星'),
+        "a useful Unicode prefix survives"
+    );
+    assert!(shaped.text.contains("[truncated]"), "the cut stays visible");
+    assert!(
+        shaped.text.len() <= 64,
+        "the final text stays within the cap"
+    );
+}
+
 /// A tool-turn budget is divided before execution, so every accepted call has
 /// a deterministic share and their retained model-facing contents cannot add
 /// up past the turn's aggregate allowance.
