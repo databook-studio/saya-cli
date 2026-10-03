@@ -1052,6 +1052,10 @@ async fn ollama_complete_distinguishes_reported_zero_from_absent_usage() {
     let cases = [
         ("{\"done\":true}", None),
         (
+            "{\"done\":true,\"prompt_eval_count\":0,\"eval_count\":0}",
+            Some(TokenUsage::new(0, 0)),
+        ),
+        (
             "{\"done\":true,\"prompt_eval_count\":9,\"eval_count\":11}",
             Some(TokenUsage::new(9, 11)),
         ),
