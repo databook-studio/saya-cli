@@ -79,3 +79,7 @@ pub(crate) fn tick_resume(
         queue_session_save(&mut *app, store, state);
     }
 }
+
+#[cfg(test)]
+#[path = "../../session_privacy_receipt_tests.rs"]
+mod session_privacy_receipt_tests;
