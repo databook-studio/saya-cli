@@ -16,6 +16,10 @@ mod session_actions;
 mod export_mode_tests;
 
 #[cfg(test)]
+#[path = "../../session_context_key_tests.rs"]
+mod session_context_key_tests;
+
+#[cfg(test)]
 mod chain_tests;
 
 pub(crate) use outcome::Dispatch;
