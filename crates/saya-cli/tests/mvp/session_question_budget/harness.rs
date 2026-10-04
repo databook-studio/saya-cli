@@ -136,6 +136,7 @@ pub(crate) fn wait_for_stream_timeout(
 pub(crate) enum ScriptStep {
     Clarify { delay: std::time::Duration },
     Natural,
+    DelayedNatural { delay: std::time::Duration },
     Harmless,
     HoldOpen { marker: String },
 }
@@ -233,6 +234,10 @@ pub(crate) fn spawn_script_server(
                     reply_finished(&mut stream, &clarification_body());
                 }
                 ScriptStep::Natural => reply_finished(&mut stream, &answer_body()),
+                ScriptStep::DelayedNatural { delay } => {
+                    thread::sleep(delay);
+                    reply_finished(&mut stream, &answer_body());
+                }
                 ScriptStep::Harmless => reply_finished(&mut stream, &harmless_body()),
                 ScriptStep::HoldOpen { marker } => {
                     // A 429 establishment refusal: the loop backs off and
@@ -295,6 +300,45 @@ pub(crate) fn spawn_script_server(
         address,
         requests,
         handle: Some(handle),
+    }
+}
+
+/// Waits until `needle` has appeared at least `count` times in `buffer`.
+#[cfg(unix)]
+pub(crate) fn wait_for_stream_count(
+    buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    needle: &[u8],
+    label: &str,
+    count: usize,
+    timeout: std::time::Duration,
+) {
+    use std::{thread, time::Instant};
+
+    let deadline = Instant::now() + timeout;
+    let needle_owned = needle.to_vec();
+    let hits = |locked: &[u8]| {
+        locked
+            .windows(needle_owned.len().max(1))
+            .filter(|window| *window == needle_owned.as_slice())
+            .count()
+    };
+    loop {
+        if hits(&buffer.lock().unwrap()) >= count {
+            return;
+        }
+        if Instant::now() >= deadline {
+            let full = {
+                let locked = buffer.lock().unwrap();
+                String::from_utf8_lossy(&locked).into_owned()
+            };
+            let start = full.len().saturating_sub(2000);
+            panic!(
+                "did not observe {label} {count}x; buffer ({}/full): {:?}",
+                full.len(),
+                &full[start..]
+            );
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
