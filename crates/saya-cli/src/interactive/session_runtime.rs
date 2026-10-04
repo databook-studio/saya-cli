@@ -190,14 +190,21 @@ impl SessionRuntime {
         Ok(scope)
     }
 
-    pub(crate) fn settle_question(&mut self, clarification: bool) {
-        let previous = std::mem::replace(&mut self.question, QuestionLifecycle::Idle);
-        if let QuestionLifecycle::Active(scope) = previous {
-            if clarification && !scope.cancellation().is_cancelled() {
-                self.question = QuestionLifecycle::PendingClarification(scope);
-            } else {
-                scope.finish_segment();
-            }
+    /// Settles the question that actually completed. Only the scope
+    /// `begin_question` handed out may settle itself: a completion of any
+    /// other scope — and any completion while idle or pending clarification
+    /// — is ignored outright, so a late completion of a stale question can
+    /// never restore or change the live question's state.
+    pub(crate) fn settle_question(&mut self, completed: &QuestionScope, clarification: bool) {
+        let settling = match &self.question {
+            QuestionLifecycle::Active(scope) if scope.is_same_question(completed) => scope.clone(),
+            _ => return,
+        };
+        if clarification && !settling.cancellation().is_cancelled() {
+            self.question = QuestionLifecycle::PendingClarification(settling);
+        } else {
+            settling.finish_segment();
+            self.question = QuestionLifecycle::Idle;
         }
     }
 
@@ -482,3 +489,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "session_runtime_question_tests.rs"]
+mod question_tests;

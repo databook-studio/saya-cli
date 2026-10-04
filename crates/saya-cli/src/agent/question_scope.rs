@@ -61,6 +61,14 @@ impl QuestionScope {
         self.inner.answering.cancellation_token()
     }
 
+    /// Identity of the shared inner: two clones of one `begin_question`
+    /// scope are the same question; scopes of different questions never
+    /// are. `Arc::ptr_eq` on the one `Arc<QuestionInner>` every clone
+    /// shares — no counter noise, no resurrected identity.
+    pub(crate) fn is_same_question(&self, other: &QuestionScope) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub(crate) fn answering_scope(&self) -> AnsweringScope {
         self.inner.answering.clone()
     }

@@ -589,6 +589,9 @@ fn handle_line_verbatim(
             // the same fact here — no modal, no alternate screen. The TUI
             // states them separately (`tui::agent::approval_capabilities`).
             let scope = session.begin_question(runtime)?;
+            // The settle must know WHICH question completed: the scope this
+            // begin handed out, cloned before the request consumes it.
+            let completed = scope.clone();
             match block_on(super::session_request::run(
                 runtime,
                 line,
@@ -611,7 +614,7 @@ fn handle_line_verbatim(
                     let clarification = output.events.iter().any(|event| {
                         matches!(event, saya_agent::AgentEvent::ClarificationNeeded { .. })
                     });
-                    session.settle_question(clarification);
+                    session.settle_question(&completed, clarification);
                     state.task_list = session.universe().tasks().current();
                     state.record_agent_output(line, &output);
                     // Feed the session accumulator so /usage is honest in
