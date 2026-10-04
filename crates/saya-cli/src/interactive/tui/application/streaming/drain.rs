@@ -6,6 +6,7 @@ use super::super::super::transcript::BlockKind;
 use super::super::super::types::{
     App, LastQuery, MAX_PENDING_QUERIES, PendingApproval, PendingQuery,
 };
+use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::capture_agent::{AgentCaptureOutcome, promote_agent_capture};
 use crate::render::tool_groups::is_failure_summary;
@@ -14,7 +15,29 @@ use saya_agent::{AgentEvent, ProviderRecoveryPhase, UsageCall};
 impl App {
     /// Drains any queued agent-stream messages into the transcript. Returns true
     /// when the request just finished (so the caller can persist the session).
+    /// No session runtime is held, so the turn's question lifecycle is not
+    /// settled here — the session-holding tick uses `drain_stream_with_session`.
     pub(crate) fn drain_stream(&mut self, state: &mut SessionState) -> bool {
+        self.drain_inner(state, None)
+    }
+
+    /// Drains and settles the turn's question scope with the session
+    /// runtime — the production tick's path (`tick_busy` holds the session):
+    /// the scope the turn began with settles or abandons when the stream
+    /// ends (see `question.rs`).
+    pub(crate) fn drain_stream_with_session(
+        &mut self,
+        state: &mut SessionState,
+        session: &mut SessionRuntime,
+    ) -> bool {
+        self.drain_inner(state, Some(session))
+    }
+
+    fn drain_inner(
+        &mut self,
+        state: &mut SessionState,
+        mut session: Option<&mut SessionRuntime>,
+    ) -> bool {
         let mut messages = Vec::new();
         if let Some(stream) = self.request.stream.as_mut() {
             while let Ok(msg) = stream.rx.try_recv() {
@@ -241,7 +264,12 @@ impl App {
                     });
                 }
                 StreamMsg::Done(result) => {
-                    self.settle_done(result, state, prompt.clone());
+                    self.settle_done(
+                        result,
+                        state,
+                        prompt.clone(),
+                        session.as_mut().map(|session| &mut **session),
+                    );
                     finished = true;
                 }
             }

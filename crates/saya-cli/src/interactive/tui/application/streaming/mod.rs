@@ -5,6 +5,7 @@
 //! `drain`. Sibling test files exercise the drain seam.
 
 mod drain;
+mod question;
 mod settle;
 mod start;
 

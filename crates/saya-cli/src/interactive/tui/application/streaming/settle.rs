@@ -4,17 +4,22 @@
 use super::super::super::transcript::BlockKind;
 use super::super::super::types::App;
 use super::super::super::usage_footer;
+use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
 use saya_agent::AgentOutput;
 
 impl App {
     /// Handles a settled stream: the `Done` arm of the drain loop, lifted out
-    /// so `drain.rs` stays under the size cap.
+    /// so `drain.rs` stays under the size cap. `session`, when the caller
+    /// holds the session runtime, settles or abandons the turn's question
+    /// scope by the outcome the stream ended with (see `question.rs`); test
+    /// callers without a session pass `None` and settle nothing.
     pub(super) fn settle_done(
         &mut self,
         result: Result<AgentOutput, String>,
         state: &mut SessionState,
         prompt: String,
+        session: Option<&mut SessionRuntime>,
     ) {
         // Whether the user asked this stream to stop: Esc fires the
         // token before the worker's settle arrives. Read before
@@ -40,6 +45,12 @@ impl App {
             .as_ref()
             .map(|output| output.truncated)
             .unwrap_or(false);
+        // The turn's question settles or abandons now that its stream has
+        // ended — read AFTER `stop_confirmed` above, so the abandon's token
+        // cancel can never reclassify an error as the user's stop.
+        if let Some(session) = session {
+            super::question::settle_stream_question(session, self.request.stream.as_ref(), &result);
+        }
         match result {
             Ok(output) => {
                 state.task_list = self.session.tasks().current();
