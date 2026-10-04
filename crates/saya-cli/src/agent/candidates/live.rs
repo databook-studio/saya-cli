@@ -22,6 +22,7 @@ pub(super) async fn build_executor(
     runtime: &crate::config::runtime::RuntimeConfig,
     overrides: &PromptOverrides,
     can_prompt: bool,
+    scope: &QuestionScope,
 ) -> Result<(LiveCandidateExecutor, SqlDialect), AgentRuntimeError> {
     let (_name, profile) = profile::selected(runtime, overrides.profile.as_ref())?;
     let Some(profile) = profile else {
@@ -47,6 +48,7 @@ pub(super) async fn build_executor(
         LiveCandidateExecutor {
             connector,
             max_rows: runtime.resolved.max_rows,
+            cancellation: scope.cancellation(),
         },
         dialect,
     ))
@@ -67,15 +69,26 @@ pub(super) async fn build_executor(
 pub(super) struct LiveCandidateExecutor {
     connector: Box<dyn DatabaseConnector>,
     max_rows: usize,
+    cancellation: saya_agent::CancellationToken,
 }
 
 #[async_trait]
 impl CandidateExecutor for LiveCandidateExecutor {
     async fn run(&self, sql: &str) -> Option<QueryResult> {
-        self.connector
-            .execute(QueryRequest::new(sql, self.max_rows))
-            .await
-            .ok()
+        if self.cancellation.is_cancelled() {
+            return None;
+        }
+        let execution = self
+            .connector
+            .execute(QueryRequest::new(sql, self.max_rows));
+        tokio::pin!(execution);
+        tokio::select! {
+            result = &mut execution => (!self.cancellation.is_cancelled()).then(|| result.ok()).flatten(),
+            _ = self.cancellation.cancelled() => {
+                let (_cancel, _settled) = tokio::join!(self.connector.request_cancel(), execution);
+                None
+            }
+        }
     }
 }
 

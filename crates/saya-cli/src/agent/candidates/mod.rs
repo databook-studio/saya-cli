@@ -24,7 +24,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use self::live::LiveAttemptRunner;
+#[cfg(test)]
 use self::orchestrate::orchestrate;
+use self::orchestrate::orchestrate_scoped;
 
 /// Runs one agent attempt and returns its output. Exists so [`orchestrate`] can
 /// be tested against a fake runner without a live provider or database, the way
@@ -97,7 +99,10 @@ pub(crate) async fn run_with_candidates(
     let cancellation = scope.cancellation();
     let (executor, dialect) = {
         let deadline = scope.begin_segment();
-        let build = live::build_executor(runtime, &overrides, can_prompt);
+        if cancellation.is_cancelled() {
+            return Err(AgentRuntimeError::Agent("request cancelled".into()));
+        }
+        let build = live::build_executor(runtime, &overrides, can_prompt, &scope);
         tokio::pin!(build);
         let result = match deadline {
             Some(duration) => tokio::select! {
@@ -133,7 +138,16 @@ pub(crate) async fn run_with_candidates(
         session,
         agent_mode,
     );
-    let result = orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await;
+    let result = orchestrate_scoped(
+        candidates,
+        &runner,
+        &executor,
+        dialect,
+        sink,
+        &cancellation,
+        &scope,
+    )
+    .await;
     result
 }
 

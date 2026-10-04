@@ -5,6 +5,7 @@
 //! [`decide`]: super::super::decide::decide
 
 use super::super::decide::{CandidateExecutor, decide};
+use super::super::question_scope::QuestionScope;
 use super::super::runtime::AgentRuntimeError;
 use super::AttemptRunner;
 use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
@@ -26,6 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// [`decide`] votes on the result sets, a `ConsensusDecided` event is emitted
 /// once, and the winning attempt's output is returned — or, with no winner, the
 /// last successful attempt's output, so the caller always has an answer to show.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn orchestrate(
     candidates: usize,
     runner: &dyn AttemptRunner,
@@ -33,6 +35,48 @@ pub(crate) async fn orchestrate(
     dialect: SqlDialect,
     sink: &dyn AgentEventSink,
     cancellation: &CancellationToken,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    orchestrate_inner(
+        candidates,
+        runner,
+        executor,
+        dialect,
+        sink,
+        cancellation,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn orchestrate_scoped(
+    candidates: usize,
+    runner: &dyn AttemptRunner,
+    executor: &dyn CandidateExecutor,
+    dialect: SqlDialect,
+    sink: &dyn AgentEventSink,
+    cancellation: &CancellationToken,
+    scope: &QuestionScope,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    orchestrate_inner(
+        candidates,
+        runner,
+        executor,
+        dialect,
+        sink,
+        cancellation,
+        Some(scope),
+    )
+    .await
+}
+
+async fn orchestrate_inner(
+    candidates: usize,
+    runner: &dyn AttemptRunner,
+    executor: &dyn CandidateExecutor,
+    dialect: SqlDialect,
+    sink: &dyn AgentEventSink,
+    cancellation: &CancellationToken,
+    scope: Option<&QuestionScope>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
         return runner.run().await;
@@ -92,7 +136,30 @@ pub(crate) async fn orchestrate(
     if nominations.len() > 1 {
         let nominated: HashSet<String> = nominations.iter().flatten().cloned().collect();
         let counter = VoteCounter::new(executor, &nominated);
-        let decision = decide(&nominations, &counter, dialect, cancellation).await;
+        let deadline = scope.and_then(QuestionScope::begin_segment);
+        if cancellation.is_cancelled() {
+            return Ok(with_paid_usage(last_success, paid_usage));
+        }
+        let decision = match deadline {
+            Some(duration) => {
+                let work = decide(&nominations, &counter, dialect, cancellation);
+                tokio::pin!(work);
+                tokio::select! {
+                    decision = &mut work => decision,
+                    _ = tokio::time::sleep(duration) => {
+                        cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime));
+                        work.await
+                    }
+                }
+            }
+            None => decide(&nominations, &counter, dialect, cancellation).await,
+        };
+        if let Some(scope) = scope {
+            scope.finish_segment();
+        }
+        if cancellation.is_cancelled() {
+            return Ok(with_paid_usage(last_success, paid_usage));
+        }
         let winner_sql = decision.winner.and_then(|i| {
             outputs
                 .get(i)
