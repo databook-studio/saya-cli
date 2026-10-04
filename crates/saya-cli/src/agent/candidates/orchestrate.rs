@@ -8,6 +8,7 @@ use super::super::decide::{CandidateExecutor, decide};
 use super::super::question_scope::QuestionScope;
 use super::super::runtime::AgentRuntimeError;
 use super::AttemptRunner;
+use crate::answering_receipts::AnsweringReceiptSink;
 use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
 use saya_types::SqlDialect;
 use std::collections::HashSet;
@@ -27,56 +28,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// [`decide`] votes on the result sets, a `ConsensusDecided` event is emitted
 /// once, and the winning attempt's output is returned — or, with no winner, the
 /// last successful attempt's output, so the caller always has an answer to show.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn orchestrate(
     candidates: usize,
     runner: &dyn AttemptRunner,
     executor: &dyn CandidateExecutor,
     dialect: SqlDialect,
-    sink: &dyn AgentEventSink,
-    cancellation: &CancellationToken,
-) -> Result<AgentOutput, AgentRuntimeError> {
-    orchestrate_inner(
-        candidates,
-        runner,
-        executor,
-        dialect,
-        sink,
-        cancellation,
-        None,
-    )
-    .await
-}
-
-pub(crate) async fn orchestrate_scoped(
-    candidates: usize,
-    runner: &dyn AttemptRunner,
-    executor: &dyn CandidateExecutor,
-    dialect: SqlDialect,
-    sink: &dyn AgentEventSink,
+    receipts: &AnsweringReceiptSink<'_>,
     cancellation: &CancellationToken,
     scope: &QuestionScope,
-) -> Result<AgentOutput, AgentRuntimeError> {
-    orchestrate_inner(
-        candidates,
-        runner,
-        executor,
-        dialect,
-        sink,
-        cancellation,
-        Some(scope),
-    )
-    .await
-}
-
-async fn orchestrate_inner(
-    candidates: usize,
-    runner: &dyn AttemptRunner,
-    executor: &dyn CandidateExecutor,
-    dialect: SqlDialect,
-    sink: &dyn AgentEventSink,
-    cancellation: &CancellationToken,
-    scope: Option<&QuestionScope>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
         return runner.run().await;
@@ -108,12 +67,7 @@ async fn orchestrate_inner(
         }
     }
 
-    let paid_usage = outputs
-        .iter()
-        .flatten()
-        .fold(TokenUsage::default(), |total, output| {
-            add_usage(total, output.usage)
-        });
+    let paid_usage = receipts.take().unwrap_or_default();
     let last_success = outputs.iter().rev().flatten().next().cloned();
     let Some(last_success) = last_success else {
         // Nothing succeeded. Surface the last error, or — when the loop was
@@ -136,7 +90,7 @@ async fn orchestrate_inner(
     if nominations.len() > 1 {
         let nominated: HashSet<String> = nominations.iter().flatten().cloned().collect();
         let counter = VoteCounter::new(executor, &nominated);
-        let deadline = scope.and_then(QuestionScope::begin_segment);
+        let deadline = scope.begin_segment();
         if cancellation.is_cancelled() {
             return Ok(with_paid_usage(last_success, paid_usage));
         }
@@ -154,9 +108,7 @@ async fn orchestrate_inner(
             }
             None => decide(&nominations, &counter, dialect, cancellation).await,
         };
-        if let Some(scope) = scope {
-            scope.finish_segment();
-        }
+        scope.finish_segment();
         if cancellation.is_cancelled() {
             return Ok(with_paid_usage(last_success, paid_usage));
         }
@@ -165,16 +117,17 @@ async fn orchestrate_inner(
                 .get(i)
                 .and_then(|o| o.as_ref().and_then(|x| x.answer_sql.clone()))
         });
-        sink.emit(AgentEvent::consensus_decided(
-            winner_sql,
-            nominations.len(),
-            counter.voted(),
-            decision.votes,
-            decision.margin,
-            decision.tied,
-            decision.probe_broke_tie,
-        ))
-        .await;
+        receipts
+            .emit(AgentEvent::consensus_decided(
+                winner_sql,
+                nominations.len(),
+                counter.voted(),
+                decision.votes,
+                decision.margin,
+                decision.tied,
+                decision.probe_broke_tie,
+            ))
+            .await;
         if let Some(i) = decision.winner
             && let Some(Some(out)) = outputs.get(i)
         {
@@ -190,27 +143,6 @@ async fn orchestrate_inner(
 fn with_paid_usage(mut output: AgentOutput, usage: TokenUsage) -> AgentOutput {
     output.usage = usage;
     output
-}
-
-fn add_usage(mut total: TokenUsage, usage: TokenUsage) -> TokenUsage {
-    total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
-    total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
-    total.cached_input_tokens = add_optional(total.cached_input_tokens, usage.cached_input_tokens);
-    total.cache_creation_input_tokens = add_optional(
-        total.cache_creation_input_tokens,
-        usage.cache_creation_input_tokens,
-    );
-    total.reasoning_tokens = add_optional(total.reasoning_tokens, usage.reasoning_tokens);
-    total
-}
-
-fn add_optional(total: Option<u64>, usage: Option<u64>) -> Option<u64> {
-    match (total, usage) {
-        (Some(total), Some(usage)) => Some(total.saturating_add(usage)),
-        (Some(total), None) => Some(total),
-        (None, Some(usage)) => Some(usage),
-        (None, None) => None,
-    }
 }
 
 /// Wraps a [`CandidateExecutor`] to count how many nominated statements

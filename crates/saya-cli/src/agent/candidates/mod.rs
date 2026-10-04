@@ -17,6 +17,7 @@ mod orchestrate;
 
 use super::question_scope::QuestionScope;
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
+use crate::answering_receipts::AnsweringReceiptSink;
 use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, ChatMessage};
 use saya_store::SqliteStateStore;
 use std::future::Future;
@@ -24,9 +25,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use self::live::LiveAttemptRunner;
-#[cfg(test)]
 use self::orchestrate::orchestrate;
-use self::orchestrate::orchestrate_scoped;
 
 /// Runs one agent attempt and returns its output. Exists so [`orchestrate`] can
 /// be tested against a fake runner without a live provider or database, the way
@@ -123,6 +122,7 @@ pub(crate) async fn run_with_candidates(
         }
         result?
     };
+    let receipt_sink = AnsweringReceiptSink::new(sink);
     let runner = LiveAttemptRunner::new(
         runtime,
         prompt,
@@ -130,7 +130,7 @@ pub(crate) async fn run_with_candidates(
         can_prompt,
         can_obtain_approval,
         overrides,
-        sink,
+        &receipt_sink,
         scope.clone(),
         state_db,
         decider,
@@ -138,19 +138,22 @@ pub(crate) async fn run_with_candidates(
         session,
         agent_mode,
     );
-    let result = orchestrate_scoped(
+    orchestrate(
         candidates,
         &runner,
         &executor,
         dialect,
-        sink,
+        &receipt_sink,
         &cancellation,
         &scope,
     )
-    .await;
-    result
+    .await
 }
 
 #[cfg(test)]
 #[path = "candidates_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "receipt_tests.rs"]
+mod receipt_tests;
