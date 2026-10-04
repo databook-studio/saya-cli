@@ -4,8 +4,34 @@
 //! (`session_loop`). Runtime-only: nothing here rides the session record.
 
 use super::super::super::agent::messages::Stream;
+use super::super::super::types::App;
 use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session_state::SessionState;
 use saya_agent::{AgentEvent, AgentOutput};
+
+impl App {
+    /// Drains any queued agent-stream messages into the transcript. Returns
+    /// true when the request just finished (so the caller can persist the
+    /// session). Test-only seam: the tests drive the drain without a
+    /// session runtime, so the turn's question lifecycle is not settled
+    /// here — the session-holding tick uses `drain_stream_with_session`.
+    #[cfg(test)]
+    pub(crate) fn drain_stream(&mut self, state: &mut SessionState) -> bool {
+        self.drain_inner(state, None)
+    }
+
+    /// Drains and settles the turn's question scope with the session
+    /// runtime — the production tick's path (`tick_busy` holds the session):
+    /// the scope the turn began with settles or abandons when the stream
+    /// ends.
+    pub(crate) fn drain_stream_with_session(
+        &mut self,
+        state: &mut SessionState,
+        session: &mut SessionRuntime,
+    ) -> bool {
+        self.drain_inner(state, Some(session))
+    }
+}
 
 /// Settles or abandons the turn's question scope by the outcome its stream
 /// ended with. A completed output settles — and only the completed output's
