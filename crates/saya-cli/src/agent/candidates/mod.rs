@@ -96,9 +96,13 @@ pub(crate) async fn run_with_candidates(
         return result;
     }
     let cancellation = scope.cancellation();
+    if cancellation.is_cancelled() {
+        return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
     let (executor, dialect) = {
         let deadline = scope.begin_segment();
         if cancellation.is_cancelled() {
+            scope.finish_segment();
             return Err(AgentRuntimeError::Agent("request cancelled".into()));
         }
         let build = live::build_executor(runtime, &overrides, can_prompt, &scope);
@@ -106,6 +110,7 @@ pub(crate) async fn run_with_candidates(
         let result = match deadline {
             Some(duration) => tokio::select! {
                 result = &mut build => result,
+                _ = cancellation.cancelled() => build.await,
                 _ = tokio::time::sleep(duration) => {
                     cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime));
                     build.await

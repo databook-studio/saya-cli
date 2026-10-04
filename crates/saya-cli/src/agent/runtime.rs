@@ -127,26 +127,36 @@ pub(crate) async fn run_prompt_with_sink(
 }
 
 pub(crate) async fn run_prompt_with_sink_and_outcomes(
-    request: SinkPrompt<'_>,
+    mut request: SinkPrompt<'_>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    let scoped_deadline = request
-        .question_scope
-        .as_ref()
-        .map(QuestionScope::begin_segment);
-    let deadline = scoped_deadline.flatten().or_else(|| {
-        finite_seconds(
+    if let Some(scope) = request.question_scope.as_ref() {
+        request.cancellation = scope.cancellation();
+    }
+    let cancellation = request.cancellation.clone();
+    if cancellation.is_cancelled() {
+        return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
+    let scope = request.question_scope.clone();
+    let deadline = match scope.as_ref() {
+        Some(scope) => scope.begin_segment(),
+        None => finite_seconds(
             request
                 .runtime
                 .resolved
                 .investigation_budgets
                 .elapsed_seconds,
-        )
-    });
-    let cancellation = request.cancellation.clone();
+        ),
+    };
+    if cancellation.is_cancelled() {
+        if let Some(scope) = scope.as_ref() {
+            scope.finish_segment();
+        }
+        return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
     let (answering_settled_tx, mut answering_settled) = tokio::sync::oneshot::channel();
     let work = run_prompt_after_question_start(request, Some(answering_settled_tx));
     tokio::pin!(work);
-    match deadline {
+    let result = match deadline {
         Some(duration) => tokio::select! {
             biased;
             result = &mut work => result,
@@ -157,7 +167,13 @@ pub(crate) async fn run_prompt_with_sink_and_outcomes(
             }
         },
         None => work.await,
+    };
+    // The answering owner normally finishes before learning. This is the
+    // idempotent fallback for an earlier preparation or composition error.
+    if let Some(scope) = scope {
+        scope.finish_segment();
     }
+    result
 }
 
 fn finite_seconds(limit: BudgetLimit) -> Option<std::time::Duration> {

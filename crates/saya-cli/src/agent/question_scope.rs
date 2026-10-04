@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 /// Keeps every answering invocation for a question on one admission wallet.
 ///
 /// The elapsed source starts before connector setup. Calling
-/// [`QuestionScope::settle_answering`] stops it before post-turn learning, so
+/// [`QuestionScope::finish_segment`] stops it before post-turn learning, so
 /// ancillary work neither consumes nor is cancelled by answering time.
 #[derive(Clone)]
 pub(crate) struct QuestionScope {
