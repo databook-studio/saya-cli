@@ -1074,3 +1074,7 @@ mod turn_file_tests {
         let _ = std::fs::remove_file(path);
     }
 }
+
+#[cfg(test)]
+#[path = "session_headless_receipt_tests.rs"]
+mod session_headless_receipt_tests;
