@@ -3,10 +3,11 @@
 
 use super::super::decide::CandidateExecutor;
 use super::super::profile;
+use super::super::question_scope::QuestionScope;
 use super::super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
 use super::AttemptRunner;
 use async_trait::async_trait;
-use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_store::SqliteStateStore;
 use saya_types::{QueryRequest, QueryResult, SqlDialect};
@@ -90,7 +91,7 @@ pub(crate) struct LiveAttemptRunner<'a> {
     can_obtain_approval: bool,
     overrides: PromptOverrides,
     sink: &'a dyn saya_agent::AgentEventSink,
-    cancellation: CancellationToken,
+    scope: QuestionScope,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
@@ -108,7 +109,7 @@ impl<'a> LiveAttemptRunner<'a> {
         can_obtain_approval: bool,
         overrides: PromptOverrides,
         sink: &'a dyn saya_agent::AgentEventSink,
-        cancellation: CancellationToken,
+        scope: QuestionScope,
         state_db: Option<SqliteStateStore>,
         decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
         last_sql: Option<String>,
@@ -123,7 +124,7 @@ impl<'a> LiveAttemptRunner<'a> {
             can_obtain_approval,
             overrides,
             sink,
-            cancellation,
+            scope,
             state_db,
             decider,
             last_sql,
@@ -145,7 +146,8 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.overrides.clone(),
             Vec::new(),
             self.sink,
-            self.cancellation.clone(),
+            self.scope.cancellation(),
+            Some(self.scope.clone()),
             self.state_db.clone(),
             self.decider.clone(),
             self.last_sql.clone(),

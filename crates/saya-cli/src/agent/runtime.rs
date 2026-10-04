@@ -1,4 +1,5 @@
 use super::knowledge_event::knowledge_supplied_event;
+use super::question_scope::QuestionScope;
 use super::tools;
 #[cfg(test)]
 pub(crate) use super::turn_config::query_data_allowed;
@@ -29,6 +30,9 @@ pub(crate) struct SinkPrompt<'a> {
     pub(crate) history: Vec<ChatMessage>,
     pub(crate) sink: &'a dyn AgentEventSink,
     pub(crate) cancellation: CancellationToken,
+    /// Present when an outer question owns the budget across several runtime
+    /// invocations (candidate attempts or a clarification continuation).
+    pub(crate) question_scope: Option<QuestionScope>,
     pub(crate) state_db: Option<SqliteStateStore>,
     pub(crate) decider: Option<Arc<dyn ApprovalDecider>>,
     pub(crate) last_sql: Option<String>,
@@ -50,6 +54,7 @@ pub(crate) struct TurnPrompt<'a> {
     pub(crate) history: Vec<ChatMessage>,
     pub(crate) sink: &'a dyn AgentEventSink,
     pub(crate) cancellation: CancellationToken,
+    pub(crate) question_scope: Option<QuestionScope>,
     pub(crate) state_db: Option<SqliteStateStore>,
     pub(crate) decider: Option<Arc<dyn ApprovalDecider>>,
     pub(crate) last_sql: Option<String>,
@@ -83,6 +88,7 @@ pub(crate) async fn run_prompt_with_sink(
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
+    question_scope: Option<QuestionScope>,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
@@ -107,6 +113,7 @@ pub(crate) async fn run_prompt_with_sink(
         history,
         sink,
         cancellation,
+        question_scope,
         state_db,
         decider,
         last_sql,
@@ -122,6 +129,9 @@ pub(crate) async fn run_prompt_with_sink(
 pub(crate) async fn run_prompt_with_sink_and_outcomes(
     request: SinkPrompt<'_>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
+    if request.question_scope.is_some() {
+        return run_prompt_after_question_start(request, None).await;
+    }
     let deadline = finite_seconds(
         request
             .runtime
@@ -168,6 +178,7 @@ async fn run_prompt_after_question_start(
         history,
         sink,
         cancellation,
+        question_scope,
         state_db,
         decider,
         last_sql,
@@ -177,9 +188,10 @@ async fn run_prompt_after_question_start(
         prior_tool_outcomes,
         compaction_summary,
     } = request;
-    let inputs = prepare_turn(runtime, &overrides, can_prompt)
-        .await
-        .map_err(with_next_step)?;
+    let inputs = match prepare_turn(runtime, &overrides, can_prompt).await {
+        Ok(inputs) => inputs,
+        Err(error) => return Err(with_next_step(error)),
+    };
     run_prompt_with_continuation_inputs_with_signal(
         TurnPrompt {
             runtime,
@@ -191,6 +203,7 @@ async fn run_prompt_after_question_start(
             history,
             sink,
             cancellation,
+            question_scope,
             state_db,
             decider,
             last_sql,
@@ -241,6 +254,7 @@ pub(crate) async fn run_prompt_with_inputs(
             history,
             sink,
             cancellation,
+            question_scope: None,
             state_db,
             decider,
             last_sql,
@@ -269,6 +283,7 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         history,
         sink,
         cancellation,
+        question_scope,
         state_db,
         decider,
         last_sql,
@@ -548,14 +563,13 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
             runtime.resolved.investigation_budgets.known_reported_tokens,
         ),
     };
-    let mut output = run_agent_with_control(
-        &*provider,
-        executor.as_ref(),
-        request,
-        definitions,
-        AgentRunControl::new(limits, answering, approver, sink, cancellation.clone()),
-    )
-    .await;
+    let control = AgentRunControl::new(limits, answering, approver, sink, cancellation.clone());
+    let control = match question_scope.as_ref() {
+        Some(scope) => control.with_answering_scope(scope.answering_scope()),
+        None => control,
+    };
+    let mut output =
+        run_agent_with_control(&*provider, executor.as_ref(), request, definitions, control).await;
     if let Some(answering_settled) = answering_settled {
         let _ = answering_settled.send(());
     }

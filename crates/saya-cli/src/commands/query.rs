@@ -1,5 +1,5 @@
 use crate::{
-    agent::runtime::PromptOverrides,
+    agent::{question_scope::QuestionScope, runtime::PromptOverrides},
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
     render::{RenderFormat, TerminalEvent},
@@ -35,6 +35,7 @@ pub(super) async fn ask(
         return Err("ask requires a prompt or --file".into());
     }
     let cancellation = CancellationToken::new();
+    let scope = QuestionScope::new(runtime, cancellation.clone());
     let sink = TerminalSink::new(format);
     // The one-shot `ask` path composes no session universe at all — writes
     // stay hidden, reads deny — so both capabilities ride the same
@@ -52,7 +53,7 @@ pub(super) async fn ask(
         },
         Vec::new(),
         &sink,
-        cancellation.clone(),
+        scope,
         Some(state_db.clone()),
         None,
         None,

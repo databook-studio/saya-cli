@@ -96,6 +96,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
                     history,
                     sink: &sink,
                     cancellation: cancel_worker,
+                    question_scope: None,
                     state_db: Some(state_db),
                     decider: Some(decider),
                     last_sql,

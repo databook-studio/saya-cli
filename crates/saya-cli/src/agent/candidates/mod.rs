@@ -15,8 +15,9 @@
 mod live;
 mod orchestrate;
 
+use super::question_scope::QuestionScope;
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
-use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, ChatMessage};
 use saya_store::SqliteStateStore;
 use std::future::Future;
 use std::pin::Pin;
@@ -59,7 +60,7 @@ pub(crate) async fn run_with_candidates(
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     sink: &dyn saya_agent::AgentEventSink,
-    cancellation: CancellationToken,
+    scope: QuestionScope,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
@@ -71,7 +72,7 @@ pub(crate) async fn run_with_candidates(
     candidates: usize,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
-        return run_prompt_with_sink(
+        let result = run_prompt_with_sink(
             runtime,
             prompt,
             approval,
@@ -80,7 +81,8 @@ pub(crate) async fn run_with_candidates(
             overrides,
             history,
             sink,
-            cancellation,
+            scope.cancellation(),
+            Some(scope.clone()),
             state_db,
             decider,
             last_sql,
@@ -90,8 +92,21 @@ pub(crate) async fn run_with_candidates(
             None,
         )
         .await;
+        scope.settle_answering();
+        return result;
     }
-    let (executor, dialect) = live::build_executor(runtime, &overrides, can_prompt).await?;
+    let cancellation = scope.cancellation();
+    let (executor, dialect) = {
+        let build = live::build_executor(runtime, &overrides, can_prompt);
+        tokio::pin!(build);
+        tokio::select! {
+            result = &mut build => result?,
+            _ = cancellation.cancelled() => {
+                scope.settle_answering();
+                return Err(AgentRuntimeError::Agent("request cancelled".into()));
+            }
+        }
+    };
     let runner = LiveAttemptRunner::new(
         runtime,
         prompt,
@@ -100,14 +115,16 @@ pub(crate) async fn run_with_candidates(
         can_obtain_approval,
         overrides,
         sink,
-        cancellation.clone(),
+        scope.clone(),
         state_db,
         decider,
         last_sql,
         session,
         agent_mode,
     );
-    orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await
+    let result = orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await;
+    scope.settle_answering();
+    result
 }
 
 #[cfg(test)]

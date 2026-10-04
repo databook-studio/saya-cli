@@ -9,6 +9,7 @@ pub(crate) mod knowledge_event;
 pub(crate) mod learning;
 pub(crate) mod profile;
 pub(crate) mod provider;
+pub(crate) mod question_scope;
 pub(crate) mod recall_context;
 #[allow(dead_code)]
 // mechanism only — not yet wired into the agent loop; a later change decides when it runs

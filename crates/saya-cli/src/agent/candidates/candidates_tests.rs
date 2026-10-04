@@ -168,6 +168,12 @@ fn output_without_sql(label: &str) -> AgentOutput {
     }
 }
 
+fn output_with_usage(sql: &str, input: u64, output: u64) -> AgentOutput {
+    let mut result = output_with_sql(sql);
+    result.usage = TokenUsage::new(input, output);
+    result
+}
+
 /// The single `ConsensusDecided` event in `captured`, if any.
 fn one_consensus(captured: &[AgentEvent]) -> Option<&AgentEvent> {
     captured
@@ -462,6 +468,39 @@ async fn cancellation_between_attempts_stops_early() {
         runner.calls(),
         2,
         "cancellation between attempts stopped the loop early (2 of 3 ran)"
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "a stopped question never starts vote or consensus work"
+    );
+}
+
+#[tokio::test]
+async fn selected_candidate_retains_all_settled_attempt_usage() {
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_usage(sql, 2, 3)),
+        Outcome::Ok(output_with_usage(sql, 5, 7)),
+    ]);
+    let executor = ScriptedExecutor {
+        results: HashMap::from([(sql.to_string(), rows_result(&["a"], vec![json!([1])]))]),
+    };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let output = orchestrate(2, &runner, &executor, D, &sink, &CancellationToken::new())
+        .await
+        .expect("two settled candidates decide");
+
+    assert_eq!(
+        output.usage.input_tokens, 7,
+        "both paid input receipts survive"
+    );
+    assert_eq!(
+        output.usage.output_tokens, 10,
+        "both paid output receipts survive"
     );
 }
 

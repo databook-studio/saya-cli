@@ -93,6 +93,7 @@ pub(crate) async fn run(
         history,
         sink: &sink,
         cancellation: cancellation.clone(),
+        question_scope: None,
         state_db: Some(state_db.clone()),
         decider: Some(decider),
         last_sql: None,

@@ -7,7 +7,7 @@
 use super::super::decide::{CandidateExecutor, decide};
 use super::super::runtime::AgentRuntimeError;
 use super::AttemptRunner;
-use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken};
+use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
 use saya_types::SqlDialect;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -64,6 +64,12 @@ pub(crate) async fn orchestrate(
         }
     }
 
+    let paid_usage = outputs
+        .iter()
+        .flatten()
+        .fold(TokenUsage::default(), |total, output| {
+            add_usage(total, output.usage)
+        });
     let last_success = outputs.iter().rev().flatten().next().cloned();
     let Some(last_success) = last_success else {
         // Nothing succeeded. Surface the last error, or — when the loop was
@@ -73,6 +79,12 @@ pub(crate) async fn orchestrate(
             last_error.unwrap_or_else(|| AgentRuntimeError::Agent("request cancelled".into()))
         );
     };
+
+    // A stopped question keeps its last settled answer, but it must not begin
+    // consensus/vote work after the stop source fired.
+    if cancellation.is_cancelled() {
+        return Ok(with_paid_usage(last_success, paid_usage));
+    }
 
     // The event is emitted once whenever more than one attempt ran — including
     // when there is no winner, because "the attempts disagreed" is the most
@@ -99,13 +111,39 @@ pub(crate) async fn orchestrate(
         if let Some(i) = decision.winner
             && let Some(Some(out)) = outputs.get(i)
         {
-            return Ok(out.clone());
+            return Ok(with_paid_usage(out.clone(), paid_usage));
         }
     }
 
     // No winner (tie, or a single survivor after cancellation): return the last
     // successful attempt's output so the caller always has an answer to show.
-    Ok(last_success)
+    Ok(with_paid_usage(last_success, paid_usage))
+}
+
+fn with_paid_usage(mut output: AgentOutput, usage: TokenUsage) -> AgentOutput {
+    output.usage = usage;
+    output
+}
+
+fn add_usage(mut total: TokenUsage, usage: TokenUsage) -> TokenUsage {
+    total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
+    total.cached_input_tokens = add_optional(total.cached_input_tokens, usage.cached_input_tokens);
+    total.cache_creation_input_tokens = add_optional(
+        total.cache_creation_input_tokens,
+        usage.cache_creation_input_tokens,
+    );
+    total.reasoning_tokens = add_optional(total.reasoning_tokens, usage.reasoning_tokens);
+    total
+}
+
+fn add_optional(total: Option<u64>, usage: Option<u64>) -> Option<u64> {
+    match (total, usage) {
+        (Some(total), Some(usage)) => Some(total.saturating_add(usage)),
+        (Some(total), None) => Some(total),
+        (None, Some(usage)) => Some(usage),
+        (None, None) => None,
+    }
 }
 
 /// Wraps a [`CandidateExecutor`] to count how many nominated statements
