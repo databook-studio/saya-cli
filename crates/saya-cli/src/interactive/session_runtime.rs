@@ -14,6 +14,7 @@ use saya_store::{BypassSource, SessionJournal};
 
 use super::session_paths::create_state_dir;
 use super::session_universe::{SessionComposition, SessionUniverse};
+use crate::agent::question_scope::QuestionScope;
 
 pub(crate) struct SessionRuntime {
     universe: Arc<SessionUniverse>,
@@ -51,6 +52,16 @@ pub(crate) struct SessionRuntime {
     /// notice seam the surfaces already print. Later failures are said by
     /// the site that made the consent.
     journal_failure: Mutex<Option<String>>,
+    /// Runtime-only question authority. It deliberately never rides
+    /// `SessionState`, so a saved narrative cannot restore a cancellation
+    /// token or answering wallet after resume.
+    question: QuestionLifecycle,
+}
+
+enum QuestionLifecycle {
+    Idle,
+    Active(QuestionScope),
+    PendingClarification(QuestionScope),
 }
 
 /// The acquisition's inputs, including the trust seam: `trusted: None` is
@@ -157,7 +168,48 @@ impl SessionRuntime {
             state_dir: state_dir.clone(),
             journal: Arc::new(SessionJournal::open(&state_dir)),
             journal_failure: Mutex::new(None),
+            question: QuestionLifecycle::Idle,
         })
+    }
+
+    pub(crate) fn begin_question(
+        &mut self,
+        runtime: &crate::config::runtime::RuntimeConfig,
+    ) -> Result<QuestionScope, String> {
+        let scope = match std::mem::replace(&mut self.question, QuestionLifecycle::Idle) {
+            QuestionLifecycle::Idle => {
+                QuestionScope::new(runtime, saya_agent::CancellationToken::new())
+            }
+            QuestionLifecycle::PendingClarification(scope) => scope,
+            QuestionLifecycle::Active(scope) => {
+                self.question = QuestionLifecycle::Active(scope);
+                return Err("an answering question is already active".into());
+            }
+        };
+        self.question = QuestionLifecycle::Active(scope.clone());
+        Ok(scope)
+    }
+
+    pub(crate) fn settle_question(&mut self, clarification: bool) {
+        let previous = std::mem::replace(&mut self.question, QuestionLifecycle::Idle);
+        if let QuestionLifecycle::Active(scope) = previous {
+            if clarification && !scope.cancellation().is_cancelled() {
+                self.question = QuestionLifecycle::PendingClarification(scope);
+            } else {
+                scope.settle_answering();
+            }
+        }
+    }
+
+    pub(crate) fn abandon_question(&mut self) {
+        let previous = std::mem::replace(&mut self.question, QuestionLifecycle::Idle);
+        match previous {
+            QuestionLifecycle::Active(scope) | QuestionLifecycle::PendingClarification(scope) => {
+                scope.cancellation().cancel();
+                scope.settle_answering();
+            }
+            QuestionLifecycle::Idle => {}
+        }
     }
 
     /// Swaps the composed universe for a startup trust answer given

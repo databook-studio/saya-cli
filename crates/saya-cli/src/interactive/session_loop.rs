@@ -588,6 +588,7 @@ fn handle_line_verbatim(
             // capabilities: stdin readability and approval obtainability are
             // the same fact here — no modal, no alternate screen. The TUI
             // states them separately (`tui::agent::approval_capabilities`).
+            let scope = session.begin_question(runtime)?;
             match block_on(super::session_request::run(
                 runtime,
                 line,
@@ -604,8 +605,13 @@ fn handle_line_verbatim(
                 state.agent_mode_parsed(),
                 state.prior_tool_outcomes.clone(),
                 state.compaction_narrative(),
+                scope,
             )) {
                 Ok(PromptResult::Completed(output)) => {
+                    let clarification = output.events.iter().any(|event| {
+                        matches!(event, saya_agent::AgentEvent::ClarificationNeeded { .. })
+                    });
+                    session.settle_question(clarification);
                     state.task_list = session.universe().tasks().current();
                     state.record_agent_output(line, &output);
                     // Feed the session accumulator so /usage is honest in
@@ -622,6 +628,7 @@ fn handle_line_verbatim(
                     answering_usage,
                     learning_usage,
                 }) => {
+                    session.abandon_question();
                     if let Some(usage) = answering_usage {
                         state.usage.answering.record_call(&usage);
                     }
@@ -629,12 +636,16 @@ fn handle_line_verbatim(
                     SessionAction::Cancelled
                 }
                 Ok(PromptResult::Failed(error, usage)) => {
+                    session.abandon_question();
                     if let Some(usage) = usage {
                         state.usage.answering.record_call(&usage);
                     }
                     SessionAction::Error(error.to_string())
                 }
-                Err(error) => SessionAction::Error(error.to_string()),
+                Err(error) => {
+                    session.abandon_question();
+                    SessionAction::Error(error.to_string())
+                }
             }
         }
     };
