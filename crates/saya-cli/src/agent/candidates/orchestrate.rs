@@ -47,14 +47,22 @@ pub(crate) async fn orchestrate(
     let mut nominations: Vec<Option<String>> = Vec::with_capacity(candidates);
     let mut outputs: Vec<Option<AgentOutput>> = Vec::with_capacity(candidates);
     let mut last_error: Option<AgentRuntimeError> = None;
+    // Set when an attempt's returned output ended on a settled clarification:
+    // the pause IS the question's outcome, so nothing after it may launch.
+    let mut settled_clarification = false;
     for _ in 0..candidates {
         if cancellation.is_cancelled() {
             break;
         }
         match runner.run().await {
             Ok(out) => {
+                let paused = ended_on_settled_clarification(&out);
                 nominations.push(out.answer_sql.clone());
                 outputs.push(Some(out));
+                if paused {
+                    settled_clarification = true;
+                    break;
+                }
             }
             // A failed attempt contributes no nomination and does not abort the
             // rest; it is recorded so the alignment holds and the error is
@@ -77,6 +85,14 @@ pub(crate) async fn orchestrate(
             last_error.unwrap_or_else(|| AgentRuntimeError::Agent("request cancelled".into()))
         );
     };
+
+    // A settled clarification is the answer: no further attempts, no
+    // verification, no vote — the paused output returns as-is with the earlier
+    // paid usage summed truthfully, and no consensus may be fabricated over a
+    // turn that never answered.
+    if settled_clarification {
+        return Ok(with_paid_usage(last_success, paid_usage));
+    }
 
     // A stopped question keeps its last settled answer, but it must not begin
     // consensus/vote work after the stop source fired.
@@ -144,6 +160,17 @@ pub(crate) async fn orchestrate(
 fn with_paid_usage(mut output: AgentOutput, usage: TokenUsage) -> AgentOutput {
     output.usage = usage;
     output
+}
+
+/// Whether a returned attempt ended on a settled clarification: the loop's
+/// clarification turn emits [`AgentEvent::ClarificationNeeded`] and then
+/// completes, so a returned Ok output carrying the event is a finished pause
+/// for input, not a mid-turn interruption.
+fn ended_on_settled_clarification(output: &AgentOutput) -> bool {
+    output
+        .events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. }))
 }
 
 /// Wraps a [`CandidateExecutor`] to count how many nominated statements
