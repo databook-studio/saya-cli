@@ -23,7 +23,7 @@ use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::application::tests_support::{idle_app, unused_runtime};
 use crate::interactive::tui::transcript::BlockKind;
-use crate::interactive::tui::types::{App, LastQuery};
+use crate::interactive::tui::types::App;
 use crate::render::RenderFormat;
 use crate::slash::SlashCommand;
 use saya_store::FsSessionStore;
@@ -417,7 +417,9 @@ struct TuiHarness {
     session: SessionRuntime,
     store: FsSessionStore,
     runtime: RuntimeConfig,
-    root: RootGuard,
+    /// Held, never read: the guard's purpose is its lifetime — dropping the
+    /// fixture removes the throwaway root (the `_lock` precedent).
+    _root: RootGuard,
 }
 
 impl TuiHarness {
@@ -444,7 +446,7 @@ impl TuiHarness {
             session,
             store: FsSessionStore::new(root.join("session-store")),
             runtime,
-            root: RootGuard(root),
+            _root: RootGuard(root),
         }
     }
 
