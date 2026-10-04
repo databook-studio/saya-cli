@@ -44,6 +44,9 @@ use saya_types::{
     Budgets, Capabilities, PauseReason, RunEvent, RunFailureCode, RunId, RunPlan, StepSpec,
 };
 
+#[path = "engine_episode/deadline.rs"]
+mod deadline;
+
 /// A per-test scratch root: the state database and the run directory both
 /// live under it, and one cleanup covers both.
 fn temp_root(label: &str) -> PathBuf {

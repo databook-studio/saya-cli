@@ -36,9 +36,9 @@ use std::{
 
 use async_trait::async_trait;
 use saya_agent::{
-    ApprovalDecider, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
-    LocalStateEffect, ProviderError, TokenUsage, ToolCall, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutor,
+    ApprovalDecider, CancellationReason, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
+    ChatResponse, LocalStateEffect, ProviderError, TokenUsage, ToolCall, ToolDefinition,
+    ToolEffect, ToolError, ToolExecutionContext, ToolExecutor,
 };
 use saya_harness::HarnessError;
 use saya_harness::engine::{
@@ -55,6 +55,7 @@ use saya_store::{
     RunStore, RunSummary, RunUsage, SqliteStateStore, StoreError,
 };
 use saya_types::{Capabilities, PauseReason, RunEvent, RunId, RunPlan, StepSpec};
+use tokio::sync::oneshot;
 
 /// A per-test scratch root: the state database and the run directory both
 /// live under it, and one cleanup covers both.
@@ -139,6 +140,44 @@ impl ToolExecutor for NoTools {
     async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
         panic!("no resume test may execute a tool call")
+    }
+}
+
+struct HeldResumeTool {
+    started: std::sync::Mutex<Option<oneshot::Sender<CancellationToken>>>,
+    stopped: std::sync::Mutex<Option<oneshot::Sender<CancellationReason>>>,
+    release: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+#[async_trait]
+impl ToolExecutor for HeldResumeTool {
+    async fn execute(&self, _: &str, _: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+        unreachable!("the resumed loop must forward its execution context")
+    }
+
+    async fn execute_with_context(
+        &self,
+        _: &str,
+        _: serde_json::Value,
+        context: ToolExecutionContext,
+    ) -> Result<serde_json::Value, ToolError> {
+        let _ = self
+            .started
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .send(context.cancellation.clone());
+        context.cancellation.cancelled().await;
+        let _ = self.stopped.lock().unwrap().take().unwrap().send(
+            context
+                .cancellation
+                .reason()
+                .expect("the source sees the driver's stop"),
+        );
+        let release = self.release.lock().unwrap().take().unwrap();
+        release.await.unwrap();
+        Ok(serde_json::json!({"settled": true}))
     }
 }
 
@@ -831,11 +870,9 @@ fn budgeted_inputs<'a>(
 /// invocation. A run pauses on its 150-token ceiling having spent 160; a
 /// resume seeds the sink's totals from the journal's usage record instead of
 /// re-arming the ceiling, so — resumed with no fresh budget — the run pauses
-/// again at its cumulative spend. The pause lands on the first tick of the
-/// resumed episode, before the turn's own usage folds in: the carried spend
-/// alone is already past the ceiling, which no re-armed ceiling could trip.
-/// Under the re-arm behaviour this replaces, the resumed invocation would
-/// have started from zero and spent a whole fresh ceiling before pausing.
+/// again at its cumulative spend. The same cancellation owner sees the
+/// carried spend before the resumed provider is polled, so there is no new
+/// request after the run already crossed its ceiling.
 #[tokio::test]
 async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumulative_spend() {
     // The posture a `BudgetExhausted` pause leaves: the per-call usage the
@@ -862,20 +899,17 @@ async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumula
     // Resumed against the same ceiling, granted nothing fresh.
     let outcome = resume(&run.run_dir, budgeted_inputs(&run, &provider, Some(150))).await;
 
-    // The resumed episode tripped the ceiling on its first tick and then ran
-    // to its natural end — a paused run's episode is not interrupted — so
-    // the driver's completion meets the machine: only an executing run
-    // completes. That refusal surfaces as the step's error; the pause itself
-    // is in the journal, and it is the shape every mid-episode pause leaves.
+    // The carried known spend is checked before the resumed source starts.
     let error = outcome.unwrap_err();
-    assert!(
-        matches!(error, ResumeError::Episode { .. }),
-        "the machine must refuse a paused run's completion: {error:?}"
-    );
+    assert!(matches!(error, ResumeError::Episode { .. }));
 
-    // The journal: the first invocation's record, then the resume's — one
-    // step started, the ceiling pause, the turn's usage (journaled after the
-    // pause that tripped on the carried spend), and the step's completion.
+    assert_eq!(
+        provider.count(),
+        0,
+        "an exhausted carried budget admits no request"
+    );
+    // The journal has the original record followed by exactly one settled
+    // budget pause; resume never adds a request or replays a receipt.
     assert_eq!(
         run.journal(),
         vec![
@@ -887,15 +921,11 @@ async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumula
             RunEvent::Paused {
                 reason: PauseReason::BudgetExhausted
             },
-            RunEvent::StepStarted { step: 0 },
             RunEvent::Paused {
                 reason: PauseReason::BudgetExhausted
             },
-            journaled_usage(10),
-            RunEvent::StepCompleted { step: 0 },
         ],
-        "the resume must pause again on the run's cumulative spend, not at a \
-         re-armed ceiling"
+        "the resume must pause before admitting work at the carried ceiling"
     );
     let events = run.journal();
     // The run's whole spend across both invocations.
@@ -909,7 +939,10 @@ async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumula
             _ => 0,
         })
         .sum();
-    assert_eq!(total, 170, "the run spent 160 before the pause, 10 after");
+    assert_eq!(
+        total, 160,
+        "resume must not fabricate another usage receipt"
+    );
     // The store mirrors the pause the resume recorded.
     let recorded = run.store.get_run(&run.run_id).await.unwrap().unwrap();
     assert_eq!(
@@ -917,10 +950,128 @@ async fn a_budget_paused_run_resumed_without_a_fresh_budget_pauses_at_its_cumula
         RunStatus::Paused,
         "the run must stand paused, not running on a fresh budget"
     );
-    // One call — the paused episode's own turn, not a fresh budget's worth.
-    assert_eq!(provider.count(), 1);
+    // No resumed call: the carried known spend already exhausted the ceiling.
+    assert_eq!(provider.count(), 0);
 
     let _ = fs::remove_dir_all(&run.root);
+}
+
+#[tokio::test]
+async fn resume_deadline_waits_for_context_tool_settlement_before_its_pause() {
+    let clock = saya_harness::engine::ElapsedClock::arm_now(Duration::from_secs(1)).unwrap();
+    let plan = RunPlan::new(vec![step("hold until the resumed source stops")]).unwrap();
+    let run = crashed_run(
+        "held-resume-deadline",
+        &[
+            RunEvent::RunStarted,
+            RunEvent::PlanApproved { scopes: None },
+            RunEvent::StepStarted { step: 0 },
+            clock.event(),
+        ],
+        RunStatus::Executing,
+        plan,
+    )
+    .await;
+    let provider = ScriptProvider::new(vec![
+        Turn::Tools(vec![tool_call("held_probe")]),
+        Turn::Answer("done"),
+    ]);
+    let (started_tx, started_rx) = oneshot::channel();
+    let (stopped_tx, stopped_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let toolsets = vec![StepToolset {
+        executor: Arc::new(HeldResumeTool {
+            started: std::sync::Mutex::new(Some(started_tx)),
+            stopped: std::sync::Mutex::new(Some(stopped_tx)),
+            release: std::sync::Mutex::new(Some(release_rx)),
+        }),
+        definitions: vec![ToolDefinition {
+            name: "held_probe".into(),
+            description: "bounded held source".into(),
+            read_only: true,
+            parameters: serde_json::json!({"type": "object"}),
+            effect: ToolEffect {
+                database_data: false,
+                external_side_effect: false,
+                requires_approval: false,
+                local_state: LocalStateEffect::None,
+            },
+            concurrency: saya_agent::ToolConcurrency::Serial,
+            completion: None,
+        }],
+    }];
+    let cancellation = CancellationToken::default();
+    let mut inputs = run.inputs();
+    inputs.incomplete_policy = saya_harness::engine::IncompletePolicy::Retry;
+    inputs.collaborators.provider = &provider;
+    inputs.collaborators.cancellation = cancellation.clone();
+    inputs.collaborators.toolsets = &toolsets;
+    inputs.wall_clock = Some(Duration::from_secs(1));
+    let active = resume(&run.run_dir, inputs);
+    tokio::pin!(active);
+
+    let source_token = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::select! {
+            started = started_rx => started.unwrap(),
+            result = &mut active => panic!("resume ended before the held source started: {result:?}"),
+        }
+    })
+    .await
+    .expect("the resumed context-aware tool starts");
+    let baseline = run.journal();
+    assert!(!matches!(
+        baseline.last(),
+        Some(
+            RunEvent::Paused {
+                reason: PauseReason::WallClockExceeded
+            } | RunEvent::Cancelled
+        )
+    ));
+    let observed = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::select! {
+            stopped = stopped_rx => stopped.unwrap(),
+            result = &mut active => panic!("resume returned before the held source saw stop: {result:?}"),
+        }
+    })
+    .await
+    .expect("the independent resume timer reaches the actual tool token");
+    assert_eq!(
+        observed,
+        CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime)
+    );
+    assert_eq!(source_token.reason(), Some(observed));
+    assert_eq!(
+        run.journal(),
+        baseline,
+        "no terminal lifecycle is written while the source is held"
+    );
+
+    release_tx.send(()).unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(2), &mut active)
+        .await
+        .expect("resume awaits the same source before recording its stop")
+        .unwrap_err();
+    assert!(matches!(result, ResumeError::Episode { .. }));
+    let events = run.journal();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                RunEvent::Paused {
+                    reason: PauseReason::WallClockExceeded
+                }
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, RunEvent::Cancelled))
+            .count(),
+        0
+    );
 }
 
 /// Seeding rides the repaired record: a torn trailing usage line — the
@@ -1186,9 +1337,8 @@ async fn a_download_paused_run_resumed_without_a_fresh_wallet_continues_against_
     let recorded = run.store.get_run(&run.run_id).await.unwrap().unwrap();
     assert_eq!(recorded.status, RunStatus::Paused);
 
-    // The journal: the first invocation's record, then the resume's — the
-    // step restarted, the refusal paused the run again, the episode ran to
-    // its natural end, and nothing was claimed (no level grew past 97).
+    // The journal: the first invocation's record, then the resumed attempt
+    // started and settled at the first refused claim, with no step completion.
     assert_eq!(
         run.journal(),
         vec![
@@ -1204,7 +1354,6 @@ async fn a_download_paused_run_resumed_without_a_fresh_wallet_continues_against_
             RunEvent::Paused {
                 reason: PauseReason::BudgetExhausted
             },
-            RunEvent::StepCompleted { step: 0 },
         ],
         "the resume must continue against the recorded spend, not a fresh wallet"
     );
@@ -1288,7 +1437,6 @@ async fn a_resumed_download_claims_the_carried_headroom_and_records_the_level_it
             RunEvent::Paused {
                 reason: PauseReason::BudgetExhausted
             },
-            RunEvent::StepCompleted { step: 0 },
         ],
         "the resumed claims must record the level they reached, past the \
          carried spend, never the carried spend again"

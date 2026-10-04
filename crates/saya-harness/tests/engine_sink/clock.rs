@@ -144,7 +144,7 @@ async fn an_active_clock_error_is_diagnosed_while_the_run_pauses() {
 }
 
 #[tokio::test]
-async fn a_failed_clock_append_before_a_tool_request_pauses_with_the_journal_error() {
+async fn a_failed_clock_append_before_a_tool_request_does_not_fabricate_a_pause() {
     let root = temp_root("clock-write-failure");
     let (store, run_id) = seeded_store(&root, "clock-write-failure", RunStatus::Planned).await;
     let run_dir = root.join("run");
@@ -184,7 +184,11 @@ async fn a_failed_clock_append_before_a_tool_request_pauses_with_the_journal_err
     )
     .await;
 
-    assert_eq!(sink.state(), RunState::Paused);
+    assert_eq!(
+        sink.state(),
+        RunState::Executing,
+        "a failed journal append cannot be presented as a durable pause"
+    );
     assert!(matches!(
         sink.take_diagnostic().as_deref(),
         Some(EngineSinkError::Journal { .. })

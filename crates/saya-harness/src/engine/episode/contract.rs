@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use saya_agent::{ApprovalDecider, CancellationToken, ChatProvider, ToolDefinition, ToolExecutor};
 use saya_store::RunStore;
-use saya_types::{RunFailureCode, RunId};
+use saya_types::{PauseReason, RunFailureCode, RunId};
 use thiserror::Error;
 
 use crate::{HarnessError, journal::Journal};
@@ -34,6 +34,68 @@ pub enum EpisodeError {
     /// The user cancelled the run; the run was recorded cancelled.
     #[error("run cancelled during step {step}")]
     Cancelled { step: usize },
+
+    /// The user cancellation was recorded, and an independent sink diagnostic
+    /// was retained while the active source settled.
+    #[error("run cancelled during step {step}; diagnostic: {diagnostic}")]
+    CancelledDiagnostic {
+        step: usize,
+        diagnostic: Arc<EngineSinkError>,
+    },
+
+    /// A retained sink diagnostic preceded a failed cancellation transition.
+    /// The transition may have reached the journal before its store mirror
+    /// failed; callers must consult the authoritative state and surface both.
+    #[error(
+        "run cancellation persistence failed during step {step}; original diagnostic: {diagnostic}; transition: {transition}"
+    )]
+    CancelPersistenceFailed {
+        step: usize,
+        diagnostic: Arc<EngineSinkError>,
+        transition: Arc<EngineSinkError>,
+    },
+
+    /// A budget stopped the run after the active episode had settled.
+    #[error("run paused during step {step}: {reason:?}")]
+    BudgetStopped { step: usize, reason: PauseReason },
+
+    /// A budget pause that also retained an independent clock/store diagnostic.
+    #[error("run paused during step {step}: {reason:?}; diagnostic: {diagnostic}")]
+    BudgetStoppedDiagnostic {
+        step: usize,
+        reason: PauseReason,
+        diagnostic: Arc<EngineSinkError>,
+    },
+
+    /// A budget pause whose lifecycle write or mirror failed after a prior
+    /// diagnostic had already been retained. The journal state decides
+    /// whether the pause was committed.
+    #[error(
+        "run budget stop during step {step} ({reason:?}) encountered a transition error; original diagnostic: {diagnostic}; transition: {transition}"
+    )]
+    BudgetPersistenceFailed {
+        step: usize,
+        reason: PauseReason,
+        diagnostic: Arc<EngineSinkError>,
+        transition: Arc<EngineSinkError>,
+    },
+
+    /// An internal owner stopped the active episode; no user or budget
+    /// lifecycle reason can be inferred from that signal.
+    #[error("run owner failed during step {step}")]
+    OwnerFailure { step: usize },
+
+    /// An owner failure with the concrete first sink diagnostic retained.
+    #[error("run owner failed during step {step}: {diagnostic}")]
+    OwnerFailureDiagnostic {
+        step: usize,
+        diagnostic: Arc<EngineSinkError>,
+    },
+
+    /// The authoritative elapsed-clock observation failed before an episode
+    /// could safely begin.
+    #[error("run clock or sink observation failed before work: {source}")]
+    SinkDiagnostic { source: Arc<EngineSinkError> },
 
     /// The run cannot begin a step in its current state: `planned` has no
     /// approval to run under, a later step cannot begin an unstarted run,

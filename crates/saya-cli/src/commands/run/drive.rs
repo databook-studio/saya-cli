@@ -241,6 +241,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         Some(clock) => sink.with_elapsed_clock(clock),
         None => sink,
     };
+    let sink = sink.with_cancellation(host.cancellation.clone());
     let sink = match host.agent_stream {
         Some(stream) => sink.with_agent_stream(stream),
         None => sink.with_agent_stream(Arc::new(TerminalSink::new(format))),
@@ -287,6 +288,58 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
             &run_id,
             format,
         ),
+        Err(error @ saya_harness::engine::EpisodeError::OwnerFailureDiagnostic { .. })
+        | Err(error @ saya_harness::engine::EpisodeError::SinkDiagnostic { .. }) => {
+            crate::commands::output::failure_message(
+                3,
+                format!("run {run_id} stopped after an owner error: {error}"),
+                format,
+            )
+        }
+        Err(error @ saya_harness::engine::EpisodeError::BudgetStoppedDiagnostic { .. }) => {
+            crate::commands::output::failure_message(
+                6,
+                format!("run {run_id} paused after its stop settled: {error}"),
+                format,
+            )
+        }
+        Err(
+            error @ (saya_harness::engine::EpisodeError::CancelledDiagnostic { .. }
+            | saya_harness::engine::EpisodeError::CancelPersistenceFailed { .. }
+            | saya_harness::engine::EpisodeError::BudgetPersistenceFailed { .. }
+            | saya_harness::engine::EpisodeError::Transition { .. }),
+        ) if matches!(
+            sink.state(),
+            saya_harness::engine::RunState::Completed
+                | saya_harness::engine::RunState::Failed
+                | saya_harness::engine::RunState::Cancelled
+                | saya_harness::engine::RunState::Paused
+        ) =>
+        {
+            exit::settle_diagnostic(
+                Settled {
+                    state: sink.state(),
+                    code: exit::failure_code_of(&error),
+                },
+                &error,
+                &run_id,
+                format,
+            )
+        }
+        Err(error)
+            if matches!(
+                sink.state(),
+                saya_harness::engine::RunState::Planned
+                    | saya_harness::engine::RunState::Approved
+                    | saya_harness::engine::RunState::Executing
+            ) =>
+        {
+            crate::commands::output::failure_message(
+                3,
+                format!("run {run_id} could not settle: {error}"),
+                format,
+            )
+        }
         Err(error) => exit::settle(
             Settled {
                 state: sink.state(),
