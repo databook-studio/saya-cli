@@ -5,14 +5,14 @@ pub(crate) mod allow_refusal;
 pub(crate) mod auto_compact;
 pub(crate) mod compact_task;
 mod session_commands;
-// The one key for the session's answering context: both dispatch sites
-// snapshot it around `state.apply` to abandon a stale question scope.
-pub(crate) mod session_context_key;
 pub(crate) mod session_compact;
 pub(crate) mod session_compact_call;
 #[cfg(test)]
 #[path = "session_compact_tests.rs"]
 mod session_compact_tests;
+// The one key for the session's answering context: both dispatch sites
+// snapshot it around `state.apply` to abandon a stale question scope.
+pub(crate) mod session_context_key;
 pub(crate) mod session_continuation;
 pub(crate) mod session_deny;
 #[cfg(test)]
