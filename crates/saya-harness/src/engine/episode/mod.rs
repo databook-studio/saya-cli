@@ -270,8 +270,10 @@ impl<'a> EpisodeDriver<'a> {
                 } else {
                     PauseReason::BudgetExhausted
                 };
-                let diagnostic = sink.take_diagnostic();
-                match sink.record(TransitionEvent::Pause(reason)).await {
+                let prior_diagnostic = sink.take_diagnostic();
+                let transition = sink.record(TransitionEvent::Pause(reason)).await;
+                let diagnostic = prior_diagnostic.or_else(|| sink.take_diagnostic());
+                match transition {
                     Ok(_) => match diagnostic {
                         Some(diagnostic) => Err(EpisodeError::BudgetStoppedDiagnostic {
                             step,
