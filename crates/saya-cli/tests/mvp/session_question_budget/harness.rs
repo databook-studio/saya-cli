@@ -1,0 +1,378 @@
+//! Shared harness for the REPL question-budget rows: the child guard,
+//! the mock SSE provider helpers, the output pumps, and a scriptable mock
+//! server. Row B (idle wait) and Row A (remaining budget) share it.
+
+#[cfg(unix)]
+pub(crate) struct InteractiveChildGuard(pub(crate) Option<std::process::Child>);
+
+#[cfg(unix)]
+impl Drop for InteractiveChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            if child.try_wait().unwrap().is_none() {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+        }
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn drain_provider_request(stream: &mut std::net::TcpStream) -> String {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if let Some(head) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            let length = String::from_utf8_lossy(&bytes[..head])
+                .lines()
+                .find_map(|line| match line.split_once(':') {
+                    Some((name, value)) if name.eq_ignore_ascii_case("content-length") => {
+                        value.trim().parse::<usize>().ok()
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0);
+            if bytes.len() >= head + 4 + length {
+                return String::from_utf8_lossy(&bytes[head + 4..head + 4 + length]).into_owned();
+            }
+        }
+        let count = match stream.read(&mut chunk) {
+            Ok(count) => count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                return String::from_utf8_lossy(&bytes).into_owned();
+            }
+            Err(error) => panic!("provider request reads: {error}"),
+        };
+        if count == 0 {
+            return String::new();
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+}
+#[cfg(unix)]
+pub(crate) fn accept_provider(listener: &std::net::TcpListener) -> Option<std::net::TcpStream> {
+    use std::{
+        io, thread,
+        time::{Duration, Instant},
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => {
+                stream.set_nonblocking(false).ok()?;
+                stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+                stream.set_write_timeout(Some(Duration::from_secs(5))).ok()?;
+                return Some(stream);
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn wait_for_stream(
+    buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    needle: &[u8],
+    label: &str,
+) {
+    wait_for_stream_timeout(buffer, needle, label, std::time::Duration::from_secs(5));
+}
+
+#[cfg(unix)]
+pub(crate) fn wait_for_stream_timeout(
+    buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    needle: &[u8],
+    label: &str,
+    timeout: std::time::Duration,
+) {
+    use std::{
+        thread,
+        time::Instant,
+    };
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        if buffer
+            .lock()
+            .unwrap()
+            .windows(needle.len())
+            .any(|window| window == needle)
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "did not observe {label}");
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// One reply the scriptable mock server sends per provider request.
+#[cfg(unix)]
+#[derive(Clone)]
+pub(crate) enum ScriptStep {
+    Clarify { delay: std::time::Duration },
+    Natural,
+    Harmless,
+    HoldOpen { marker: String },
+}
+
+#[cfg(unix)]
+pub(crate) fn clarification_body() -> String {
+    concat!(
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,",
+        "\"id\":\"call-1\",\"function\":{\"name\":\"request_clarification\",",
+        "\"arguments\":\"{\\\"question\\\":\\\"Which one?\\\",\\\"options\\\":[\\\"a\\\",\\\"b\\\"]}\"}}]},",
+        "\"finish_reason\":\"tool_calls\"}]}\n\n"
+    )
+    .to_owned()
+}
+
+#[cfg(unix)]
+pub(crate) fn answer_body() -> String {
+    concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"the-final-answer\"},",
+        "\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,",
+        "\"completion_tokens\":1}}\n\n"
+    )
+    .to_owned()
+}
+
+#[cfg(unix)]
+pub(crate) fn harmless_body() -> String {
+    "data: {\"content\":\"{\\\"proposals\\\": []}\"}\n\n".to_owned()
+}
+
+#[cfg(unix)]
+fn reply_finished(stream: &mut std::net::TcpStream, body: &str) {
+    use std::io::Write;
+    let done = format!("data: [{}]\n\n", "DONE");
+    let full = format!("{body}{done}");
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{full}"
+    )
+    .unwrap();
+    stream.flush().unwrap();
+}
+
+#[cfg(unix)]
+pub(crate) struct MockServer {
+    pub(crate) address: String,
+    pub(crate) requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(unix)]
+impl MockServer {
+    pub(crate) fn join(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for MockServer {
+    fn drop(&mut self) {
+        self.join();
+    }
+}
+
+/// Spawns the mock provider thread: request `i` is answered by
+/// `script[i]` (requests past the script get a harmless completion).
+/// Clarify holds `delay` inside the thread before writing (source-held
+/// ACTIVE time); HoldOpen writes one marker chunk and keeps the socket
+/// open until `release` fires, so no new request can arrive meanwhile.
+#[cfg(unix)]
+pub(crate) fn spawn_script_server(
+    listener: std::net::TcpListener,
+    script: Vec<ScriptStep>,
+    release: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> MockServer {
+    use std::{
+        io::Write,
+        sync::atomic::Ordering,
+        thread,
+        time::Duration,
+    };
+
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server_count = requests.clone();
+    let handle = thread::spawn(move || {
+        loop {
+            let Some(mut stream) = accept_provider(&listener) else {
+                break;
+            };
+            drain_provider_request(&mut stream);
+            let index = server_count.fetch_add(1, Ordering::SeqCst);
+            let step = script.get(index).cloned().unwrap_or(ScriptStep::Harmless);
+            match step {
+                ScriptStep::Clarify { delay } => {
+                    thread::sleep(delay);
+                    reply_finished(&mut stream, &clarification_body());
+                }
+                ScriptStep::Natural => reply_finished(&mut stream, &answer_body()),
+                ScriptStep::Harmless => reply_finished(&mut stream, &harmless_body()),
+                ScriptStep::HoldOpen { marker } => {
+                    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+                    write!(stream, "{head}data: {marker}\n\n").unwrap();
+                    stream.flush().unwrap();
+                    while !release.load(Ordering::SeqCst) {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
+            }
+            drop(stream);
+            if index >= 8 {
+                break;
+            }
+        }
+    });
+    MockServer { address, requests, handle: Some(handle) }
+}
+
+/// Waits for the child to exit, then asserts a clean status and removes
+/// the temp config/session roots. Pumps are joined after the process ends
+/// so trailing output is still captured.
+#[cfg(unix)]
+pub(crate) struct SpawnedChild {
+    pub(crate) guard: InteractiveChildGuard,
+    pub(crate) stdout_buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    pub(crate) stderr_buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    pub(crate) stdin: std::process::ChildStdin,
+    config_root: std::path::PathBuf,
+    session_root: std::path::PathBuf,
+    pumps: Option<(std::thread::JoinHandle<()>, std::thread::JoinHandle<()>)>,
+}
+
+#[cfg(unix)]
+impl SpawnedChild {
+    pub(crate) fn child(&mut self) -> &mut std::process::Child {
+        self.guard.0.as_mut().unwrap()
+    }
+    pub(crate) fn send(&mut self, bytes: &[u8]) {
+        use std::io::Write;
+        self.stdin.write_all(bytes).unwrap();
+        self.stdin.flush().unwrap();
+    }
+    pub(crate) fn finish(mut self) {
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if self.guard.0.as_mut().unwrap().try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "interactive child did not exit");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let status = self.guard.0.take().unwrap().wait().unwrap();
+        assert!(status.success(), "child should exit cleanly");
+        if let Some((err_pump, out_pump)) = self.pumps.take() {
+            let _ = err_pump.join();
+            let _ = out_pump.join();
+        }
+        let _ = std::fs::remove_dir_all(&self.config_root);
+        let _ = std::fs::remove_dir_all(&self.session_root);
+    }
+}
+
+/// Spawns the REPL against `base_url` with `ceiling_secs` question budget.
+#[cfg(unix)]
+pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> SpawnedChild {
+    use std::{
+        io::Read,
+        process::{Command, Stdio},
+        thread,
+    };
+
+    let pid = std::process::id();
+    let config_root = std::env::temp_dir().join(format!("saya-cli-question-{tag}-{pid}"));
+    let session_root = std::env::temp_dir().join(format!("saya-cli-question-sess-{tag}-{pid}"));
+    std::fs::create_dir_all(config_root.join("saya")).unwrap();
+    std::fs::write(
+        config_root.join("saya").join("config.toml"),
+        format!("[ai]\ninvestigation_max_elapsed_seconds = {ceiling_secs}\n"),
+    )
+    .unwrap();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear()
+        .env("SAYA_CONFIG_HOME", &config_root)
+        .env("SAYA_SESSION_DIR", &session_root)
+        .env("SAYA_PROVIDER", "openai_compatible")
+        .env("SAYA_MODEL", "mock-model")
+        .env("SAYA_PROVIDER_BASE_URL", format!("{base_url}/v1"))
+        .env("SAYA_API_KEY", "mock-secret");
+    let mut guard = InteractiveChildGuard(Some(command.spawn().unwrap()));
+    let child = guard.0.as_mut().unwrap();
+
+    let stderr = child.stderr.take().unwrap();
+    let stderr_buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let stderr_sink = stderr_buf.clone();
+    let stderr_pump = thread::spawn(move || {
+        let mut reader = stderr;
+        let mut buffer = [0_u8; 4096];
+        while let Ok(size) = reader.read(&mut buffer) {
+            if size == 0 {
+                break;
+            }
+            stderr_sink.lock().unwrap().extend_from_slice(&buffer[..size]);
+        }
+    });
+    let stdout = child.stdout.take().unwrap();
+    let stdout_buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let stdout_sink = stdout_buf.clone();
+    let stdout_pump = thread::spawn(move || {
+        let mut reader = stdout;
+        let mut buffer = [0_u8; 4096];
+        while let Ok(size) = reader.read(&mut buffer) {
+            if size == 0 {
+                break;
+            }
+            stdout_sink.lock().unwrap().extend_from_slice(&buffer[..size]);
+        }
+    });
+    let stdin = child.stdin.take().unwrap();
+    SpawnedChild {
+        guard,
+        stdout_buf,
+        stderr_buf,
+        stdin,
+        config_root,
+        session_root,
+        pumps: Some((stderr_pump, stdout_pump)),
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn wait_with_deadline(child: &mut std::process::Child, timeout: std::time::Duration) {
+    use std::{thread, time::Instant};
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "interactive child did not exit");
+        thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
