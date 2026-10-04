@@ -1,4 +1,7 @@
 use crate::config::runtime::{RuntimeConfig, RuntimeError};
+use crate::interactive::sql_execution::{
+    SqlExecution, connected_connector, profile_label, source_binding, timed_execute,
+};
 use saya_agent::CancellationToken;
 use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
 use saya_types::{ConnectionError, DatabaseProfile, QueryRequest, QueryResult};
@@ -57,7 +60,39 @@ pub(crate) async fn execute_resolved(
     sql: &str,
     can_prompt: bool,
 ) -> Result<QueryResult, SqlOperationError> {
-    execute_resolved_with_cancellation(runtime, profile, sql, can_prompt, None).await
+    let name = profile_label(runtime, profile);
+    execute_resolved_with_source(runtime, &name, profile, sql, can_prompt)
+        .await
+        .map(|execution| execution.into_parts().0)
+}
+
+/// Executes direct SQL and returns the immutable source envelope: the
+/// result plus the binding (profile name/identity, dialect, issued row
+/// cap) and the wall-clock window around the real query.
+pub(crate) async fn execute_resolved_with_source(
+    runtime: &RuntimeConfig,
+    profile_name: &str,
+    profile: &DatabaseProfile,
+    sql: &str,
+    can_prompt: bool,
+) -> Result<SqlExecution, SqlOperationError> {
+    let applied_row_cap = runtime.resolved.max_rows;
+    let connector = connected_connector(runtime, profile, can_prompt).await?;
+    let binding = source_binding(
+        runtime,
+        profile_name,
+        profile,
+        connector.as_ref(),
+        applied_row_cap,
+    );
+    let (result, started_unix_ms, finished_unix_ms) =
+        timed_execute(connector.as_ref(), sql, applied_row_cap).await?;
+    Ok(SqlExecution::new(
+        result,
+        binding,
+        started_unix_ms,
+        finished_unix_ms,
+    ))
 }
 
 /// Executes bounded direct SQL while keeping cancellation attached to this
@@ -123,3 +158,6 @@ fn is_cancelled(cancellation: Option<&CancellationToken>) -> bool {
 #[cfg(test)]
 #[path = "sql_operation_cancellation_tests.rs"]
 mod cancellation_tests;
+#[cfg(test)]
+#[path = "sql_operation_source_tests.rs"]
+mod source_tests;
