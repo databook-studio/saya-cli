@@ -36,7 +36,18 @@ fn drain_provider_request(stream: &mut std::net::TcpStream) -> String {
                 return String::from_utf8_lossy(&bytes[head + 4..head + 4 + length]).into_owned();
             }
         }
-        let count = stream.read(&mut chunk).expect("provider request reads");
+        let count = match stream.read(&mut chunk) {
+            Ok(count) => count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                return String::from_utf8_lossy(&bytes).into_owned();
+            }
+            Err(error) => panic!("provider request reads: {error}"),
+        };
         if count == 0 {
             return String::new();
         }
@@ -190,7 +201,7 @@ fn idle_eof_exits_the_interactive_process_cleanly() {
 #[test]
 fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
     use std::{
-        io::{self, Read, Write},
+        io::{Read, Write},
         net::TcpListener,
         process::{Child, Command, Stdio},
         sync::mpsc,
@@ -209,33 +220,18 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         }
     }
 
-    // Mock provider: the first completed answer has a paid receipt; the second
-    // request reports usage and then remains live until the real session path
-    // receives SIGINT. The second receipt is the regression boundary: it has
-    // no `AgentOutput`, so only the settled cancellation owner can reach
-    // `/usage` with it.
+    // Mock provider: the first completed answer has the only paid receipt.
+    // The second response remains an unfinished marker-only SSE stream until
+    // the real session path receives SIGINT.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
     let (first_done_tx, first_done_rx) = mpsc::channel();
     let (accepted_tx, accepted_rx) = mpsc::channel();
     let server = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let (mut first, _) = loop {
-            match listener.accept() {
-                Ok(value) => break value,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return;
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => return,
-            }
+        let Some(mut first) = accept_provider(&listener) else {
+            return;
         };
-        first
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
         drain_provider_request(&mut first);
         let first_body = concat!(
             "data: {\"choices\":[{\"delta\":{\"content\":\"first answer\"}}]}\n\n",
@@ -251,31 +247,20 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         first.flush().unwrap();
         first_done_tx.send(()).unwrap();
 
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let (mut second, _) = loop {
-            match listener.accept() {
-                Ok(value) => break value,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if Instant::now() >= deadline {
-                        return;
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(_) => return,
-            }
+        let Some(mut second) = accept_provider(&listener) else {
+            return;
         };
-        second
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
         drain_provider_request(&mut second);
-        let second_body =
-            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":0}}\n\n";
         write!(
             second,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{second_body}",
-            second_body.len()
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
         )
         .unwrap();
+        second
+            .write_all(
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"active-cancel-marker\"}}]}\n\n",
+            )
+            .unwrap();
         second.flush().unwrap();
         accepted_tx.send(()).unwrap();
         let _ = second.read_to_end(&mut Vec::new());
@@ -325,9 +310,16 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
     let stdout_sink = stdout_buf.clone();
     let stdout_pump = thread::spawn(move || {
         let mut reader = stdout;
-        let mut sink = Vec::new();
-        let _ = reader.read_to_end(&mut sink);
-        *stdout_sink.lock().unwrap() = sink;
+        let mut buffer = [0_u8; 4096];
+        while let Ok(size) = reader.read(&mut buffer) {
+            if size == 0 {
+                break;
+            }
+            stdout_sink
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buffer[..size]);
+        }
     });
 
     let mut stdin = child.stdin.take().unwrap();
@@ -342,10 +334,16 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
     stdin.write_all(b"incomplete prompt\n").unwrap();
     stdin.flush().unwrap();
 
-    // The request reached the provider and is now hanging.
+    // The source has an unfinished response open; the marker proves the child
+    // consumed that live stream before SIGINT.
     accepted_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("provider request was not observed");
+    wait_for_stream(
+        &stdout_buf,
+        b"active-cancel-marker",
+        "active cancellation source marker",
+    );
 
     // SIGINT must be caught (cancelling the request), not kill the process.
     assert_eq!(
@@ -353,19 +351,7 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
         0
     );
 
-    // Give the loop a moment to cancel and return, then exit cleanly.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        let seen = stderr_buf.lock().unwrap();
-        if seen
-            .windows(b"Request cancelled.".len())
-            .any(|window| window == b"Request cancelled.")
-        {
-            break;
-        }
-        drop(seen);
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_stream(&stderr_buf, b"Request cancelled.", "cancelled action");
     stdin.write_all(b"/usage\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);

@@ -76,7 +76,26 @@ async fn failed_candidate_receipt_survives_later_sqlite_answer_once() {
     assert_eq!(seen.len(), 3, "one rejected attempt, then tool and answer");
     assert!(seen[0].contains("bounded_sql_query"));
     assert!(seen[1].contains("bounded_sql_query"));
-    assert!(seen[2].contains("\"role\":\"tool\""));
+    let third_request: serde_json::Value =
+        serde_json::from_str(&seen[2]).expect("third provider request is JSON");
+    let tool_messages = third_request["messages"]
+        .as_array()
+        .expect("third provider request carries messages")
+        .iter()
+        .filter(|message| message["role"] == "tool" && message["tool_call_id"] == "call-sql")
+        .collect::<Vec<_>>();
+    assert_eq!(tool_messages.len(), 1, "one paired SQLite tool message");
+    let tool_result: serde_json::Value = serde_json::from_str(
+        tool_messages[0]["content"]
+            .as_str()
+            .expect("paired tool message carries JSON content"),
+    )
+    .expect("paired tool result is JSON");
+    assert!(tool_result.get("error").is_none(), "SQLite tool succeeded");
+    assert_eq!(tool_result["columns"], serde_json::json!(["id"]));
+    assert_eq!(tool_result["row_count"], 1);
+    assert_eq!(tool_result["truncated"], false);
+    assert_eq!(tool_result["rows"], serde_json::json!([[1]]));
     assert_eq!(output.answer, "The query returned one.");
     assert_eq!(
         output.usage.input_tokens, 51,
