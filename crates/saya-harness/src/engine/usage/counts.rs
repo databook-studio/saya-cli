@@ -27,7 +27,7 @@ impl StepAnsweringCounts {
             match event {
                 RunEvent::StepStarted { step } => match counts.step {
                     Some(active) if active == *step && !counts.completed => {}
-                    Some(_) if !counts.completed => {
+                    Some(active) if !counts.completed || active.checked_add(1) != Some(*step) => {
                         return Err(AnsweringCountError::InvalidEvidence);
                     }
                     _ => {

@@ -41,4 +41,41 @@ fn replay_keeps_pending_and_malformed_count_evidence_unknown() {
         matches!(malformed, Err(AnsweringCountError::InvalidEvidence)),
         "unsupported count pairs fail closed instead of reseeding the grant"
     );
+
+    for (events, target) in [
+        (
+            vec![
+                RunEvent::StepStarted { step: 0 },
+                counts(Some(0), Some(0)),
+                counts(Some(1), None),
+                counts(None, Some(2)),
+                RunEvent::StepCompleted { step: 0 },
+                RunEvent::StepStarted { step: 0 },
+                counts(Some(0), Some(0)),
+            ],
+            0,
+        ),
+        (
+            vec![
+                RunEvent::StepStarted { step: 0 },
+                counts(Some(0), Some(0)),
+                RunEvent::StepCompleted { step: 0 },
+                RunEvent::StepStarted { step: 1 },
+                counts(Some(0), Some(0)),
+                counts(Some(1), None),
+                counts(None, Some(1)),
+                RunEvent::StepCompleted { step: 1 },
+                RunEvent::StepStarted { step: 0 },
+                counts(Some(0), Some(0)),
+            ],
+            0,
+        ),
+    ] {
+        let replayed = StepAnsweringCounts::from_journal(&events, target);
+        assert!(
+            matches!(replayed, Err(AnsweringCountError::InvalidEvidence)),
+            "completed same-index and backward step starts cannot mint a fresh grant: {:?}",
+            replayed.map(|counts| counts.remaining(target, Some(3), Some(7)))
+        );
+    }
 }
