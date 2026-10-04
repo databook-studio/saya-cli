@@ -57,6 +57,9 @@ use saya_store::{
 use saya_types::{Capabilities, PauseReason, RunEvent, RunId, RunPlan, StepSpec};
 use tokio::sync::oneshot;
 
+#[path = "engine_resume/counts.rs"]
+mod counts;
+
 /// A per-test scratch root: the state database and the run directory both
 /// live under it, and one cleanup covers both.
 fn temp_root(label: &str) -> PathBuf {

@@ -8,7 +8,9 @@
 //! `StepCompleted` / `StepFailed`) before they are mirrored to the store —
 //! the durable record first, the sink's own order for its mirrors.
 
-use saya_agent::{AgentError, AgentOutput, AgentRequest, run_agent_with_sink};
+use saya_agent::{
+    AgentError, AgentOutput, AgentRequest, AgentRunControl, AnsweringLimits, run_agent_with_control,
+};
 use saya_store::RunStepStatus;
 use saya_types::{Deliverable, RunEvent, RunFailureCode, RunPlan};
 
@@ -72,6 +74,14 @@ pub(super) async fn drive_attempt(
             steps: driver.collaborators.toolsets.len(),
         }));
     };
+    let budget = spec.budget.as_ref();
+    let (turns, tool_calls) = sink
+        .remaining_answering_grant(
+            step,
+            budget.and_then(|budget| budget.turns),
+            budget.and_then(|budget| budget.tool_calls),
+        )
+        .map_err(|source| AttemptError::Gate(EpisodeError::CountEvidence { step, source }))?;
     let manifest = brief::manifest(workspace, &driver.bounds)
         .map_err(|source| AttemptError::Gate(EpisodeError::Brief { source }))?;
     let request = AgentRequest {
@@ -82,15 +92,26 @@ pub(super) async fn drive_attempt(
         history: Vec::new(),
         context_blocks: Vec::new(),
     };
-    match run_agent_with_sink(
+    let mut limits = brief::limits(&driver.request, spec);
+    limits.max_turns = turns.map(|turns| usize::try_from(turns).unwrap_or(usize::MAX));
+    limits.max_tool_calls = tool_calls.map(|calls| usize::try_from(calls).unwrap_or(usize::MAX));
+    let control = AgentRunControl::new(
+        limits,
+        AnsweringLimits {
+            max_requests: turns,
+            max_tool_calls: tool_calls,
+            max_reported_tokens: None,
+        },
+        driver.collaborators.approval,
+        sink,
+        driver.collaborators.cancellation.clone(),
+    );
+    match run_agent_with_control(
         driver.collaborators.provider,
         toolset.executor.as_ref(),
         request,
         brief::definitions(&toolset.definitions, &spec.capabilities),
-        brief::limits(&driver.request, spec),
-        driver.collaborators.approval,
-        sink,
-        driver.collaborators.cancellation.clone(),
+        control,
     )
     .await
     {

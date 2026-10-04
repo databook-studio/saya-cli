@@ -235,6 +235,16 @@ async fn continue_run(
             let (tail_state, code) = super::journal_tail(&journal);
             if matches!(
                 &error,
+                saya_harness::engine::ResumeError::CountEvidence { .. }
+            ) {
+                return crate::commands::output::failure_message(
+                    3,
+                    format!("run {run_id} cannot resume with unknown step counts: {error}"),
+                    format,
+                );
+            }
+            if matches!(
+                &error,
                 saya_harness::engine::ResumeError::Episode {
                     source: saya_harness::engine::EpisodeError::BudgetStoppedDiagnostic { .. }
                 }

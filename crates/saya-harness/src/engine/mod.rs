@@ -27,7 +27,7 @@ pub use resume::{IncompletePolicy, ResumeEffect, ResumeError, ResumeOutcome, Res
 pub use sink::{EngineEventSink, EngineSinkError, SinkBudgets};
 pub use state::{RunState, RunTransition, RunTransitionError, transition};
 pub use transitions::TransitionEvent;
-pub use usage::UsageTotals;
+pub use usage::{AnsweringCountError, UsageTotals};
 
 #[cfg(test)]
 mod clock_tests;
