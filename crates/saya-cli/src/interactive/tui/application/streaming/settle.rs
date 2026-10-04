@@ -30,21 +30,18 @@ impl App {
             .stream
             .as_ref()
             .is_some_and(|stream| stream.cancel.is_cancelled());
-        // Whether this run continued after the provider capped a
-        // response mid-answer: the loop re-instructs, the partial
-        // stays discarded, and the resume anchors live in earlier
-        // tool results. A finished turn that continued is not a
-        // turn boundary for compaction — compacting there risks
-        // the very lines the resume needs. `TurnReset` (retried
-        // transport attempts) re-streams the same answer and is
-        // not a continuation; only the output-cap re-instruction
-        // counts. `output.truncated` is that signal: it is set
-        // only when a run salvaged an answer after a ceiling ran
-        // out, never on a natural completion.
-        let continued = result
-            .as_ref()
-            .map(|output| output.truncated)
-            .unwrap_or(false);
+        // The two suppression gates, derived from the settled output by
+        // `compaction_gates`: `continued` is the admitted continuation
+        // (`ProviderContinuationPhase::Continuing`) — the loop
+        // re-instructs, the partial stays discarded, and the resume
+        // anchors live in earlier tool results — and `terminal_stop` is a
+        // budget/terminal salvage (`output.truncated`). Either suppresses
+        // compaction at this boundary; only the first is a continuation.
+        // `TurnReset` (retried transport attempts) re-streams the same
+        // answer and sets neither gate. An error/absent result derives
+        // neither.
+        let (continued, terminal_stop) =
+            crate::interactive::auto_compact::compaction_gates(result.as_ref().ok());
         // The turn's question settles or abandons now that its stream has
         // ended — read AFTER `stop_confirmed` above, so the abandon's token
         // cancel can never reclassify an error as the user's stop.
@@ -125,6 +122,7 @@ impl App {
                             answering_input: auto_input,
                             window,
                             continued,
+                            terminal_stop,
                             compact_running: self.compact_task.is_some(),
                             auto_failed: state.auto_compact_failed,
                         },
