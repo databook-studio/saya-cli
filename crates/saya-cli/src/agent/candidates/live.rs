@@ -171,3 +171,7 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;
