@@ -398,8 +398,12 @@ impl SessionRuntime {
             mode,
             &self.sessions_root,
         )?;
-        // Only reached when the new session is fully held and composed; the
+        // Only reached when the new session is fully held and composed, so
+        // failure is impossible past this point: the swap first abandons the
+        // old session's question — the same effect `abandon_question` has —
+        // and a failed swap above returned early, leaving it untouched. The
         // swap drops this lock last.
+        self.abandon_question();
         *self = replacement;
         Ok(())
     }
