@@ -14,6 +14,7 @@
 
 mod live;
 mod orchestrate;
+mod stop;
 
 use super::question_scope::QuestionScope;
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};

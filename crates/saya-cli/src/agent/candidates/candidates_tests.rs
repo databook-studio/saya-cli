@@ -37,6 +37,8 @@ use super::orchestrate;
 /// Postgres accepts the most syntax, so it is the default dialect here.
 const D: SqlDialect = SqlDialect::Postgres;
 
+use saya_agent::{BudgetDimension, CancellationReason};
+
 fn test_scope(cancellation: CancellationToken) -> QuestionScope {
     let connections = ConnectionsFile::default();
     let runtime = RuntimeConfig {
@@ -85,12 +87,13 @@ enum Outcome {
 }
 
 /// A scripted `AttemptRunner`: returns one queued outcome per call, records
-/// every call, and optionally cancels the token once `cancel_after` calls have
-/// completed so a cancellation-between-attempts test can trip the token.
+/// every call, and optionally latches the token with a stop reason once
+/// `cancel_after` calls have completed so a stop-between-attempts test can
+/// fire the token exactly where a real budget or signal would.
 struct ScriptedRunner {
     outcomes: Mutex<Vec<Outcome>>,
     calls: AtomicUsize,
-    cancel_after: Option<(usize, CancellationToken)>,
+    cancel_after: Option<(usize, CancellationToken, CancellationReason)>,
 }
 
 impl ScriptedRunner {
@@ -102,8 +105,17 @@ impl ScriptedRunner {
         }
     }
 
-    fn cancel_after(mut self, n: usize, token: CancellationToken) -> Self {
-        self.cancel_after = Some((n, token));
+    fn cancel_after(self, n: usize, token: CancellationToken) -> Self {
+        self.cancel_after_with(n, token, CancellationReason::User)
+    }
+
+    fn cancel_after_with(
+        mut self,
+        n: usize,
+        token: CancellationToken,
+        reason: CancellationReason,
+    ) -> Self {
+        self.cancel_after = Some((n, token, reason));
         self
     }
 
@@ -116,10 +128,10 @@ impl AttemptRunner for ScriptedRunner {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<AgentOutput, AgentRuntimeError>> + '_>> {
         Box::pin(async move {
             let count = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some((n, token)) = &self.cancel_after
+            if let Some((n, token, reason)) = &self.cancel_after
                 && count == *n
             {
-                token.cancel();
+                token.cancel_with_reason(*reason);
             }
             let mut outcomes = self.outcomes.lock().expect("outcomes lock");
             match outcomes.len() {
@@ -175,6 +187,32 @@ impl CandidateExecutor for CountingExecutor {
     async fn run(&self, _: &str) -> Option<QueryResult> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         None
+    }
+}
+
+/// A scripted `CandidateExecutor` that serves its result and latches the
+/// question token with a stop reason on every call — the verification work
+/// itself is where the stop fired, the way a deadline expiring mid-decision
+/// would.
+struct StopDuringVoteExecutor {
+    calls: AtomicUsize,
+    results: HashMap<String, QueryResult>,
+    reason: CancellationReason,
+    token: CancellationToken,
+}
+
+impl StopDuringVoteExecutor {
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl CandidateExecutor for StopDuringVoteExecutor {
+    async fn run(&self, sql: &str) -> Option<QueryResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.token.cancel_with_reason(self.reason);
+        self.results.get(sql).cloned()
     }
 }
 
@@ -761,5 +799,257 @@ async fn a_settled_clarification_after_an_errored_attempt_returns_the_paused_out
         !out.truncated,
         "a settled clarification is not a truncation: {:?}",
         out.truncated
+    );
+}
+
+// ===========================================================================
+// A budget stop between attempts: the stop-return keeps the last settled
+// answer, but the retained output must carry the actual stop — partial
+// (`truncated: true`) with the typed `AnsweringBudgetStopped` event naming the
+// real dimension — not come back looking like a natural completion. Before the
+// repair the returned output has `truncated: false` and no budget-stop event.
+// ===========================================================================
+
+#[tokio::test]
+async fn a_budget_stop_before_verification_marks_the_retained_output_partial_with_a_typed_event() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    // Attempt 1 settles naturally; the elapsed budget latches the token the
+    // moment it completes — before any verification could begin.
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_sql(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after_with(
+        1,
+        token.clone(),
+        CancellationReason::Budget(BudgetDimension::ElapsedTime),
+    );
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert_eq!(
+        runner.calls(),
+        1,
+        "the stop between attempts kept attempt 2 from starting"
+    );
+    assert!(
+        out.truncated,
+        "the retained answer is partial, not a natural completion"
+    );
+    assert!(
+        out.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::AnsweringBudgetStopped {
+                dimension: BudgetDimension::ElapsedTime
+            }
+        )),
+        "the retained events carry the typed budget stop for the real dimension: {:?}",
+        out.events
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "no consensus may be fabricated over a stopped run"
+    );
+}
+
+// ===========================================================================
+// A budget stop during the vote's verification work: the decision dies with
+// the stop, the consensus emit is skipped, and the retained answer comes back
+// partial with the typed event — not as a natural completion.
+// ===========================================================================
+
+#[tokio::test]
+async fn a_budget_stop_during_the_vote_returns_the_answer_as_partial_with_no_consensus() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_sql(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ]);
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = StopDuringVoteExecutor {
+        calls: AtomicUsize::new(0),
+        results,
+        reason: CancellationReason::Budget(BudgetDimension::ElapsedTime),
+        token: token.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert_eq!(runner.calls(), 2, "both attempts settled naturally");
+    assert!(executor.calls() >= 1, "the vote ran its verification work");
+    assert!(
+        out.truncated,
+        "the retained answer is partial, not a natural completion"
+    );
+    assert!(
+        out.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::AnsweringBudgetStopped {
+                dimension: BudgetDimension::ElapsedTime
+            }
+        )),
+        "the retained events carry the typed budget stop: {:?}",
+        out.events
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "a stopped question never emits a consensus"
+    );
+}
+
+// ===========================================================================
+// Green-side pins for the retained-output stop rules. (These cannot be red:
+// two of them pass by accident on the un-repaired code, which never touched
+// the output; they pin what the repair must keep true.)
+// ===========================================================================
+
+/// An `AgentOutput` the answering loop itself budget-stopped: partial, with
+/// its own typed event already in the retained events.
+fn budget_stopped_output(sql: &str) -> AgentOutput {
+    let mut out = output_with_sql(sql);
+    out.truncated = true;
+    out.events.push(AgentEvent::answering_budget_stopped(
+        BudgetDimension::ElapsedTime,
+    ));
+    out
+}
+
+/// An `AgentOutput` already truncated for a non-budget reason — the legacy
+/// truncation shape (e.g. a salvaged partial from a truncated provider
+/// response): partial, no typed budget event.
+fn legacy_truncated_output(sql: &str) -> AgentOutput {
+    let mut out = output_with_sql(sql);
+    out.truncated = true;
+    out
+}
+
+/// A loop budget-stop is kept once: the token's Budget reason must not append
+/// a second typed event to an output that already carries its own.
+#[tokio::test]
+async fn a_retained_output_already_budget_stopped_is_not_marked_twice() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(budget_stopped_output(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after_with(
+        1,
+        token.clone(),
+        CancellationReason::Budget(BudgetDimension::ElapsedTime),
+    );
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert!(out.truncated, "the loop's own partial marking stands");
+    let stops = out
+        .events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::AnsweringBudgetStopped { .. }))
+        .count();
+    assert_eq!(
+        stops, 1,
+        "the loop's budget-stop event is kept, not duplicated: {:?}",
+        out.events
+    );
+}
+
+/// A legacy truncation is never relabelled as a configured-budget stop: the
+/// token's Budget reason must not fabricate a typed event onto an output that
+/// was already truncated for some other reason.
+#[tokio::test]
+async fn a_legacy_truncated_output_is_not_relabelled_as_a_budget_stop() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(legacy_truncated_output(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after_with(
+        1,
+        token.clone(),
+        CancellationReason::Budget(BudgetDimension::ElapsedTime),
+    );
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert!(out.truncated, "the legacy truncation stands");
+    assert!(
+        !out.events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AnsweringBudgetStopped { .. })),
+        "a legacy truncation is not relabelled as a configured-budget stop: {:?}",
+        out.events
+    );
+}
+
+/// A User stop leaves the retained output untouched — no partial marking, no
+/// typed event; the ask adapter classifies a user stop from the token itself.
+#[tokio::test]
+async fn a_user_stop_leaves_the_retained_output_untouched() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_sql(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after(1, token.clone());
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert!(
+        !out.truncated,
+        "a user stop does not mark the answer partial"
+    );
+    assert!(
+        !out.events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AnsweringBudgetStopped { .. })),
+        "a user stop never fabricates a budget-stop event: {:?}",
+        out.events
     );
 }

@@ -8,6 +8,7 @@ use super::super::decide::{CandidateExecutor, decide};
 use super::super::question_scope::QuestionScope;
 use super::super::runtime::AgentRuntimeError;
 use super::AttemptRunner;
+use super::stop::{apply_stop_reason, ended_on_settled_clarification};
 use crate::answering_receipts::AnsweringReceiptSink;
 use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
 use saya_types::SqlDialect;
@@ -97,7 +98,9 @@ pub(crate) async fn orchestrate(
     // A stopped question keeps its last settled answer, but it must not begin
     // consensus/vote work after the stop source fired.
     if cancellation.is_cancelled() {
-        return Ok(with_paid_usage(last_success, paid_usage));
+        let mut retained = last_success;
+        apply_stop_reason(&mut retained, cancellation.reason());
+        return Ok(with_paid_usage(retained, paid_usage));
     }
 
     // The event is emitted once whenever more than one attempt ran — including
@@ -109,7 +112,9 @@ pub(crate) async fn orchestrate(
         let deadline = scope.begin_segment();
         if cancellation.is_cancelled() {
             scope.finish_segment();
-            return Ok(with_paid_usage(last_success, paid_usage));
+            let mut retained = last_success;
+            apply_stop_reason(&mut retained, cancellation.reason());
+            return Ok(with_paid_usage(retained, paid_usage));
         }
         let decision = match deadline {
             Some(duration) => {
@@ -127,7 +132,9 @@ pub(crate) async fn orchestrate(
         };
         scope.finish_segment();
         if cancellation.is_cancelled() {
-            return Ok(with_paid_usage(last_success, paid_usage));
+            let mut retained = last_success;
+            apply_stop_reason(&mut retained, cancellation.reason());
+            return Ok(with_paid_usage(retained, paid_usage));
         }
         let winner_sql = decision.winner.and_then(|i| {
             outputs
@@ -160,17 +167,6 @@ pub(crate) async fn orchestrate(
 fn with_paid_usage(mut output: AgentOutput, usage: TokenUsage) -> AgentOutput {
     output.usage = usage;
     output
-}
-
-/// Whether a returned attempt ended on a settled clarification: the loop's
-/// clarification turn emits [`AgentEvent::ClarificationNeeded`] and then
-/// completes, so a returned Ok output carrying the event is a finished pause
-/// for input, not a mid-turn interruption.
-fn ended_on_settled_clarification(output: &AgentOutput) -> bool {
-    output
-        .events
-        .iter()
-        .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. }))
 }
 
 /// Wraps a [`CandidateExecutor`] to count how many nominated statements
