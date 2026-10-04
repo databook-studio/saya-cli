@@ -3,13 +3,17 @@
 //! (6, the paused class) and the TUI transcript's Question block.
 
 use super::ask_exit_code;
+use super::settle_ask;
+use crate::agent::runtime::AgentRuntimeError;
 use crate::agent::tools::DatabaseTools;
+use crate::commands::{capture_output_start, capture_output_take};
 use crate::render::{RenderFormat, clarification_text, render_event};
 use crate::stream_render::terminal_event;
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentRequest, AllowReadOnlyApproval, CancellationToken, ChatMessage, ChatProvider,
-    ChatRequest, ChatResponse, ProviderError, ProviderStream, ToolCall, run_agent_with_sink,
+    AgentEvent, AgentOutput, AgentRequest, AllowReadOnlyApproval, BudgetDimension,
+    CancellationReason, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse,
+    ProviderError, ProviderStream, TokenUsage, ToolCall, run_agent_with_sink,
 };
 use std::sync::Mutex;
 
@@ -175,4 +179,175 @@ async fn an_ordinary_completion_exits_zero() {
     .expect("an ordinary turn completes");
     assert_eq!(ask_exit_code(&output), 0);
     assert_eq!(output.answer, "42 active users");
+}
+
+// ===========================================================================
+// The one classification for a settled `ask`. After the work has settled —
+// on the work-ready branch or the setup-error branch, and independent of
+// which select branch won — the question token's first stop reason decides:
+// User 130, Budget 6 with truthful partial wording, OwnerFailure 5, and only
+// a run that stopped for no typed reason falls through to the old mapping
+// (clarification 6, natural 0, setup error 5).
+// ===========================================================================
+
+/// A natural completion: the model answered, nothing stopped.
+fn natural_output() -> AgentOutput {
+    AgentOutput {
+        answer: "42 active users".into(),
+        events: Vec::new(),
+        used_bounded_sql_query: true,
+        tool_metadata: Vec::new(),
+        usage: TokenUsage::default(),
+        learning_usage: None,
+        truncated: false,
+        answer_sql: None,
+    }
+}
+
+/// The same completion whose run paused for input instead of answering.
+fn clarification_output() -> AgentOutput {
+    let mut out = natural_output();
+    out.events.push(AgentEvent::clarification_needed(
+        QUESTION,
+        OPTIONS.iter().map(|option| option.to_string()).collect(),
+    ));
+    out
+}
+
+/// A Budget(ElapsedTime)-latched question that still produced a natural
+/// output (the deadline expired at/after verification) exits 6 — the
+/// partial/stopped class — and the printed diagnostic says the answer is
+/// partial. Before the repair this returned 0 with no wording.
+#[test]
+fn a_budget_latched_question_with_a_natural_answer_exits_six_with_partial_wording() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+    capture_output_start();
+    let code = settle_ask(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+        .expect("a settled ask maps to an exit code, not an error");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(
+        code, 6,
+        "the budget-stopped class is the paused exit: {code}"
+    );
+    let printed = format!("{stdout}{stderr}");
+    assert!(
+        printed.contains("partial"),
+        "the diagnostic says the answer is partial/stopped: {printed:?}"
+    );
+}
+
+/// A User-latched token on the work-ready branch exits 130 — the same class
+/// the ready-signal branch returns — so a ready-work/ready-signal race
+/// classifies the same either way. Before the repair this returned 0.
+#[test]
+fn a_user_latched_question_exits_130_on_the_work_ready_branch() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let code = settle_ask(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+        .expect("a settled ask maps to an exit code");
+    assert_eq!(
+        code, 130,
+        "a user-stopped run is the interrupted class: {code}"
+    );
+}
+
+/// A budget stop before any answer existed (setup error) still classifies
+/// from the token: exit 6, without inventing output — and the wording stays
+/// truthful that nothing finished.
+#[test]
+fn a_budget_latched_setup_failure_exits_six_without_inventing_an_answer() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+    capture_output_start();
+    let code = settle_ask(
+        Err(AgentRuntimeError::Agent("request cancelled".into())),
+        &cancellation,
+        RenderFormat::Ndjson,
+    )
+    .expect("a settled ask maps to an exit code");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(
+        code, 6,
+        "the budget-stopped class on the error branch: {code}"
+    );
+    let printed = format!("{stdout}{stderr}");
+    assert!(
+        printed.contains("partial"),
+        "the diagnostic stays truthful about the unfinished answer: {printed:?}"
+    );
+}
+
+/// A user stop before any answer existed exits 130 too.
+#[test]
+fn a_user_latched_setup_failure_exits_130() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    let code = settle_ask(
+        Err(AgentRuntimeError::Agent("request cancelled".into())),
+        &cancellation,
+        RenderFormat::Ndjson,
+    )
+    .expect("a settled ask maps to an exit code");
+    assert_eq!(
+        code, 130,
+        "a user-stopped setup is the interrupted class: {code}"
+    );
+}
+
+/// An OwnerFailure stop on the work-ready branch exits 5 with a message that
+/// says what actually stopped the run.
+#[test]
+fn an_owner_failure_on_the_work_ready_branch_exits_five_with_a_truthful_message() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
+    capture_output_start();
+    let code = settle_ask(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+        .expect("a settled ask maps to an exit code");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(code, 5, "an owner failure is the failure class: {code}");
+    let printed = format!("{stdout}{stderr}");
+    assert!(
+        printed.contains("owner failure"),
+        "the diagnostic names the owner failure: {printed:?}"
+    );
+}
+
+/// An OwnerFailure stop on the setup-error branch keeps exit 5 and keeps the
+/// run's own error as the message — the truth the owner failure interrupted.
+#[test]
+fn an_owner_failure_on_a_setup_error_keeps_exit_five_with_the_run_s_own_error() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
+    capture_output_start();
+    let code = settle_ask(
+        Err(AgentRuntimeError::Provider("provider down".into())),
+        &cancellation,
+        RenderFormat::Ndjson,
+    )
+    .expect("a settled ask maps to an exit code");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(code, 5);
+    let printed = format!("{stdout}{stderr}");
+    assert!(
+        printed.contains("provider down"),
+        "the run's own error is the message: {printed:?}"
+    );
+}
+
+/// A question that stopped for no typed reason keeps the existing exits:
+/// a natural answer 0, a settled clarification 6.
+#[test]
+fn a_question_that_stopped_for_no_reason_keeps_the_existing_exit() {
+    let cancellation = CancellationToken::new();
+    let natural = settle_ask(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+        .expect("a settled ask maps to an exit code");
+    assert_eq!(natural, 0, "an ordinary completion still exits 0");
+    let paused = settle_ask(
+        Ok(clarification_output()),
+        &cancellation,
+        RenderFormat::Ndjson,
+    )
+    .expect("a settled ask maps to an exit code");
+    assert_eq!(paused, 6, "a settled clarification still exits 6");
 }
