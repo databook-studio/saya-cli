@@ -32,16 +32,17 @@ use std::{
 
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, BudgetDimension, CancellationReason, CancellationToken,
+    AgentEvent, AgentEventSink, AnsweringObservation, BudgetDimension, CancellationReason,
+    CancellationToken,
 };
 use saya_store::RunStore;
-use saya_types::{PauseReason, RunId};
+use saya_types::{PauseReason, RunEvent, RunId};
 
 use crate::fetch::DownloadBudget;
 use crate::journal::Journal;
 
 use super::clock::ElapsedClock;
-use super::usage::UsageTotals;
+use super::usage::{AnsweringCountError, StepAnsweringCounts, UsageTotals};
 use super::{state::RunState, transitions::TransitionEvent};
 
 mod accounting;
@@ -72,6 +73,8 @@ pub struct EngineEventSink {
     download_budget: Option<DownloadBudget>,
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
+    answering_counts: Mutex<StepAnsweringCounts>,
+    count_tracking: Mutex<bool>,
     /// The download level the journal already holds when this sink takes
     /// over — the wallet's consumed figure at construction, which on a
     /// resume is the level its record carries (the seeding `resume` did
@@ -131,6 +134,8 @@ impl EngineEventSink {
             download_budget,
             state: Mutex::new(initial),
             usage: Mutex::new(carried_usage),
+            answering_counts: Mutex::new(StepAnsweringCounts::default()),
+            count_tracking: Mutex::new(false),
             journaled_downloads,
             diagnostic: Mutex::new(None),
             agent_stream: None,
@@ -143,6 +148,37 @@ impl EngineEventSink {
     pub fn with_elapsed_clock(self, clock: ElapsedClock) -> Self {
         *self.elapsed_clock.lock().expect("engine sink clock lock") = Some(clock);
         self
+    }
+
+    pub(crate) fn with_answering_counts(self, counts: StepAnsweringCounts) -> Self {
+        *self
+            .answering_counts
+            .lock()
+            .expect("engine sink answering-count lock") = counts;
+        self
+    }
+
+    pub(in crate::engine) fn begin_answering_step(&self, step: usize, tracked: bool) {
+        self.answering_counts
+            .lock()
+            .expect("engine sink answering-count lock")
+            .begin_step(step);
+        *self
+            .count_tracking
+            .lock()
+            .expect("engine sink answering-count tracking lock") = tracked;
+    }
+
+    pub(in crate::engine) fn remaining_answering_grant(
+        &self,
+        step: usize,
+        turns: Option<u64>,
+        tool_calls: Option<u64>,
+    ) -> Result<(Option<u64>, Option<u64>), AnsweringCountError> {
+        self.answering_counts
+            .lock()
+            .expect("engine sink answering-count lock")
+            .remaining(step, turns, tool_calls)
     }
 
     /// Attaches the production run's shared cancellation owner. Legacy sink
@@ -219,6 +255,57 @@ impl EngineEventSink {
 
 #[async_trait]
 impl AgentEventSink for EngineEventSink {
+    async fn observe_answering(&self, observation: AnsweringObservation) {
+        if !*self
+            .count_tracking
+            .lock()
+            .expect("engine sink answering-count tracking lock")
+        {
+            return;
+        }
+        let mut counts = self
+            .answering_counts
+            .lock()
+            .expect("engine sink answering-count lock");
+        let mut updated = *counts;
+        match updated.observe(observation) {
+            Ok(false) => return,
+            Ok(true) => {}
+            Err(source) => {
+                self.hold_diagnostic(EngineSinkError::AnsweringCount { source });
+                self.request_owner_failure();
+                return;
+            }
+        }
+        let (turns, tool_calls) = match observation {
+            AnsweringObservation::Initialized => (Some(0), Some(0)),
+            AnsweringObservation::RequestAdmitted => (Some(1), None),
+            AnsweringObservation::ToolBatchObserved { requested } => (None, Some(requested)),
+            _ => {
+                self.hold_diagnostic(EngineSinkError::AnsweringCount {
+                    source: AnsweringCountError::InvalidEvidence,
+                });
+                self.request_owner_failure();
+                return;
+            }
+        };
+        let event = RunEvent::Usage {
+            endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
+            tokens: None,
+            turns,
+            tool_calls,
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
+        };
+        match self.journal.append(&event) {
+            Ok(()) => *counts = updated,
+            Err(source) => {
+                self.hold_diagnostic(EngineSinkError::Journal { source });
+                self.request_owner_failure();
+            }
+        }
+    }
+
     /// One event emission is one tick: a successful or failed-attempt usage
     /// receipt folds into the run's totals and is journaled as the durable
     /// per-endpoint record, the download wallet's spend is journaled when it

@@ -176,6 +176,11 @@ impl<'a> EpisodeDriver<'a> {
             }
             attempt += 1;
             retry::mark_started(&self.run, step).await?;
+            let budget = plan.steps[step].budget.as_ref();
+            sink.begin_answering_step(
+                step,
+                budget.is_some_and(|budget| budget.turns.is_some() || budget.tool_calls.is_some()),
+            );
             if let Some(reason) = self.collaborators.cancellation.reason() {
                 return self.settle_stop(sink, step, reason).await;
             }

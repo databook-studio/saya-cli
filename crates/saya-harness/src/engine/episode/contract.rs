@@ -13,14 +13,22 @@ use thiserror::Error;
 
 use crate::{HarnessError, journal::Journal};
 
-use crate::engine::sink::EngineSinkError;
 use crate::engine::state::RunState;
+use crate::engine::{AnsweringCountError, sink::EngineSinkError};
 
 /// Why the episode driver refused or gave up on a step. Data, not prose:
 /// `saya-cli` renders these.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EpisodeError {
+    /// A finite per-step grant cannot be reconstructed from durable count evidence.
+    #[error("step {step} answering-count evidence is not safe to continue: {source}")]
+    CountEvidence {
+        step: usize,
+        #[source]
+        source: AnsweringCountError,
+    },
+
     /// The step failed on every bounded attempt; the run was paused with
     /// `StepFailedAfterRetry`. `code` is the typed cause of the last
     /// episode's failure.

@@ -4,6 +4,7 @@ use crate::engine::clock::ElapsedClockError;
 use crate::engine::state::RunTransitionError;
 use saya_store::StoreError;
 
+use crate::engine::AnsweringCountError;
 use crate::engine::usage::UsageTotals;
 use crate::{HarnessError, fetch::DownloadBudget};
 
@@ -12,6 +13,13 @@ use crate::{HarnessError, fetch::DownloadBudget};
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum EngineSinkError {
+    /// A source-owned answering count could not be accepted as a valid journal fact.
+    #[error("answering count observation failed closed: {source}")]
+    AnsweringCount {
+        #[source]
+        source: AnsweringCountError,
+    },
+
     /// The first-party elapsed clock could not be safely observed.
     #[error("run elapsed clock failed closed: {source}")]
     ElapsedClock {
