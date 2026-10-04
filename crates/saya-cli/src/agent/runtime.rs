@@ -129,16 +129,19 @@ pub(crate) async fn run_prompt_with_sink(
 pub(crate) async fn run_prompt_with_sink_and_outcomes(
     request: SinkPrompt<'_>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    if request.question_scope.is_some() {
-        return run_prompt_after_question_start(request, None).await;
-    }
-    let deadline = finite_seconds(
-        request
-            .runtime
-            .resolved
-            .investigation_budgets
-            .elapsed_seconds,
-    );
+    let scoped_deadline = request
+        .question_scope
+        .as_ref()
+        .map(QuestionScope::begin_segment);
+    let deadline = scoped_deadline.flatten().or_else(|| {
+        finite_seconds(
+            request
+                .runtime
+                .resolved
+                .investigation_budgets
+                .elapsed_seconds,
+        )
+    });
     let cancellation = request.cancellation.clone();
     let (answering_settled_tx, mut answering_settled) = tokio::sync::oneshot::channel();
     let work = run_prompt_after_question_start(request, Some(answering_settled_tx));
@@ -190,7 +193,12 @@ async fn run_prompt_after_question_start(
     } = request;
     let inputs = match prepare_turn(runtime, &overrides, can_prompt).await {
         Ok(inputs) => inputs,
-        Err(error) => return Err(with_next_step(error)),
+        Err(error) => {
+            if let Some(scope) = question_scope.as_ref() {
+                scope.finish_segment();
+            }
+            return Err(with_next_step(error));
+        }
     };
     run_prompt_with_continuation_inputs_with_signal(
         TurnPrompt {
@@ -570,6 +578,9 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
     };
     let mut output =
         run_agent_with_control(&*provider, executor.as_ref(), request, definitions, control).await;
+    if let Some(scope) = question_scope.as_ref() {
+        scope.finish_segment();
+    }
     if let Some(answering_settled) = answering_settled {
         let _ = answering_settled.send(());
     }

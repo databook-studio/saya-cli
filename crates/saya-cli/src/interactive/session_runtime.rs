@@ -196,7 +196,7 @@ impl SessionRuntime {
             if clarification && !scope.cancellation().is_cancelled() {
                 self.question = QuestionLifecycle::PendingClarification(scope);
             } else {
-                scope.settle_answering();
+                scope.finish_segment();
             }
         }
     }
@@ -206,7 +206,7 @@ impl SessionRuntime {
         match previous {
             QuestionLifecycle::Active(scope) | QuestionLifecycle::PendingClarification(scope) => {
                 scope.cancellation().cancel();
-                scope.settle_answering();
+                scope.finish_segment();
             }
             QuestionLifecycle::Idle => {}
         }

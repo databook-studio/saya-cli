@@ -92,20 +92,31 @@ pub(crate) async fn run_with_candidates(
             None,
         )
         .await;
-        scope.settle_answering();
         return result;
     }
     let cancellation = scope.cancellation();
     let (executor, dialect) = {
+        let deadline = scope.begin_segment();
         let build = live::build_executor(runtime, &overrides, can_prompt);
         tokio::pin!(build);
-        tokio::select! {
-            result = &mut build => result?,
-            _ = cancellation.cancelled() => {
-                scope.settle_answering();
-                return Err(AgentRuntimeError::Agent("request cancelled".into()));
-            }
+        let result = match deadline {
+            Some(duration) => tokio::select! {
+                result = &mut build => result,
+                _ = tokio::time::sleep(duration) => {
+                    cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime));
+                    build.await
+                }
+            },
+            None => tokio::select! {
+                result = &mut build => result,
+                _ = cancellation.cancelled() => build.await,
+            },
+        };
+        scope.finish_segment();
+        if cancellation.is_cancelled() {
+            return Err(AgentRuntimeError::Agent("request cancelled".into()));
         }
+        result?
     };
     let runner = LiveAttemptRunner::new(
         runtime,
@@ -123,7 +134,6 @@ pub(crate) async fn run_with_candidates(
         agent_mode,
     );
     let result = orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await;
-    scope.settle_answering();
     result
 }
 

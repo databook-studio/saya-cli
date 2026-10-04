@@ -65,7 +65,7 @@ pub(super) async fn ask(
     tokio::pin!(work);
     match tokio::select! {
         result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); return Ok(130); }
+        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); let _ = work.await; return Ok(130); }
     } {
         Ok(output) => Ok(ask_exit_code(&output)),
         Err(error) => failure_message(5, error.to_string(), format),
