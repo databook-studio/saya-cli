@@ -67,6 +67,19 @@ pub enum EpisodeError {
         diagnostic: Arc<EngineSinkError>,
     },
 
+    /// A budget pause whose lifecycle write or mirror failed after a prior
+    /// diagnostic had already been retained. The journal state decides
+    /// whether the pause was committed.
+    #[error(
+        "run budget stop during step {step} ({reason:?}) encountered a transition error; original diagnostic: {diagnostic}; transition: {transition}"
+    )]
+    BudgetPersistenceFailed {
+        step: usize,
+        reason: PauseReason,
+        diagnostic: Arc<EngineSinkError>,
+        transition: Arc<EngineSinkError>,
+    },
+
     /// An internal owner stopped the active episode; no user or budget
     /// lifecycle reason can be inferred from that signal.
     #[error("run owner failed during step {step}")]

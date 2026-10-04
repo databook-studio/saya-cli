@@ -270,16 +270,25 @@ impl<'a> EpisodeDriver<'a> {
                 } else {
                     PauseReason::BudgetExhausted
                 };
-                sink.record(TransitionEvent::Pause(reason))
-                    .await
-                    .map_err(|source| EpisodeError::Transition { source })?;
-                match sink.take_diagnostic() {
-                    Some(diagnostic) => Err(EpisodeError::BudgetStoppedDiagnostic {
-                        step,
-                        reason,
-                        diagnostic,
-                    }),
-                    None => Err(EpisodeError::BudgetStopped { step, reason }),
+                let diagnostic = sink.take_diagnostic();
+                match sink.record(TransitionEvent::Pause(reason)).await {
+                    Ok(_) => match diagnostic {
+                        Some(diagnostic) => Err(EpisodeError::BudgetStoppedDiagnostic {
+                            step,
+                            reason,
+                            diagnostic,
+                        }),
+                        None => Err(EpisodeError::BudgetStopped { step, reason }),
+                    },
+                    Err(source) => match diagnostic {
+                        Some(diagnostic) => Err(EpisodeError::BudgetPersistenceFailed {
+                            step,
+                            reason,
+                            diagnostic,
+                            transition: std::sync::Arc::new(source),
+                        }),
+                        None => Err(EpisodeError::Transition { source }),
+                    },
                 }
             }
             CancellationReason::OwnerFailure => {

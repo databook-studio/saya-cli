@@ -122,7 +122,7 @@ pub(super) fn failure_code_of(
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
-    use saya_harness::engine::{EngineSinkError, EpisodeError, RunState};
+    use saya_harness::engine::{ElapsedClockError, EngineSinkError, EpisodeError, RunState};
     use saya_store::StoreError;
     use std::sync::Arc;
 
@@ -167,5 +167,31 @@ mod diagnostic_tests {
         )
         .unwrap();
         assert_eq!(code, 130);
+    }
+
+    #[test]
+    fn committed_budget_pause_with_mirror_error_keeps_budget_exit_class() {
+        let run_id = RunId::parse("diagnostic-run").unwrap();
+        let diagnostic = EpisodeError::BudgetPersistenceFailed {
+            step: 0,
+            reason: saya_types::PauseReason::BudgetExhausted,
+            diagnostic: Arc::new(EngineSinkError::ElapsedClock {
+                source: ElapsedClockError::FutureOrigin,
+            }),
+            transition: Arc::new(EngineSinkError::Store {
+                source: StoreError::Unavailable,
+            }),
+        };
+        let code = settle_diagnostic(
+            Settled {
+                state: RunState::Paused,
+                code: None,
+            },
+            &diagnostic,
+            &run_id,
+            RenderFormat::Text,
+        )
+        .unwrap();
+        assert_eq!(code, 6);
     }
 }

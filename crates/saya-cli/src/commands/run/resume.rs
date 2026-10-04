@@ -266,6 +266,8 @@ async fn continue_run(
                 } | saya_harness::engine::ResumeError::Episode {
                     source: saya_harness::engine::EpisodeError::CancelPersistenceFailed { .. }
                 } | saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::BudgetPersistenceFailed { .. }
+                } | saya_harness::engine::ResumeError::Episode {
                     source: saya_harness::engine::EpisodeError::Transition { .. }
                 }
             ) && matches!(

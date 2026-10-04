@@ -306,6 +306,7 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
         Err(
             error @ (saya_harness::engine::EpisodeError::CancelledDiagnostic { .. }
             | saya_harness::engine::EpisodeError::CancelPersistenceFailed { .. }
+            | saya_harness::engine::EpisodeError::BudgetPersistenceFailed { .. }
             | saya_harness::engine::EpisodeError::Transition { .. }),
         ) if matches!(
             sink.state(),
