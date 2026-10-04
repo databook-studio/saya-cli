@@ -634,6 +634,19 @@ fn handle_line_verbatim(
                     // extraction or no response) records nothing, so a session
                     // with learning disabled is unaffected.
                     state.usage.record_learning(output.learning_usage);
+                    // The shared automatic-compaction decision at the same settlement
+                    // the TUI reads; a pending clarification and a stop refuse
+                    // inside the adapter.
+                    if let Some(compact) = super::session_auto_compact::settle_auto_compact(
+                        runtime,
+                        state,
+                        session,
+                        &output,
+                        clarification,
+                        false,
+                    ) {
+                        super::session_emit::emit_action(compact, format, state, store)?;
+                    }
                     SessionAction::Agent(*output)
                 }
                 Ok(PromptResult::Cancelled {
