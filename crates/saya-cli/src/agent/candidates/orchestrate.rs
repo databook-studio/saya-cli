@@ -92,6 +92,7 @@ pub(crate) async fn orchestrate(
         let counter = VoteCounter::new(executor, &nominated);
         let deadline = scope.begin_segment();
         if cancellation.is_cancelled() {
+            scope.finish_segment();
             return Ok(with_paid_usage(last_success, paid_usage));
         }
         let decision = match deadline {
