@@ -7,11 +7,17 @@ use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::LastQuery;
 use super::chart::parse_chart_args;
 use super::outcome::Dispatch;
+use super::query_source_guard::{refuse_rerun, rerun_label};
+use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_state::SessionState;
 use crate::slash::{ExportMode, ExportRequest};
 use saya_types::{ExecutionEvidence, ResultScope};
 
+/// One entry for every caller: before any re-run entry (`--refresh`/legacy
+/// refresh, `/chart`, bare `/explain`) spawns its task, the source guard
+/// refuses when the stored alias now resolves to a different source.
+/// Snapshot and report read the capture only and never consult the guard.
 pub(super) fn apply_query_actions(
     action: &mut Option<SessionAction>,
     transcript: &mut Transcript,
@@ -19,6 +25,7 @@ pub(super) fn apply_query_actions(
     last_query: &mut Option<LastQuery>,
     captured: &Option<super::super::capture::CapturedResult>,
     capture_gap: Option<CaptureGap>,
+    runtime: &RuntimeConfig,
 ) -> Option<Dispatch> {
     // The arms this helper owns; anything else stays in `action` for the
     // next helper in the chain.
@@ -34,6 +41,13 @@ pub(super) fn apply_query_actions(
         return None;
     }
     let current = action.take()?;
+    // The re-run guard resolves the stored label again with the caller's
+    // runtime; entries that never re-run skip it via `rerun_label`.
+    if let Some(label) = rerun_label(&current, state, last_query)
+        && refuse_rerun(captured, &label, runtime, transcript)
+    {
+        return Some(Dispatch::Handled);
+    }
     match current {
         SessionAction::Export(request) => apply_export(
             request,

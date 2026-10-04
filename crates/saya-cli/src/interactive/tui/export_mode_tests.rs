@@ -8,6 +8,7 @@ use super::outcome::Dispatch;
 use super::query::apply_query_actions;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_state::SessionState;
+use crate::interactive::tui::application::tests_support::unused_runtime;
 use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::export::{
     MAX_EXPORT_BYTES, write_result_overwrite, write_result_with_ceiling,
@@ -79,6 +80,7 @@ fn apply_export_action(
     last_query: &mut Option<LastQuery>,
     captured: &Option<CapturedResult>,
 ) -> Option<Dispatch> {
+    let rt = unused_runtime();
     apply_query_actions(
         &mut Some(SessionAction::Export(request)),
         transcript,
@@ -86,6 +88,7 @@ fn apply_export_action(
         last_query,
         captured,
         None,
+        &rt,
     )
 }
 

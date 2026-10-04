@@ -6,6 +6,7 @@ use super::super::outcome::Dispatch;
 use super::apply_query_actions;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_state::SessionState;
+use crate::interactive::tui::application::tests_support::unused_runtime;
 use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
 use crate::interactive::tui::types::LastQuery;
@@ -68,6 +69,7 @@ fn apply_report_action(
     last_query: &mut Option<LastQuery>,
     captured: &Option<CapturedResult>,
 ) -> Option<Dispatch> {
+    let rt = unused_runtime();
     apply_query_actions(
         &mut Some(SessionAction::Report(request)),
         transcript,
@@ -75,6 +77,7 @@ fn apply_report_action(
         last_query,
         captured,
         None,
+        &rt,
     )
 }
 
