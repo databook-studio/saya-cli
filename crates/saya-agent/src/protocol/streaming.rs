@@ -43,11 +43,12 @@ pub struct TokenUsage {
     /// `prompt_eval_cached_count`. The Ollama value is a subset of
     /// `prompt_eval_count`; `None` when the relevant provider omits this detail.
     pub cached_input_tokens: Option<u64>,
-    /// Input tokens spent *creating* a cache entry (Anthropic only). This is a
-    /// provider-reported breakdown of `input_tokens`, kept distinct from
-    /// `cached_input_tokens` because creation bills differently from reads.
-    /// Wire source: Anthropic `usage.cache_creation_input_tokens`. `None` for
-    /// providers with no cache-write concept (OpenAI, Gemini, Ollama).
+    /// Provider-reported input tokens written to a prompt cache. This remains
+    /// an optional breakdown of `input_tokens`, separate from
+    /// `cached_input_tokens`, and is never added to the scalar total. Wire
+    /// sources are Anthropic `usage.cache_creation_input_tokens` and OpenAI
+    /// Chat `usage.prompt_tokens_details.cache_write_tokens` when reported;
+    /// `None` means this detail was absent or unsupported.
     pub cache_creation_input_tokens: Option<u64>,
     /// Tokens spent on chain-of-thought reasoning. The inclusive/separate
     /// split is per-provider and documented here because a normalising layer
