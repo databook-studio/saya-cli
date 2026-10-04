@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use saya_agent::{AgentEvent, AgentEventSink, AnsweringObservation, TokenUsage, UsageCall};
+use saya_agent::{
+    AgentEvent, AgentEventSink, AgentMetric, AnsweringObservation, TokenUsage, UsageCall,
+};
 use std::sync::Mutex;
 
 #[derive(Default)]
@@ -68,5 +70,110 @@ impl AgentEventSink for AnsweringReceiptSink<'_> {
 
     async fn observe_answering(&self, observation: AnsweringObservation) {
         self.inner.observe_answering(observation).await;
+    }
+
+    async fn metric(&self, metric: AgentMetric) {
+        self.inner.metric(metric).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use saya_agent::{
+        AgentAttemptOutcome, AgentMetric, AgentMetricCount, AgentMetricOutcome, AgentMetricPhase,
+        AgentMetricUseful,
+    };
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum SinkRecord {
+        Event(AgentEvent),
+        Metric(AgentMetric),
+    }
+
+    struct RecordingSink(Mutex<Vec<SinkRecord>>);
+
+    impl RecordingSink {
+        fn records(&self) -> Vec<SinkRecord> {
+            self.0.lock().expect("recording sink lock").clone()
+        }
+    }
+
+    #[async_trait]
+    impl AgentEventSink for RecordingSink {
+        async fn emit(&self, event: AgentEvent) {
+            self.0
+                .lock()
+                .expect("recording sink lock")
+                .push(SinkRecord::Event(event));
+        }
+
+        async fn metric(&self, metric: AgentMetric) {
+            self.0
+                .lock()
+                .expect("recording sink lock")
+                .push(SinkRecord::Metric(metric));
+        }
+    }
+
+    #[tokio::test]
+    async fn metric_reaches_inner_once_unchanged_and_in_order() {
+        let sink = RecordingSink(Mutex::new(Vec::new()));
+        let wrapper = AnsweringReceiptSink::new(&sink);
+        wrapper.emit(AgentEvent::turn_started()).await;
+        wrapper
+            .metric(AgentMetric::Count(AgentMetricCount::RetryAttemptStarted))
+            .await;
+        wrapper.emit(AgentEvent::assistant_text("partial")).await;
+        assert_eq!(
+            sink.records(),
+            vec![
+                SinkRecord::Event(AgentEvent::TurnStarted),
+                SinkRecord::Metric(AgentMetric::Count(AgentMetricCount::RetryAttemptStarted)),
+                SinkRecord::Event(AgentEvent::AssistantText {
+                    text: "partial".to_string(),
+                }),
+            ],
+            "exactly one metric, unchanged, between the two emitted events"
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_leave_receipt_sums_unchanged() {
+        let usage = || AgentEvent::usage(UsageCall::Answer, TokenUsage::new(2, 5));
+        let plain_sink = RecordingSink(Mutex::new(Vec::new()));
+        let plain = AnsweringReceiptSink::new(&plain_sink);
+        plain.emit(usage()).await;
+        plain.emit(usage()).await;
+
+        let metrics_sink = RecordingSink(Mutex::new(Vec::new()));
+        let with_metrics = AnsweringReceiptSink::new(&metrics_sink);
+        with_metrics.emit(usage()).await;
+        with_metrics
+            .metric(AgentMetric::Phase {
+                phase: AgentMetricPhase::ProviderEstablishment,
+                elapsed_ns: 1,
+                outcome: AgentMetricOutcome::Succeeded,
+            })
+            .await;
+        with_metrics.emit(usage()).await;
+        with_metrics
+            .metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
+            .await;
+        with_metrics
+            .metric(AgentMetric::UsageCoverage {
+                attempt_outcome: AgentAttemptOutcome::Succeeded,
+                reported: true,
+            })
+            .await;
+
+        let plain_total = plain.take();
+        assert_eq!(plain_total, Some(TokenUsage::new(4, 10)), "usage sums");
+        assert_eq!(
+            with_metrics.take(),
+            plain_total,
+            "metrics must not enter receipts"
+        );
     }
 }
