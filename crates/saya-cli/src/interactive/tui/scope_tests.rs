@@ -23,14 +23,13 @@ fn query_result(sql: &str, rows: usize, truncated: bool) -> saya_types::QueryRes
 }
 
 fn sql_task_with_connection(connection: Option<&str>, sql: &str) -> SqlTask {
-    SqlTask {
-        profile: connection.map(str::to_string),
-        sql: sql.to_string(),
-        followup: Followup::Sql {
+    SqlTask::new(
+        connection.map(str::to_string),
+        sql.to_string(),
+        Followup::Sql {
             connection: connection.map(str::to_string),
         },
-        started_unix_ms: 1_790_000_000_000,
-    }
+    )
 }
 
 /// Drives `complete` with a `QueryResult` event and returns the table block
@@ -43,7 +42,6 @@ fn completed_table(task: &SqlTask, result: saya_types::QueryResult) -> Block {
         &mut transcript,
         &mut None,
         &mut None,
-        &super::ui_snapshot_tests::unused_runtime(),
     );
     transcript
         .blocks()

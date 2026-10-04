@@ -67,6 +67,10 @@ fn timer_source(
                     Err(error) => return Err(error.to_string()),
                 }
             };
+            // Accepted sockets inherit O_NONBLOCK from a non-blocking listener on macOS.
+            stream
+                .set_nonblocking(false)
+                .map_err(|error| error.to_string())?;
             let body = read_request(&mut stream)?;
             let kind = classify_request(&body)?;
             if kind != expected {
@@ -282,6 +286,10 @@ fn postgres_setup_source(
                 Err(error) => return Err(error.to_string()),
             }
         };
+        // Accepted sockets inherit O_NONBLOCK from a non-blocking listener on macOS.
+        stream
+            .set_nonblocking(false)
+            .map_err(|error| error.to_string())?;
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .map_err(|error| error.to_string())?;

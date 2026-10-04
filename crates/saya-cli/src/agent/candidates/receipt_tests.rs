@@ -141,6 +141,10 @@ fn candidate_source(
                     Err(error) => return Err(error.to_string()),
                 }
             };
+            // Accepted sockets inherit O_NONBLOCK from a non-blocking listener on macOS.
+            stream
+                .set_nonblocking(false)
+                .map_err(|error| error.to_string())?;
             let request = read_request(&mut stream)?;
             requests
                 .lock()

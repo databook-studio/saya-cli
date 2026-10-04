@@ -34,11 +34,13 @@ use super::exec;
 use super::transcript::{BlockKind, Transcript};
 use super::worker_permits::WorkerPermit;
 use crate::config::runtime::RuntimeConfig;
+use crate::interactive::sql_execution::SqlExecution;
 use crate::interactive::tui::types::LastQuery;
 use crate::render::TerminalEvent;
 use crate::slash::ExportRequest;
 use saya_agent::CancellationToken;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
 
 /// What to do with a finished query result, captured when the command ran.
@@ -65,9 +67,41 @@ pub(crate) struct SqlTask {
     pub profile: Option<String>,
     pub sql: String,
     pub followup: Followup,
-    /// Unix ms when the command was dispatched — the evidence's start time,
-    /// recorded at creation so the capture never guesses it later.
-    pub started_unix_ms: i64,
+    /// The envelope the worker's query ACTUALLY ran with, written by the
+    /// worker before its `QueryResult` event. Per task, dropped with it:
+    /// no global state, no keys, no eviction. A poisoned lock reads as
+    /// "no envelope".
+    pub execution: Arc<Mutex<Option<SqlExecution>>>,
+}
+
+impl SqlTask {
+    pub(crate) fn new(profile: Option<String>, sql: String, followup: Followup) -> Self {
+        Self {
+            profile,
+            sql,
+            followup,
+            execution: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub(crate) fn take_execution(&self) -> Option<SqlExecution> {
+        self.execution.lock().ok()?.take()
+    }
+
+    /// Test helper: plants a synthetic envelope built from a `QueryResult`
+    /// with an explicit source binding, so `complete` tests keep testing
+    /// what they test without a live worker.
+    #[cfg(test)]
+    pub(crate) fn plant_execution_for_test(
+        &self,
+        result: &saya_types::QueryResult,
+        binding: crate::interactive::sql_execution::SqlSourceBinding,
+    ) {
+        if let Ok(mut guard) = self.execution.lock() {
+            let now = super::capture::unix_now_ms();
+            *guard = Some(SqlExecution::new(result.clone(), binding, now, now));
+        }
+    }
 }
 
 /// Spawns the query on a worker thread with its own tokio runtime and returns
@@ -82,6 +116,7 @@ pub(crate) fn spawn(
     cancellation: CancellationToken,
 ) -> Receiver<TerminalEvent> {
     let (tx, rx) = std::sync::mpsc::channel();
+    let slot = Arc::clone(&task.execution);
     std::thread::spawn(move || {
         let _permit = permit;
         let event = match tokio::runtime::Builder::new_current_thread()
@@ -93,6 +128,7 @@ pub(crate) fn spawn(
                 task.profile.as_deref(),
                 &task.sql,
                 &cancellation,
+                &slot,
             )),
             Err(error) => TerminalEvent::Error {
                 message: error.to_string(),
@@ -114,7 +150,6 @@ pub(crate) fn complete(
     transcript: &mut Transcript,
     last_query: &mut Option<LastQuery>,
     captured: &mut Option<super::capture::CapturedResult>,
-    runtime: &RuntimeConfig,
 ) {
     let TerminalEvent::QueryResult { result } = event else {
         let TerminalEvent::Error { message } = event else {
@@ -134,29 +169,26 @@ pub(crate) fn complete(
                 connection.as_deref(),
                 &result.executed_sql,
             );
-            match super::capture::direct_sql_evidence(
-                task.profile.as_deref(),
+            let Some(execution) = task.take_execution() else {
+                // No envelope: the worker never ran (or failed before it
+                // could write one). Render the result with no evidence and
+                // capture nothing — never synthesize provenance from the
+                // live runtime.
+                transcript.push(BlockKind::Table, table);
+                return;
+            };
+            let evidence = super::capture::direct_sql_evidence_from_execution(
                 connection.as_deref(),
-                &result,
-                runtime,
-                task.started_unix_ms,
-            ) {
-                Some(evidence) => {
-                    // One final line under the scope line: the execution's
-                    // provenance, no SQL text in it.
-                    transcript.push(
-                        BlockKind::Table,
-                        format!("{table}\n{}", evidence.human_line()),
-                    );
-                    let accounted = super::capture::accounted_bytes(&result);
-                    super::capture::capture_within(
-                        captured, result, evidence, accounted, transcript,
-                    );
-                }
-                // No resolvable dialect, no evidence, no capture, nothing
-                // extra said: the table renders exactly as before.
-                None => transcript.push(BlockKind::Table, table),
-            }
+                &execution,
+            );
+            // One final line under the scope line: the execution's
+            // provenance, no SQL text in it.
+            transcript.push(
+                BlockKind::Table,
+                format!("{table}\n{}", evidence.human_line()),
+            );
+            let accounted = super::capture::accounted_bytes(&result);
+            super::capture::capture_within(captured, result, evidence, accounted, transcript);
         }
         Followup::Export { request } => {
             match super::export::write_result_overwrite(

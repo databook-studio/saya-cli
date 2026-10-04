@@ -8,6 +8,7 @@ use super::apply_query_actions;
 use crate::agent::tools::AgentCapture;
 use crate::interactive::session_commands::SessionAction;
 use crate::interactive::session_state::SessionState;
+use crate::interactive::tui::application::tests_support::unused_runtime;
 use crate::interactive::tui::capture::{CapturedResult, agent_evidence};
 use crate::interactive::tui::capture_agent::CaptureGap;
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
@@ -88,6 +89,7 @@ fn snapshot_of_agent_capture_is_labelled_model_limited() {
     let path = dir.join("snap.csv");
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
     let outcome = apply_query_actions(
         &mut Some(SessionAction::Export(snapshot_request(&path))),
         &mut transcript,
@@ -95,6 +97,7 @@ fn snapshot_of_agent_capture_is_labelled_model_limited() {
         &mut None,
         &agent_captured(2, 100),
         None,
+        &rt,
     );
     assert!(
         !matches!(outcome, Some(Dispatch::SqlTask(_))),
@@ -122,6 +125,7 @@ fn snapshot_of_agent_capture_is_labelled_model_limited() {
 fn snapshot_after_uncaptured_agent_query_names_the_gap() {
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
     let request = SessionAction::Export(snapshot_request(std::path::Path::new(
         "/nonexistent-saya-c2/never.csv",
     )));
@@ -132,6 +136,7 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
         &mut None,
         &None,
         Some(CaptureGap::OverBudget),
+        &rt,
     );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert_eq!(
@@ -147,6 +152,7 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
         &mut None,
         &None,
         Some(CaptureGap::Missing),
+        &rt,
     );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert_eq!(
@@ -160,6 +166,7 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
         &mut None,
         &None,
         None,
+        &rt,
     );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert!(
@@ -175,6 +182,7 @@ fn snapshot_after_uncaptured_agent_query_names_the_gap() {
 fn snapshot_after_truncated_model_view_names_the_reason() {
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
     apply_query_actions(
         &mut Some(SessionAction::Export(snapshot_request(
             std::path::Path::new("/nonexistent-saya-r3/never.csv"),
@@ -184,6 +192,7 @@ fn snapshot_after_truncated_model_view_names_the_reason() {
         &mut None,
         &None,
         Some(CaptureGap::ModelViewTruncated),
+        &rt,
     );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert_eq!(
@@ -200,6 +209,7 @@ fn snapshot_after_truncated_model_view_names_the_reason() {
 fn snapshot_after_redacted_model_view_names_the_reason() {
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
     apply_query_actions(
         &mut Some(SessionAction::Export(snapshot_request(
             std::path::Path::new("/nonexistent-saya-r3/never.csv"),
@@ -209,6 +219,7 @@ fn snapshot_after_redacted_model_view_names_the_reason() {
         &mut None,
         &None,
         Some(CaptureGap::ModelViewRedacted),
+        &rt,
     );
     let msg = last_block(&transcript, BlockKind::Error).expect("the refusal is an error");
     assert_eq!(
@@ -227,6 +238,7 @@ fn report_of_agent_capture_names_scope() {
     let path = dir.join("report.md");
     let mut transcript = Transcript::new();
     let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
     apply_query_actions(
         &mut Some(SessionAction::Report(report_request(&path))),
         &mut transcript,
@@ -234,6 +246,7 @@ fn report_of_agent_capture_names_scope() {
         &mut None,
         &agent_captured(2, 100),
         None,
+        &rt,
     );
     let written = std::fs::read_to_string(&path).expect("the report was written");
     assert!(

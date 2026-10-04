@@ -8,6 +8,7 @@ mod chart;
 mod grants;
 mod outcome;
 mod query;
+mod query_source_guard;
 mod run;
 mod session_actions;
 
@@ -21,6 +22,10 @@ mod session_context_key_tests;
 
 #[cfg(test)]
 mod chain_tests;
+
+#[cfg(test)]
+#[path = "query_source_tests.rs"]
+mod query_source_tests;
 
 pub(crate) use outcome::Dispatch;
 
@@ -122,6 +127,7 @@ pub(crate) fn dispatch(
                             last_query,
                             captured,
                             capture_gap,
+                            runtime,
                         ) {
                             result = outcome;
                         } else if let Some(outcome) = run::apply_run_action(

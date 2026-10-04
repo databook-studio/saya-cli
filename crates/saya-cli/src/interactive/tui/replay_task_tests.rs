@@ -17,7 +17,7 @@ use crate::commands::Replay;
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::application::tests_support::{idle_app, unused_runtime};
-use crate::interactive::tui::capture::{CapturedResult, accounted_bytes, unix_now_ms};
+use crate::interactive::tui::capture::{CapturedResult, accounted_bytes};
 use crate::interactive::tui::loop_tick::tick_workers;
 use crate::interactive::tui::worker_permits::{WorkerPermit, test_permit_lock_async};
 use crate::render::{RenderFormat, TerminalEvent};
@@ -795,18 +795,17 @@ fn running_replay_is_visible_in_the_status_bar() {
 #[test]
 fn detached_refresh_export_writes_no_file() {
     fn export_task(path: &Path) -> SqlTask {
-        SqlTask {
-            profile: Some("local".to_string()),
-            sql: "SELECT 1 AS one".to_string(),
-            followup: Followup::Export {
+        SqlTask::new(
+            Some("local".to_string()),
+            "SELECT 1 AS one".to_string(),
+            Followup::Export {
                 request: ExportRequest {
                     mode: Some(ExportMode::Refresh),
                     overwrite: false,
                     path: path.to_string_lossy().into_owned(),
                 },
             },
-            started_unix_ms: unix_now_ms(),
-        }
+        )
     }
 
     let dir = temp_dir("refresh-export");

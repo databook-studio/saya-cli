@@ -62,6 +62,7 @@ pub(crate) mod session_trust;
 mod session_trust_tests;
 pub(crate) mod session_universe;
 mod session_workspace;
+pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
 pub(crate) mod tui;
 

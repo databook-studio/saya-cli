@@ -1,7 +1,9 @@
 use crate::config::runtime::{RuntimeConfig, RuntimeError};
+use crate::interactive::sql_execution::{
+    SqlExecution, connected_connector, profile_label, source_binding, timed_execute,
+};
 use saya_agent::CancellationToken;
-use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
-use saya_types::{ConnectionError, DatabaseProfile, QueryRequest, QueryResult};
+use saya_types::{ConnectionError, DatabaseProfile, QueryResult};
 
 #[path = "sql_operation_cancellation.rs"]
 pub(crate) mod cancellation;
@@ -57,69 +59,72 @@ pub(crate) async fn execute_resolved(
     sql: &str,
     can_prompt: bool,
 ) -> Result<QueryResult, SqlOperationError> {
-    execute_resolved_with_cancellation(runtime, profile, sql, can_prompt, None).await
+    let name = profile_label(runtime, profile);
+    execute_resolved_with_source(runtime, &name, profile, sql, can_prompt)
+        .await
+        .map(|execution| execution.into_parts().0)
 }
 
-/// Executes bounded direct SQL while keeping cancellation attached to this
-/// operation through setup and connector execution.
-pub(crate) async fn execute_with_cancellation(
+/// Executes direct SQL and returns the immutable source envelope: the
+/// result plus the binding (profile name/identity, dialect, issued row
+/// cap) and the wall-clock window around the real query.
+pub(crate) async fn execute_resolved_with_source(
+    runtime: &RuntimeConfig,
+    profile_name: &str,
+    profile: &DatabaseProfile,
+    sql: &str,
+    can_prompt: bool,
+) -> Result<SqlExecution, SqlOperationError> {
+    let applied_row_cap = runtime.resolved.max_rows;
+    let connector = connected_connector(runtime, profile, can_prompt).await?;
+    let binding = source_binding(
+        runtime,
+        profile_name,
+        profile,
+        connector.as_ref(),
+        applied_row_cap,
+    );
+    let (result, started_unix_ms, finished_unix_ms) =
+        timed_execute(connector.as_ref(), sql, applied_row_cap).await?;
+    Ok(SqlExecution::new(
+        result,
+        binding,
+        started_unix_ms,
+        finished_unix_ms,
+    ))
+}
+
+/// Executes bounded direct SQL with cancellation AND returns the immutable
+/// source envelope: the result plus the binding (profile name/identity,
+/// dialect, issued row cap) and the wall-clock window around the real query.
+///
+/// The binding and connector reuse the same setup as the non-envelope
+/// cancellation path (`connected_connector` = build + connect with the same
+/// `ConnectorOptions`); the timestamps wrap the SAME execution (including
+/// the cancellation-settled wait — E2-2's Spec Review calls this out).
+pub(crate) async fn execute_with_cancellation_and_source(
     runtime: &RuntimeConfig,
     profile_name: Option<&str>,
     sql: &str,
     can_prompt: bool,
     cancellation: &CancellationToken,
-) -> Result<QueryResult, SqlOperationError> {
+) -> Result<SqlExecution, SqlOperationError> {
     let name = profile_name.ok_or(SqlOperationError::NoActiveProfile)?;
-    let profile = runtime.named_profile(name)?;
-    execute_resolved_with_cancellation(runtime, profile, sql, can_prompt, Some(cancellation)).await
-}
-
-async fn execute_resolved_with_cancellation(
-    runtime: &RuntimeConfig,
-    profile: &DatabaseProfile,
-    sql: &str,
-    can_prompt: bool,
-    cancellation: Option<&CancellationToken>,
-) -> Result<QueryResult, SqlOperationError> {
-    if is_cancelled(cancellation) {
-        return Err(SqlOperationError::Execute(ConnectionError::cancelled()));
-    }
-    let connector = build_connector_with_prompt(
-        profile,
-        &runtime.secret_resolver(),
-        ConnectorOptions {
-            query_timeout_seconds: runtime.resolved.query_timeout_seconds,
-            read_only: runtime.resolved.read_only,
-            ..Default::default()
-        },
+    let profile = runtime.named_profile(name)?.clone();
+    crate::interactive::sql_execution::execute_with_cancellation_and_source_inner(
+        runtime,
+        name,
+        &profile,
+        sql,
         can_prompt,
+        cancellation,
     )
     .await
-    .map_err(SqlOperationError::Build)?;
-    if is_cancelled(cancellation) {
-        return Err(SqlOperationError::Execute(ConnectionError::cancelled()));
-    }
-    connector
-        .connect()
-        .await
-        .map_err(SqlOperationError::Connect)?;
-    if is_cancelled(cancellation) {
-        return Err(SqlOperationError::Execute(ConnectionError::cancelled()));
-    }
-    let request = QueryRequest::new(sql.to_string(), runtime.resolved.max_rows);
-    let result = match cancellation {
-        Some(cancellation) => {
-            cancellation::execute_with_cancellation(connector.as_ref(), request, cancellation).await
-        }
-        None => connector.execute(request).await,
-    };
-    result.map_err(SqlOperationError::Execute)
-}
-
-fn is_cancelled(cancellation: Option<&CancellationToken>) -> bool {
-    cancellation.is_some_and(CancellationToken::is_cancelled)
 }
 
 #[cfg(test)]
 #[path = "sql_operation_cancellation_tests.rs"]
 mod cancellation_tests;
+#[cfg(test)]
+#[path = "sql_operation_source_tests.rs"]
+mod source_tests;

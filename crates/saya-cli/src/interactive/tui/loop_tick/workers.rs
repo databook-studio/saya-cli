@@ -40,7 +40,6 @@ pub(crate) fn tick_workers(app: &mut App, store: &FsSessionStore, state: &mut Se
                     &mut app.transcript,
                     &mut app.last_query,
                     &mut app.captured,
-                    &app.runtime,
                 );
                 // A new result table starts at its first column so the
                 // view does not inherit a scroll position from an earlier,
