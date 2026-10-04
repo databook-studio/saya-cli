@@ -68,6 +68,7 @@ pub(super) async fn salvage(
         definitions: &[],
         context_byte_budget,
         request_preflight,
+        continuation: None,
         sink,
         cancellation,
         events,

@@ -1,5 +1,6 @@
 mod admission;
 mod attempt;
+mod attempt_metrics;
 mod clarification;
 mod clarification_args;
 mod clarification_feed;
@@ -164,6 +165,7 @@ async fn run_agent_loop(
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
     let mut continuation_count = 0;
+    let mut pending_continuation = None;
     // Calls that failed during this run — SQL statements keyed on the
     // statement exactly as submitted, other tools on (tool, arguments) — so a
     // byte-identical re-submission is refused rather than re-executed (loop
@@ -229,6 +231,7 @@ async fn run_agent_loop(
             definitions: &definitions,
             context_byte_budget: limits.context_byte_budget,
             request_preflight,
+            continuation: pending_continuation.take(),
             sink,
             cancellation: &cancellation,
             events: &mut events,
@@ -257,6 +260,13 @@ async fn run_agent_loop(
                             .is_some_and(|max| continuation_count < max) =>
                     {
                         continuation_count += 1;
+                        pending_continuation = Some(receive::ContinuationProgress {
+                            index: continuation_count as usize,
+                            limit: limits
+                                .max_continuations
+                                .expect("the continuation guard checked a finite limit")
+                                as usize,
+                        });
                         messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
                         continue;
                     }

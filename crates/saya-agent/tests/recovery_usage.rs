@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use saya_agent::{
-    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AllowReadOnlyApproval,
+    AgentAttemptOutcome, AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentMetric,
+    AgentMetricCount, AgentMetricOutcome, AgentMetricPhase, AgentRequest, AllowReadOnlyApproval,
     CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderEvent,
     ProviderRecoveryPhase, ProviderRecoveryReason, ProviderStream, TokenUsage, ToolError,
     ToolExecutor, run_agent_with_sink,
@@ -25,6 +26,22 @@ struct RecordingSink(Arc<Mutex<Vec<AgentEvent>>>);
 impl AgentEventSink for RecordingSink {
     async fn emit(&self, event: AgentEvent) {
         self.0.lock().unwrap().push(event);
+    }
+}
+
+struct CaptureSink {
+    events: Arc<Mutex<Vec<AgentEvent>>>,
+    metrics: Arc<Mutex<Vec<AgentMetric>>>,
+}
+
+#[async_trait]
+impl AgentEventSink for CaptureSink {
+    async fn emit(&self, event: AgentEvent) {
+        self.events.lock().unwrap().push(event);
+    }
+
+    async fn metric(&self, metric: AgentMetric) {
+        self.metrics.lock().unwrap().push(metric);
     }
 }
 
@@ -70,6 +87,7 @@ async fn stream_establishment_failure_is_not_retried() {
     let provider_calls = Arc::new(Mutex::new(0));
     let tool_calls = Arc::new(Mutex::new(0));
     let events = Arc::new(Mutex::new(Vec::new()));
+    let metrics = Arc::new(Mutex::new(Vec::new()));
     let error = run_agent_with_sink(
         &EstablishmentFailure {
             calls: provider_calls.clone(),
@@ -81,7 +99,10 @@ async fn stream_establishment_failure_is_not_retried() {
         Vec::new(),
         AgentLimits::default(),
         &AllowReadOnlyApproval,
-        &RecordingSink(events.clone()),
+        &CaptureSink {
+            events: events.clone(),
+            metrics: metrics.clone(),
+        },
         CancellationToken::new(),
     )
     .await
@@ -111,6 +132,25 @@ async fn stream_establishment_failure_is_not_retried() {
         )),
         "the receipt is typed but never derives a reason from provider prose: {events:?}"
     );
+    let metrics = metrics.lock().unwrap();
+    assert!(metrics.iter().any(|metric| matches!(
+        metric,
+        AgentMetric::Phase {
+            phase: AgentMetricPhase::ProviderEstablishment,
+            outcome: AgentMetricOutcome::Failed,
+            ..
+        }
+    )));
+    for phase in [
+        AgentMetricPhase::ProviderReadAwait,
+        AgentMetricPhase::FirstProviderEvent,
+    ] {
+        assert!(metrics.iter().any(|metric| matches!(
+            metric,
+            AgentMetric::Phase { phase: seen, elapsed_ns: 0, outcome: AgentMetricOutcome::Unavailable }
+                if *seen == phase
+        )));
+    }
 }
 
 struct MaxThenSuccess {
@@ -205,6 +245,125 @@ async fn retry_uses_latest_failed_snapshot_and_unambiguous_progress() {
     ));
 }
 
+struct OptionalUsageRetry {
+    calls: Mutex<usize>,
+    failed_usage: Option<TokenUsage>,
+    successful_usage: Option<TokenUsage>,
+}
+
+#[async_trait]
+impl ChatProvider for OptionalUsageRetry {
+    fn name(&self) -> &str {
+        "optional-usage-retry"
+    }
+
+    async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
+        unreachable!("the agent receive path streams")
+    }
+
+    async fn stream(
+        &self,
+        _: ChatRequest,
+        _: CancellationToken,
+    ) -> Result<ProviderStream, ProviderError> {
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let attempt = *calls;
+        let usage = if attempt == 1 {
+            self.failed_usage
+        } else {
+            self.successful_usage
+        };
+        let mut events = if attempt == 1 {
+            vec![Ok(ProviderEvent::TextDelta("discarded".into()))]
+        } else {
+            vec![Ok(ProviderEvent::TextDelta("kept".into()))]
+        };
+        if let Some(usage) = usage {
+            events.push(Ok(ProviderEvent::Usage(usage)));
+        }
+        if attempt > 1 {
+            events.push(Ok(ProviderEvent::Done));
+        }
+        Ok(Box::pin(futures_util::stream::iter(events)))
+    }
+}
+
+struct MetricSink(Arc<Mutex<Vec<AgentMetric>>>);
+
+#[async_trait]
+impl AgentEventSink for MetricSink {
+    async fn emit(&self, _: AgentEvent) {}
+
+    async fn metric(&self, metric: AgentMetric) {
+        self.0.lock().unwrap().push(metric);
+    }
+}
+
+#[tokio::test]
+async fn retry_metrics_keep_absent_and_reported_zero_usage_distinct() {
+    for (failed_usage, successful_usage, expected_reported) in [
+        (None, Some(TokenUsage::new(0, 0)), [false, true]),
+        (Some(TokenUsage::new(0, 0)), None, [true, false]),
+    ] {
+        let metrics = Arc::new(Mutex::new(Vec::new()));
+        let output = run_agent_with_sink(
+            &OptionalUsageRetry {
+                calls: Mutex::new(0),
+                failed_usage,
+                successful_usage,
+            },
+            &NoTools {
+                calls: Arc::new(Mutex::new(0)),
+            },
+            request(),
+            Vec::new(),
+            AgentLimits::default(),
+            &AllowReadOnlyApproval,
+            &MetricSink(metrics.clone()),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.answer, "kept");
+        let metrics = metrics.lock().unwrap();
+        let coverage = metrics
+            .iter()
+            .filter_map(|metric| match metric {
+                AgentMetric::UsageCoverage {
+                    attempt_outcome,
+                    reported,
+                } => Some((*attempt_outcome, *reported)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            coverage,
+            vec![
+                (AgentAttemptOutcome::Failed, expected_reported[0]),
+                (AgentAttemptOutcome::Succeeded, expected_reported[1]),
+            ]
+        );
+        assert_eq!(
+            metrics
+                .iter()
+                .filter(
+                    |metric| **metric == AgentMetric::Count(AgentMetricCount::RetryAttemptStarted)
+                )
+                .count(),
+            1
+        );
+        assert!(metrics.iter().any(|metric| matches!(
+            metric,
+            AgentMetric::Phase {
+                phase: AgentMetricPhase::RetryBackoff,
+                outcome: AgentMetricOutcome::Succeeded,
+                ..
+            }
+        )));
+    }
+}
+
 struct DroppingProvider {
     calls: Arc<Mutex<usize>>,
 }
@@ -229,7 +388,10 @@ impl ChatProvider for DroppingProvider {
     }
 }
 
-struct CancelOnRetry(CancellationToken);
+struct CancelOnRetry {
+    cancellation: CancellationToken,
+    metrics: Arc<Mutex<Vec<AgentMetric>>>,
+}
 
 #[async_trait]
 impl AgentEventSink for CancelOnRetry {
@@ -241,8 +403,12 @@ impl AgentEventSink for CancelOnRetry {
                 ..
             }
         ) {
-            self.0.cancel();
+            self.cancellation.cancel();
         }
+    }
+
+    async fn metric(&self, metric: AgentMetric) {
+        self.metrics.lock().unwrap().push(metric);
     }
 }
 
@@ -250,6 +416,7 @@ impl AgentEventSink for CancelOnRetry {
 async fn cancellation_during_backoff_makes_no_next_provider_call() {
     let calls = Arc::new(Mutex::new(0));
     let cancellation = CancellationToken::new();
+    let metrics = Arc::new(Mutex::new(Vec::new()));
     let error = run_agent_with_sink(
         &DroppingProvider {
             calls: calls.clone(),
@@ -261,13 +428,26 @@ async fn cancellation_during_backoff_makes_no_next_provider_call() {
         Vec::new(),
         AgentLimits::default(),
         &AllowReadOnlyApproval,
-        &CancelOnRetry(cancellation.clone()),
+        &CancelOnRetry {
+            cancellation: cancellation.clone(),
+            metrics: metrics.clone(),
+        },
         cancellation,
     )
     .await
     .expect_err("cancellation abandons the local backoff");
     assert!(matches!(error, AgentError::Cancelled));
     assert_eq!(*calls.lock().unwrap(), 1);
+    let metrics = metrics.lock().unwrap();
+    assert!(metrics.iter().any(|metric| matches!(
+        metric,
+        AgentMetric::Phase {
+            phase: AgentMetricPhase::RetryBackoff,
+            outcome: AgentMetricOutcome::Cancelled,
+            ..
+        }
+    )));
+    assert!(!metrics.contains(&AgentMetric::Count(AgentMetricCount::RetryAttemptStarted)));
 }
 
 struct ByteLimitThenSuccess {
