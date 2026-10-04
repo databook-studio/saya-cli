@@ -1,4 +1,4 @@
-use crate::{AgentEvent, AnsweringObservation};
+use crate::{AgentEvent, AgentMetric, AnsweringObservation};
 use async_trait::async_trait;
 #[async_trait]
 pub trait AgentEventSink: Send + Sync {
@@ -8,6 +8,9 @@ pub trait AgentEventSink: Send + Sync {
     /// A sink that cannot persist an observation should cancel its shared token
     /// with `CancellationReason::OwnerFailure` before returning.
     async fn observe_answering(&self, _observation: AnsweringObservation) {}
+
+    /// Receives fixed source-owned metrics, separate from display events.
+    async fn metric(&self, _metric: AgentMetric) {}
 }
 pub struct NoopEventSink;
 #[async_trait]

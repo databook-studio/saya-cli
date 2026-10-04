@@ -5,8 +5,8 @@
 
 use super::{check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tools};
 use crate::{
-    AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
-    ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentMetric, AgentMetricUseful,
+    ApprovalDecider, CancellationToken, ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -79,6 +79,7 @@ pub(super) async fn run_turn_tools(
             definitions,
             result_caps,
             cancellation,
+            sink,
         )
         .await;
         for (call, completed) in assistant.tool_calls.iter().zip(results) {
@@ -86,7 +87,7 @@ pub(super) async fn run_turn_tools(
                 failed,
                 last_successful_sql,
                 failure_key::key_of(call),
-                true,
+                completed.executed,
                 completed.succeeded,
                 completed.failure_reason.as_deref(),
             );
@@ -102,16 +103,20 @@ pub(super) async fn run_turn_tools(
                 result_shape: completed.result_shape,
             });
             messages.push(completed.message);
-            check_cancelled(cancellation)?;
-            emit(
-                events,
-                sink,
-                AgentEvent::ToolCompleted {
-                    name: call.name.clone(),
-                    summary: output::completion_summary(&completed.summary, completed.truncated),
-                },
-            )
-            .await;
+            if completed.executed {
+                emit(
+                    events,
+                    sink,
+                    AgentEvent::ToolCompleted {
+                        name: call.name.clone(),
+                        summary: output::completion_summary(
+                            &completed.summary,
+                            completed.truncated,
+                        ),
+                    },
+                )
+                .await;
+            }
         }
         return Ok(());
     }
@@ -155,6 +160,7 @@ pub(super) async fn run_turn_tools(
                 serde_json::json!({"error": reason}),
                 "tool call failed validation".into(),
                 false,
+                false,
                 cap,
             );
             messages.push(completed.message);
@@ -188,7 +194,8 @@ pub(super) async fn run_turn_tools(
                 arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
                 result_shape: None,
             });
-            let completed = tools::complete_tool(call.id, result, summary.into(), false, cap);
+            let completed =
+                tools::complete_tool(call.id, result, summary.into(), false, false, cap);
             messages.push(completed.message);
             emit(
                 events,
@@ -272,6 +279,10 @@ pub(super) async fn run_turn_tools(
                 false,
             )
         };
+        if executed && succeeded {
+            sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
+                .await;
+        }
         failed_statements::record_outcome(
             failed,
             last_successful_sql,
@@ -282,7 +293,7 @@ pub(super) async fn run_turn_tools(
                 .then(|| result.get("error").and_then(serde_json::Value::as_str))
                 .flatten(),
         );
-        let completed = tools::complete_tool(call.id, result, summary, succeeded, cap);
+        let completed = tools::complete_tool(call.id, result, summary, succeeded, executed, cap);
         tool_metadata.push(crate::ToolMetadata {
             name: call.name.clone(),
             status: if executed {

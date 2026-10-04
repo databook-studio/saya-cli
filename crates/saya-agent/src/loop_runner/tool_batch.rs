@@ -1,5 +1,6 @@
 use crate::{
-    CancellationToken, ChatMessage, ToolCall, ToolDefinition, ToolExecutionContext, ToolExecutor,
+    AgentEventSink, AgentMetric, AgentMetricUseful, CancellationToken, ChatMessage, ToolCall,
+    ToolDefinition, ToolExecutionContext, ToolExecutor,
 };
 use serde_json::Value;
 
@@ -12,6 +13,7 @@ pub(super) struct CompletedTool {
     pub(super) message: ChatMessage,
     pub(super) summary: String,
     pub(super) succeeded: bool,
+    pub(super) executed: bool,
     pub(super) truncated: bool,
     pub(super) result_shape: Option<crate::ToolResultShape>,
     pub(super) failure_reason: Option<String>,
@@ -23,6 +25,7 @@ pub(super) async fn execute_batch(
     definitions: &[ToolDefinition],
     result_caps: &[usize],
     cancellation: &CancellationToken,
+    sink: &dyn AgentEventSink,
 ) -> Vec<CompletedTool> {
     use futures_util::{StreamExt, stream};
 
@@ -37,9 +40,24 @@ pub(super) async fn execute_batch(
             cancellation: cancellation.clone(),
         };
         async move {
-            let (result, summary, succeeded) =
-                tools::execute_with_outcome(executor, &name, arguments, definition, context).await;
-            complete_tool(call.id.clone(), result, summary, succeeded, cap)
+            let (result, summary, succeeded, executed) = if cancellation.is_cancelled() {
+                (
+                    serde_json::json!({"error":"tool was not executed after cancellation"}),
+                    "tool not executed after cancellation".to_owned(),
+                    false,
+                    false,
+                )
+            } else {
+                let result =
+                    tools::execute_with_outcome(executor, &name, arguments, definition, context)
+                        .await;
+                if result.2 {
+                    sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
+                        .await;
+                }
+                (result.0, result.1, result.2, true)
+            };
+            complete_tool(call.id.clone(), result, summary, succeeded, executed, cap)
         }
     });
     stream::iter(pending)
@@ -53,6 +71,7 @@ pub(super) fn complete_tool(
     result: Value,
     summary: String,
     succeeded: bool,
+    executed: bool,
     cap: usize,
 ) -> CompletedTool {
     let result_shape = tool_record::result_shape_of(&result);
@@ -74,6 +93,7 @@ pub(super) fn complete_tool(
         },
         summary: bound_summary(&summary),
         succeeded,
+        executed,
         truncated: shaped.truncated,
         result_shape,
         failure_reason,

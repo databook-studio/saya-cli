@@ -61,6 +61,7 @@ async fn main_loop_request_does_not_set_json_mode() {
         definitions: &[],
         context_byte_budget: AgentLimits::default().context_byte_budget,
         request_preflight: None,
+        continuation: None,
         sink: &sink,
         cancellation: &cancellation,
         events: &mut events,

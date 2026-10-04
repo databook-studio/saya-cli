@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AgentRunControl, AnsweringLimits,
-    AnsweringObservation, ApprovalDecider, BudgetDimension, CancellationToken, ChatMessage,
-    ChatProvider, ChatRequest, ChatResponse, LocalStateEffect, ProviderError, ProviderEvent,
-    ProviderStream, ReasoningEffort, RequestPreflightConfig, ResponseFormat, TokenUsage, ToolCall,
-    ToolConcurrency, ToolDefinition, ToolEffect, ToolError, ToolExecutionContext, ToolExecutor,
-    run_agent_with_control,
+    AgentEvent, AgentEventSink, AgentLimits, AgentMetric, AgentMetricCount, AgentRequest,
+    AgentRunControl, AnsweringLimits, AnsweringObservation, ApprovalDecider, BudgetDimension,
+    CancellationToken, ChatMessage, ChatProvider, ChatRequest, ChatResponse, LocalStateEffect,
+    ProviderError, ProviderEvent, ProviderStream, ReasoningEffort, RequestPreflightConfig,
+    ResponseFormat, TokenUsage, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect, ToolError,
+    ToolExecutionContext, ToolExecutor, run_agent_with_control,
 };
 use serde::Serialize;
 use std::{
@@ -112,6 +112,7 @@ impl ApprovalDecider for RecordingApproval {
 struct RecordingSink {
     events: Mutex<Vec<AgentEvent>>,
     observations: Mutex<Vec<AnsweringObservation>>,
+    metrics: Mutex<Vec<AgentMetric>>,
 }
 
 #[async_trait]
@@ -121,6 +122,9 @@ impl AgentEventSink for RecordingSink {
     }
     async fn observe_answering(&self, observation: AnsweringObservation) {
         self.observations.lock().unwrap().push(observation);
+    }
+    async fn metric(&self, metric: AgentMetric) {
+        self.metrics.lock().unwrap().push(metric);
     }
 }
 
