@@ -15,8 +15,10 @@ use saya_agent::{AgentEvent, ProviderRecoveryPhase, UsageCall};
 impl App {
     /// Drains any queued agent-stream messages into the transcript. Returns true
     /// when the request just finished (so the caller can persist the session).
-    /// No session runtime is held, so the turn's question lifecycle is not
-    /// settled here — the session-holding tick uses `drain_stream_with_session`.
+    /// Test-only seam: the tests drive the drain without a session runtime,
+    /// so the turn's question lifecycle is not settled here — the
+    /// session-holding tick uses `drain_stream_with_session`.
+    #[cfg(test)]
     pub(crate) fn drain_stream(&mut self, state: &mut SessionState) -> bool {
         self.drain_inner(state, None)
     }
@@ -264,12 +266,9 @@ impl App {
                     });
                 }
                 StreamMsg::Done(result) => {
-                    self.settle_done(
-                        result,
-                        state,
-                        prompt.clone(),
-                        session.as_mut().map(|session| &mut **session),
-                    );
+                    // One stream posts exactly one `Done`; the settle takes
+                    // the session handle out of the loop's Option.
+                    self.settle_done(result, state, prompt.clone(), session.take());
                     finished = true;
                 }
             }
