@@ -26,10 +26,10 @@ pub use protocol::contracts::{
     AnsweringObservation, ApprovalChoice, ApprovalDecider, ApprovalDecision, BudgetDimension,
     CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, ChatMessage, ChatRequest, ChatResponse,
     ContextBlock, KnowledgeOutcome, LearningSkipReason, LocalStateEffect, OverrideFindingDto,
-    ProposedClaimDto, ProviderError, ProviderRecoveryPhase, ProviderRecoveryReason,
-    ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy, SuppliedClaimDto,
-    SuppliedContractDto, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutionContext, ToolExecutor, ToolMetadata, ToolResultShape, UsageCall,
+    ProposedClaimDto, ProviderContinuationPhase, ProviderError, ProviderRecoveryPhase,
+    ProviderRecoveryReason, ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy,
+    SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect,
+    ToolError, ToolExecutionContext, ToolExecutor, ToolMetadata, ToolResultShape, UsageCall,
     context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};

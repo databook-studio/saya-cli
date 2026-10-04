@@ -30,7 +30,7 @@ pub use chat::{
 };
 pub use context::{CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, context_utilisation_percent};
 pub use error::{ProviderError, ToolError};
-pub use event::AgentEvent;
+pub use event::{AgentEvent, ProviderContinuationPhase};
 pub use knowledge::{
     KnowledgeOutcome, OverrideFindingDto, ProposedClaimDto, SuppliedClaimDto, SuppliedContractDto,
 };

@@ -80,6 +80,21 @@ pub enum AgentEvent {
         attempt: u8,
         limit: u8,
     },
+    /// The provider capped the response at its output-token limit. Emitted
+    /// with [`ProviderContinuationPhase::Continuing`] once per **admitted**
+    /// continuation — after the request preflight and admission accepted the
+    /// re-ask, before any new provider work — and with
+    /// [`ProviderContinuationPhase::Exhausted`] once, when the run stops
+    /// **because** the fixed continuation allowance ran out. `index` is the
+    /// one-based continuation number this transition names (the count already
+    /// used, for `Exhausted`); `limit` is the run's allowance. The event is
+    /// progress only: it never replaces [`AgentEvent::ProviderRecovery`]
+    /// (same-request transport retries) or the truncation error itself.
+    ProviderContinuation {
+        phase: ProviderContinuationPhase,
+        index: u32,
+        limit: u32,
+    },
     /// A tool was requested. `arguments` is the raw call payload (e.g. the SQL),
     /// surfaced so the user can see exactly what will run before approving it.
     /// `effect` carries the tool's **declared effect** (`ToolEffect`) so a
@@ -240,6 +255,19 @@ pub enum AgentEvent {
         /// True when a tie was resolved by fan-out evidence, not by votes.
         probe_broke_tie: bool,
     },
+}
+
+/// The provider-continuation disposition of a run that hit the provider's
+/// output-token cap. Progress only: the run's existing completion or error
+/// outcome still settles it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ProviderContinuationPhase {
+    /// The receiver admitted the continuation; a re-ask follows.
+    Continuing,
+    /// The continuation allowance ran out; the truncation error settles the run.
+    Exhausted,
 }
 
 #[cfg(test)]

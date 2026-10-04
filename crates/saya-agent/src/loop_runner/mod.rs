@@ -29,7 +29,8 @@ pub use clarification_args::{
 
 use crate::{
     AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage,
-    ChatProvider, ProviderError, TokenUsage, ToolDefinition, ToolExecutor,
+    ChatProvider, ProviderContinuationPhase, ProviderError, TokenUsage, ToolDefinition,
+    ToolExecutor,
 };
 
 use control::AgentRunInvocation;
@@ -296,6 +297,30 @@ async fn run_agent_loop(
                             (usage, used_bounded_sql_query, tool_metadata),
                         )
                         .await;
+                    }
+                    AgentError::Provider(ProviderError::OutputTruncated { .. })
+                        if limits
+                            .max_continuations
+                            .is_some_and(|max| max > 0 && continuation_count >= max) =>
+                    {
+                        // The allowance is spent: this truncation is terminal
+                        // here — no budget, cancellation, or designation
+                        // recovery arm matched above to own the stop instead.
+                        // A disabled continuation (`None`/`Some(0)`) never had
+                        // a limit to exhaust and stays silent.
+                        emit(
+                            &mut events,
+                            sink,
+                            AgentEvent::provider_continuation(
+                                ProviderContinuationPhase::Exhausted,
+                                continuation_count,
+                                limits
+                                    .max_continuations
+                                    .expect("the guard checked a finite limit"),
+                            ),
+                        )
+                        .await;
+                        return Err(error);
                     }
                     error => return Err(error),
                 }
