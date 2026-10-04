@@ -12,7 +12,10 @@
 //! 100%: a stale numerator means the true figure may already exceed the
 //! window, and that is exactly when compaction is most needed.
 
-use saya_agent::{CONTEXT_COMPACT_PERCENT, context_utilisation_percent};
+use saya_agent::{
+    AgentEvent, AgentOutput, CONTEXT_COMPACT_PERCENT, ProviderContinuationPhase,
+    context_utilisation_percent,
+};
 use saya_config::CompactionMode;
 
 /// Whether the automatic trigger may fire on this turn's report.
@@ -20,11 +23,16 @@ pub(crate) struct AutoCompactInput {
     pub(crate) mode: CompactionMode,
     pub(crate) answering_input: Option<u64>,
     pub(crate) window: Option<u64>,
-    /// `true` once the provider caps a response mid-answer and the loop
-    /// re-instructs: the partial is discarded and the resume anchors live in
-    /// earlier tool results — compacting there risks the very lines the
-    /// resume needs. The caller passes whether the finished turn continued.
+    /// `true` when the answering output carries an admitted provider
+    /// continuation (`ProviderContinuationPhase::Continuing`): the partial
+    /// was discarded and the resume anchors live in earlier tool results —
+    /// compacting there risks the very lines the resume needs. Derived from
+    /// the typed transition, never from strings or the salvage flag.
     pub(crate) continued: bool,
+    /// `true` when the run was cut by a budget/terminal salvage
+    /// (`output.truncated`): also suppressed, but named apart from
+    /// `continued` so a salvage stop is never read as a continuation.
+    pub(crate) terminal_stop: bool,
     /// `true` while a compaction worker is already running: one compaction at
     /// a time, so a second crossing waits rather than piling on.
     pub(crate) compact_running: bool,
@@ -37,18 +45,42 @@ pub(crate) struct AutoCompactInput {
 
 /// The pure decision: fire only in `auto` mode, at a finished turn, with a
 /// known window, a provider report, utilisation at or above the compact
-/// threshold, no compaction running, and no outstanding automatic failure.
+/// threshold, no compaction running, no outstanding automatic failure, and
+/// neither an admitted continuation nor a budget salvage stop.
 pub(crate) fn should_auto_compact(input: &AutoCompactInput) -> bool {
     if input.mode != CompactionMode::Auto {
         return false;
     }
-    if input.continued || input.compact_running || input.auto_failed {
+    if input.continued || input.terminal_stop || input.compact_running || input.auto_failed {
         return false;
     }
     let Some(percent) = context_utilisation_percent(input.answering_input, input.window) else {
         return false;
     };
     percent >= CONTEXT_COMPACT_PERCENT
+}
+
+/// Derives the two suppression gates from a settled turn's output.
+/// `continued` is `true` only when the output carries the admitted
+/// continuation transition (`ProviderContinuationPhase::Continuing`);
+/// `Exhausted` alone is a spent allowance — a terminal error path, not an
+/// admitted continuation. `terminal_stop` is the budget-salvage flag
+/// `output.truncated`. An error or absent result derives neither, and
+/// `TurnReset` (retried transport attempts) never sets either gate.
+pub(crate) fn compaction_gates(output: Option<&AgentOutput>) -> (bool, bool) {
+    let Some(output) = output else {
+        return (false, false);
+    };
+    let continued = output.events.iter().any(|event| {
+        matches!(
+            event,
+            AgentEvent::ProviderContinuation {
+                phase: ProviderContinuationPhase::Continuing,
+                ..
+            }
+        )
+    });
+    (continued, output.truncated)
 }
 
 /// The transcript line for an automatic success: the manual success message
@@ -87,6 +119,7 @@ mod tests {
             answering_input,
             window,
             continued: false,
+            terminal_stop: false,
             compact_running: false,
             auto_failed: false,
         }

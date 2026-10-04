@@ -1,6 +1,6 @@
 #[cfg(unix)]
 #[path = "session_question_budget/harness.rs"]
-mod harness;
+pub(crate) mod harness;
 
 #[cfg(unix)]
 #[test]

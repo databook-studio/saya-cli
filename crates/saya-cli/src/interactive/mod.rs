@@ -4,6 +4,7 @@ pub(crate) mod session_activation;
 pub(crate) mod allow_refusal;
 pub(crate) mod auto_compact;
 pub(crate) mod compact_task;
+pub(crate) mod session_auto_compact;
 mod session_commands;
 pub(crate) mod session_compact;
 pub(crate) mod session_compact_call;
