@@ -191,3 +191,7 @@ pub(crate) fn capture_event(
 #[cfg(test)]
 #[path = "capture_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "capture_receipt_tests.rs"]
+mod receipt_tests;
