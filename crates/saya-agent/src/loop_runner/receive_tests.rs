@@ -51,11 +51,13 @@ async fn main_loop_request_does_not_set_json_mode() {
     let mut admission = Admission::new(AnsweringLimits::default(), false);
     let mut messages = vec![ChatMessage::text("user", "hello")];
     let mut ordinary_history_pairs = 0;
+    let mut protected_prefix_len = 1;
     receive(ReceiveContext {
         provider: &provider,
         model: "m",
         messages: &mut messages,
         ordinary_history_pairs: &mut ordinary_history_pairs,
+        protected_prefix_len: &mut protected_prefix_len,
         definitions: &[],
         context_byte_budget: AgentLimits::default().context_byte_budget,
         request_preflight: None,

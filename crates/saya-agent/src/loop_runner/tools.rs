@@ -6,8 +6,6 @@ use saya_types::redact;
 use saya_types::redact_counted;
 use serde_json::Value;
 
-#[cfg(test)]
-pub(super) use super::tool_batch::turn_result_caps;
 pub(super) use super::tool_batch::{complete_tool, execute_batch};
 pub(super) use super::tool_shape::tool_message;
 pub use super::tool_shape::{

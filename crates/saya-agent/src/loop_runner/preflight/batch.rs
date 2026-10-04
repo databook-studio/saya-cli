@@ -7,6 +7,7 @@ use crate::{ChatMessage, ToolDefinition};
 pub(super) fn reserve(
     model: &str,
     prefix: &mut Vec<ChatMessage>,
+    protected_prefix_len: usize,
     assistant: &ChatMessage,
     definitions: &[ToolDefinition],
     byte_limit: usize,
@@ -24,9 +25,10 @@ pub(super) fn reserve(
         Measurement::Exceeded
     ) {
         // Include the pending assistant batch while the established compactor
-        // evicts older complete groups, so it cannot rewrite the batch itself.
+        // evicts only the suffix after the original question, so it cannot
+        // rewrite the protected request or this pending batch.
         prefix.push(assistant.clone());
-        super::super::output::trim_to_budget(prefix, 0);
+        super::super::output::trim_to_budget(prefix, 0, protected_prefix_len);
         prefix.pop();
     }
     let skeleton = Messages::Batch {

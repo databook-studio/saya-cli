@@ -151,7 +151,7 @@ async fn run_agent_loop(
     if controlled {
         admission.check(&cancellation)?;
     }
-    let (mut messages, mut ordinary_history_pairs) =
+    let (mut messages, mut ordinary_history_pairs, mut protected_prefix_len) =
         crate::history::build_messages_with_history_count(
             request.system_prompt.as_deref(),
             &request.context_blocks,
@@ -199,6 +199,7 @@ async fn run_agent_loop(
                 &request.model,
                 &mut messages,
                 &mut ordinary_history_pairs,
+                &mut protected_prefix_len,
                 &[],
                 limits.context_byte_budget,
                 request_preflight,
@@ -224,6 +225,7 @@ async fn run_agent_loop(
             model: &request.model,
             messages: &mut messages,
             ordinary_history_pairs: &mut ordinary_history_pairs,
+            protected_prefix_len: &mut protected_prefix_len,
             definitions: &definitions,
             context_byte_budget: limits.context_byte_budget,
             request_preflight,
@@ -314,6 +316,7 @@ async fn run_agent_loop(
             let result_budget = match preflight::reserve_tool_batch(
                 &request.model,
                 &mut messages,
+                protected_prefix_len,
                 &assistant,
                 &definitions,
                 limits.context_byte_budget,
@@ -439,6 +442,7 @@ async fn run_agent_loop(
                 &request.model,
                 &mut messages,
                 &mut ordinary_history_pairs,
+                &mut protected_prefix_len,
                 &assistant.tool_calls,
                 limits.context_byte_budget,
                 request_preflight,
@@ -499,7 +503,11 @@ async fn run_agent_loop(
         // assistant turns and tool results accumulate here. Trim every turn —
         // batch (parallel) and sequential alike — so the byte budget binds
         // unconditionally, never just on the turns a single call ran.
-        output::trim_to_budget(&mut messages, limits.context_byte_budget);
+        output::trim_to_budget(
+            &mut messages,
+            limits.context_byte_budget,
+            protected_prefix_len,
+        );
     }
 }
 

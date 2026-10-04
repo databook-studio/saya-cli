@@ -32,6 +32,7 @@ pub(super) fn fit_request(
     model: &str,
     messages: &mut Vec<ChatMessage>,
     ordinary_history_pairs: &mut usize,
+    protected_prefix_len: &mut usize,
     definitions: &[ToolDefinition],
     byte_limit: usize,
     config: Option<RequestPreflightConfig>,
@@ -53,7 +54,11 @@ pub(super) fn fit_request(
         projection::Measurement::Exceeded => return Err(PreflightError::Budget(dimension)),
         projection::Measurement::Serialization => return Err(PreflightError::Serialization),
     };
-    while crate::history::discard_oldest_history_pair(messages, ordinary_history_pairs) {
+    while crate::history::discard_oldest_history_pair(
+        messages,
+        ordinary_history_pairs,
+        protected_prefix_len,
+    ) {
         match projection::measure(
             model,
             projection::Messages::Slice(messages),
@@ -67,7 +72,7 @@ pub(super) fn fit_request(
             projection::Measurement::Exceeded => {}
         }
     }
-    super::output::trim_to_budget(messages, cap.saturating_sub(fixed));
+    super::output::trim_to_budget(messages, cap.saturating_sub(fixed), *protected_prefix_len);
     match projection::measure(
         model,
         projection::Messages::Slice(messages),
@@ -79,7 +84,7 @@ pub(super) fn fit_request(
             // The established compactor uses a deliberately cheap message-size
             // estimate. If that estimate leaves the exact neutral projection
             // oversized, evict older complete groups once more before refusing.
-            super::output::trim_to_budget(messages, 0);
+            super::output::trim_to_budget(messages, 0, *protected_prefix_len);
             match projection::measure(
                 model,
                 projection::Messages::Slice(messages),
@@ -98,12 +103,21 @@ pub(super) fn fit_request(
 pub(super) fn reserve_tool_batch(
     model: &str,
     messages: &mut Vec<ChatMessage>,
+    protected_prefix_len: usize,
     assistant: &ChatMessage,
     definitions: &[ToolDefinition],
     byte_limit: usize,
     config: Option<RequestPreflightConfig>,
 ) -> Result<usize, PreflightError> {
-    batch::reserve(model, messages, assistant, definitions, byte_limit, config)
+    batch::reserve(
+        model,
+        messages,
+        protected_prefix_len,
+        assistant,
+        definitions,
+        byte_limit,
+        config,
+    )
 }
 
 pub(super) fn non_execution_replies(assistant: &ChatMessage) -> Vec<ChatMessage> {
