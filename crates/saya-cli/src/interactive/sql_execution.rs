@@ -3,10 +3,11 @@
 //! issued row cap) and the wall-clock window around the real query.
 
 use crate::config::runtime::RuntimeConfig;
+use saya_agent::CancellationToken;
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
-use saya_types::{DatabaseProfile, QueryRequest, QueryResult, SqlDialect};
+use saya_types::{ConnectionError, DatabaseProfile, QueryRequest, QueryResult, SqlDialect};
 
-use super::sql_operation::SqlOperationError;
+use super::sql_operation::{SqlOperationError, cancellation};
 
 /// Where one direct SQL execution ran, captured from the SAME resolved
 /// profile/connector BEFORE the query runs.
@@ -102,6 +103,53 @@ pub(crate) async fn connected_connector(
 }
 
 /// One bounded execution stamped with the window around the real call.
+pub(crate) fn request_with_cap(sql: &str, applied_row_cap: usize) -> QueryRequest {
+    QueryRequest::new(sql.to_string(), applied_row_cap)
+}
+
+/// The cancellation-aware source variant's body: same connector setup as the
+/// cancellation path (build + connect, cancelled at both seams), then the
+/// envelope stamped around the cancellation-settled execution.
+pub(crate) async fn execute_with_cancellation_and_source_inner(
+    runtime: &RuntimeConfig,
+    profile_name: &str,
+    profile: &DatabaseProfile,
+    sql: &str,
+    can_prompt: bool,
+    cancellation: &CancellationToken,
+) -> Result<SqlExecution, SqlOperationError> {
+    let outer_started = unix_now_ms();
+    if cancellation.is_cancelled() {
+        return Err(SqlOperationError::Execute(ConnectionError::cancelled()));
+    }
+    let connector = connected_connector(runtime, profile, can_prompt).await?;
+    if cancellation.is_cancelled() {
+        return Err(SqlOperationError::Execute(ConnectionError::cancelled()));
+    }
+    let applied_row_cap = runtime.resolved.max_rows;
+    let binding = source_binding(
+        runtime,
+        profile_name,
+        profile,
+        connector.as_ref(),
+        applied_row_cap,
+    );
+    let query_started = unix_now_ms();
+    let result = cancellation::execute_with_cancellation(
+        connector.as_ref(),
+        request_with_cap(sql, applied_row_cap),
+        cancellation,
+    )
+    .await
+    .map_err(SqlOperationError::Execute)?;
+    Ok(SqlExecution::new(
+        result,
+        binding,
+        outer_started.min(query_started),
+        unix_now_ms(),
+    ))
+}
+
 pub(crate) async fn timed_execute(
     connector: &dyn DatabaseConnector,
     sql: &str,

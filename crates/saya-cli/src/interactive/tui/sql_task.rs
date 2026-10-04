@@ -88,11 +88,12 @@ pub(crate) fn spawn(
             .enable_all()
             .build()
         {
-            Ok(runtime_handle) => runtime_handle.block_on(exec::run_sql(
+            Ok(runtime_handle) => runtime_handle.block_on(exec::run_sql_with_key(
                 &runtime,
                 task.profile.as_deref(),
                 &task.sql,
                 &cancellation,
+                task.started_unix_ms,
             )),
             Err(error) => TerminalEvent::Error {
                 message: error.to_string(),
@@ -134,14 +135,14 @@ pub(crate) fn complete(
                 connection.as_deref(),
                 &result.executed_sql,
             );
-            match super::capture::direct_sql_evidence(
-                task.profile.as_deref(),
-                connection.as_deref(),
-                &result,
-                runtime,
-                task.started_unix_ms,
-            ) {
-                Some(evidence) => {
+            let key =
+                super::exec::stash_key(task.profile.as_deref(), &task.sql, task.started_unix_ms);
+            match super::exec::take_stashed_envelope(&key) {
+                Some(execution) => {
+                    let evidence = super::capture::direct_sql_evidence_from_execution(
+                        connection.as_deref(),
+                        &execution,
+                    );
                     // One final line under the scope line: the execution's
                     // provenance, no SQL text in it.
                     transcript.push(
@@ -153,9 +154,29 @@ pub(crate) fn complete(
                         captured, result, evidence, accounted, transcript,
                     );
                 }
-                // No resolvable dialect, no evidence, no capture, nothing
-                // extra said: the table renders exactly as before.
-                None => transcript.push(BlockKind::Table, table),
+                None => match super::capture::direct_sql_evidence(
+                    task.profile.as_deref(),
+                    connection.as_deref(),
+                    &result,
+                    runtime,
+                    task.started_unix_ms,
+                ) {
+                    Some(evidence) => {
+                        // One final line under the scope line: the execution's
+                        // provenance, no SQL text in it.
+                        transcript.push(
+                            BlockKind::Table,
+                            format!("{table}\n{}", evidence.human_line()),
+                        );
+                        let accounted = super::capture::accounted_bytes(&result);
+                        super::capture::capture_within(
+                            captured, result, evidence, accounted, transcript,
+                        );
+                    }
+                    // No resolvable dialect, no evidence, no capture, nothing
+                    // extra said: the table renders exactly as before.
+                    None => transcript.push(BlockKind::Table, table),
+                },
             }
         }
         Followup::Export { request } => {

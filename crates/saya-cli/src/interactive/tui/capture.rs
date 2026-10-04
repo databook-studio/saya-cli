@@ -13,6 +13,7 @@
 use super::transcript::{BlockKind, Transcript};
 use crate::agent::tools::AgentCapture;
 use crate::config::runtime::RuntimeConfig;
+use crate::interactive::sql_execution::SqlExecution;
 use saya_types::{
     EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryResult, ResultScope,
 };
@@ -76,6 +77,24 @@ pub(crate) fn direct_sql_evidence(
     started_unix_ms: i64,
 ) -> Option<ExecutionEvidence> {
     let dialect = runtime.named_profile(profile?).ok()?.dialect();
+    evidence_from_runtime(
+        profile,
+        connection,
+        result,
+        runtime,
+        started_unix_ms,
+        dialect,
+    )
+}
+
+fn evidence_from_runtime(
+    profile: Option<&str>,
+    connection: Option<&str>,
+    result: &QueryResult,
+    runtime: &RuntimeConfig,
+    started_unix_ms: i64,
+    dialect: saya_types::SqlDialect,
+) -> Option<ExecutionEvidence> {
     let connection_label = connection
         .filter(|label| !label.is_empty())
         .map(str::to_owned)
@@ -94,6 +113,33 @@ pub(crate) fn direct_sql_evidence(
             source: EvidenceSource::DirectSql,
         },
     ))
+}
+
+/// Direct-SQL evidence built ONLY from the executed envelope: the binding
+/// (profile name, opaque identity, dialect, issued row cap) and the real
+/// execution timestamps. Never reads the current runtime/App, so a context
+/// change between execution and completion cannot rewrite the provenance.
+pub(crate) fn direct_sql_evidence_from_execution(
+    connection: Option<&str>,
+    execution: &SqlExecution,
+) -> ExecutionEvidence {
+    let connection_label = connection
+        .filter(|label| !label.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| execution.binding.profile_name.clone());
+    ExecutionEvidence::for_result(
+        &execution.result,
+        ExecutionEvidenceArgs {
+            execution_id: next_execution_id(execution.started_unix_ms),
+            connection_label,
+            connection_identity: Some(execution.binding.profile_identity.clone()),
+            dialect: execution.binding.dialect,
+            max_rows: execution.binding.applied_row_cap,
+            started_unix_ms: execution.started_unix_ms,
+            finished_unix_ms: execution.finished_unix_ms,
+            source: EvidenceSource::DirectSql,
+        },
+    )
 }
 
 /// Execution evidence for a promoted agent capture (D12): source `Agent`,
