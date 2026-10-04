@@ -69,7 +69,9 @@ pub(crate) fn accept_provider(listener: &std::net::TcpListener) -> Option<std::n
             Ok((stream, _)) => {
                 stream.set_nonblocking(false).ok()?;
                 stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
-                stream.set_write_timeout(Some(Duration::from_secs(5))).ok()?;
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .ok()?;
                 return Some(stream);
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -99,22 +101,31 @@ pub(crate) fn wait_for_stream_timeout(
     label: &str,
     timeout: std::time::Duration,
 ) {
-    use std::{
-        thread,
-        time::Instant,
-    };
+    use std::{thread, time::Instant};
 
     let deadline = Instant::now() + timeout;
+    let needle_owned = needle.to_vec();
     loop {
         if buffer
             .lock()
             .unwrap()
-            .windows(needle.len())
-            .any(|window| window == needle)
+            .windows(needle_owned.len())
+            .any(|window| window == needle_owned.as_slice())
         {
             return;
         }
-        assert!(Instant::now() < deadline, "did not observe {label}");
+        if Instant::now() >= deadline {
+            let full = {
+                let locked = buffer.lock().unwrap();
+                String::from_utf8_lossy(&locked).into_owned()
+            };
+            let start = full.len().saturating_sub(2000);
+            panic!(
+                "did not observe {label}; buffer ({}/full): {:?}",
+                full.len(),
+                &full[start..]
+            );
+        }
         thread::sleep(std::time::Duration::from_millis(10));
     }
 }
@@ -203,12 +214,7 @@ pub(crate) fn spawn_script_server(
     script: Vec<ScriptStep>,
     release: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> MockServer {
-    use std::{
-        io::Write,
-        sync::atomic::Ordering,
-        thread,
-        time::Duration,
-    };
+    use std::{io::Write, sync::atomic::Ordering, thread, time::Duration};
 
     let address = format!("http://{}", listener.local_addr().unwrap());
     let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -229,12 +235,54 @@ pub(crate) fn spawn_script_server(
                 ScriptStep::Natural => reply_finished(&mut stream, &answer_body()),
                 ScriptStep::Harmless => reply_finished(&mut stream, &harmless_body()),
                 ScriptStep::HoldOpen { marker } => {
+                    // A 429 establishment refusal: the loop backs off and
+                    // retries the SAME answering request against the next
+                    // script slot, so the run stays inside the answering
+                    // source, held, until the remaining budget fires. (A
+                    // 200 + content + DONE would settle the turn naturally
+                    // instead of tripping the ceiling.) `marker` selects
+                    // which unfinished chunk the retry serves: empty keeps
+                    // the socket silent; non-empty writes one content chunk
+                    // (already on screen, proving the reply turn runs)
+                    // with no DONE frame, then holds the socket open.
+                    if marker.is_empty() {
+                        // Hold the socket silent: accept the request, say
+                        // nothing, keep it open. The establishment (60s)
+                        // and per-chunk idle (90s) timeouts never fire, so
+                        // the runtime's own remaining-elapsed timer is what
+                        // ends the reply turn — still ACTIVE elapsed time
+                        // of the same question scope. (A 429 refusal is NOT
+                        // usable here: a body on a 429 confuses reqwest's
+                        // framing and the loop classes it as a not-retried
+                        // provider failure instead of backing off.)
+                        use std::time::Instant;
+                        let held = Instant::now();
+                        while !release.load(Ordering::SeqCst) {
+                            if held.elapsed() > Duration::from_secs(25) {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        return;
+                    }
                     let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
                     write!(stream, "{head}data: {marker}\n\n").unwrap();
                     stream.flush().unwrap();
+                    use std::time::Instant;
+                    let held = Instant::now();
+                    let mut beats = 0_u32;
                     while !release.load(Ordering::SeqCst) {
+                        if held.elapsed() > Duration::from_secs(25) {
+                            break;
+                        }
+                        if beats.is_multiple_of(10) {
+                            let _ = write!(stream, ": keep-alive\n\n");
+                            let _ = stream.flush();
+                        }
+                        beats = beats.wrapping_add(1);
                         thread::sleep(Duration::from_millis(20));
                     }
+                    return;
                 }
             }
             drop(stream);
@@ -243,7 +291,11 @@ pub(crate) fn spawn_script_server(
             }
         }
     });
-    MockServer { address, requests, handle: Some(handle) }
+    MockServer {
+        address,
+        requests,
+        handle: Some(handle),
+    }
 }
 
 /// Waits for the child to exit, then asserts a clean status and removes
@@ -262,9 +314,6 @@ pub(crate) struct SpawnedChild {
 
 #[cfg(unix)]
 impl SpawnedChild {
-    pub(crate) fn child(&mut self) -> &mut std::process::Child {
-        self.guard.0.as_mut().unwrap()
-    }
     pub(crate) fn send(&mut self, bytes: &[u8]) {
         use std::io::Write;
         self.stdin.write_all(bytes).unwrap();
@@ -311,11 +360,17 @@ pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> Spawn
     .unwrap();
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
+    // The session composition reads PATH for the host-command lane; the
+    // harness clears the environment for hermeticity, so restore the real
+    // PATH (Row B passed without it only because nothing it ran needed the
+    // lane — the startup notice always prints to stderr either way).
+    let path = std::env::var_os("PATH").unwrap_or_default();
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
+        .env("PATH", path)
         .env("SAYA_CONFIG_HOME", &config_root)
         .env("SAYA_SESSION_DIR", &session_root)
         .env("SAYA_PROVIDER", "openai_compatible")
@@ -335,7 +390,10 @@ pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> Spawn
             if size == 0 {
                 break;
             }
-            stderr_sink.lock().unwrap().extend_from_slice(&buffer[..size]);
+            stderr_sink
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buffer[..size]);
         }
     });
     let stdout = child.stdout.take().unwrap();
@@ -348,7 +406,10 @@ pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> Spawn
             if size == 0 {
                 break;
             }
-            stdout_sink.lock().unwrap().extend_from_slice(&buffer[..size]);
+            stdout_sink
+                .lock()
+                .unwrap()
+                .extend_from_slice(&buffer[..size]);
         }
     });
     let stdin = child.stdin.take().unwrap();
@@ -360,19 +421,5 @@ pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> Spawn
         config_root,
         session_root,
         pumps: Some((stderr_pump, stdout_pump)),
-    }
-}
-
-#[cfg(unix)]
-pub(crate) fn wait_with_deadline(child: &mut std::process::Child, timeout: std::time::Duration) {
-    use std::{thread, time::Instant};
-
-    let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait().unwrap().is_some() {
-            return;
-        }
-        assert!(Instant::now() < deadline, "interactive child did not exit");
-        thread::sleep(std::time::Duration::from_millis(20));
     }
 }
