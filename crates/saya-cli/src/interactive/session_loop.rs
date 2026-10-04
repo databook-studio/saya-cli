@@ -560,15 +560,24 @@ fn handle_line_verbatim(
     let before_mode = state.approval_mode.clone();
     let approvals_set = matches!(parsed, Some(SlashCommand::Approvals(Some(_))));
     let action = match parsed {
-        Some(command) => state.apply(
-            command,
-            &runtime
-                .connections
-                .profiles
-                .keys()
-                .cloned()
-                .collect::<Vec<_>>(),
-        ),
+        Some(command) => {
+            // The answering context before and after the command decides
+            // whether this command changed it: a changed key retires the
+            // question authority once the command's message is produced, an
+            // unchanged key leaves a pending clarification untouched.
+            let before = state.context_key();
+            let action = state.apply(
+                command,
+                &runtime
+                    .connections
+                    .profiles
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            state.abandon_question_when_context_changed(&before, session);
+            action
+        }
         None => {
             let history = state.provider_request_history();
             let approval = state
