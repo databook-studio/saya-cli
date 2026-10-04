@@ -1,9 +1,11 @@
 use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
 use saya_agent::{
-    ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionGrants, SessionPolicy, ToolDefinition,
+    ApprovalChoice, ApprovalDecision, ApprovalPolicy, CancellationToken, SessionGrants,
+    SessionPolicy, ToolDefinition,
 };
 use saya_store::SessionJournal;
+use std::io::Write;
 use std::sync::Arc;
 
 pub(crate) struct TerminalApproval {
@@ -29,14 +31,16 @@ pub(crate) struct TerminalApproval {
     /// allowed runs. `None` — the one-shot ask and the headless shapes —
     /// records grants with no journal: there is no session to journal for.
     journal: Option<Arc<SessionJournal>>,
+    cancellation: CancellationToken,
 }
 
 impl TerminalApproval {
-    pub(crate) fn new(
+    pub(crate) fn with_cancellation(
         policy: ApprovalPolicy,
         can_prompt: bool,
         primary: TurnPrimary,
         facts: ApprovalFacts,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             policy: SessionPolicy::new(policy),
@@ -44,6 +48,7 @@ impl TerminalApproval {
             primary,
             facts,
             journal: None,
+            cancellation,
         }
     }
 
@@ -70,6 +75,7 @@ impl TerminalApproval {
             primary: TurnPrimary::default(),
             facts,
             journal: None,
+            cancellation: CancellationToken::new(),
         }
     }
 
@@ -81,12 +87,13 @@ impl TerminalApproval {
     /// facts — what this decider's prompts may state about the session. The
     /// session's journal rides along: a `[s]` answer's new grant is written
     /// there before this call is allowed to run.
-    pub(crate) fn from_session(
+    pub(crate) fn from_session_with_cancellation(
         policy: SessionPolicy,
         can_prompt: bool,
         primary: TurnPrimary,
         facts: ApprovalFacts,
         journal: Option<Arc<SessionJournal>>,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             policy,
@@ -94,6 +101,7 @@ impl TerminalApproval {
             primary,
             facts,
             journal,
+            cancellation,
         }
     }
 }
@@ -162,10 +170,6 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
             ApprovalDecision::Deny { .. } => false,
             ApprovalDecision::Ask if !self.can_prompt => false,
             ApprovalDecision::Ask => {
-                use std::io::{self, IsTerminal, Write};
-                if !io::stdin().is_terminal() {
-                    return false;
-                }
                 let primary = primary.as_deref();
                 eprint!(
                     "{}",
@@ -178,9 +182,13 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                         Some(self.policy.grants()),
                     )
                 );
-                let _ = io::stderr().flush();
-                let mut answer = String::new();
-                if !(io::stdin().read_line(&mut answer).is_ok()) {
+                let _ = std::io::stderr().flush();
+                let Ok(Some(answer)) =
+                    crate::terminal_input::approval_line(&self.cancellation).await
+                else {
+                    return false;
+                };
+                if self.cancellation.is_cancelled() {
                     return false;
                 }
                 let choice = terminal_choice(&answer, grant.as_deref());

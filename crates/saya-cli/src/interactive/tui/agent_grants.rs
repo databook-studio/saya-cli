@@ -3,7 +3,9 @@
 use super::super::{ChannelApproval, StreamMsg};
 use super::support::{composed_facts, read_shaped_tool, side_effecting_tool};
 use crate::grant_token::TurnPrimary;
-use saya_agent::{ApprovalChoice, ApprovalDecider, ApprovalPolicy, SessionPolicy};
+use saya_agent::{
+    ApprovalChoice, ApprovalDecider, ApprovalPolicy, CancellationToken, SessionPolicy,
+};
 use tokio::sync::mpsc::unbounded_channel;
 
 /// The TUI's modal offers the SQL family's token the way the turn binds it:
@@ -17,12 +19,13 @@ async fn the_tui_s_modal_offers_the_turn_s_primary_sql_token() {
         "analytics",
     ));
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         primary.clone(),
         crate::approval_facts::ApprovalFacts::default(),
         None,
+        CancellationToken::new(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -47,12 +50,13 @@ async fn the_tui_s_modal_offers_the_turn_s_primary_sql_token() {
     // And an unbound handle — a decider built before its turn bound a
     // registry (or a run's construction) — offers no token at all.
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
         crate::approval_facts::ApprovalFacts::default(),
         None,
+        CancellationToken::new(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { grant, .. }) = rx.recv().await {
@@ -81,12 +85,13 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
     // Turn three: the ask arrives with the suggested token, and the user's
     // session grant is recorded through the decider.
     let (tx, mut rx) = unbounded_channel();
-    let turn_three = ChannelApproval::new(
+    let turn_three = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -110,12 +115,13 @@ async fn a_tui_grant_made_in_one_turn_is_in_force_in_the_next() {
     // closed, so an ask would deny.
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let turn_four = ChannelApproval::new(
+    let turn_four = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     assert!(
         turn_four.approve(&tool, &arguments).await,
@@ -140,12 +146,13 @@ async fn a_grant_does_not_answer_a_different_shape() {
 
     // Turn three grants runner:bench through the ask.
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -161,12 +168,13 @@ async fn a_grant_does_not_answer_a_different_shape() {
     // The granted shape is pre-answered (closed channel: an ask would deny).
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     assert!(
         decider.approve(&granted, &granted_args).await,
@@ -174,12 +182,13 @@ async fn a_grant_does_not_answer_a_different_shape() {
     );
     // A different shape still asks — and a deny there denies.
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -202,12 +211,13 @@ async fn a_grant_does_not_answer_a_different_shape() {
     let here = serde_json::json!({"url": "https://a.example/x"});
     let there = serde_json::json!({"url": "https://b.example/x"});
     let (tx, mut rx) = unbounded_channel();
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     let answerer = tokio::spawn(async move {
         if let Some(StreamMsg::ApprovalRequest { respond, grant, .. }) = rx.recv().await {
@@ -221,12 +231,13 @@ async fn a_grant_does_not_answer_a_different_shape() {
     answerer.await.expect("the answerer completes");
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let decider = ChannelApproval::new(
+    let decider = ChannelApproval::with_cancellation(
         tx,
         policy.clone(),
         TurnPrimary::default(),
         composed_facts(),
         None,
+        CancellationToken::new(),
     );
     assert!(
         !decider.approve(&fetch, &there).await,

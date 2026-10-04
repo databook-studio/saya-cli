@@ -88,6 +88,17 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // facts can never be the keys that answer, and the modal's offered
     // token decides whether `s` is an answer at all.
     if let Some(pending) = app.request.pending_approval.as_ref() {
+        if code == KeyCode::Esc && mods.is_empty() && app.request.stream.is_some() {
+            if let Some(stream) = &app.request.stream {
+                stream.cancel.cancel();
+            }
+            app.request.pending_approval = None;
+            app.transcript.push(
+                super::super::transcript::BlockKind::System,
+                "Stop requested — waiting for the worker to confirm.",
+            );
+            return;
+        }
         match approval_key(code, mods, pending.grant.as_deref()) {
             ApprovalKey::Answer(choice) => app.answer_approval(choice),
             ApprovalKey::Scroll(delta) => app.scroll_approval(delta),

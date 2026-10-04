@@ -185,34 +185,37 @@ async fn agent_turn(
     sql: Option<&'static str>,
 ) -> (saya_agent::AgentOutput, Vec<ChatRequest>) {
     let requests = Arc::new(Mutex::new(Vec::new()));
-    let output = runtime::run_prompt_with_continuation_inputs(TurnPrompt {
-        runtime,
-        inputs: TurnInputs {
-            ai: runtime.resolved.ai.clone(),
-            provider: Box::new(ScriptedProvider {
-                requests: Arc::clone(&requests),
-                sql,
-                queried: AtomicBool::new(false),
-            }),
-            registry: registry(path, executions).await,
-            failures: Vec::new(),
+    let output = runtime::run_prompt_with_continuation_inputs_with_signal(
+        TurnPrompt {
+            runtime,
+            inputs: TurnInputs {
+                ai: runtime.resolved.ai.clone(),
+                provider: Box::new(ScriptedProvider {
+                    requests: Arc::clone(&requests),
+                    sql,
+                    queried: AtomicBool::new(false),
+                }),
+                registry: registry(path, executions).await,
+                failures: Vec::new(),
+            },
+            prompt,
+            approval: ApprovalPolicy::ReadOnly,
+            can_prompt: false,
+            can_obtain_approval: true,
+            history: state.provider_request_history(),
+            sink: &Sink,
+            cancellation: CancellationToken::new(),
+            state_db: None::<SqliteStateStore>,
+            decider: Some(Arc::new(saya_agent::AllowReadOnlyApproval)),
+            last_sql: None,
+            session: Some(session.universe()),
+            agent_mode: AgentMode::Build,
+            capture: None,
+            prior_tool_outcomes: state.prior_tool_outcomes.clone(),
+            compaction_summary: state.compaction_narrative(),
         },
-        prompt,
-        approval: ApprovalPolicy::ReadOnly,
-        can_prompt: false,
-        can_obtain_approval: true,
-        history: state.provider_request_history(),
-        sink: &Sink,
-        cancellation: CancellationToken::new(),
-        state_db: None::<SqliteStateStore>,
-        decider: Some(Arc::new(saya_agent::AllowReadOnlyApproval)),
-        last_sql: None,
-        session: Some(session.universe()),
-        agent_mode: AgentMode::Build,
-        capture: None,
-        prior_tool_outcomes: state.prior_tool_outcomes.clone(),
-        compaction_summary: state.compaction_narrative(),
-    })
+        None,
+    )
     .await
     .unwrap();
     let requests = Arc::try_unwrap(requests).unwrap().into_inner().unwrap();

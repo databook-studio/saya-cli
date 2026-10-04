@@ -29,6 +29,7 @@ mod runtime_profile;
 mod setup;
 mod slash;
 mod stream_render;
+mod terminal_input;
 
 #[cfg(test)]
 mod privacy_tests;

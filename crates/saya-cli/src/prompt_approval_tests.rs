@@ -9,8 +9,8 @@ use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token};
 use crate::prompt_approval::{TerminalApproval, approval_prompt, terminal_choice};
 use saya_agent::{
-    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, LocalStateEffect,
-    SessionPolicy, ToolDefinition, ToolEffect,
+    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, CancellationToken,
+    LocalStateEffect, SessionPolicy, ToolDefinition, ToolEffect,
 };
 
 fn side_effecting_tool() -> ToolDefinition {
@@ -50,11 +50,12 @@ fn workspace_rooted_facts() -> ApprovalFacts {
 
 #[tokio::test]
 async fn read_only_approval_denies_a_side_effecting_tool() {
-    let approval = TerminalApproval::new(
+    let approval = TerminalApproval::with_cancellation(
         ApprovalPolicy::ReadOnly,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     assert!(
         !approval
@@ -66,11 +67,12 @@ async fn read_only_approval_denies_a_side_effecting_tool() {
 
 #[tokio::test]
 async fn non_interactive_read_only_denies_render_chart_and_still_approves_sql() {
-    let approval = TerminalApproval::new(
+    let approval = TerminalApproval::with_cancellation(
         ApprovalPolicy::ReadOnly,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     let tools = database_tools();
     let render_chart = tools
@@ -108,22 +110,24 @@ async fn never_denies_and_ask_without_a_terminal_denies() {
         .iter()
         .find(|tool| tool.name == "bounded_sql_query")
         .expect("bounded_sql_query is defined");
-    let never = TerminalApproval::new(
+    let never = TerminalApproval::with_cancellation(
         ApprovalPolicy::Never,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     assert!(
         !never
             .approve(sql, &serde_json::json!({"sql": "SELECT 1"}))
             .await
     );
-    let ask = TerminalApproval::new(
+    let ask = TerminalApproval::with_cancellation(
         ApprovalPolicy::Ask,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     assert!(
         !ask.approve(sql, &serde_json::json!({"sql": "SELECT 1"}))
@@ -177,12 +181,13 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
     let token = grant_token(&tool.name, &arguments, None, &workspace_rooted_facts())
         .expect("workspace_write is grantable");
     let policy = SessionPolicy::new(ApprovalPolicy::Ask);
-    let before = TerminalApproval::from_session(
+    let before = TerminalApproval::from_session_with_cancellation(
         policy.clone(),
         false,
         TurnPrimary::default(),
         workspace_rooted_facts(),
         None,
+        CancellationToken::new(),
     );
     assert!(
         !before.approve(&tool, &arguments).await,
@@ -192,12 +197,13 @@ async fn a_granted_token_stops_the_ask_without_a_prompt() {
         policy.record(ApprovalChoice::AllowSession { token }),
         "the first grant is new"
     );
-    let after = TerminalApproval::from_session(
+    let after = TerminalApproval::from_session_with_cancellation(
         policy,
         false,
         TurnPrimary::default(),
         workspace_rooted_facts(),
         None,
+        CancellationToken::new(),
     );
     assert!(
         after.approve(&tool, &arguments).await,
@@ -286,12 +292,13 @@ async fn the_sql_family_s_grant_rides_the_turn_s_primary() {
         }),
         "the first grant is new"
     );
-    let after = TerminalApproval::from_session(
+    let after = TerminalApproval::from_session_with_cancellation(
         policy.clone(),
         false,
         primary,
         ApprovalFacts::default(),
         None,
+        CancellationToken::new(),
     );
     // The bound decider suggests `sql:analytics` for a connectionless call,
     // so the grant pre-answers it with no prompt at all.

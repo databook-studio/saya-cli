@@ -9,7 +9,7 @@ use crate::interactive::session_universe::SessionUniverse;
 use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentMode, ApprovalChoice, ApprovalDecider, ApprovalDecision,
-    ApprovalPolicy, ChatMessage, SessionPolicy, ToolDefinition,
+    ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy, ToolDefinition,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -50,15 +50,17 @@ pub(crate) struct ChannelApproval {
     /// `[s]` answer's new grant is journalled there, before the call it
     /// allowed runs. `None` — test shapes — records grants with no journal.
     journal: Option<Arc<saya_store::SessionJournal>>,
+    cancellation: CancellationToken,
 }
 
 impl ChannelApproval {
-    pub(crate) fn new(
+    pub(crate) fn with_cancellation(
         tx: UnboundedSender<StreamMsg>,
         policy: SessionPolicy,
         primary: TurnPrimary,
         facts: ApprovalFacts,
         journal: Option<Arc<saya_store::SessionJournal>>,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             tx,
@@ -66,6 +68,7 @@ impl ChannelApproval {
             primary,
             facts,
             journal,
+            cancellation,
         }
     }
 }
@@ -118,7 +121,9 @@ impl ApprovalDecider for ChannelApproval {
                 {
                     return false;
                 }
-                match answer.await {
+                tokio::select! {
+                    _ = self.cancellation.cancelled() => false,
+                    result = answer => match result {
                     Ok(choice) => {
                         // The user's answer reaches the session's grant store
                         // here, where the policy lives; allow-once and deny
@@ -139,6 +144,7 @@ impl ApprovalDecider for ChannelApproval {
                     }
                     // A UI that died mid-ask denies.
                     Err(_) => false,
+                    }
                 }
             }
         }
