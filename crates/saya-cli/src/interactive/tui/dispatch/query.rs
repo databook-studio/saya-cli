@@ -131,12 +131,11 @@ fn apply_export(
     }
     match last_query.as_ref() {
         Some(lq) => {
-            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-                profile: lq.connection.clone().or(state.profile.clone()),
-                sql: lq.sql.clone(),
-                followup: super::super::sql_task::Followup::Export { request },
-                started_unix_ms: super::super::capture::unix_now_ms(),
-            }));
+            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+                lq.connection.clone().or(state.profile.clone()),
+                lq.sql.clone(),
+                super::super::sql_task::Followup::Export { request },
+            )));
         }
         None => transcript.push(
             BlockKind::System,
@@ -207,12 +206,11 @@ fn apply_chart(
     match last_query.as_ref() {
         Some(lq) => {
             let (kind, path) = parse_chart_args(&args);
-            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-                profile: lq.connection.clone().or(state.profile.clone()),
-                sql: lq.sql.clone(),
-                followup: super::super::sql_task::Followup::Chart { kind, path },
-                started_unix_ms: super::super::capture::unix_now_ms(),
-            }));
+            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+                lq.connection.clone().or(state.profile.clone()),
+                lq.sql.clone(),
+                super::super::sql_task::Followup::Chart { kind, path },
+            )));
         }
         None => transcript.push(
             BlockKind::System,
@@ -240,12 +238,11 @@ fn apply_explain(
         return Some(Dispatch::Handled);
     };
     let trimmed = sql.trim().trim_end_matches(';').trim();
-    Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-        profile: connection.or_else(|| state.profile.clone()),
-        sql: format!("EXPLAIN {trimmed}"),
-        followup: super::super::sql_task::Followup::Explain,
-        started_unix_ms: super::super::capture::unix_now_ms(),
-    }))
+    Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+        connection.or_else(|| state.profile.clone()),
+        format!("EXPLAIN {trimmed}"),
+        super::super::sql_task::Followup::Explain,
+    )))
 }
 
 #[cfg(test)]

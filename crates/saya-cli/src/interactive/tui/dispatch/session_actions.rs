@@ -54,14 +54,13 @@ pub(super) fn apply_session_action(
         }
         SessionAction::Resume(id) => resume(transcript, state, runtime, store, session, &id),
         SessionAction::Sql(sql) => {
-            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-                profile: state.profile.clone(),
+            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+                state.profile.clone(),
                 sql,
-                followup: super::super::sql_task::Followup::Sql {
+                super::super::sql_task::Followup::Sql {
                     connection: state.profile.clone(),
                 },
-                started_unix_ms: super::super::capture::unix_now_ms(),
-            }));
+            )));
         }
         SessionAction::Contracts(command) => {
             run_contracts(transcript, state, runtime, state_db, format, &command)

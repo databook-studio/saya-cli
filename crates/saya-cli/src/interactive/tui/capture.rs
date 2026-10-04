@@ -12,7 +12,6 @@
 
 use super::transcript::{BlockKind, Transcript};
 use crate::agent::tools::AgentCapture;
-use crate::config::runtime::RuntimeConfig;
 use crate::interactive::sql_execution::SqlExecution;
 use saya_types::{
     EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryResult, ResultScope,
@@ -65,54 +64,6 @@ pub(crate) fn next_execution_id(started_unix_ms: i64) -> String {
         started_unix_ms,
         EXECUTION_COUNTER.fetch_add(1, Ordering::Relaxed),
     )
-}
-
-/// Direct-SQL evidence for a successful result, or `None` when the profile's
-/// dialect cannot be resolved — capture never guesses a dialect.
-pub(crate) fn direct_sql_evidence(
-    profile: Option<&str>,
-    connection: Option<&str>,
-    result: &QueryResult,
-    runtime: &RuntimeConfig,
-    started_unix_ms: i64,
-) -> Option<ExecutionEvidence> {
-    let dialect = runtime.named_profile(profile?).ok()?.dialect();
-    evidence_from_runtime(
-        profile,
-        connection,
-        result,
-        runtime,
-        started_unix_ms,
-        dialect,
-    )
-}
-
-fn evidence_from_runtime(
-    profile: Option<&str>,
-    connection: Option<&str>,
-    result: &QueryResult,
-    runtime: &RuntimeConfig,
-    started_unix_ms: i64,
-    dialect: saya_types::SqlDialect,
-) -> Option<ExecutionEvidence> {
-    let connection_label = connection
-        .filter(|label| !label.is_empty())
-        .map(str::to_owned)
-        .or_else(|| profile.map(str::to_owned))
-        .unwrap_or_else(|| "default".to_owned());
-    Some(ExecutionEvidence::for_result(
-        result,
-        ExecutionEvidenceArgs {
-            execution_id: next_execution_id(started_unix_ms),
-            connection_label,
-            connection_identity: None,
-            dialect,
-            max_rows: runtime.resolved.max_rows,
-            started_unix_ms,
-            finished_unix_ms: unix_now_ms(),
-            source: EvidenceSource::DirectSql,
-        },
-    ))
 }
 
 /// Direct-SQL evidence built ONLY from the executed envelope: the binding

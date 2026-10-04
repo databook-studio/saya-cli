@@ -15,7 +15,6 @@ use crate::interactive::tui::export::{
 use crate::interactive::tui::sql_task::{Followup, SqlTask, complete};
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
 use crate::interactive::tui::types::LastQuery;
-use crate::interactive::tui::ui_snapshot_tests::unused_runtime;
 use crate::render::TerminalEvent;
 use crate::slash::{ExportMode, ExportRequest};
 use saya_types::{
@@ -237,14 +236,13 @@ fn legacy_refresh_hint_names_snapshot_only_when_captured() {
     // refuses an existing file, which is the writer test's business, not
     // this one's.
     let run = |name: &str, mode: Option<ExportMode>, mut captured: Option<CapturedResult>| {
-        let task = SqlTask {
-            profile: Some("analytics".to_string()),
-            sql: "SELECT id, name FROM users".to_string(),
-            followup: Followup::Export {
+        let task = SqlTask::new(
+            Some("analytics".to_string()),
+            "SELECT id, name FROM users".to_string(),
+            Followup::Export {
                 request: export_request(mode, false, &dir.join(name).to_string_lossy()),
             },
-            started_unix_ms: STARTED_UNIX_MS,
-        };
+        );
         let mut transcript = Transcript::new();
         complete(
             &task,
@@ -254,7 +252,6 @@ fn legacy_refresh_hint_names_snapshot_only_when_captured() {
             &mut transcript,
             &mut None,
             &mut captured,
-            &unused_runtime(),
         );
         transcript
     };

@@ -32,15 +32,14 @@ fn chart_note_for(result: &saya_types::QueryResult) -> String {
             .as_nanos()
     ));
     std::fs::write(&path, "<html></html>").expect("stub chart file");
-    let task = SqlTask {
-        profile: None,
-        sql: "SELECT id FROM t".to_string(),
-        followup: Followup::Chart {
+    let task = SqlTask::new(
+        None,
+        "SELECT id FROM t".to_string(),
+        Followup::Chart {
             kind: None,
             path: Some(path.to_string_lossy().into_owned()),
         },
-        started_unix_ms: 1_790_000_000_000,
-    };
+    );
     // One numeric column charts as a bar; `suggest_spec` picks it up.
     let chartable = saya_types::QueryResult {
         columns: vec!["id".to_string()],
@@ -56,7 +55,6 @@ fn chart_note_for(result: &saya_types::QueryResult) -> String {
         &mut transcript,
         &mut None,
         &mut None,
-        &super::ui_snapshot_tests::unused_runtime(),
     );
     let _ = std::fs::remove_file(&path);
     transcript

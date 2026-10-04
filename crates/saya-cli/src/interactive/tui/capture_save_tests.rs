@@ -358,12 +358,12 @@ fn direct_sql_operation_preserves_profile_and_read_only_errors() {
         no_profile.to_string(),
         "No active profile. Use /connect <profile> first."
     );
-    let no_profile_event = runtime.block_on(crate::interactive::tui::exec::run_sql_with_key(
+    let no_profile_event = runtime.block_on(crate::interactive::tui::exec::run_sql(
         &fx.runtime,
         None,
         "SELECT 1",
         &CancellationToken::new(),
-        0,
+        &std::sync::Arc::new(std::sync::Mutex::new(None)),
     ));
     assert!(matches!(
         no_profile_event,
@@ -379,12 +379,12 @@ fn direct_sql_operation_preserves_profile_and_read_only_errors() {
         ))
         .expect_err("an unknown profile is refused");
     assert!(invalid_profile.to_string().contains("not found"));
-    let invalid_event = runtime.block_on(crate::interactive::tui::exec::run_sql_with_key(
+    let invalid_event = runtime.block_on(crate::interactive::tui::exec::run_sql(
         &fx.runtime,
         Some("missing"),
         "SELECT 1",
         &CancellationToken::new(),
-        0,
+        &std::sync::Arc::new(std::sync::Mutex::new(None)),
     ));
     assert!(matches!(
         invalid_event,
@@ -401,12 +401,12 @@ fn direct_sql_operation_preserves_profile_and_read_only_errors() {
             false,
         ))
         .expect_err("direct SQL cannot write");
-    let event = runtime.block_on(crate::interactive::tui::exec::run_sql_with_key(
+    let event = runtime.block_on(crate::interactive::tui::exec::run_sql(
         &fx.runtime,
         Some("analytics"),
         sql,
         &CancellationToken::new(),
-        0,
+        &std::sync::Arc::new(std::sync::Mutex::new(None)),
     ));
     let crate::render::TerminalEvent::Error { message } = event else {
         panic!("an unsafe query is rendered as an error");
@@ -447,7 +447,7 @@ fn a_pre_cancelled_sql_operation_stops_before_observable_connector_build() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     let cancelled = runtime
-        .block_on(sql_operation::execute_with_cancellation(
+        .block_on(sql_operation::execute_with_cancellation_and_source(
             &fx.runtime,
             Some("unopened"),
             "SELECT 1",
@@ -651,7 +651,6 @@ fn tui_worker_evidence_comes_from_the_executed_envelope() {
     let Dispatch::SqlTask(task) = fx.dispatch_line("/sql SELECT * FROM t5 ORDER BY id") else {
         panic!("/sql dispatches its worker task");
     };
-    let dispatched_at = task.started_unix_ms;
     spawn_real_sql_task(&mut fx, task, &_pool);
     tick_until(
         &mut fx,
@@ -685,10 +684,6 @@ fn tui_worker_evidence_comes_from_the_executed_envelope() {
     assert!(
         evidence.started_unix_ms <= evidence.finished_unix_ms,
         "the envelope timestamps never run backwards",
-    );
-    assert!(
-        evidence.started_unix_ms >= dispatched_at,
-        "the execution starts no earlier than its dispatch",
     );
 }
 

@@ -164,13 +164,12 @@ pub(crate) fn in_flight_task_at(
     saya_agent::CancellationToken,
 ) {
     let (_tx, rx) = std::sync::mpsc::channel();
-    let task = SqlTask {
-        profile: Some("analytics".into()),
-        sql: "SELECT 1".into(),
-        followup: Followup::Sql {
+    let task = SqlTask::new(
+        Some("analytics".into()),
+        "SELECT 1".into(),
+        Followup::Sql {
             connection: Some("analytics".into()),
         },
-        started_unix_ms: 1_790_000_000_000,
-    };
+    );
     (rx, task, started, saya_agent::CancellationToken::new())
 }

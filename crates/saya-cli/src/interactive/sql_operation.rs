@@ -94,26 +94,6 @@ pub(crate) async fn execute_resolved_with_source(
     ))
 }
 
-/// Executes bounded direct SQL while keeping cancellation attached to this
-/// operation through setup and connector execution. The TUI worker drives
-/// the envelope variant directly; this stays as the shared non-envelope
-/// entry for callers that only need the result, delegating so both paths
-/// run the same connector setup, cancel seams, and safety path.
-/// Called from the error-behavior tests (pre-cancelled stop boundary), which
-/// link the test target — not the lib — so the lib build sees no caller.
-#[cfg(test)]
-pub(crate) async fn execute_with_cancellation(
-    runtime: &RuntimeConfig,
-    profile_name: Option<&str>,
-    sql: &str,
-    can_prompt: bool,
-    cancellation: &CancellationToken,
-) -> Result<QueryResult, SqlOperationError> {
-    execute_with_cancellation_and_source(runtime, profile_name, sql, can_prompt, cancellation)
-        .await
-        .map(|execution| execution.into_parts().0)
-}
-
 /// Executes bounded direct SQL with cancellation AND returns the immutable
 /// source envelope: the result plus the binding (profile name/identity,
 /// dialect, issued row cap) and the wall-clock window around the real query.
@@ -141,13 +121,6 @@ pub(crate) async fn execute_with_cancellation_and_source(
     )
     .await
 }
-
-/// The retired non-envelope cancellation body: kept as a named marker so the
-/// diff shows the old behavior moved into the source variant's inner body
-/// (`sql_execution::execute_with_cancellation_and_source_inner`) instead of
-/// vanishing. Never called.
-#[allow(dead_code)]
-async fn execute_resolved_with_cancellation_retired() {}
 
 #[cfg(test)]
 #[path = "sql_operation_cancellation_tests.rs"]

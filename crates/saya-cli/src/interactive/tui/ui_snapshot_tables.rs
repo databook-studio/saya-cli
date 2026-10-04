@@ -96,20 +96,19 @@ fn copy_last_answer_does_not_grab_a_table_block() {
 /// painted beneath the row-count footer on the composed screen.
 #[test]
 fn a_completed_result_names_its_connection_and_query() {
-    use super::super::sql_task::{Followup, SqlTask, complete};
+    use super::super::sql_task::{Followup, complete};
     use super::claims::wide_table_result;
 
     let mut app = empty_app();
     app.transcript
         .push(BlockKind::User, "/sql SELECT * FROM orders");
-    let task = SqlTask {
-        profile: Some("analytics".into()),
-        sql: "SELECT * FROM orders".into(),
-        followup: Followup::Sql {
+    let task = super::super::sql_task::SqlTask::new(
+        Some("analytics".into()),
+        "SELECT * FROM orders".into(),
+        Followup::Sql {
             connection: Some("analytics".into()),
         },
-        started_unix_ms: 1_790_000_000_000,
-    };
+    );
     complete(
         &task,
         crate::render::TerminalEvent::QueryResult {
@@ -118,7 +117,6 @@ fn a_completed_result_names_its_connection_and_query() {
         &mut app.transcript,
         &mut app.last_query,
         &mut app.captured,
-        &app.runtime,
     );
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     assert!(
