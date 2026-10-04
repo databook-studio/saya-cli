@@ -134,11 +134,26 @@ pub(crate) fn wait_for_stream_timeout(
 #[cfg(unix)]
 #[derive(Clone)]
 pub(crate) enum ScriptStep {
-    Clarify { delay: std::time::Duration },
+    Clarify {
+        delay: std::time::Duration,
+    },
     Natural,
-    DelayedNatural { delay: std::time::Duration },
+    /// A natural answer whose usage frame reports `input_tokens` as the
+    /// prompt tokens (the figure that becomes the answering input usage).
+    NaturalWithUsage {
+        input_tokens: u64,
+    },
+    /// A natural answer with NO usage frame: the numerator stays unknown.
+    NaturalNoUsage,
+    /// A plain text completion (the summariser's reply shape).
+    Summary(String),
+    DelayedNatural {
+        delay: std::time::Duration,
+    },
     Harmless,
-    HoldOpen { marker: String },
+    HoldOpen {
+        marker: String,
+    },
 }
 
 #[cfg(unix)]
@@ -164,6 +179,39 @@ pub(crate) fn answer_body() -> String {
 }
 
 #[cfg(unix)]
+pub(crate) fn answer_with_usage_body(input_tokens: u64) -> String {
+    format!(
+        concat!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"the-final-answer\"}},",
+            "\"finish_reason\":\"stop\"}}]}}\n\n",
+            "data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":{},",
+            "\"completion_tokens\":5}}}}\n\n"
+        ),
+        input_tokens
+    )
+}
+
+#[cfg(unix)]
+pub(crate) fn answer_no_usage_body() -> String {
+    concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"the-final-answer\"},",
+        "\"finish_reason\":\"stop\"}]}\n\n"
+    )
+    .to_owned()
+}
+
+#[cfg(unix)]
+pub(crate) fn summary_body(text: &str) -> String {
+    format!(
+        concat!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{text}\"}},",
+            "\"finish_reason\":\"stop\"}}]}}\n\n"
+        ),
+        text = text.replace('"', "'")
+    )
+}
+
+#[cfg(unix)]
 pub(crate) fn harmless_body() -> String {
     "data: {\"content\":\"{\\\"proposals\\\": []}\"}\n\n".to_owned()
 }
@@ -185,6 +233,8 @@ fn reply_finished(stream: &mut std::net::TcpStream, body: &str) {
 pub(crate) struct MockServer {
     pub(crate) address: String,
     pub(crate) requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// The request bodies the mock received, in arrival order.
+    pub(crate) bodies: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -220,12 +270,15 @@ pub(crate) fn spawn_script_server(
     let address = format!("http://{}", listener.local_addr().unwrap());
     let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let server_count = requests.clone();
+    let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let server_bodies = bodies.clone();
     let handle = thread::spawn(move || {
         loop {
             let Some(mut stream) = accept_provider(&listener) else {
                 break;
             };
-            drain_provider_request(&mut stream);
+            let body = drain_provider_request(&mut stream);
+            server_bodies.lock().unwrap().push(body);
             let index = server_count.fetch_add(1, Ordering::SeqCst);
             let step = script.get(index).cloned().unwrap_or(ScriptStep::Harmless);
             match step {
@@ -234,6 +287,11 @@ pub(crate) fn spawn_script_server(
                     reply_finished(&mut stream, &clarification_body());
                 }
                 ScriptStep::Natural => reply_finished(&mut stream, &answer_body()),
+                ScriptStep::NaturalWithUsage { input_tokens } => {
+                    reply_finished(&mut stream, &answer_with_usage_body(input_tokens))
+                }
+                ScriptStep::NaturalNoUsage => reply_finished(&mut stream, &answer_no_usage_body()),
+                ScriptStep::Summary(text) => reply_finished(&mut stream, &summary_body(&text)),
                 ScriptStep::DelayedNatural { delay } => {
                     thread::sleep(delay);
                     reply_finished(&mut stream, &answer_body());
@@ -299,6 +357,7 @@ pub(crate) fn spawn_script_server(
     MockServer {
         address,
         requests,
+        bodies,
         handle: Some(handle),
     }
 }
@@ -387,6 +446,20 @@ impl SpawnedChild {
 /// Spawns the REPL against `base_url` with `ceiling_secs` question budget.
 #[cfg(unix)]
 pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> SpawnedChild {
+    spawn_child_with_config(
+        base_url,
+        &format!("[ai]\ninvestigation_max_elapsed_seconds = {ceiling_secs}\n"),
+        tag,
+    )
+}
+
+/// Spawns the REPL against `base_url` with the caller's full config TOML.
+#[cfg(unix)]
+pub(crate) fn spawn_child_with_config(
+    base_url: &str,
+    config_toml: &str,
+    tag: &str,
+) -> SpawnedChild {
     use std::{
         io::Read,
         process::{Command, Stdio},
@@ -397,11 +470,7 @@ pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> Spawn
     let config_root = std::env::temp_dir().join(format!("saya-cli-question-{tag}-{pid}"));
     let session_root = std::env::temp_dir().join(format!("saya-cli-question-sess-{tag}-{pid}"));
     std::fs::create_dir_all(config_root.join("saya")).unwrap();
-    std::fs::write(
-        config_root.join("saya").join("config.toml"),
-        format!("[ai]\ninvestigation_max_elapsed_seconds = {ceiling_secs}\n"),
-    )
-    .unwrap();
+    std::fs::write(config_root.join("saya").join("config.toml"), config_toml).unwrap();
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
     // The session composition reads PATH for the host-command lane; the
