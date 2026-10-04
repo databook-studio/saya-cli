@@ -919,6 +919,41 @@ async fn openai_usage_only_zero_and_absent_usage_survive_complete_and_stream() {
             ],
             None,
         ),
+        (
+            vec![
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":200,\"prompt_tokens_details\":{\"cached_tokens\":90},\"completion_tokens_details\":{\"reasoning_tokens\":170}}}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            Some(
+                TokenUsage::new(100, 200)
+                    .with_cached_input(Some(90))
+                    .with_reasoning(Some(170)),
+            ),
+        ),
+        (
+            vec![
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":200,\"prompt_tokens_details\":{\"cached_tokens\":90,\"cache_write_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":170}}}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            Some(
+                TokenUsage::new(100, 200)
+                    .with_cached_input(Some(90))
+                    .with_cache_creation(Some(0))
+                    .with_reasoning(Some(170)),
+            ),
+        ),
+        (
+            vec![
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":200,\"prompt_tokens_details\":{\"cached_tokens\":90,\"cache_write_tokens\":35},\"completion_tokens_details\":{\"reasoning_tokens\":170}}}\n\n",
+                "data: [DONE]\n\n",
+            ],
+            Some(
+                TokenUsage::new(100, 200)
+                    .with_cached_input(Some(90))
+                    .with_cache_creation(Some(35))
+                    .with_reasoning(Some(170)),
+            ),
+        ),
     ];
     for (terminal, expected) in cases {
         let mut chunks = vec!["data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"];

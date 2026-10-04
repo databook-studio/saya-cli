@@ -222,10 +222,9 @@ fn size_error() -> ProviderError {
 fn has_reported_usage(usage: &super::openai_chunks::Usage) -> bool {
     usage.prompt_tokens.is_some()
         || usage.completion_tokens.is_some()
-        || usage
-            .prompt_tokens_details
-            .as_ref()
-            .is_some_and(|details| details.cached_tokens.is_some())
+        || usage.prompt_tokens_details.as_ref().is_some_and(|details| {
+            details.cached_tokens.is_some() || details.cache_write_tokens.is_some()
+        })
         || usage
             .completion_tokens_details
             .as_ref()
@@ -248,6 +247,10 @@ fn apply_usage(accumulated: &mut TokenUsage, usage: &super::openai_chunks::Usage
         .prompt_tokens_details
         .as_ref()
         .and_then(|details| details.cached_tokens);
+    accumulated.cache_creation_input_tokens = usage
+        .prompt_tokens_details
+        .as_ref()
+        .and_then(|details| details.cache_write_tokens);
     accumulated.reasoning_tokens = usage
         .completion_tokens_details
         .as_ref()
