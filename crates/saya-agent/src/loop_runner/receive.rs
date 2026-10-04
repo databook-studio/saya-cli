@@ -1,5 +1,6 @@
 use super::{
-    add_usage, admission::Admission, attempt, emit, receive_stream::stream_attempt, tool_protocol,
+    add_usage, admission::Admission, attempt, emit, preflight, receive_stream::stream_attempt,
+    tool_protocol,
 };
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
@@ -13,8 +14,12 @@ use std::time::Duration;
 pub(super) struct ReceiveContext<'a> {
     pub(super) provider: &'a dyn ChatProvider,
     pub(super) model: &'a str,
-    pub(super) messages: &'a [ChatMessage],
+    pub(super) messages: &'a mut Vec<ChatMessage>,
+    pub(super) ordinary_history_pairs: &'a mut usize,
+    pub(super) protected_prefix_len: &'a mut usize,
     pub(super) definitions: &'a [ToolDefinition],
+    pub(super) context_byte_budget: usize,
+    pub(super) request_preflight: Option<super::preflight::RequestPreflightConfig>,
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: &'a CancellationToken,
     pub(super) events: &'a mut Vec<AgentEvent>,
@@ -28,21 +33,53 @@ pub(super) async fn receive(
         provider,
         model,
         messages,
+        ordinary_history_pairs,
+        protected_prefix_len,
         definitions,
+        context_byte_budget,
+        request_preflight,
         sink,
         cancellation,
         events,
         admission,
     } = context;
+    let mut recovered_usage = TokenUsage::default();
+    if let Err(error) = admission.check(cancellation) {
+        return Err(attempt::ReceiveFailure {
+            error,
+            usage: recovered_usage,
+        });
+    }
+    if let Err(error) = preflight::fit_request(
+        model,
+        messages,
+        ordinary_history_pairs,
+        protected_prefix_len,
+        definitions,
+        context_byte_budget,
+        request_preflight,
+    ) {
+        let error = match error {
+            preflight::PreflightError::Budget(dimension) => {
+                admission.stop_preflight(cancellation, dimension)
+            }
+            preflight::PreflightError::Serialization => {
+                crate::AgentError::Limit("request projection serialization failed")
+            }
+        };
+        return Err(attempt::ReceiveFailure {
+            error,
+            usage: recovered_usage,
+        });
+    }
     let request = ChatRequest {
         model: model.into(),
-        messages: messages.into(),
+        messages: messages.as_slice().into(),
         tools: definitions.into(),
         ..Default::default()
     };
     let delays = crate::providers::default_retry_delays();
     let mut retries = 0_u8;
-    let mut recovered_usage = TokenUsage::default();
     if let Err(error) = admission.request(sink, cancellation).await {
         return Err(attempt::ReceiveFailure {
             error,

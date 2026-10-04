@@ -4,9 +4,7 @@
 
 use super::clarification_args::ClarificationError;
 use super::{emit, tools};
-use crate::{
-    AgentEvent, AgentEventSink, AgentLimits, ChatMessage, ToolCall, ToolDefinition, ToolMetadata,
-};
+use crate::{AgentEvent, AgentEventSink, ChatMessage, ToolCall, ToolDefinition, ToolMetadata};
 
 /// The tool result fed for a call that did not run because the turn paused on
 /// the ask (siblings of a landed ask, and further asks).
@@ -25,7 +23,7 @@ pub(super) async fn feed_malformed(
     call: &ToolCall,
     error: &ClarificationError,
     definitions: &[ToolDefinition],
-    limits: &AgentLimits,
+    result_cap: usize,
     (events, sink): (&mut Vec<AgentEvent>, &dyn AgentEventSink),
     messages: &mut Vec<ChatMessage>,
     tool_metadata: &mut Vec<ToolMetadata>,
@@ -49,7 +47,7 @@ pub(super) async fn feed_malformed(
     let (message, _) = tools::tool_message(
         call.id.clone(),
         serde_json::json!({"error": error.to_string()}),
-        limits.context_byte_budget,
+        result_cap,
     );
     messages.push(message);
     emit(
@@ -69,19 +67,16 @@ pub(super) async fn feed_malformed(
 pub(super) fn refuse_others(
     assistant: &ChatMessage,
     skip: &[&str],
-    limits: &AgentLimits,
+    result_caps: &[usize],
     messages: &mut Vec<ChatMessage>,
     reason: &str,
 ) {
-    for call in &assistant.tool_calls {
+    for (call, cap) in assistant.tool_calls.iter().zip(result_caps.iter().copied()) {
         if skip.contains(&call.id.as_str()) {
             continue;
         }
-        let (message, _) = tools::tool_message(
-            call.id.clone(),
-            serde_json::json!({"error": reason}),
-            limits.context_byte_budget,
-        );
+        let (message, _) =
+            tools::tool_message(call.id.clone(), serde_json::json!({"error": reason}), cap);
         messages.push(message);
     }
 }

@@ -5,6 +5,7 @@
 //! failure. The model's JSON path is unchanged — the full error still
 //! reaches it.
 
+use super::super::tool_batch::turn_result_caps;
 use super::super::tool_policy::{
     ApprovalState, ExecutionDecision, PolicyDenial, execution_decision, external_side_effect_gated,
 };

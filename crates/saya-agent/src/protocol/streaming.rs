@@ -162,6 +162,8 @@ impl CancellationReason {
             Self::Budget(BudgetDimension::ReportedTokens) => 5,
             Self::Budget(BudgetDimension::DownloadBytes) => 6,
             Self::OwnerFailure => 7,
+            Self::Budget(BudgetDimension::RequestContextBytes) => 8,
+            Self::Budget(BudgetDimension::RequestContextWindow) => 9,
         }
     }
 
@@ -174,6 +176,8 @@ impl CancellationReason {
             5 => Some(Self::Budget(BudgetDimension::ReportedTokens)),
             6 => Some(Self::Budget(BudgetDimension::DownloadBytes)),
             7 => Some(Self::OwnerFailure),
+            8 => Some(Self::Budget(BudgetDimension::RequestContextBytes)),
+            9 => Some(Self::Budget(BudgetDimension::RequestContextWindow)),
             _ => None,
         }
     }

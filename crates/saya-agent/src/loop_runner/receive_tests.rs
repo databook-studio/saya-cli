@@ -1,7 +1,9 @@
 //! Tests for `receive`'s main-loop request shape.
 
 use super::*;
-use crate::{AnsweringLimits, ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat};
+use crate::{
+    AgentLimits, AnsweringLimits, ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat,
+};
 use crate::{ProviderError, ProviderEvent};
 use async_trait::async_trait;
 use futures_util::stream;
@@ -47,12 +49,18 @@ async fn main_loop_request_does_not_set_json_mode() {
     let mut events = Vec::new();
     let cancellation = CancellationToken::new();
     let mut admission = Admission::new(AnsweringLimits::default(), false);
-    let messages = vec![ChatMessage::text("user", "hello")];
+    let mut messages = vec![ChatMessage::text("user", "hello")];
+    let mut ordinary_history_pairs = 0;
+    let mut protected_prefix_len = 1;
     receive(ReceiveContext {
         provider: &provider,
         model: "m",
-        messages: &messages,
+        messages: &mut messages,
+        ordinary_history_pairs: &mut ordinary_history_pairs,
+        protected_prefix_len: &mut protected_prefix_len,
         definitions: &[],
+        context_byte_budget: AgentLimits::default().context_byte_budget,
+        request_preflight: None,
         sink: &sink,
         cancellation: &cancellation,
         events: &mut events,
