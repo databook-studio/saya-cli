@@ -41,6 +41,9 @@ async fn stream_attempt_inner(
     timing: &mut AttemptTiming,
 ) -> attempt::AttemptOutcome {
     emit(events, sink, AgentEvent::turn_started()).await;
+    if cancellation.is_cancelled() {
+        return failed(attempt::AttemptError::Cancelled, None);
+    }
     let provider_request = request.clone();
     let provider_cancellation = cancellation.clone();
     let establishment_start = timing.begin_establishment();
