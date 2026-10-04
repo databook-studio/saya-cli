@@ -5,8 +5,8 @@
 
 use super::{check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tools};
 use crate::{
-    AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
-    ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
+    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentMetric, AgentMetricUseful,
+    ApprovalDecider, CancellationToken, ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -14,6 +14,7 @@ pub(super) async fn run_turn_tools(
     tools: &dyn ToolExecutor,
     assistant: ChatMessage,
     definitions: &[ToolDefinition],
+    result_caps: &[usize],
     limits: &AgentLimits,
     approval: &dyn ApprovalDecider,
     sink: &dyn AgentEventSink,
@@ -25,8 +26,6 @@ pub(super) async fn run_turn_tools(
     failed: &mut failed_statements::FailedStatements,
     last_successful_sql: &mut Option<String>,
 ) -> Result<(), AgentError> {
-    let result_caps =
-        tools::turn_result_caps(limits.context_byte_budget, assistant.tool_calls.len());
     // A batch overlaps only when every member opted in and is allowed without
     // a per-call approval. Prompted calls stay serial, preserving approval
     // authority and prompt order.
@@ -78,8 +77,9 @@ pub(super) async fn run_turn_tools(
             tools,
             &assistant.tool_calls,
             definitions,
-            &result_caps,
+            result_caps,
             cancellation,
+            sink,
         )
         .await;
         for (call, completed) in assistant.tool_calls.iter().zip(results) {
@@ -87,7 +87,7 @@ pub(super) async fn run_turn_tools(
                 failed,
                 last_successful_sql,
                 failure_key::key_of(call),
-                true,
+                completed.executed,
                 completed.succeeded,
                 completed.failure_reason.as_deref(),
             );
@@ -103,20 +103,28 @@ pub(super) async fn run_turn_tools(
                 result_shape: completed.result_shape,
             });
             messages.push(completed.message);
-            check_cancelled(cancellation)?;
-            emit(
-                events,
-                sink,
-                AgentEvent::ToolCompleted {
-                    name: call.name.clone(),
-                    summary: output::completion_summary(&completed.summary, completed.truncated),
-                },
-            )
-            .await;
+            if completed.executed {
+                emit(
+                    events,
+                    sink,
+                    AgentEvent::ToolCompleted {
+                        name: call.name.clone(),
+                        summary: output::completion_summary(
+                            &completed.summary,
+                            completed.truncated,
+                        ),
+                    },
+                )
+                .await;
+            }
         }
         return Ok(());
     }
-    for (call, cap) in assistant.tool_calls.into_iter().zip(result_caps) {
+    for (call, cap) in assistant
+        .tool_calls
+        .into_iter()
+        .zip(result_caps.iter().copied())
+    {
         if let Some(reason) = tools::invalid_reason(&call, definitions) {
             if call.id.trim().is_empty() {
                 return Err(AgentError::InvalidToolCall);
@@ -152,6 +160,7 @@ pub(super) async fn run_turn_tools(
                 serde_json::json!({"error": reason}),
                 "tool call failed validation".into(),
                 false,
+                false,
                 cap,
             );
             messages.push(completed.message);
@@ -185,7 +194,8 @@ pub(super) async fn run_turn_tools(
                 arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
                 result_shape: None,
             });
-            let completed = tools::complete_tool(call.id, result, summary.into(), false, cap);
+            let completed =
+                tools::complete_tool(call.id, result, summary.into(), false, false, cap);
             messages.push(completed.message);
             emit(
                 events,
@@ -269,6 +279,10 @@ pub(super) async fn run_turn_tools(
                 false,
             )
         };
+        if executed && succeeded {
+            sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
+                .await;
+        }
         failed_statements::record_outcome(
             failed,
             last_successful_sql,
@@ -279,7 +293,7 @@ pub(super) async fn run_turn_tools(
                 .then(|| result.get("error").and_then(serde_json::Value::as_str))
                 .flatten(),
         );
-        let completed = tools::complete_tool(call.id, result, summary, succeeded, cap);
+        let completed = tools::complete_tool(call.id, result, summary, succeeded, executed, cap);
         tool_metadata.push(crate::ToolMetadata {
             name: call.name.clone(),
             status: if executed {

@@ -63,7 +63,6 @@ type Totals<'a> = (TokenUsage, bool, &'a mut Vec<ToolMetadata>);
 /// emitted, how many follow-up turns recovery has spent, and whether the next
 /// turn owes the recovered prose.
 pub(super) struct State {
-    context_byte_budget: usize,
     pub(super) sql: Option<String>,
     emitted: bool,
     recoveries: usize,
@@ -71,9 +70,8 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn new(context_byte_budget: usize) -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            context_byte_budget,
             sql: None,
             emitted: false,
             recoveries: 0,
@@ -104,6 +102,7 @@ impl State {
 pub(super) async fn handle(
     state: &mut State,
     assistant: &ChatMessage,
+    result_caps: &[usize],
     (events, sink, cancellation): Emit<'_>,
     messages: &mut Vec<ChatMessage>,
     totals: Totals<'_>,
@@ -127,7 +126,7 @@ pub(super) async fn handle(
         state.recoveries += 1;
         state.prose_due = true;
         emit_event(state, (events, sink, cancellation)).await;
-        answer_calls_without_executing(state, assistant, messages);
+        answer_calls_without_executing(state, assistant, result_caps, messages);
         return Ok(Outcome::Recovering);
     }
     // The recovery is spent and the follow-up still produced no prose:
@@ -210,16 +209,17 @@ async fn emit_event(state: &mut State, (events, sink, _): Emit<'_>) {
 fn answer_calls_without_executing(
     state: &State,
     assistant: &ChatMessage,
+    result_caps: &[usize],
     messages: &mut Vec<ChatMessage>,
 ) {
     let designated = state.sql.clone().unwrap_or_default();
-    for call in &assistant.tool_calls {
+    for (call, cap) in assistant.tool_calls.iter().zip(result_caps.iter().copied()) {
         let result = if call.name == DESIGNATE_ANSWER_TOOL {
             recovery_result(&designated)
         } else {
             sibling_result()
         };
-        let (message, _) = tools::tool_message(call.id.clone(), result, state.context_byte_budget);
+        let (message, _) = tools::tool_message(call.id.clone(), result, cap);
         messages.push(message);
     }
 }

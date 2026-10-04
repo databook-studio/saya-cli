@@ -68,6 +68,11 @@ pub(super) struct PromptTokensDetails {
     /// miss; absent is `None`.
     #[serde(default)]
     pub(super) cached_tokens: Option<u64>,
+    /// `prompt_tokens_details.cache_write_tokens` — unadjusted prompt tokens
+    /// written to cache. This is optional prompt detail, not an extra scalar
+    /// input count.
+    #[serde(default)]
+    pub(super) cache_write_tokens: Option<u64>,
 }
 
 /// OpenAI `usage.completion_tokens_details`: the completion side, including

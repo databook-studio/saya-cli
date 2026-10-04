@@ -19,9 +19,9 @@ impl EngineEventSink {
     /// A failed append is held as a diagnostic and the level is not
     /// advanced, so the next tick retries it; emit has no error channel,
     /// and the next transition's write fails loudly the same way.
-    pub(super) fn journal_downloads(&self) {
+    pub(super) fn journal_downloads(&self) -> Result<(), EngineSinkError> {
         let Some(budget) = &self.download_budget else {
-            return;
+            return Ok(());
         };
         let level = budget.consumed();
         let mut journaled = self
@@ -29,13 +29,14 @@ impl EngineEventSink {
             .lock()
             .expect("engine sink download journal lock");
         if level <= *journaled {
-            return;
+            return Ok(());
         }
         let event = RunEvent::DownloadedBytes { bytes: level };
         match self.journal.append(&event) {
             Ok(()) => *journaled = level,
-            Err(source) => self.hold_diagnostic(EngineSinkError::Journal { source }),
+            Err(source) => return Err(EngineSinkError::Journal { source }),
         }
+        Ok(())
     }
 }
 
@@ -50,7 +51,10 @@ impl EngineEventSink {
     ///
     /// A failed append is held as a diagnostic: emit has no error channel,
     /// and the next transition's write fails loudly the same way.
-    pub(super) fn journal_usage(&self, usage: &saya_agent::TokenUsage) {
+    pub(super) fn journal_usage(
+        &self,
+        usage: &saya_agent::TokenUsage,
+    ) -> Result<(), EngineSinkError> {
         let event = RunEvent::Usage {
             endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
             tokens: Some(usage.input_tokens.saturating_add(usage.output_tokens)),
@@ -59,8 +63,8 @@ impl EngineEventSink {
             cached_input_tokens: usage.cached_input_tokens,
             cache_creation_input_tokens: usage.cache_creation_input_tokens,
         };
-        if let Err(source) = self.journal.append(&event) {
-            self.hold_diagnostic(EngineSinkError::Journal { source });
-        }
+        self.journal
+            .append(&event)
+            .map_err(|source| EngineSinkError::Journal { source })
     }
 }

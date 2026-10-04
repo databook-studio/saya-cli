@@ -6,7 +6,7 @@ use saya_types::redact;
 use saya_types::redact_counted;
 use serde_json::Value;
 
-pub(super) use super::tool_batch::{complete_tool, execute_batch, turn_result_caps};
+pub(super) use super::tool_batch::{complete_tool, execute_batch};
 pub(super) use super::tool_shape::tool_message;
 pub use super::tool_shape::{
     MAX_TOOL_MESSAGE_BYTES, ShapedToolResult, shape_tool_result, tool_message_cap,

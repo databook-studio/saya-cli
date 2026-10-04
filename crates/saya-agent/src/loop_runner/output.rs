@@ -210,30 +210,35 @@ const TRUNCATED_MARKER: &str = "…[truncated: tool result exceeded the conversa
 /// the one part of the conversation not yet sent to the provider at the point
 /// of trimming — may be truncated, and only when it alone (with the digest)
 /// still exceeds the budget.
-pub(super) fn trim_to_budget(messages: &mut Vec<crate::ChatMessage>, budget: usize) {
+pub(super) fn trim_to_budget(
+    messages: &mut Vec<crate::ChatMessage>,
+    budget: usize,
+    protected_prefix_len: usize,
+) {
     let total = messages.iter().map(message_size).sum::<usize>();
     if total <= budget {
         return;
     }
-    compact(messages, budget);
+    compact(messages, budget, protected_prefix_len);
 }
 
 /// One compaction: evict the oldest tool-result groups (and any prior digest),
 /// replacing them with a single digest, keeping the most recent groups that
-/// still fit. If keeping only the newest group with the digest still does not
-/// fit, truncate the newest group's largest `tool` result (the one part not
-/// yet sent) rather than rewrite a seen message.
-fn compact(messages: &mut Vec<crate::ChatMessage>, budget: usize) {
-    let groups = tool_groups(messages);
+/// still fit. Group and digest discovery is confined to the suffix after the
+/// assembly-owned protected prefix. If keeping only the newest group with the
+/// digest still does not fit, truncate its largest `tool` result (the one part
+/// not yet sent) rather than rewrite a seen message.
+fn compact(messages: &mut Vec<crate::ChatMessage>, budget: usize, protected_prefix_len: usize) {
+    let groups = tool_groups(messages, protected_prefix_len);
     let n = groups.len();
     if n <= 1 {
         // No older group to evict: the newest group alone is over budget (plus
         // any prior digest). Truncate its `tool` result; do not insert a digest
         // for nothing.
-        truncate_newest_group(messages, budget);
+        truncate_newest_group(messages, budget, protected_prefix_len);
         return;
     }
-    let Some(region_start) = first_evictable_index(messages, &groups) else {
+    let Some(region_start) = first_evictable_index(messages, &groups, protected_prefix_len) else {
         return;
     };
     // Keep the most recent groups that fit with a single digest replacing the
@@ -254,7 +259,7 @@ fn compact(messages: &mut Vec<crate::ChatMessage>, budget: usize) {
     let kept_start = groups[n - 1].start;
     let digest = super::compaction::build_digest(&messages[region_start..kept_start]);
     replace_with_digest(messages, region_start, kept_start, digest);
-    truncate_newest_group(messages, budget);
+    truncate_newest_group(messages, budget, protected_prefix_len);
 }
 
 /// Drains `messages[start..end)` and inserts `digest` at `start` in its place.
@@ -269,14 +274,19 @@ fn replace_with_digest(
 }
 
 /// The index where the evictable region begins: the first tool group, or a
-/// prior digest sitting just before it — whichever is earlier. Everything
-/// before it (system, user, history) is the head and is never evicted.
+/// prior digest in the unprotected suffix sitting just before it — whichever
+/// is earlier. The original system and current-user prefix is never searched.
 fn first_evictable_index(
     messages: &[crate::ChatMessage],
     groups: &[std::ops::Range<usize>],
+    protected_prefix_len: usize,
 ) -> Option<usize> {
     let first_group = groups.first().map(|range| range.start);
-    let first_digest = messages.iter().position(super::compaction::is_digest);
+    let first_digest = messages
+        .iter()
+        .enumerate()
+        .skip(protected_prefix_len)
+        .find_map(|(index, message)| super::compaction::is_digest(message).then_some(index));
     match (first_group, first_digest) {
         (Some(g), Some(d)) => Some(g.min(d)),
         (Some(g), None) => Some(g),
@@ -290,13 +300,17 @@ fn first_evictable_index(
 /// to the provider, so rewriting it does not mislead the model about text it
 /// already saw. Stops when the budget is met or no truncation can make
 /// progress, never touching any other `tool` message.
-fn truncate_newest_group(messages: &mut [crate::ChatMessage], budget: usize) {
+fn truncate_newest_group(
+    messages: &mut [crate::ChatMessage],
+    budget: usize,
+    protected_prefix_len: usize,
+) {
     loop {
         let total = messages.iter().map(message_size).sum::<usize>();
         if total <= budget {
             return;
         }
-        let Some(newest) = tool_groups(messages).last().cloned() else {
+        let Some(newest) = tool_groups(messages, protected_prefix_len).last().cloned() else {
             return;
         };
         let Some(idx) = (newest.start + 1..newest.end)
@@ -323,9 +337,12 @@ fn truncate_newest_group(messages: &mut [crate::ChatMessage], budget: usize) {
 /// Returns the index ranges of complete tool-result groups in `messages`: each
 /// is an assistant turn carrying tool calls followed by its consecutive `tool`
 /// messages. Ranges are half-open `[start, end)`, suitable for `Vec::drain`.
-fn tool_groups(messages: &[crate::ChatMessage]) -> Vec<std::ops::Range<usize>> {
+fn tool_groups(
+    messages: &[crate::ChatMessage],
+    protected_prefix_len: usize,
+) -> Vec<std::ops::Range<usize>> {
     let mut groups = Vec::new();
-    let mut i = 0;
+    let mut i = protected_prefix_len;
     while i < messages.len() {
         if !messages[i].tool_calls.is_empty() {
             let start = i;
@@ -521,7 +538,7 @@ mod tests {
             budget < total,
             "test setup must exceed the budget: {budget} vs {total}"
         );
-        trim_to_budget(&mut messages, budget);
+        trim_to_budget(&mut messages, budget, 2);
         assert_eq!(
             messages[2].content, old_sent,
             "an already-sent tool message must not be mutated"
@@ -571,7 +588,7 @@ mod tests {
         ));
         let snapshot = messages.clone();
         let total: usize = messages.iter().map(message_size).sum();
-        trim_to_budget(&mut messages, total + 1024);
+        trim_to_budget(&mut messages, total + 1024, 2);
         assert_eq!(
             messages, snapshot,
             "under-budget trim must not touch the conversation"
@@ -604,7 +621,7 @@ mod tests {
             .map(message_size)
             .sum();
         let budget = head + newest_size + 1024;
-        trim_to_budget(&mut messages, budget);
+        trim_to_budget(&mut messages, budget, 2);
         assert_eq!(
             messages[0], system_snapshot,
             "the system message must be byte-identical after compaction"
@@ -657,7 +674,7 @@ mod tests {
             budget < total,
             "test setup must exceed the budget: {budget} vs {total}"
         );
-        trim_to_budget(&mut messages, budget);
+        trim_to_budget(&mut messages, budget, 2);
         let digest = messages
             .iter()
             .find(|message| crate::loop_runner::compaction::is_digest(message))

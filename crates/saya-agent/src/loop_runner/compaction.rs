@@ -18,8 +18,9 @@ use serde_json::Value;
 
 /// Leading sentinel marking a message as a compaction digest, so a later
 /// compaction can identify and re-evict the prior digest (keeping at most one
-/// digest in the conversation). Tool results are JSON (`{...}`) and history
-/// assistant turns do not begin with this marker, so the prefix is unambiguous.
+/// digest in the evictable suffix. Content can contain this marker, so callers
+/// must use the assembly-owned protected boundary rather than infer it from
+/// message text.
 pub(super) const DIGEST_SENTINEL: &str = "…[compacted:";
 
 /// Whether `message` is a compaction digest produced by an earlier compaction.

@@ -12,6 +12,8 @@ pub enum BudgetDimension {
     ElapsedTime,
     ReportedTokens,
     DownloadBytes,
+    RequestContextBytes,
+    RequestContextWindow,
 }
 
 /// Authoritative count facts emitted by the answering loop before effects.

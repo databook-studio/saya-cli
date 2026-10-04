@@ -27,12 +27,14 @@ use std::{
 
 use saya_agent::{AgentEvent, AgentEventSink, TokenUsage, UsageCall};
 use saya_harness::engine::{
-    EngineEventSink, EngineSinkError, RunState, SinkBudgets, TransitionEvent, UsageTotals,
+    ElapsedClock, EngineEventSink, EngineSinkError, RunState, SinkBudgets, TransitionEvent,
+    UsageTotals,
 };
 use saya_harness::fetch::DownloadBudget;
 use saya_harness::journal::Journal;
 use saya_store::{NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStore, SqliteStateStore};
 use saya_types::{PauseReason, RunEvent, RunId};
+use tokio::sync::oneshot;
 
 /// A per-test scratch root: the state database and the run directory both
 /// live under it, and one cleanup covers both.
@@ -365,6 +367,165 @@ async fn a_store_failure_pauses_rather_than_continuing() {
     );
     assert_eq!(Journal::open(&run_dir).read().unwrap().len(), 1);
 
+    let _ = fs::remove_dir_all(root);
+}
+
+struct HeldDisplay {
+    entered: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+    release: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl AgentEventSink for HeldDisplay {
+    async fn emit(&self, _: AgentEvent) {
+        let _ = self.entered.lock().unwrap().take().unwrap().send(());
+        let release = self.release.lock().unwrap().take().unwrap();
+        release.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn known_usage_budget_is_latched_before_waiting_for_display() {
+    let clock = SimClock::new();
+    let root = temp_root("budget-before-display");
+    let (store, run_id) = seeded_store(&root, "budget-before-display", RunStatus::Executing).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let clock_for_sink = clock.clone();
+    let (entered_tx, entered_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let cancellation = saya_agent::CancellationToken::default();
+    let sink = EngineEventSink::new(
+        run_id,
+        RunState::Executing,
+        Journal::open(&run_dir),
+        store,
+        SinkBudgets {
+            wall_clock: Some(Duration::from_millis(100)),
+            token_ceiling: Some(1),
+            download_budget: None,
+            carried_usage: UsageTotals::default(),
+        },
+        move || clock_for_sink.clock(),
+    )
+    .with_cancellation(cancellation.clone())
+    .with_agent_stream(Arc::new(HeldDisplay {
+        entered: std::sync::Mutex::new(Some(entered_tx)),
+        release: std::sync::Mutex::new(Some(release_rx)),
+    }));
+    let event = AgentEvent::Usage {
+        call: UsageCall::Answer,
+        usage: TokenUsage::new(1, 0),
+    };
+    let emit = AgentEventSink::emit(&sink, event);
+    tokio::pin!(emit);
+
+    tokio::select! {
+        entered = entered_rx => entered.unwrap(),
+        _ = &mut emit => panic!("display did not retain its source future"),
+    }
+    assert_eq!(
+        cancellation.reason(),
+        Some(saya_agent::CancellationReason::Budget(
+            saya_agent::BudgetDimension::ReportedTokens
+        )),
+        "the known receipt owns the stop before downstream display can wait"
+    );
+    assert_eq!(
+        Journal::open(&run_dir).read().unwrap(),
+        vec![RunEvent::Usage {
+            endpoint: "orchestrator".into(),
+            tokens: Some(1),
+            turns: None,
+            tool_calls: None,
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
+        }],
+        "the actual receipt is durable before display begins"
+    );
+
+    clock.advance(200);
+    assert!(
+        !cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(
+            saya_agent::BudgetDimension::ElapsedTime
+        ))
+    );
+    assert_eq!(
+        cancellation.reason(),
+        Some(saya_agent::CancellationReason::Budget(
+            saya_agent::BudgetDimension::ReportedTokens
+        )),
+        "later elapsed expiry cannot replace the already observed token budget"
+    );
+    release_tx.send(()).unwrap();
+    emit.await;
+    assert_eq!(sink.state(), RunState::Executing);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn known_usage_budget_precedes_clock_uncertainty_and_keeps_its_diagnostic() {
+    let root = temp_root("budget-clock-error");
+    let (store, run_id) = seeded_store(&root, "budget-clock-error", RunStatus::Executing).await;
+    let run_dir = root.join("run");
+    fs::create_dir_all(&run_dir).unwrap();
+    let origin = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 60_000;
+    let elapsed = ElapsedClock::arm(Duration::from_secs(5), origin, Instant::now()).unwrap();
+    let cancellation = saya_agent::CancellationToken::default();
+    let sink = EngineEventSink::new(
+        run_id,
+        RunState::Executing,
+        Journal::open(&run_dir),
+        store,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: Some(1),
+            download_budget: None,
+            carried_usage: UsageTotals::default(),
+        },
+        Instant::now,
+    )
+    .with_elapsed_clock(elapsed)
+    .with_cancellation(cancellation.clone());
+
+    AgentEventSink::emit(
+        &sink,
+        AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage: TokenUsage::new(1, 0),
+        },
+    )
+    .await;
+
+    assert_eq!(
+        cancellation.reason(),
+        Some(saya_agent::CancellationReason::Budget(
+            saya_agent::BudgetDimension::ReportedTokens
+        )),
+        "a known receipt is evaluated before uncertain elapsed time"
+    );
+    assert!(
+        matches!(
+            sink.take_diagnostic().as_deref(),
+            Some(EngineSinkError::ElapsedClock { .. })
+        ),
+        "the clock uncertainty remains available beside the winning known-budget cause"
+    );
+    assert_eq!(
+        Journal::open(&run_dir).read().unwrap(),
+        vec![RunEvent::Usage {
+            endpoint: "orchestrator".into(),
+            tokens: Some(1),
+            turns: None,
+            tool_calls: None,
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
+        }]
+    );
     let _ = fs::remove_dir_all(root);
 }
 

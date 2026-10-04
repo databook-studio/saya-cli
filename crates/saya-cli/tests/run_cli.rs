@@ -25,11 +25,34 @@ use std::{
     net::TcpListener,
     path::PathBuf,
     process::{Command as ProcessCommand, Output, Stdio},
-    sync::Arc,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{Arc, mpsc},
     thread,
     time::Duration,
 };
+
+struct ChildGuard(std::process::Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+impl std::ops::Deref for ChildGuard {
+    type Target = std::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ChildGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 /// One scripted provider response: its SSE body and how long to wait before
 /// sending it (a wall-clock budget's trip depends on a slow response).
@@ -78,6 +101,34 @@ fn mock(script: Vec<Scripted>) -> (String, Arc<AtomicBool>) {
         }
     });
     (address, first_arrived)
+}
+
+/// A provider response held by a test-controlled channel after the request
+/// has arrived. This lets cancellation tests distinguish local ownership
+/// from an elapsed mock delay.
+#[cfg(unix)]
+fn held_mock(body: String) -> (String, Arc<AtomicBool>, mpsc::Sender<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let arrived = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&arrived);
+    let (release, wait) = mpsc::channel();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut request = [0_u8; 32_768];
+            let _ = stream.read(&mut request);
+            flag.store(true, Ordering::SeqCst);
+            let _ = wait.recv();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        }
+    });
+    (address, arrived, release)
 }
 
 fn counted_drop_server() -> (String, Arc<AtomicUsize>) {
@@ -633,12 +684,9 @@ fn resume_process_emits_typed_uncertainty_without_calling_provider() {
 #[test]
 fn ctrl_c_cancels_a_run_with_exit_130() {
     let env = test_root("ctrl-c");
-    // The plan call blocks far past the SIGINT: the child is inside the
-    // provider call when the signal lands.
-    let (address, ready) = mock(vec![Scripted {
-        body: plan_body(&["never reached"]),
-        delay_ms: 120_000,
-    }]);
+    // Keep the plan response held after SIGINT so the command's local source
+    // owner can be observed before it is explicitly released.
+    let (address, ready, release) = held_mock(plan_body(&["never reached"]));
     let mut child = ProcessCommand::new(env!("CARGO_BIN_EXE_saya"))
         .args([
             "--non-interactive",
@@ -664,11 +712,141 @@ fn ctrl_c_cancels_a_run_with_exit_130() {
     // SAFETY: `kill` takes no pointers and has no invariants to uphold.
     let sent = unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGINT) };
     assert_eq!(sent, 0, "the child must be alive to receive SIGINT");
+    for _ in 0..20 {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "Ctrl-C must retain the active drive until the source response settles"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    release.send(()).unwrap();
     let status = child.wait().unwrap();
     assert_eq!(
         status.code(),
         Some(130),
         "Ctrl-C must exit 130 through the handler, not die by signal"
+    );
+    let _ = fs::remove_dir_all(&env.root);
+}
+
+/// Resume Ctrl-C settles its active journal owner before the process exits.
+/// The provider stream is locally abandoned on stop, so this proves local
+/// journal/lock settlement only; it makes no claim about remote completion.
+#[cfg(unix)]
+#[test]
+fn resume_ctrl_c_records_cancelled_before_releasing_the_run_lock() {
+    let env = test_root("resume-ctrl-c");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", listener.local_addr().unwrap());
+    let planner_seen = Arc::new(AtomicBool::new(false));
+    let step_seen = Arc::new(AtomicBool::new(false));
+    let planner_flag = Arc::clone(&planner_seen);
+    let step_flag = Arc::clone(&step_seen);
+    let (release_initial, initial_wait) = mpsc::channel();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut request = [0_u8; 32_768];
+            let _ = stream.read(&mut request);
+            planner_flag.store(true, Ordering::SeqCst);
+            let body = plan_body(&["interrupted step"]);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        }
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut request = [0_u8; 32_768];
+            let _ = stream.read(&mut request);
+            step_flag.store(true, Ordering::SeqCst);
+            let _ = initial_wait.recv();
+            let body = sse("done");
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.flush();
+        }
+    });
+    let mut interrupted = ChildGuard(
+        ProcessCommand::new(env!("CARGO_BIN_EXE_saya"))
+            .args(["--non-interactive", "run", "--allow", "none", "a long goal"])
+            .current_dir(&env.root)
+            .env("SAYA_CONFIG_HOME", env.root.join("user-config"))
+            .env("SAYA_RUNS_DIR", &env.runs)
+            .env("SAYA_STATE_DB", &env.state)
+            .env("SAYA_PROVIDER", "openai_compatible")
+            .env("SAYA_MODEL", "mock-model")
+            .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
+            .env("SAYA_API_KEY", "mock-secret")
+            .spawn()
+            .unwrap(),
+    );
+    wait_ready(&planner_seen);
+    wait_ready(&step_seen);
+    interrupted.kill().unwrap();
+    let _ = interrupted.wait().unwrap();
+    release_initial.send(()).unwrap();
+
+    let listing = saya(&env, &["run", "list"], &address);
+    assert_eq!(listing.status.code(), Some(0), "{}", stderr(&listing));
+    let id = newest_run_id(&listing);
+    let (resume_address, ready, release) = held_mock(sse("done"));
+    let mut resumed = ChildGuard(
+        ProcessCommand::new(env!("CARGO_BIN_EXE_saya"))
+            .args([
+                "--non-interactive",
+                "run",
+                "resume",
+                &id,
+                "--retry-incomplete",
+            ])
+            .current_dir(&env.root)
+            .env("SAYA_CONFIG_HOME", env.root.join("user-config"))
+            .env("SAYA_RUNS_DIR", &env.runs)
+            .env("SAYA_STATE_DB", &env.state)
+            .env("SAYA_PROVIDER", "openai_compatible")
+            .env("SAYA_MODEL", "mock-model")
+            .env("SAYA_PROVIDER_BASE_URL", format!("{resume_address}/v1"))
+            .env("SAYA_API_KEY", "mock-secret")
+            .spawn()
+            .unwrap(),
+    );
+    wait_ready(&ready);
+    // SAFETY: `kill` takes no pointers and has no invariants to uphold.
+    let sent = unsafe { libc::kill(resumed.id() as libc::pid_t, libc::SIGINT) };
+    assert_eq!(sent, 0, "the resumed process is inside its provider call");
+    let mut status = None;
+    for _ in 0..200 {
+        if let Some(exited) = resumed.try_wait().unwrap() {
+            status = Some(exited);
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let settled_before_remote_release = status.is_some();
+    if !settled_before_remote_release {
+        let _ = resumed.kill();
+        let _ = resumed.wait();
+    }
+    release.send(()).unwrap();
+    assert!(
+        settled_before_remote_release,
+        "the local provider attempt must settle without claiming remote completion"
+    );
+    assert_eq!(status.unwrap().code(), Some(130));
+    let journal = fs::read_to_string(env.runs.join(&id).join("events.ndjson")).unwrap();
+    assert_eq!(
+        journal
+            .lines()
+            .filter(|line| line.contains("\"type\":\"cancelled\""))
+            .count(),
+        1,
+        "resume records exactly one durable cancellation before releasing its lock"
     );
     let _ = fs::remove_dir_all(&env.root);
 }
@@ -869,29 +1047,34 @@ fn an_ndjson_run_stream_parses_as_one_json_object_per_line_when_paused() {
         "the pause names its cause: {paused:?}"
     );
 
-    // The resume speaks the same wire: every line is one JSON object, and the
-    // run it continues ends `completed` on the same stream.
+    // The resume speaks the same wire. Its whole-run clock includes time
+    // already spent before the pause, so an expired ceiling stops before a
+    // new provider request.
     let id = {
         let listing = saya(&env, &["run", "list"], &slow);
         newest_run_id(&listing)
     };
-    let (fast, _fast_ready) = mock(vec![Scripted {
+    let (fast, fast_ready) = mock(vec![Scripted {
         body: sse("remaining step answer"),
         delay_ms: 0,
     }]);
     let resumed = saya(&env, &["--format", "ndjson", "run", "resume", &id], &fast);
     assert_eq!(
         resumed.status.code(),
-        Some(0),
-        "the resumed run completes; stderr: {}",
+        Some(6),
+        "the whole-run wall-clock budget includes pause time; stderr: {}",
         stderr(&resumed)
+    );
+    assert!(
+        !fast_ready.load(Ordering::SeqCst),
+        "an expired carried deadline must stop before another provider request"
     );
     let resumed_lines = json_lines(&stdout(&resumed), "resumed stdout");
     json_lines(&stderr(&resumed), "resumed stderr");
     let resumed_tags = type_tags(&resumed_lines);
     assert!(
-        resumed_tags.contains(&"paused") && resumed_tags.contains(&"completed"),
-        "the journal proves the step completed before pause, so resume settles the run: {resumed_lines:?}"
+        resumed_tags.contains(&"paused") && !resumed_tags.contains(&"completed"),
+        "the same spent whole-run deadline remains paused on resume: {resumed_lines:?}"
     );
     let _ = fs::remove_dir_all(&env.root);
 }

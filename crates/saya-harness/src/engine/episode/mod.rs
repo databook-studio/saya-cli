@@ -27,6 +27,7 @@ pub use contract::{
 };
 pub use retry::MAX_EPISODE_ATTEMPTS;
 
+use saya_agent::{BudgetDimension, CancellationReason};
 use saya_types::{PauseReason, RunPlan};
 
 use crate::workspace::Workspace;
@@ -66,11 +67,69 @@ impl<'a> EpisodeDriver<'a> {
     /// with `StepFailedAfterRetry` when a step's attempts are spent,
     /// `Cancel` when the user stops the episode.
     ///
+    /// A controlled deadline and terminal ownership apply when the sink is
+    /// attached to this same collaborator cancellation token. Standalone
+    /// callers with an unattached legacy sink retain tick-based behavior.
     /// Gate refusals (brief, journal, store, machine) are never retried and
     /// never silent: they return immediately, with the run's state as the
     /// sink last advanced it. Retryable means the episode itself failed;
     /// every attempt begins with a fresh brief and a fresh loop.
     pub async fn run_step(
+        &self,
+        sink: &EngineEventSink,
+        plan: &RunPlan,
+        step: usize,
+        workspace: &Workspace,
+    ) -> Result<(), EpisodeError> {
+        let remaining = match sink.time_remaining() {
+            Ok(remaining) => remaining,
+            Err(source) if sink.state() == RunState::Approved => {
+                return Err(EpisodeError::SinkDiagnostic { source });
+            }
+            Err(source) => {
+                sink.request_owner_failure();
+                return self
+                    .run_step_inner(sink, plan, step, workspace)
+                    .await
+                    .map_err(|error| match error {
+                        EpisodeError::OwnerFailure { step }
+                        | EpisodeError::OwnerFailureDiagnostic { step, .. } => {
+                            EpisodeError::OwnerFailureDiagnostic {
+                                step,
+                                diagnostic: source,
+                            }
+                        }
+                        other => other,
+                    });
+            }
+        };
+        let active = self.run_step_inner(sink, plan, step, workspace);
+        tokio::pin!(active);
+        if !sink.has_cancellation() {
+            return active.await;
+        }
+        if remaining.is_some_and(|remaining| remaining.is_zero()) {
+            self.collaborators
+                .cancellation
+                .cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+        }
+        if let Some(remaining) = remaining.filter(|remaining| !remaining.is_zero()) {
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep(remaining) => {
+                    self.collaborators.cancellation.cancel_with_reason(CancellationReason::Budget(
+                        BudgetDimension::ElapsedTime,
+                    ));
+                    active.await
+                }
+                result = &mut active => result,
+            }
+        } else {
+            active.await
+        }
+    }
+
+    async fn run_step_inner(
         &self,
         sink: &EngineEventSink,
         plan: &RunPlan,
@@ -101,11 +160,35 @@ impl<'a> EpisodeDriver<'a> {
             RunState::Executing => {}
             state => return Err(EpisodeError::NotRunnable { step, state }),
         }
+        if let Some(reason) = self.collaborators.cancellation.reason() {
+            return self.settle_stop(sink, step, reason).await;
+        }
         let mut attempt = 0;
         loop {
+            if self.collaborators.cancellation.is_cancelled() {
+                return self
+                    .settle_stop(
+                        sink,
+                        step,
+                        self.collaborators.cancellation.reason().unwrap(),
+                    )
+                    .await;
+            }
             attempt += 1;
             retry::mark_started(&self.run, step).await?;
-            match retry::drive_attempt(self, sink, plan, step, workspace).await {
+            let budget = plan.steps[step].budget.as_ref();
+            sink.begin_answering_step(
+                step,
+                budget.is_some_and(|budget| budget.turns.is_some() || budget.tool_calls.is_some()),
+            );
+            if let Some(reason) = self.collaborators.cancellation.reason() {
+                return self.settle_stop(sink, step, reason).await;
+            }
+            let result = retry::drive_attempt(self, sink, plan, step, workspace).await;
+            if let Some(reason) = self.collaborators.cancellation.reason() {
+                return self.settle_stop(sink, step, reason).await;
+            }
+            match result {
                 Ok(_) => {
                     // The step's declared deliverables become the artifact
                     // manifest at completion: resolved against the workspace
@@ -121,6 +204,9 @@ impl<'a> EpisodeDriver<'a> {
                         retry::record_deliverables(&self.run, step, deliverables)?;
                     }
                     retry::mark_completed(&self.run, step).await?;
+                    if let Some(reason) = self.collaborators.cancellation.reason() {
+                        return self.settle_stop(sink, step, reason).await;
+                    }
                     if step + 1 == plan.steps.len() {
                         sink.record(TransitionEvent::Complete)
                             .await
@@ -139,6 +225,9 @@ impl<'a> EpisodeDriver<'a> {
                 Err(retry::AttemptError::Gate(gate)) => return Err(gate),
                 Err(retry::AttemptError::Episode(source)) => {
                     retry::mark_failed(&self.run, step).await?;
+                    if let Some(reason) = self.collaborators.cancellation.reason() {
+                        return self.settle_stop(sink, step, reason).await;
+                    }
                     if attempt >= MAX_EPISODE_ATTEMPTS {
                         sink.record(TransitionEvent::Pause(PauseReason::StepFailedAfterRetry))
                             .await
@@ -149,6 +238,82 @@ impl<'a> EpisodeDriver<'a> {
                             code: retry::failure_code(&source),
                         });
                     }
+                }
+            }
+        }
+    }
+
+    async fn settle_stop(
+        &self,
+        sink: &EngineEventSink,
+        step: usize,
+        reason: CancellationReason,
+    ) -> Result<(), EpisodeError> {
+        match reason {
+            CancellationReason::User => {
+                let diagnostic = sink.take_diagnostic();
+                match sink.record(TransitionEvent::Cancel).await {
+                    Ok(_) => match diagnostic {
+                        Some(diagnostic) => {
+                            Err(EpisodeError::CancelledDiagnostic { step, diagnostic })
+                        }
+                        None => Err(EpisodeError::Cancelled { step }),
+                    },
+                    Err(source) => match diagnostic {
+                        Some(diagnostic) => Err(EpisodeError::CancelPersistenceFailed {
+                            step,
+                            diagnostic,
+                            transition: std::sync::Arc::new(source),
+                        }),
+                        None => Err(EpisodeError::Transition { source }),
+                    },
+                }
+            }
+            CancellationReason::Budget(dimension) => {
+                let reason = if dimension == BudgetDimension::ElapsedTime {
+                    PauseReason::WallClockExceeded
+                } else {
+                    PauseReason::BudgetExhausted
+                };
+                let prior_diagnostic = sink.take_diagnostic();
+                let transition = sink.record(TransitionEvent::Pause(reason)).await;
+                let diagnostic = prior_diagnostic.or_else(|| sink.take_diagnostic());
+                match transition {
+                    Ok(_) => match diagnostic {
+                        Some(diagnostic) => Err(EpisodeError::BudgetStoppedDiagnostic {
+                            step,
+                            reason,
+                            diagnostic,
+                        }),
+                        None => Err(EpisodeError::BudgetStopped { step, reason }),
+                    },
+                    Err(source) => match diagnostic {
+                        Some(diagnostic) => Err(EpisodeError::BudgetPersistenceFailed {
+                            step,
+                            reason,
+                            diagnostic,
+                            transition: std::sync::Arc::new(source),
+                        }),
+                        None => Err(EpisodeError::Transition { source }),
+                    },
+                }
+            }
+            CancellationReason::OwnerFailure => {
+                let diagnostic = sink.take_diagnostic();
+                if diagnostic.as_deref().is_some_and(|error| {
+                    matches!(error, super::sink::EngineSinkError::Store { .. })
+                }) && sink.state() == RunState::Executing
+                    && let Err(error) = sink
+                        .record(TransitionEvent::Pause(PauseReason::StoreUnavailable))
+                        .await
+                {
+                    sink.hold_diagnostic(error);
+                }
+                match diagnostic.or_else(|| sink.take_diagnostic()) {
+                    Some(diagnostic) => {
+                        Err(EpisodeError::OwnerFailureDiagnostic { step, diagnostic })
+                    }
+                    None => Err(EpisodeError::OwnerFailure { step }),
                 }
             }
         }

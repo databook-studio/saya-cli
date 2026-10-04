@@ -17,8 +17,8 @@ pub use loop_runner::{
     AgentError, AgentLimits, AgentOutput, AgentRunControl, AnsweringLimits, AnsweringScope,
     DESIGNATE_ANSWER_TOOL, EnvBudgets, MAX_CLARIFICATION_OPTION_CHARS, MAX_CLARIFICATION_OPTIONS,
     MAX_CLARIFICATION_QUESTION_CHARS, MAX_TOOL_MESSAGE_BYTES, REQUEST_CLARIFICATION_TOOL,
-    ShapedToolResult, budgets_from_env, run_agent_with_control, run_agent_with_sink,
-    shape_tool_result, tool_message_cap,
+    RequestPreflightConfig, ShapedToolResult, budgets_from_env, run_agent_with_control,
+    run_agent_with_sink, shape_tool_result, tool_message_cap,
 };
 pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{
@@ -33,6 +33,10 @@ pub use protocol::contracts::{
     context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
+pub use protocol::metrics::{
+    AgentAttemptOutcome, AgentMetric, AgentMetricCount, AgentMetricOutcome, AgentMetricPhase,
+    AgentMetricUseful,
+};
 pub use protocol::stream_item_limit::MAX_STREAM_EVENTS;
 pub use protocol::streaming::{
     CancellationReason, CancellationToken, ChatProvider, MAX_STREAM_BYTES,

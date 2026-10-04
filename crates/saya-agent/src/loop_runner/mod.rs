@@ -1,5 +1,6 @@
 mod admission;
 mod attempt;
+mod attempt_metrics;
 mod clarification;
 mod clarification_args;
 mod clarification_feed;
@@ -9,6 +10,7 @@ mod designation;
 mod failed_statements;
 mod failure_key;
 mod output;
+mod preflight;
 mod receive;
 mod receive_stream;
 mod salvage;
@@ -35,6 +37,7 @@ pub use control::{AgentRunControl, AnsweringLimits, AnsweringScope};
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
+pub use preflight::RequestPreflightConfig;
 pub use tools::{MAX_TOOL_MESSAGE_BYTES, ShapedToolResult, shape_tool_result, tool_message_cap};
 
 /// Re-instruction pushed as a user-role message after the provider caps a
@@ -90,6 +93,7 @@ pub async fn run_agent_with_sink(
         sink,
         cancellation,
         answering: None,
+        request_preflight: None,
     })
     .await
 }
@@ -111,6 +115,7 @@ pub async fn run_agent_with_control<'a>(
         sink: control.sink,
         cancellation: control.cancellation,
         answering: Some(control.answering_scope),
+        request_preflight: control.request_preflight,
     })
     .await
 }
@@ -140,24 +145,27 @@ async fn run_agent_loop(
         sink,
         cancellation,
         answering,
+        request_preflight,
     } = invocation;
     let controlled = answering.is_some();
     admission.initialize(sink).await;
     if controlled {
         admission.check(&cancellation)?;
     }
-    let mut messages = crate::history::build_messages(
-        request.system_prompt.as_deref(),
-        &request.context_blocks,
-        &request.prompt,
-        &request.history,
-        limits.context_byte_budget,
-    )?;
+    let (mut messages, mut ordinary_history_pairs, mut protected_prefix_len) =
+        crate::history::build_messages_with_history_count(
+            request.system_prompt.as_deref(),
+            &request.context_blocks,
+            &request.prompt,
+            &request.history,
+            limits.context_byte_budget,
+        )?;
     let mut events = Vec::new();
     let mut used_bounded_sql_query = false;
     let mut tool_metadata = Vec::new();
     let mut usage = TokenUsage::default();
     let mut continuation_count = 0;
+    let mut pending_continuation = None;
     // Calls that failed during this run — SQL statements keyed on the
     // statement exactly as submitted, other tools on (tool, arguments) — so a
     // byte-identical re-submission is refused rather than re-executed (loop
@@ -167,7 +175,7 @@ async fn run_agent_loop(
     // The last statement that completed successfully, so a run that exhausts its
     // budget without nominating can still surface its best available answer.
     let mut last_successful_sql: Option<String> = None;
-    let mut designation = designation::State::new(limits.context_byte_budget);
+    let mut designation = designation::State::new();
     loop {
         if let Err(error) = admission.check(&cancellation) {
             if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
@@ -192,8 +200,11 @@ async fn run_agent_loop(
                 provider,
                 &request.model,
                 &mut messages,
+                &mut ordinary_history_pairs,
+                &mut protected_prefix_len,
                 &[],
                 limits.context_byte_budget,
+                request_preflight,
                 sink,
                 &cancellation,
                 &mut events,
@@ -214,8 +225,13 @@ async fn run_agent_loop(
         let (assistant, turn_usage, reasoning) = match receive::receive(receive::ReceiveContext {
             provider,
             model: &request.model,
-            messages: &messages,
+            messages: &mut messages,
+            ordinary_history_pairs: &mut ordinary_history_pairs,
+            protected_prefix_len: &mut protected_prefix_len,
             definitions: &definitions,
+            context_byte_budget: limits.context_byte_budget,
+            request_preflight,
+            continuation: pending_continuation.take(),
             sink,
             cancellation: &cancellation,
             events: &mut events,
@@ -244,6 +260,13 @@ async fn run_agent_loop(
                             .is_some_and(|max| continuation_count < max) =>
                     {
                         continuation_count += 1;
+                        pending_continuation = Some(receive::ContinuationProgress {
+                            index: continuation_count as usize,
+                            limit: limits
+                                .max_continuations
+                                .expect("the continuation guard checked a finite limit")
+                                as usize,
+                        });
                         messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
                         continue;
                     }
@@ -298,6 +321,49 @@ async fn run_agent_loop(
             )
             .await);
         }
+        let mut response_limits = limits;
+        let result_caps = if !assistant.tool_calls.is_empty() {
+            let result_budget = match preflight::reserve_tool_batch(
+                &request.model,
+                &mut messages,
+                protected_prefix_len,
+                &assistant,
+                &definitions,
+                limits.context_byte_budget,
+                request_preflight,
+            ) {
+                Ok(budget) => budget,
+                Err(preflight::PreflightError::Budget(dimension)) => {
+                    let error = admission.stop_preflight(&cancellation, dimension);
+                    if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
+                        messages.push(assistant.clone());
+                        messages.extend(preflight::non_execution_replies(&assistant));
+                        return Ok(budget_output(
+                            dimension,
+                            &mut events,
+                            sink,
+                            PartialOutput {
+                                usage,
+                                used_bounded_sql_query,
+                                tool_metadata,
+                                answer_sql: designation.sql.clone().or(last_successful_sql),
+                                answer: assistant.content,
+                            },
+                        )
+                        .await);
+                    }
+                    return Err(error);
+                }
+                Err(preflight::PreflightError::Serialization) => {
+                    return Err(AgentError::Limit("request projection serialization failed"));
+                }
+            };
+            response_limits.context_byte_budget =
+                response_limits.context_byte_budget.min(result_budget);
+            tool_batch::turn_result_caps(result_budget, assistant.tool_calls.len())
+        } else {
+            Vec::new()
+        };
         // Forward the turn's captured chain-of-thought onto the event stream as
         // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
         // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
@@ -318,6 +384,7 @@ async fn run_agent_loop(
         match designation::handle(
             &mut designation,
             &assistant,
+            &result_caps,
             (&mut events, sink, &cancellation),
             &mut messages,
             (usage, used_bounded_sql_query, &mut tool_metadata),
@@ -335,7 +402,8 @@ async fn run_agent_loop(
         match clarification::handle(
             &assistant,
             &definitions,
-            &limits,
+            &response_limits,
+            &result_caps,
             approval,
             tools,
             &designation,
@@ -383,8 +451,11 @@ async fn run_agent_loop(
                 provider,
                 &request.model,
                 &mut messages,
+                &mut ordinary_history_pairs,
+                &mut protected_prefix_len,
                 &assistant.tool_calls,
                 limits.context_byte_budget,
+                request_preflight,
                 sink,
                 &cancellation,
                 &mut events,
@@ -402,7 +473,8 @@ async fn run_agent_loop(
             tools,
             assistant,
             &definitions,
-            &limits,
+            &result_caps,
+            &response_limits,
             approval,
             sink,
             &cancellation,
@@ -441,7 +513,11 @@ async fn run_agent_loop(
         // assistant turns and tool results accumulate here. Trim every turn —
         // batch (parallel) and sequential alike — so the byte budget binds
         // unconditionally, never just on the turns a single call ran.
-        output::trim_to_budget(&mut messages, limits.context_byte_budget);
+        output::trim_to_budget(
+            &mut messages,
+            limits.context_byte_budget,
+            protected_prefix_len,
+        );
     }
 }
 

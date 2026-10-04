@@ -49,6 +49,38 @@ pub(super) fn settle(
     }
 }
 
+/// Reports an operational diagnostic without changing a journal-committed
+/// terminal state. In particular, a failed store mirror after Complete is an
+/// error (not success), while a committed user Cancel or budget Pause keeps
+/// its established exit class.
+pub(super) fn settle_diagnostic(
+    settled: Settled,
+    diagnostic: &dyn std::fmt::Display,
+    run_id: &RunId,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    use saya_harness::engine::RunState;
+    let id = run_id.as_str();
+    let (code, status) = match settled.state {
+        RunState::Completed => (3, "completed"),
+        RunState::Cancelled => (130, "cancelled"),
+        RunState::Paused => (6, "paused"),
+        RunState::Failed => (settled.code.map(failure_code_exit).unwrap_or(3), "failed"),
+        state => {
+            return crate::commands::output::failure_message(
+                3,
+                format!("run {id} stopped in state {state}; diagnostic: {diagnostic}"),
+                format,
+            );
+        }
+    };
+    crate::commands::output::failure_message(
+        code,
+        format!("run {id} {status}; diagnostic: {diagnostic}"),
+        format,
+    )
+}
+
 /// A typed terminal cause becomes its message text. The wording's one source
 /// is the run renderer (`crate::render_run`) — the exit message and the
 /// rendered `Failed` event line must not drift apart.
@@ -84,5 +116,82 @@ pub(super) fn failure_code_of(
     match error {
         saya_harness::engine::EpisodeError::StepExhausted { code, .. } => Some(*code),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+    use saya_harness::engine::{ElapsedClockError, EngineSinkError, EpisodeError, RunState};
+    use saya_store::StoreError;
+    use std::sync::Arc;
+
+    #[test]
+    fn completed_state_with_terminal_mirror_error_is_operational_failure() {
+        let run_id = RunId::parse("diagnostic-run").unwrap();
+        let diagnostic = EpisodeError::Transition {
+            source: EngineSinkError::Store {
+                source: StoreError::Unavailable,
+            },
+        };
+        let code = settle_diagnostic(
+            Settled {
+                state: RunState::Completed,
+                code: None,
+            },
+            &diagnostic,
+            &run_id,
+            RenderFormat::Text,
+        )
+        .unwrap();
+        assert_eq!(code, 3);
+    }
+
+    #[test]
+    fn durable_cancel_with_diagnostic_keeps_user_exit_class() {
+        let run_id = RunId::parse("diagnostic-run").unwrap();
+        let diagnostic = EpisodeError::CancelledDiagnostic {
+            step: 0,
+            diagnostic: Arc::new(EngineSinkError::Store {
+                source: StoreError::Unavailable,
+            }),
+        };
+        let code = settle_diagnostic(
+            Settled {
+                state: RunState::Cancelled,
+                code: None,
+            },
+            &diagnostic,
+            &run_id,
+            RenderFormat::Text,
+        )
+        .unwrap();
+        assert_eq!(code, 130);
+    }
+
+    #[test]
+    fn committed_budget_pause_with_mirror_error_keeps_budget_exit_class() {
+        let run_id = RunId::parse("diagnostic-run").unwrap();
+        let diagnostic = EpisodeError::BudgetPersistenceFailed {
+            step: 0,
+            reason: saya_types::PauseReason::BudgetExhausted,
+            diagnostic: Arc::new(EngineSinkError::ElapsedClock {
+                source: ElapsedClockError::FutureOrigin,
+            }),
+            transition: Arc::new(EngineSinkError::Store {
+                source: StoreError::Unavailable,
+            }),
+        };
+        let code = settle_diagnostic(
+            Settled {
+                state: RunState::Paused,
+                code: None,
+            },
+            &diagnostic,
+            &run_id,
+            RenderFormat::Text,
+        )
+        .unwrap();
+        assert_eq!(code, 6);
     }
 }

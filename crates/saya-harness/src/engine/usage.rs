@@ -4,6 +4,21 @@
 //! not one invocation. The honesty rule is the run contracts' own: an
 //! unreported figure means "unknown", never zero.
 
+mod counts;
+pub(crate) use counts::StepAnsweringCounts;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AnsweringCountError {
+    #[error("count evidence is malformed or out of order")]
+    InvalidEvidence,
+    #[error("the step has no authoritative count initialization")]
+    MissingInitialization,
+    #[error("an admitted response has no observed tool batch")]
+    PendingBatch,
+    #[error("a tool batch has no matching admitted response")]
+    BatchWithoutRequest,
+}
+
 use saya_agent::TokenUsage;
 use saya_types::RunEvent;
 

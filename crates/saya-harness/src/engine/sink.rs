@@ -4,8 +4,10 @@
 //! The episode driver hands this sink to `run_agent_with_sink`; every event
 //! the loop emits passes through [`EngineEventSink::emit`], and each
 //! emission is a tick. The sink counts usage across the run, journals the
-//! download wallet's spend as it grows, enforces the run's wall-clock
-//! deadline per tick, and records lifecycle transitions: each one advances
+//! download wallet's spend as it grows, enforces budgets per tick, and
+//! signals the attached episode owner when a controlled run must stop. A
+//! legacy unattached sink still pauses on its own tick. The sink records
+//! lifecycle transitions: each one advances
 //! the state machine, is appended to the run journal, and is mirrored to
 //! the state store.
 //!
@@ -29,15 +31,18 @@ use std::{
 };
 
 use async_trait::async_trait;
-use saya_agent::{AgentEvent, AgentEventSink};
+use saya_agent::{
+    AgentEvent, AgentEventSink, AnsweringObservation, BudgetDimension, CancellationReason,
+    CancellationToken,
+};
 use saya_store::RunStore;
-use saya_types::{PauseReason, RunId};
+use saya_types::{PauseReason, RunEvent, RunId};
 
 use crate::fetch::DownloadBudget;
 use crate::journal::Journal;
 
 use super::clock::ElapsedClock;
-use super::usage::UsageTotals;
+use super::usage::{AnsweringCountError, StepAnsweringCounts, UsageTotals};
 use super::{state::RunState, transitions::TransitionEvent};
 
 mod accounting;
@@ -68,6 +73,8 @@ pub struct EngineEventSink {
     download_budget: Option<DownloadBudget>,
     state: Mutex<RunState>,
     usage: Mutex<UsageTotals>,
+    answering_counts: Mutex<StepAnsweringCounts>,
+    count_tracking: Mutex<bool>,
     /// The download level the journal already holds when this sink takes
     /// over — the wallet's consumed figure at construction, which on a
     /// resume is the level its record carries (the seeding `resume` did
@@ -83,6 +90,7 @@ pub struct EngineEventSink {
     /// accounting (usage totals, the wall-clock tick) is unchanged either way.
     agent_stream: Option<Arc<dyn AgentEventSink>>,
     elapsed_clock: Mutex<Option<ElapsedClock>>,
+    cancellation: Option<CancellationToken>,
 }
 
 impl EngineEventSink {
@@ -126,10 +134,13 @@ impl EngineEventSink {
             download_budget,
             state: Mutex::new(initial),
             usage: Mutex::new(carried_usage),
+            answering_counts: Mutex::new(StepAnsweringCounts::default()),
+            count_tracking: Mutex::new(false),
             journaled_downloads,
             diagnostic: Mutex::new(None),
             agent_stream: None,
             elapsed_clock: Mutex::new(None),
+            cancellation: None,
         }
     }
 
@@ -137,6 +148,67 @@ impl EngineEventSink {
     pub fn with_elapsed_clock(self, clock: ElapsedClock) -> Self {
         *self.elapsed_clock.lock().expect("engine sink clock lock") = Some(clock);
         self
+    }
+
+    pub(crate) fn with_answering_counts(self, counts: StepAnsweringCounts) -> Self {
+        *self
+            .answering_counts
+            .lock()
+            .expect("engine sink answering-count lock") = counts;
+        self
+    }
+
+    pub(in crate::engine) fn begin_answering_step(&self, step: usize, tracked: bool) {
+        self.answering_counts
+            .lock()
+            .expect("engine sink answering-count lock")
+            .begin_step(step);
+        *self
+            .count_tracking
+            .lock()
+            .expect("engine sink answering-count tracking lock") = tracked;
+    }
+
+    pub(in crate::engine) fn remaining_answering_grant(
+        &self,
+        step: usize,
+        turns: Option<u64>,
+        tool_calls: Option<u64>,
+    ) -> Result<(Option<u64>, Option<u64>), AnsweringCountError> {
+        self.answering_counts
+            .lock()
+            .expect("engine sink answering-count lock")
+            .remaining(step, turns, tool_calls)
+    }
+
+    /// Attaches the production run's shared cancellation owner. Legacy sink
+    /// callers without this attachment keep the historical per-tick pause.
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = Some(cancellation);
+        self
+    }
+
+    pub(super) fn request_budget_stop(&self, dimension: BudgetDimension) -> bool {
+        self.cancellation.as_ref().is_some_and(|cancellation| {
+            cancellation.cancel_with_reason(CancellationReason::Budget(dimension));
+            true
+        })
+    }
+
+    pub(in crate::engine) fn has_cancellation(&self) -> bool {
+        self.cancellation.is_some()
+    }
+
+    pub(in crate::engine) fn request_owner_failure(&self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
+        }
+    }
+
+    pub(in crate::engine) fn cancellation_reason(&self) -> Option<CancellationReason> {
+        self.cancellation
+            .as_ref()
+            .and_then(CancellationToken::reason)
     }
 
     /// Attaches the downstream sink every agent event forwards to.
@@ -165,8 +237,15 @@ impl EngineEventSink {
             .take()
     }
 
-    fn hold_diagnostic(&self, error: EngineSinkError) {
-        *self.diagnostic.lock().expect("engine sink diagnostic lock") = Some(Arc::new(error));
+    pub(in crate::engine) fn hold_diagnostic(&self, error: EngineSinkError) {
+        self.hold_diagnostic_arc(Arc::new(error));
+    }
+
+    pub(in crate::engine) fn hold_diagnostic_arc(&self, error: Arc<EngineSinkError>) {
+        let mut diagnostic = self.diagnostic.lock().expect("engine sink diagnostic lock");
+        if diagnostic.is_none() {
+            *diagnostic = Some(error);
+        }
     }
 
     fn set_state(&self, state: RunState) {
@@ -176,6 +255,57 @@ impl EngineEventSink {
 
 #[async_trait]
 impl AgentEventSink for EngineEventSink {
+    async fn observe_answering(&self, observation: AnsweringObservation) {
+        if !*self
+            .count_tracking
+            .lock()
+            .expect("engine sink answering-count tracking lock")
+        {
+            return;
+        }
+        let mut counts = self
+            .answering_counts
+            .lock()
+            .expect("engine sink answering-count lock");
+        let mut updated = *counts;
+        match updated.observe(observation) {
+            Ok(false) => return,
+            Ok(true) => {}
+            Err(source) => {
+                self.hold_diagnostic(EngineSinkError::AnsweringCount { source });
+                self.request_owner_failure();
+                return;
+            }
+        }
+        let (turns, tool_calls) = match observation {
+            AnsweringObservation::Initialized => (Some(0), Some(0)),
+            AnsweringObservation::RequestAdmitted => (Some(1), None),
+            AnsweringObservation::ToolBatchObserved { requested } => (None, Some(requested)),
+            _ => {
+                self.hold_diagnostic(EngineSinkError::AnsweringCount {
+                    source: AnsweringCountError::InvalidEvidence,
+                });
+                self.request_owner_failure();
+                return;
+            }
+        };
+        let event = RunEvent::Usage {
+            endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
+            tokens: None,
+            turns,
+            tool_calls,
+            cached_input_tokens: None,
+            cache_creation_input_tokens: None,
+        };
+        match self.journal.append(&event) {
+            Ok(()) => *counts = updated,
+            Err(source) => {
+                self.hold_diagnostic(EngineSinkError::Journal { source });
+                self.request_owner_failure();
+            }
+        }
+    }
+
     /// One event emission is one tick: a successful or failed-attempt usage
     /// receipt folds into the run's totals and is journaled as the durable
     /// per-endpoint record, the download wallet's spend is journaled when it
@@ -188,29 +318,84 @@ impl AgentEventSink for EngineEventSink {
                 .lock()
                 .expect("engine sink usage lock")
                 .fold(usage);
-            self.journal_usage(usage);
+            if let Err(error) = self.journal_usage(usage) {
+                self.hold_diagnostic(error);
+                self.request_owner_failure();
+                return;
+            }
         }
-        self.journal_downloads();
-        let mut clock_boundary_failed = false;
+        if let Err(error) = self.journal_downloads() {
+            self.hold_diagnostic(error);
+            self.request_owner_failure();
+            return;
+        }
+        let mut clock_error = None;
         if matches!(
             &event,
             AgentEvent::TurnStarted | AgentEvent::ToolRequested { .. }
         ) && let Err(error) = self.observe_elapsed_clock(true)
         {
-            self.hold_diagnostic(error);
-            clock_boundary_failed = true;
+            clock_error = Some(error);
         }
-        if clock_boundary_failed
-            && let Err(error) = self
-                .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
-                .await
-        {
+        if let Some(error) = clock_error {
             self.hold_diagnostic(error);
-            self.set_state(RunState::Paused);
+            if self.cancellation.is_none()
+                && self.state() == RunState::Executing
+                && let Err(error) = self
+                    .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
+                    .await
+            {
+                self.hold_diagnostic(error);
+            }
         }
+        self.observe_stop_before_display();
         if let Some(stream) = &self.agent_stream {
             stream.emit(event).await;
         }
         self.tick().await;
+    }
+}
+
+impl EngineEventSink {
+    fn observe_stop_before_display(&self) {
+        if self.state() != RunState::Executing {
+            return;
+        }
+        let already_stopped = self.cancellation_reason().is_some();
+        let dimension = if already_stopped {
+            None
+        } else if self.tokens_exhausted() {
+            Some(BudgetDimension::ReportedTokens)
+        } else if self.downloads_exhausted() {
+            Some(BudgetDimension::DownloadBytes)
+        } else {
+            None
+        };
+        if let Some(dimension) = dimension {
+            self.request_budget_stop(dimension);
+        }
+        match self.observe_elapsed_clock(false) {
+            Ok(true) => {
+                if !already_stopped && dimension.is_none() {
+                    self.request_budget_stop(BudgetDimension::ElapsedTime);
+                }
+            }
+            Ok(false) => {
+                if self
+                    .deadline
+                    .is_some_and(|deadline| (self.clock)() >= deadline)
+                    && !already_stopped
+                    && dimension.is_none()
+                {
+                    self.request_budget_stop(BudgetDimension::ElapsedTime);
+                }
+            }
+            Err(error) => {
+                self.hold_diagnostic(error);
+                if !already_stopped && dimension.is_none() {
+                    self.request_owner_failure();
+                }
+            }
+        }
     }
 }

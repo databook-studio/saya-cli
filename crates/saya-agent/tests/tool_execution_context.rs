@@ -134,7 +134,7 @@ fn calls(definitions: &[ToolDefinition]) -> Vec<ToolCall> {
 
 fn limits() -> AgentLimits {
     AgentLimits {
-        context_byte_budget: 5,
+        context_byte_budget: 4 * 1024 * 1024,
         ..AgentLimits::default()
     }
 }
@@ -157,10 +157,9 @@ async fn wait_for_starts(executor: &ContextExecutor, expected: usize) {
 async fn serial_delivery_uses_legacy_result_cap_override_through_context_default() {
     let caps = Arc::new(Mutex::new(Vec::new()));
     let executor = LegacyCapExecutor { caps: caps.clone() };
-    let definitions = vec![
-        tool("first", ToolConcurrency::Serial),
-        tool("second", ToolConcurrency::Serial),
-    ];
+    let definitions = ["first", "second", "third", "fourth", "fifth"]
+        .map(|name| tool(name, ToolConcurrency::Serial))
+        .to_vec();
     let sink = NoopEventSink;
 
     let output = run_agent_with_sink(
@@ -177,7 +176,10 @@ async fn serial_delivery_uses_legacy_result_cap_override_through_context_default
     .expect("the legacy cap-aware executor remains compatible");
 
     assert_eq!(output.answer, "done");
-    assert_eq!(&*caps.lock().unwrap(), &[3, 2]);
+    assert_eq!(
+        &*caps.lock().unwrap(),
+        &[52_429, 52_429, 52_429, 52_429, 52_428]
+    );
 }
 
 #[tokio::test]
@@ -216,5 +218,5 @@ async fn concurrent_delivery_observes_the_original_cancellation_and_exact_caps()
 
     let mut observed = caps.lock().unwrap().clone();
     observed.sort_unstable();
-    assert_eq!(observed, vec![2, 3]);
+    assert_eq!(observed, vec![65_536, 65_536]);
 }

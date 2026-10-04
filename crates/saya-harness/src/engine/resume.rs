@@ -18,7 +18,7 @@ use crate::{
         sink::{EngineEventSink, SinkBudgets},
         state::RunState,
         transitions::TransitionEvent,
-        usage::UsageTotals,
+        usage::{StepAnsweringCounts, UsageTotals},
     },
     fetch::DownloadBudget,
     journal::{Journal, JournalState, StepState, replay},
@@ -103,6 +103,7 @@ pub async fn resume(
             (!effects.is_empty()).then(|| (step, spec.goal.clone(), effects))
         })
     });
+    let replayed_counts = first_step.map(|step| StepAnsweringCounts::from_journal(&events, step));
     let elapsed = resumed
         .wall_clock
         .filter(|_| first_step.is_some() && uncertain.is_none())
@@ -112,6 +113,11 @@ pub async fn resume(
         Some(Err(_)) => None,
         None => None,
     };
+    let carried_counts = replayed_counts
+        .as_ref()
+        .and_then(|counts| counts.as_ref().ok())
+        .copied()
+        .unwrap_or_default();
     let sink = EngineEventSink::new(
         resumed.run_id.clone(),
         initial,
@@ -124,7 +130,9 @@ pub async fn resume(
             carried_usage: UsageTotals::from_journal(&events),
         },
         std::time::Instant::now,
-    );
+    )
+    .with_answering_counts(carried_counts)
+    .with_cancellation(resumed.collaborators.cancellation.clone());
     let sink = match &resumed.agent_stream {
         Some(stream) => sink.with_agent_stream(Arc::clone(stream)),
         None => sink,
@@ -145,6 +153,19 @@ pub async fn resume(
     }
     if let Some(Err(source)) = &elapsed {
         return Err(ResumeError::ElapsedClock { source: *source });
+    }
+    if let Some(step) = first_step
+        && let Some(budget) = resumed.plan.steps[step].budget.as_ref()
+        && (budget.turns.is_some() || budget.tool_calls.is_some())
+    {
+        let counts = match replayed_counts {
+            Some(Ok(counts)) => counts,
+            Some(Err(source)) => return Err(ResumeError::CountEvidence { step, source }),
+            None => StepAnsweringCounts::default(),
+        };
+        if let Err(source) = counts.remaining(step, budget.turns, budget.tool_calls) {
+            return Err(ResumeError::CountEvidence { step, source });
+        }
     }
     let (sink, clock_exhausted) = match elapsed {
         Some(Ok(mut clock)) => {

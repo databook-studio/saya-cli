@@ -15,7 +15,7 @@ use crate::{HarnessError, journal::JournalWire, workspace::Workspace};
 
 use crate::engine::episode::{EpisodeCollaborators, EpisodeError, EpisodeRequest, ManifestBounds};
 use crate::engine::state::RunState;
-use crate::engine::{clock::ElapsedClockError, sink::EngineSinkError};
+use crate::engine::{AnsweringCountError, clock::ElapsedClockError, sink::EngineSinkError};
 
 /// What resume found in the journal and what it did about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +69,14 @@ pub enum ResumeEffect {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ResumeError {
+    /// A finite per-step grant cannot be reconstructed from durable count evidence.
+    #[error("step {step} answering-count evidence is not safe to continue: {source}")]
+    CountEvidence {
+        step: usize,
+        #[source]
+        source: AnsweringCountError,
+    },
+
     /// The run directory's single-writer lock is held by a live process:
     /// another engine owns the run.
     #[error("run directory is locked by another engine: {source}")]

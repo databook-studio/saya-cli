@@ -48,6 +48,7 @@ pub(super) async fn handle(
     assistant: &ChatMessage,
     definitions: &[ToolDefinition],
     limits: &AgentLimits,
+    result_caps: &[usize],
     approval: &dyn ApprovalDecider,
     executor: &dyn ToolExecutor,
     designation: &designation::State,
@@ -64,11 +65,12 @@ pub(super) async fn handle(
     {
         return Ok(Outcome::NotCalled);
     }
-    let parsed: Vec<(&ToolCall, Result<Clarification, ClarificationError>)> = assistant
+    let parsed: Vec<(usize, &ToolCall, Result<Clarification, ClarificationError>)> = assistant
         .tool_calls
         .iter()
-        .filter(|call| call.name == REQUEST_CLARIFICATION_TOOL)
-        .map(|call| (call, parse(&call.arguments)))
+        .enumerate()
+        .filter(|(_, call)| call.name == REQUEST_CLARIFICATION_TOOL)
+        .map(|(index, call)| (index, call, parse(&call.arguments)))
         .collect();
     if parsed.is_empty() {
         return Ok(Outcome::NotCalled);
@@ -76,28 +78,38 @@ pub(super) async fn handle(
     let Some((asked_index, asked)) = parsed
         .iter()
         .enumerate()
-        .find_map(|(index, (_, result))| result.as_ref().ok().map(|ask| (index, ask.clone())))
+        .find_map(|(index, (_, _, result))| result.as_ref().ok().map(|ask| (index, ask.clone())))
     else {
         // Every ask in the message is malformed: each is fed its own named
         // validation error and the siblings are refused, so the model can
         // retry — the turn continues, and nothing asks.
         check_cancelled(cancellation)?;
-        for (call, result) in &parsed {
+        for (call_index, call, result) in &parsed {
             feed_malformed(
                 call,
                 result.as_ref().expect_err("branch holds only errors"),
                 definitions,
-                limits,
+                result_caps[*call_index],
                 (events, sink),
                 messages,
                 totals.2,
             )
             .await;
         }
-        refuse_others(assistant, &[], limits, messages, NOT_EXECUTED_REFUSAL);
+        let fed_ids = parsed
+            .iter()
+            .map(|(_, call, _)| call.id.as_str())
+            .collect::<Vec<_>>();
+        refuse_others(
+            assistant,
+            &fed_ids,
+            result_caps,
+            messages,
+            NOT_EXECUTED_REFUSAL,
+        );
         return Ok(Outcome::Continue);
     };
-    let asked_call = parsed[asked_index].0;
+    let (asked_call_index, asked_call, _) = parsed[asked_index];
     check_cancelled(cancellation)?;
     let definition = definitions
         .iter()
@@ -130,7 +142,7 @@ pub(super) async fn handle(
                 asked_call.arguments.clone(),
                 definition,
                 ToolExecutionContext {
-                    result_cap: tools::tool_message_cap(limits.context_byte_budget),
+                    result_cap: tools::tool_message_cap(result_caps[asked_call_index]),
                     cancellation: cancellation.clone(),
                 },
             )
@@ -173,7 +185,7 @@ pub(super) async fn handle(
         result_shape: tool_record::result_shape_of(&result),
     });
     let (message, truncated) =
-        tools::tool_message(asked_call.id.clone(), result, limits.context_byte_budget);
+        tools::tool_message(asked_call.id.clone(), result, result_caps[asked_call_index]);
     messages.push(message);
     emit(
         events,
@@ -188,7 +200,7 @@ pub(super) async fn handle(
         refuse_others(
             assistant,
             &[asked_call.id.as_str()],
-            limits,
+            result_caps,
             messages,
             NOT_EXECUTED_REFUSAL,
         );
@@ -203,7 +215,7 @@ pub(super) async fn handle(
     refuse_others(
         assistant,
         &[asked_call.id.as_str()],
-        limits,
+        result_caps,
         messages,
         PAUSED_REFUSAL,
     );

@@ -1,11 +1,19 @@
 use super::{
-    add_usage, admission::Admission, attempt, emit, receive_stream::stream_attempt, tool_protocol,
+    add_usage, admission::Admission, attempt, emit, preflight, receive_stream::stream_attempt,
+    tool_protocol,
 };
 use crate::{
-    AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
+    AgentEvent, AgentEventSink, AgentMetric, AgentMetricCount, AgentMetricOutcome,
+    AgentMetricPhase, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
     ProviderRecoveryPhase, ProviderRecoveryReason, TokenUsage, ToolDefinition, UsageCall,
 };
 use std::time::Duration;
+
+#[derive(Clone, Copy)]
+pub(super) struct ContinuationProgress {
+    pub(super) index: usize,
+    pub(super) limit: usize,
+}
 
 /// Streams one provider turn and returns the assembled assistant message. A
 /// failed attempt's latest reported cumulative usage remains billable even
@@ -13,8 +21,13 @@ use std::time::Duration;
 pub(super) struct ReceiveContext<'a> {
     pub(super) provider: &'a dyn ChatProvider,
     pub(super) model: &'a str,
-    pub(super) messages: &'a [ChatMessage],
+    pub(super) messages: &'a mut Vec<ChatMessage>,
+    pub(super) ordinary_history_pairs: &'a mut usize,
+    pub(super) protected_prefix_len: &'a mut usize,
     pub(super) definitions: &'a [ToolDefinition],
+    pub(super) context_byte_budget: usize,
+    pub(super) request_preflight: Option<super::preflight::RequestPreflightConfig>,
+    pub(super) continuation: Option<ContinuationProgress>,
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: &'a CancellationToken,
     pub(super) events: &'a mut Vec<AgentEvent>,
@@ -28,29 +41,73 @@ pub(super) async fn receive(
         provider,
         model,
         messages,
+        ordinary_history_pairs,
+        protected_prefix_len,
         definitions,
+        context_byte_budget,
+        request_preflight,
+        continuation,
         sink,
         cancellation,
         events,
         admission,
     } = context;
+    let mut recovered_usage = TokenUsage::default();
+    if let Err(error) = admission.check(cancellation) {
+        return Err(attempt::ReceiveFailure {
+            error,
+            usage: recovered_usage,
+        });
+    }
+    if let Err(error) = preflight::fit_request(
+        model,
+        messages,
+        ordinary_history_pairs,
+        protected_prefix_len,
+        definitions,
+        context_byte_budget,
+        request_preflight,
+    ) {
+        let error = match error {
+            preflight::PreflightError::Budget(dimension) => {
+                admission.stop_preflight(cancellation, dimension)
+            }
+            preflight::PreflightError::Serialization => {
+                crate::AgentError::Limit("request projection serialization failed")
+            }
+        };
+        return Err(attempt::ReceiveFailure {
+            error,
+            usage: recovered_usage,
+        });
+    }
     let request = ChatRequest {
         model: model.into(),
-        messages: messages.into(),
+        messages: messages.as_slice().into(),
         tools: definitions.into(),
         ..Default::default()
     };
     let delays = crate::providers::default_retry_delays();
     let mut retries = 0_u8;
-    let mut recovered_usage = TokenUsage::default();
     if let Err(error) = admission.request(sink, cancellation).await {
         return Err(attempt::ReceiveFailure {
             error,
             usage: recovered_usage,
         });
     }
+    if let Some(progress) = continuation {
+        debug_assert!(progress.index > 0 && progress.index <= progress.limit);
+        sink.metric(AgentMetric::Count(AgentMetricCount::AdmittedContinuation))
+            .await;
+        if let Err(error) = admission.check(cancellation) {
+            return Err(attempt::ReceiveFailure {
+                error,
+                usage: recovered_usage,
+            });
+        }
+    }
     loop {
-        match stream_attempt(provider, &request, sink, cancellation, events).await {
+        match stream_attempt(provider, &request, sink, cancellation, events, retries > 0).await {
             attempt::AttemptOutcome::Success {
                 message,
                 usage,
@@ -98,15 +155,39 @@ pub(super) async fn receive(
                 return Ok((message, recovered_usage, reasoning));
             }
             attempt::AttemptOutcome::Failed { error, usage } => {
+                let output_truncated = matches!(
+                    &error,
+                    attempt::AttemptError::Terminal {
+                        error: crate::ProviderError::OutputTruncated { .. },
+                        ..
+                    }
+                );
+                let mut settlement_error = None;
                 if let Some(usage) = usage {
                     emit(events, sink, AgentEvent::failed_attempt_usage(usage)).await;
                     add_usage(&mut recovered_usage, usage);
-                    if let Err(error) = admission.settle(Some(usage), cancellation) {
+                    settlement_error = admission.settle(Some(usage), cancellation).err();
+                }
+                if output_truncated {
+                    sink.metric(AgentMetric::Count(AgentMetricCount::OutputTruncated))
+                        .await;
+                    if let Some(error) = settlement_error {
                         return Err(attempt::ReceiveFailure {
                             error,
                             usage: recovered_usage,
                         });
                     }
+                    if let Err(error) = admission.check(cancellation) {
+                        return Err(attempt::ReceiveFailure {
+                            error,
+                            usage: recovered_usage,
+                        });
+                    }
+                } else if let Some(error) = settlement_error {
+                    return Err(attempt::ReceiveFailure {
+                        error,
+                        usage: recovered_usage,
+                    });
                 }
                 match error {
                     attempt::AttemptError::Retryable { error: _, reason }
@@ -125,7 +206,21 @@ pub(super) async fn receive(
                             ),
                         )
                         .await;
-                        if let Err(error) = wait(delays[usize::from(retries)], cancellation).await {
+                        let backoff_started = std::time::Instant::now();
+                        let waited = wait(delays[usize::from(retries)], cancellation).await;
+                        sink.metric(AgentMetric::Phase {
+                            phase: AgentMetricPhase::RetryBackoff,
+                            elapsed_ns: super::attempt_metrics::duration_ns(
+                                backoff_started.elapsed(),
+                            ),
+                            outcome: if waited.is_ok() {
+                                AgentMetricOutcome::Succeeded
+                            } else {
+                                AgentMetricOutcome::Cancelled
+                            },
+                        })
+                        .await;
+                        if let Err(error) = waited {
                             emit(
                                 events,
                                 sink,
@@ -137,6 +232,12 @@ pub(super) async fn receive(
                                 ),
                             )
                             .await;
+                            return Err(attempt::ReceiveFailure {
+                                error,
+                                usage: recovered_usage,
+                            });
+                        }
+                        if let Err(error) = admission.check(cancellation) {
                             return Err(attempt::ReceiveFailure {
                                 error,
                                 usage: recovered_usage,

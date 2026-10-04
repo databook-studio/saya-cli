@@ -33,6 +33,20 @@ pub fn build_messages(
     history: &[ChatMessage],
     byte_budget: usize,
 ) -> Result<Vec<ChatMessage>, AgentError> {
+    build_messages_with_history_count(system_extra, context_blocks, prompt, history, byte_budget)
+        .map(|(messages, _, _)| messages)
+}
+
+/// Builds the same request as [`build_messages`] and returns how many complete
+/// replay-history pairs were selected and the boundary after the protected
+/// system, selected history, and original current-user messages.
+pub(crate) fn build_messages_with_history_count(
+    system_extra: Option<&str>,
+    context_blocks: &[ContextBlock],
+    prompt: &str,
+    history: &[ChatMessage],
+    byte_budget: usize,
+) -> Result<(Vec<ChatMessage>, usize, usize), AgentError> {
     let system_content = system_content(system_extra);
     let user_content = render_context(context_blocks, prompt);
     let current = [
@@ -53,10 +67,28 @@ pub fn build_messages(
         chosen.push(pair.to_vec());
     }
     chosen.reverse();
+    let history_pair_count = chosen.len();
     let mut messages = vec![current[0].clone()];
     messages.extend(chosen.into_iter().flatten());
     messages.push(current[1].clone());
-    Ok(messages)
+    let protected_prefix_len = messages.len();
+    Ok((messages, history_pair_count, protected_prefix_len))
+}
+
+/// Removes the oldest selected replay pair without touching the fixed system
+/// or current-user messages, updating the assembled boundary with that pair.
+pub(crate) fn discard_oldest_history_pair(
+    messages: &mut Vec<ChatMessage>,
+    pair_count: &mut usize,
+    protected_prefix_len: &mut usize,
+) -> bool {
+    if *pair_count == 0 || *protected_prefix_len < 3 {
+        return false;
+    }
+    messages.drain(1..3);
+    *pair_count -= 1;
+    *protected_prefix_len -= 2;
+    true
 }
 
 /// The system message content [`build_messages`] would assemble from optional
