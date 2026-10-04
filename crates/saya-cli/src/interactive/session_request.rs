@@ -17,12 +17,15 @@ use std::sync::Arc;
 use super::session_universe::SessionUniverse;
 
 pub(crate) enum PromptResult {
-    /// Boxed because the variant dwarfs `Cancelled`, which carries nothing;
+    /// Boxed because the variant dwarfs `Cancelled`, which carries only usage;
     /// an unboxed `AgentOutput` makes every `PromptResult` as large as a
     /// completed turn.
     Completed(Box<AgentOutput>),
     Failed(AgentRuntimeError, Option<TokenUsage>),
-    Cancelled(Option<TokenUsage>),
+    Cancelled {
+        answering_usage: Option<TokenUsage>,
+        learning_usage: Option<TokenUsage>,
+    },
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -107,8 +110,14 @@ pub(crate) async fn run(
         },
         _ = tokio::signal::ctrl_c() => {
             cancellation.cancel();
-            let _ = work.await;
-            Ok(PromptResult::Cancelled(sink.take_answering_usage()))
+            let learning_usage = match work.await {
+                Ok(output) => output.learning_usage,
+                Err(_) => None,
+            };
+            Ok(PromptResult::Cancelled {
+                answering_usage: sink.take_answering_usage(),
+                learning_usage,
+            })
         }
     }
 }
