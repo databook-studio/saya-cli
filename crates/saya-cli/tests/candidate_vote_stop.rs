@@ -10,7 +10,7 @@ mod harness;
 
 use std::time::Duration;
 
-use harness::{DemoFixture, MockProvider, build_demo, run_ask_bounded, spawn_mock};
+use harness::{MockProvider, build_demo, run_ask_bounded, spawn_mock};
 
 /// The canonical slow source (same shape as the traced connector tests).
 const SLOW: &str = "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt \

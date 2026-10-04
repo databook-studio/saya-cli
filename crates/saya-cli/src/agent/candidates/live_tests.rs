@@ -27,7 +27,7 @@ use tokio::sync::{Mutex, oneshot};
 use super::super::orchestrate::orchestrate;
 use super::LiveCandidateExecutor;
 use crate::answering_receipts::AnsweringReceiptSink;
-use support::{RecordingSink, ScriptedRunner, one_second_scope, nominating_output};
+use support::{RecordingSink, ScriptedRunner, nominating_output, one_second_scope};
 use trace::{ExecutionTrace, FIXTURE_ID, SLOW, TracedSqlite};
 
 #[tokio::test]
@@ -114,7 +114,8 @@ async fn a_budget_stopped_vote_stays_owned_until_its_real_source_settles() {
             // same orchestrate future was still owned and pending.
             tokio::time::timeout(Duration::from_secs(5), &mut started)
                 .await
-                .expect("the delegated execute reached Pending before the vote settled");
+                .expect("the delegated execute reached Pending before the vote settled")
+                .expect("the traced source stayed connected until it signalled");
             tokio::time::timeout(Duration::from_secs(15), task)
                 .await
                 .expect("the orchestrated vote settles within 15s")
@@ -159,8 +160,7 @@ async fn a_budget_stopped_vote_stays_owned_until_its_real_source_settles() {
     // The earlier answer and its designation evidence are retained, and the
     // stop is carried truthfully: partial, with exactly one typed event.
     assert_eq!(
-        outcome.answer,
-        "second candidate settles on the same recursive count",
+        outcome.answer, "second candidate settles on the same recursive count",
         "the last settled attempt's answer is retained"
     );
     assert_eq!(

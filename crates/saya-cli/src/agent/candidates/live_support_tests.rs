@@ -2,15 +2,15 @@
 //! runner, the recording event sink, the nominating output builder, and the
 //! one-second question scope.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
 use saya_config::{ConfigFile, ConnectionsFile, ResolutionInput, resolve};
 
 use crate::agent::candidates::AttemptRunner;
-use crate::agent::runtime::AgentRuntimeError;
 use crate::agent::question_scope::QuestionScope;
+use crate::agent::runtime::AgentRuntimeError;
 use crate::config::runtime::RuntimeConfig;
 
 /// A scripted [`AttemptRunner`]: returns the queued outputs in order and
