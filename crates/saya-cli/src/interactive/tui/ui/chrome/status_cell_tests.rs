@@ -18,6 +18,7 @@ fn busy_stream() -> crate::interactive::tui::agent::Stream {
         rx,
         cancel: saya_agent::CancellationToken::new(),
         prompt: String::new(),
+        question_scope: None,
     }
 }
 

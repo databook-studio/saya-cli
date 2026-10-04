@@ -171,6 +171,7 @@ fn esc_cancels_the_live_question_and_drops_the_pending_reply() {
         rx,
         cancel: cancellation.clone(),
         prompt: "question".into(),
+        question_scope: None,
     });
 
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

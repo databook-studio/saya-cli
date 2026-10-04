@@ -19,6 +19,7 @@ fn a_revision_after_a_stop_waits_for_the_confirmation() {
         rx,
         cancel,
         prompt: "the first question".into(),
+        question_scope: None,
     });
     assert!(app.is_busy(), "precondition: the stream is still in flight");
     app.input.set_text("the revised question");
@@ -60,6 +61,7 @@ fn a_held_revision_is_never_a_user_block() {
         rx,
         cancel,
         prompt: "the first question".into(),
+        question_scope: None,
     });
     app.input.set_text("the revised question");
     app.submit();
@@ -100,6 +102,7 @@ fn the_held_revision_is_still_droppable() {
         rx,
         cancel,
         prompt: "the first question".into(),
+        question_scope: None,
     });
     app.input.set_text("the revised question");
     app.submit();

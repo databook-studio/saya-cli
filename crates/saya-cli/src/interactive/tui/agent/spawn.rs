@@ -45,13 +45,23 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         agent_mode,
         prior_tool_outcomes,
         compaction_summary,
+        question_scope,
     } = request;
     let prior_tool_outcomes = (!history.is_empty())
         .then_some(prior_tool_outcomes)
         .flatten();
     let (tx, rx) = unbounded_channel();
-    let cancel = CancellationToken::new();
+    // The turn runs on the question scope's own token — the one
+    // `begin_question` handed out — so Esc, the approval modal, and the
+    // runtime's budget stops all drive the same cancellation. A minted
+    // token here would cut the stream off from the session's question
+    // lifecycle; a scope-less turn (tests) falls back to a fresh token.
+    let cancel = question_scope
+        .as_ref()
+        .map(|scope| scope.cancellation())
+        .unwrap_or_else(CancellationToken::new);
     let cancel_worker = cancel.clone();
+    let stream_scope = question_scope.clone();
     let prompt_worker = prompt.clone();
     // The turn's primary handle rides the session's universe: the decider
     // holds a clone, and the turn binds the registry's primary into it.
@@ -96,7 +106,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
                     history,
                     sink: &sink,
                     cancellation: cancel_worker,
-                    question_scope: None,
+                    question_scope,
                     state_db: Some(state_db),
                     decider: Some(decider),
                     last_sql,
@@ -110,7 +120,12 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         let _ = tx.send(StreamMsg::Done(result.map_err(|error| error.to_string())));
     });
 
-    Stream { rx, cancel, prompt }
+    Stream {
+        rx,
+        cancel,
+        prompt,
+        question_scope: stream_scope,
+    }
 }
 
 #[cfg(test)]

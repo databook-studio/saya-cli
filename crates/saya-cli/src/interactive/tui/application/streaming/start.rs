@@ -1,6 +1,7 @@
 //! Starts the background agent prompt for one turn.
 
 use super::super::super::agent::{self};
+use super::super::super::transcript::BlockKind;
 use super::super::super::types::App;
 use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
@@ -12,6 +13,13 @@ impl App {
     /// the current mode (a mid-session `/approval` takes effect next turn,
     /// carrying every grant the user made) and cloned into `StreamRequest`,
     /// so a grant recorded in this turn is in force for the next.
+    ///
+    /// The turn's question begins here — the same runtime-only lifecycle the
+    /// headless loop drives (`session_loop`): begun once per answering turn
+    /// from `SessionRuntime`, its scope riding the request so the stream,
+    /// the runtime, and the approval modal all run on the one token. An
+    /// already-active question refuses the submission with a diagnostic and
+    /// spawns nothing; a settled clarification re-begins the SAME scope.
     pub(crate) fn start_agent(
         &mut self,
         prompt: String,
@@ -23,6 +31,13 @@ impl App {
             .parse()
             .unwrap_or(saya_agent::ApprovalPolicy::Ask);
         session.sync_policy(approval);
+        let scope = match session.begin_question(&self.runtime) {
+            Ok(scope) => scope,
+            Err(error) => {
+                self.transcript.push(BlockKind::System, error);
+                return;
+            }
+        };
         // The live task list starts the turn seeded from the record — the
         // headless loop's seam — so the model sees what it last wrote. The
         // sync-back lands in `drain_stream`, where the turn settles.
@@ -41,6 +56,7 @@ impl App {
             agent_mode: state.agent_mode_parsed(),
             prior_tool_outcomes: state.prior_tool_outcomes.clone(),
             compaction_summary: state.compaction_narrative(),
+            question_scope: Some(scope),
         }));
         self.request.started = Some(std::time::Instant::now());
     }

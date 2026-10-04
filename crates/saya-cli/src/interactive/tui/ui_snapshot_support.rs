@@ -197,5 +197,6 @@ pub(crate) fn busy_stream() -> super::super::agent::Stream {
         rx,
         cancel: saya_agent::CancellationToken::new(),
         prompt: String::new(),
+        question_scope: None,
     }
 }

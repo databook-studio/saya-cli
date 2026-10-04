@@ -20,6 +20,7 @@ pub(super) fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 
@@ -37,6 +38,7 @@ pub(super) fn cancelled_stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel,
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

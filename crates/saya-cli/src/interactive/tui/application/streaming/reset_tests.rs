@@ -20,6 +20,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 
