@@ -16,6 +16,10 @@ mod session_actions;
 mod export_mode_tests;
 
 #[cfg(test)]
+#[path = "../../session_context_key_tests.rs"]
+mod session_context_key_tests;
+
+#[cfg(test)]
 mod chain_tests;
 
 pub(crate) use outcome::Dispatch;
@@ -76,73 +80,83 @@ pub(crate) fn dispatch(
             SlashCommand::Columns(arg) => {
                 result = Dispatch::SetColumns(arg);
             }
-            command => match state.apply(command, profiles) {
-                SessionAction::Message(message) => transcript.push(BlockKind::System, message),
-                SessionAction::Error(message) => transcript.push(BlockKind::Error, message),
-                // One concern per helper: each takes `&mut Option<SessionAction>`
-                // and takes the action only when it owns the arm — an owned arm
-                // always reports handled (`Some`), an unowned one is left in
-                // place for the next helper. What no helper owns is decided
-                // below, never a panic.
-                action => {
-                    let mut action = Some(action);
-                    if let Some(outcome) = session_actions::apply_session_action(
-                        &mut action,
-                        transcript,
-                        state,
-                        runtime,
-                        store,
-                        state_db,
-                        format,
-                        session,
-                        last_query,
-                    ) {
-                        result = outcome;
-                    } else if let Some(outcome) =
-                        grants::apply_grant_action(&mut action, transcript, runtime, session)
-                    {
-                        result = outcome;
-                    } else if let Some(outcome) = query::apply_query_actions(
-                        &mut action,
-                        transcript,
-                        state,
-                        last_query,
-                        captured,
-                        capture_gap,
-                    ) {
-                        result = outcome;
-                    } else if let Some(outcome) = run::apply_run_action(
-                        &mut action,
-                        transcript,
-                        runtime,
-                        state_db,
-                        format,
-                        session,
-                    ) {
-                        result = outcome;
-                    } else if let Some(action) = action.take() {
-                        match action {
-                            SessionAction::Schema(_) => transcript.push(
-                                BlockKind::System,
-                                "Schema view is available in headless mode; TUI rendering is coming next.",
-                            ),
-                            SessionAction::Compact => {
-                                result = Dispatch::Compact;
+            command => {
+                // The answering context before and after the command decides
+                // whether this command changed it: a changed key retires the
+                // question authority once the command's message is produced,
+                // an unchanged key leaves a pending clarification untouched.
+                let before = state.context_key();
+                match state.apply(command, profiles) {
+                    SessionAction::Message(message) => {
+                        transcript.push(BlockKind::System, message);
+                        state.abandon_question_when_context_changed(&before, session);
+                    }
+                    SessionAction::Error(message) => transcript.push(BlockKind::Error, message),
+                    // One concern per helper: each takes `&mut Option<SessionAction>`
+                    // and takes the action only when it owns the arm — an owned arm
+                    // always reports handled (`Some`), an unowned one is left in
+                    // place for the next helper. What no helper owns is decided
+                    // below, never a panic.
+                    action => {
+                        let mut action = Some(action);
+                        if let Some(outcome) = session_actions::apply_session_action(
+                            &mut action,
+                            transcript,
+                            state,
+                            runtime,
+                            store,
+                            state_db,
+                            format,
+                            session,
+                            last_query,
+                        ) {
+                            result = outcome;
+                        } else if let Some(outcome) =
+                            grants::apply_grant_action(&mut action, transcript, runtime, session)
+                        {
+                            result = outcome;
+                        } else if let Some(outcome) = query::apply_query_actions(
+                            &mut action,
+                            transcript,
+                            state,
+                            last_query,
+                            captured,
+                            capture_gap,
+                        ) {
+                            result = outcome;
+                        } else if let Some(outcome) = run::apply_run_action(
+                            &mut action,
+                            transcript,
+                            runtime,
+                            state_db,
+                            format,
+                            session,
+                        ) {
+                            result = outcome;
+                        } else if let Some(action) = action.take() {
+                            match action {
+                                SessionAction::Schema(_) => transcript.push(
+                                    BlockKind::System,
+                                    "Schema view is available in headless mode; TUI rendering is coming next.",
+                                ),
+                                SessionAction::Compact => {
+                                    result = Dispatch::Compact;
+                                }
+                                SessionAction::Agent(_) | SessionAction::Cancelled => {}
+                                SessionAction::NotImplemented(feature) => transcript.push(
+                                    BlockKind::System,
+                                    format!("Not implemented: {feature}"),
+                                ),
+                                SessionAction::Exit => result = Dispatch::Quit,
+                                other => transcript.push(
+                                    BlockKind::System,
+                                    format!("Not supported here: {other:?}"),
+                                ),
                             }
-                            SessionAction::Agent(_) | SessionAction::Cancelled => {}
-                            SessionAction::NotImplemented(feature) => transcript.push(
-                                BlockKind::System,
-                                format!("Not implemented: {feature}"),
-                            ),
-                            SessionAction::Exit => result = Dispatch::Quit,
-                            other => transcript.push(
-                                BlockKind::System,
-                                format!("Not supported here: {other:?}"),
-                            ),
                         }
                     }
                 }
-            },
+            }
         },
         Ok(None) => result = Dispatch::Agent(line.to_string()),
     }

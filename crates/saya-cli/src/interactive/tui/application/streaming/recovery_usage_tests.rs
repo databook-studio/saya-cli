@@ -110,6 +110,7 @@ fn stream(events: Vec<AgentEvent>, result: Result<AgentOutput, String>) -> Strea
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

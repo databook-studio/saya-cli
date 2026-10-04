@@ -88,7 +88,7 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         );
         super::super::loop_tick::tick_clipboard(&mut app, guard.terminal.backend_mut());
         super::super::loop_tick::tick_workers(&mut app, store, state);
-        super::super::loop_tick::tick_busy(&mut app, store, state);
+        super::super::loop_tick::tick_busy(&mut app, store, state, session);
         super::super::loop_tick::tick_pending(&mut app, state, runtime, store, format, session);
         super::super::loop_tick::tick_resume(&mut app, store, state, runtime, session);
     }

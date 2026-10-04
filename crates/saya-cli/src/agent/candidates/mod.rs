@@ -14,9 +14,12 @@
 
 mod live;
 mod orchestrate;
+mod stop;
 
+use super::question_scope::QuestionScope;
 use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
-use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage};
+use crate::answering_receipts::AnsweringReceiptSink;
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, ChatMessage};
 use saya_store::SqliteStateStore;
 use std::future::Future;
 use std::pin::Pin;
@@ -59,7 +62,7 @@ pub(crate) async fn run_with_candidates(
     overrides: PromptOverrides,
     history: Vec<ChatMessage>,
     sink: &dyn saya_agent::AgentEventSink,
-    cancellation: CancellationToken,
+    scope: QuestionScope,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
@@ -71,7 +74,7 @@ pub(crate) async fn run_with_candidates(
     candidates: usize,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
-        return run_prompt_with_sink(
+        let result = run_prompt_with_sink(
             runtime,
             prompt,
             approval,
@@ -80,7 +83,8 @@ pub(crate) async fn run_with_candidates(
             overrides,
             history,
             sink,
-            cancellation,
+            scope.cancellation(),
+            Some(scope.clone()),
             state_db,
             decider,
             last_sql,
@@ -90,8 +94,41 @@ pub(crate) async fn run_with_candidates(
             None,
         )
         .await;
+        return result;
     }
-    let (executor, dialect) = live::build_executor(runtime, &overrides, can_prompt).await?;
+    let cancellation = scope.cancellation();
+    if cancellation.is_cancelled() {
+        return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
+    let (executor, dialect) = {
+        let deadline = scope.begin_segment();
+        if cancellation.is_cancelled() {
+            scope.finish_segment();
+            return Err(AgentRuntimeError::Agent("request cancelled".into()));
+        }
+        let build = live::build_executor(runtime, &overrides, can_prompt, &scope);
+        tokio::pin!(build);
+        let result = match deadline {
+            Some(duration) => tokio::select! {
+                result = &mut build => result,
+                _ = cancellation.cancelled() => build.await,
+                _ = tokio::time::sleep(duration) => {
+                    cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime));
+                    build.await
+                }
+            },
+            None => tokio::select! {
+                result = &mut build => result,
+                _ = cancellation.cancelled() => build.await,
+            },
+        };
+        scope.finish_segment();
+        if cancellation.is_cancelled() {
+            return Err(AgentRuntimeError::Agent("request cancelled".into()));
+        }
+        result?
+    };
+    let receipt_sink = AnsweringReceiptSink::new(sink);
     let runner = LiveAttemptRunner::new(
         runtime,
         prompt,
@@ -99,17 +136,30 @@ pub(crate) async fn run_with_candidates(
         can_prompt,
         can_obtain_approval,
         overrides,
-        sink,
-        cancellation.clone(),
+        &receipt_sink,
+        scope.clone(),
         state_db,
         decider,
         last_sql,
         session,
         agent_mode,
     );
-    orchestrate(candidates, &runner, &executor, dialect, sink, &cancellation).await
+    orchestrate(
+        candidates,
+        &runner,
+        &executor,
+        dialect,
+        &receipt_sink,
+        &cancellation,
+        &scope,
+    )
+    .await
 }
 
 #[cfg(test)]
 #[path = "candidates_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "receipt_tests.rs"]
+mod receipt_tests;

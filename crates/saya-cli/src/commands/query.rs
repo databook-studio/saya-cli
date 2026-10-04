@@ -1,11 +1,17 @@
 use crate::{
-    agent::runtime::PromptOverrides,
+    agent::{
+        question_scope::QuestionScope,
+        runtime::{AgentRuntimeError, PromptOverrides},
+    },
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
-use saya_agent::{AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
+use saya_agent::{
+    AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, BudgetDimension, CancellationReason,
+    CancellationToken,
+};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::ConnectionError;
 use std::{path::PathBuf, time::Instant};
@@ -35,6 +41,7 @@ pub(super) async fn ask(
         return Err("ask requires a prompt or --file".into());
     }
     let cancellation = CancellationToken::new();
+    let scope = QuestionScope::new(runtime, cancellation.clone());
     let sink = TerminalSink::new(format);
     // The one-shot `ask` path composes no session universe at all — writes
     // stay hidden, reads deny — so both capabilities ride the same
@@ -52,7 +59,7 @@ pub(super) async fn ask(
         },
         Vec::new(),
         &sink,
-        cancellation.clone(),
+        scope,
         Some(state_db.clone()),
         None,
         None,
@@ -62,13 +69,63 @@ pub(super) async fn ask(
         runtime.resolved.candidates,
     );
     tokio::pin!(work);
-    match tokio::select! {
+    let outcome = tokio::select! {
         result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); return Ok(130); }
-    } {
-        Ok(output) => Ok(ask_exit_code(&output)),
-        Err(error) => failure_message(5, error.to_string(), format),
+        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); let _ = work.await; return Ok(130); }
+    };
+    settle_ask(outcome, &cancellation, format)
+}
+
+/// The one classification for a settled `ask`, shared by the work-ready and
+/// setup-error branches and independent of which `select` branch won: the
+/// question token's first stop reason decides — User 130, Budget 6 with
+/// truthful partial wording, OwnerFailure 5 — and only a run that stopped for
+/// no typed reason falls through to the outcome itself (clarification 6,
+/// natural 0, setup error 5). A ready-work/ready-signal race classifies the
+/// same either way, because the signal branch latches User before returning.
+fn settle_ask(
+    outcome: Result<AgentOutput, AgentRuntimeError>,
+    cancellation: &CancellationToken,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    match cancellation.reason() {
+        Some(CancellationReason::User) => {
+            failure_message(130, "request cancelled".to_string(), format)
+        }
+        Some(CancellationReason::Budget(dimension)) => {
+            failure_message(6, budget_partial_message(dimension), format)
+        }
+        Some(CancellationReason::OwnerFailure) => match outcome {
+            // The run's own error is the truth the owner failure interrupted;
+            // say that rather than a generic line.
+            Err(error) => failure_message(5, error.to_string(), format),
+            Ok(_) => failure_message(
+                5,
+                "the run was stopped by an owner failure: its sink could not record answering observations".to_string(),
+                format,
+            ),
+        },
+        None => match outcome {
+            Ok(output) => Ok(ask_exit_code(&output)),
+            Err(error) => failure_message(5, error.to_string(), format),
+        },
     }
+}
+
+/// The fixed truthful wording for a budget stop: the run stopped on its
+/// configured budget, so whatever answer it produced is partial or absent.
+fn budget_partial_message(dimension: BudgetDimension) -> String {
+    let what = match dimension {
+        BudgetDimension::LogicalRequests => "logical-requests".to_string(),
+        BudgetDimension::RequestedToolCalls => "requested-tool-calls".to_string(),
+        BudgetDimension::ElapsedTime => "elapsed-time".to_string(),
+        BudgetDimension::ReportedTokens => "reported-tokens".to_string(),
+        BudgetDimension::DownloadBytes => "download-bytes".to_string(),
+        // A dimension added later keeps the truthful class and shape; its
+        // debug name stands in for the words it does not have yet.
+        other => format!("{other:?}").to_lowercase(),
+    };
+    format!("the run stopped on its {what} budget; any answer it produced is partial or absent")
 }
 
 /// The exit code a finished `ask` run returns: 6 — the paused class — when

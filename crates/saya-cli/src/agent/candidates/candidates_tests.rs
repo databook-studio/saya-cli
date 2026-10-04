@@ -13,23 +13,66 @@
 //! isolation from the runtime (which has its own tests in `runtime_tests.rs`).
 
 use super::super::decide::CandidateExecutor;
+use super::super::question_scope::QuestionScope;
 use super::super::runtime::AgentRuntimeError;
 use super::AttemptRunner;
+use crate::{answering_receipts::AnsweringReceiptSink, config::runtime::RuntimeConfig};
 use async_trait::async_trait;
 use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
+use saya_config::{ConnectionsFile, ResolutionInput, resolve};
 use saya_types::{QueryResult, SqlDialect};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use super::orchestrate;
 
 /// Postgres accepts the most syntax, so it is the default dialect here.
 const D: SqlDialect = SqlDialect::Postgres;
+
+use saya_agent::{BudgetDimension, CancellationReason};
+
+fn test_scope(cancellation: CancellationToken) -> QuestionScope {
+    let connections = ConnectionsFile::default();
+    let runtime = RuntimeConfig {
+        resolved: resolve(ResolutionInput::new(connections.clone())).expect("test config resolves"),
+        connections,
+        config_path: None,
+        connections_path: None,
+        cache_scope: PathBuf::from("/tmp/saya-candidate-tests"),
+        investigations_root: PathBuf::from("/tmp/saya-candidate-tests/investigations"),
+        secret_values: BTreeMap::new(),
+    };
+    QuestionScope::new(&runtime, cancellation)
+}
+
+async fn orchestrate_test(
+    candidates: usize,
+    runner: &dyn AttemptRunner,
+    executor: &dyn CandidateExecutor,
+    sink: &RecordingSink,
+    cancellation: &CancellationToken,
+) -> Result<AgentOutput, AgentRuntimeError> {
+    let scope = test_scope(cancellation.clone());
+    let receipts = AnsweringReceiptSink::new(sink);
+    orchestrate(
+        candidates,
+        runner,
+        executor,
+        D,
+        &receipts,
+        cancellation,
+        &scope,
+    )
+    .await
+}
 
 // ---------------------------------------------------------------------------
 // scripted attempt runner
@@ -44,12 +87,13 @@ enum Outcome {
 }
 
 /// A scripted `AttemptRunner`: returns one queued outcome per call, records
-/// every call, and optionally cancels the token once `cancel_after` calls have
-/// completed so a cancellation-between-attempts test can trip the token.
+/// every call, and optionally latches the token with a stop reason once
+/// `cancel_after` calls have completed so a stop-between-attempts test can
+/// fire the token exactly where a real budget or signal would.
 struct ScriptedRunner {
     outcomes: Mutex<Vec<Outcome>>,
     calls: AtomicUsize,
-    cancel_after: Option<(usize, CancellationToken)>,
+    cancel_after: Option<(usize, CancellationToken, CancellationReason)>,
 }
 
 impl ScriptedRunner {
@@ -61,8 +105,17 @@ impl ScriptedRunner {
         }
     }
 
-    fn cancel_after(mut self, n: usize, token: CancellationToken) -> Self {
-        self.cancel_after = Some((n, token));
+    fn cancel_after(self, n: usize, token: CancellationToken) -> Self {
+        self.cancel_after_with(n, token, CancellationReason::User)
+    }
+
+    fn cancel_after_with(
+        mut self,
+        n: usize,
+        token: CancellationToken,
+        reason: CancellationReason,
+    ) -> Self {
+        self.cancel_after = Some((n, token, reason));
         self
     }
 
@@ -75,10 +128,10 @@ impl AttemptRunner for ScriptedRunner {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<AgentOutput, AgentRuntimeError>> + '_>> {
         Box::pin(async move {
             let count = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some((n, token)) = &self.cancel_after
+            if let Some((n, token, reason)) = &self.cancel_after
                 && count == *n
             {
-                token.cancel();
+                token.cancel_with_reason(*reason);
             }
             let mut outcomes = self.outcomes.lock().expect("outcomes lock");
             match outcomes.len() {
@@ -106,6 +159,59 @@ struct ScriptedExecutor {
 #[async_trait]
 impl CandidateExecutor for ScriptedExecutor {
     async fn run(&self, sql: &str) -> Option<QueryResult> {
+        self.results.get(sql).cloned()
+    }
+}
+
+/// A `CandidateExecutor` that only counts calls and returns nothing. The vote
+/// segment is the only orchestrate path that calls the executor, so a zero
+/// count is the proof that no vote segment ever began.
+struct CountingExecutor {
+    calls: AtomicUsize,
+}
+
+impl CountingExecutor {
+    fn new() -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl CandidateExecutor for CountingExecutor {
+    async fn run(&self, _: &str) -> Option<QueryResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        None
+    }
+}
+
+/// A scripted `CandidateExecutor` that serves its result and latches the
+/// question token with a stop reason on every call — the verification work
+/// itself is where the stop fired, the way a deadline expiring mid-decision
+/// would.
+struct StopDuringVoteExecutor {
+    calls: AtomicUsize,
+    results: HashMap<String, QueryResult>,
+    reason: CancellationReason,
+    token: CancellationToken,
+}
+
+impl StopDuringVoteExecutor {
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl CandidateExecutor for StopDuringVoteExecutor {
+    async fn run(&self, sql: &str) -> Option<QueryResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.token.cancel_with_reason(self.reason);
         self.results.get(sql).cloned()
     }
 }
@@ -154,6 +260,21 @@ fn output_with_sql(sql: &str) -> AgentOutput {
     }
 }
 
+/// An `AgentOutput` whose turn settled on a clarification: the loop emitted
+/// `ClarificationNeeded` and completed, so the returned Ok output carrying the
+/// event is a settled pause — the way `loop_runner/clarification.rs` builds it.
+fn clarification_output(sql: &str) -> AgentOutput {
+    let mut out = output_with_sql(sql);
+    out.events.push(AgentEvent::clarification_needed(
+        "which definition of \"active users\" should I use?",
+        vec![
+            "sessions in the last 30 days".into(),
+            "purchases in the last 90 days".into(),
+        ],
+    ));
+    out
+}
+
 /// An `AgentOutput` that designated nothing (`answer_sql: None`).
 fn output_without_sql(label: &str) -> AgentOutput {
     AgentOutput {
@@ -166,6 +287,12 @@ fn output_without_sql(label: &str) -> AgentOutput {
         truncated: false,
         answer_sql: None,
     }
+}
+
+fn output_with_usage(sql: &str, input: u64, output: u64) -> AgentOutput {
+    let mut result = output_with_sql(sql);
+    result.usage = TokenUsage::new(input, output);
+    result
 }
 
 /// The single `ConsensusDecided` event in `captured`, if any.
@@ -231,7 +358,7 @@ async fn one_candidate_runs_once_and_emits_no_consensus_event() {
         events: events.clone(),
     };
 
-    let out = orchestrate(1, &runner, &executor, D, &sink, &CancellationToken::new())
+    let out = orchestrate_test(1, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect("single attempt succeeds");
 
@@ -273,7 +400,7 @@ async fn three_candidates_all_agree_emit_one_event_with_three_votes() {
         events: events.clone(),
     };
 
-    let out = orchestrate(3, &runner, &executor, D, &sink, &CancellationToken::new())
+    let out = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect("attempts succeed");
 
@@ -308,7 +435,7 @@ async fn three_candidates_disagree_and_the_majority_wins() {
         events: events.clone(),
     };
 
-    let out = orchestrate(3, &runner, &executor, D, &sink, &CancellationToken::new())
+    let out = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect("attempts succeed");
 
@@ -343,7 +470,7 @@ async fn all_attempts_disagree_emit_tied_event_with_no_sql() {
         events: events.clone(),
     };
 
-    let out = orchestrate(3, &runner, &executor, D, &sink, &CancellationToken::new())
+    let out = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect("attempts succeed");
 
@@ -375,7 +502,7 @@ async fn one_attempt_erroring_lets_the_others_decide() {
         events: events.clone(),
     };
 
-    let out = orchestrate(3, &runner, &executor, D, &sink, &CancellationToken::new())
+    let out = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect("the two successful attempts decide");
 
@@ -410,7 +537,7 @@ async fn every_attempt_erroring_returns_the_last_error() {
         events: events.clone(),
     };
 
-    let error = orchestrate(3, &runner, &executor, D, &sink, &CancellationToken::new())
+    let error = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect_err("all attempts failed");
 
@@ -452,7 +579,7 @@ async fn cancellation_between_attempts_stops_early() {
         events: events.clone(),
     };
 
-    orchestrate(3, &runner, &executor, D, &sink, &token)
+    orchestrate_test(3, &runner, &executor, &sink, &token)
         .await
         .expect("partial run completes");
 
@@ -462,6 +589,54 @@ async fn cancellation_between_attempts_stops_early() {
         runner.calls(),
         2,
         "cancellation between attempts stopped the loop early (2 of 3 ran)"
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "a stopped question never starts vote or consensus work"
+    );
+}
+
+#[tokio::test]
+async fn selected_candidate_retains_all_settled_attempt_usage() {
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_usage(sql, 2, 3)),
+        Outcome::Ok(output_with_usage(sql, 5, 7)),
+    ]);
+    let executor = ScriptedExecutor {
+        results: HashMap::from([(sql.to_string(), rows_result(&["a"], vec![json!([1])]))]),
+    };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let cancellation = CancellationToken::new();
+    let scope = test_scope(cancellation.clone());
+    let receipts = AnsweringReceiptSink::new(&sink);
+    receipts
+        .emit(AgentEvent::usage(
+            saya_agent::UsageCall::Answer,
+            TokenUsage::new(2, 3),
+        ))
+        .await;
+    receipts
+        .emit(AgentEvent::usage(
+            saya_agent::UsageCall::Answer,
+            TokenUsage::new(5, 7),
+        ))
+        .await;
+    let output = orchestrate(2, &runner, &executor, D, &receipts, &cancellation, &scope)
+        .await
+        .expect("two settled candidates decide");
+
+    assert_eq!(
+        output.usage.input_tokens, 7,
+        "both paid input receipts survive"
+    );
+    assert_eq!(
+        output.usage.output_tokens, 10,
+        "both paid output receipts survive"
     );
 }
 
@@ -487,7 +662,7 @@ async fn an_attempt_without_designated_sql_contributes_no_nomination() {
         events: events.clone(),
     };
 
-    let out = orchestrate(3, &runner, &executor, D, &sink, &CancellationToken::new())
+    let out = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
         .await
         .expect("attempts succeed");
 
@@ -497,4 +672,384 @@ async fn an_attempt_without_designated_sql_contributes_no_nomination() {
     // neither nominated nor voted.
     assert_consensus(event, Some(sql), 3, 2, 2, false);
     assert_eq!(out.answer_sql.as_deref(), Some(sql));
+}
+
+// ===========================================================================
+// A settled clarification stops candidates: once an attempt's returned output
+// ended on a settled ClarificationNeeded, no further attempt may launch, the
+// question must not enter verification/vote (the executor is never called —
+// the vote segment is the only path that calls it), and no consensus may be
+// fabricated for a paused turn. The paused output itself is the answer.
+// ===========================================================================
+
+#[tokio::test]
+async fn a_settled_clarification_stops_further_attempts_and_never_begins_a_vote_segment() {
+    let first = "SELECT a FROM t WHERE id = 1";
+    let second = "SELECT a FROM t WHERE id = 2";
+    // Attempt 1 settles on a clarification; attempts 2 and 3 are queued and
+    // observable (by the runner's call count) if the loop ever starts them.
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(clarification_output(first)),
+        Outcome::Ok(output_with_sql(second)),
+        Outcome::Ok(output_with_sql(second)),
+    ]);
+    let executor = CountingExecutor::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+
+    let out = orchestrate_test(3, &runner, &executor, &sink, &CancellationToken::new())
+        .await
+        .expect("the settled clarification is a finished outcome, not an error");
+
+    assert_eq!(
+        runner.calls(),
+        1,
+        "attempt 2 never started once the clarification settled"
+    );
+    assert_eq!(
+        executor.calls(),
+        0,
+        "no vote segment began: the executor is never called"
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "no consensus may be fabricated for a paused question"
+    );
+    // The returned output IS the paused attempt's, unchanged.
+    assert_eq!(out.answer_sql.as_deref(), Some(first));
+    assert!(
+        out.events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. })),
+        "the paused attempt's evidence is preserved: {:?}",
+        out.events
+    );
+    assert!(
+        !out.truncated,
+        "a settled clarification is not a truncation: {:?}",
+        out.truncated
+    );
+}
+
+// ===========================================================================
+// A settled clarification after an errored attempt: the error did not stop the
+// loop, the clarification does — and the returned paused output keeps the
+// earlier paid usage summed truthfully.
+// ===========================================================================
+
+#[tokio::test]
+async fn a_settled_clarification_after_an_errored_attempt_returns_the_paused_output_with_paid_usage()
+ {
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Err(AgentRuntimeError::Agent("attempt 1 failed".into())),
+        Outcome::Ok(clarification_output(sql)),
+    ]);
+    let executor = CountingExecutor::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+
+    let cancellation = CancellationToken::new();
+    let scope = test_scope(cancellation.clone());
+    let receipts = AnsweringReceiptSink::new(&sink);
+    receipts
+        .emit(AgentEvent::usage(
+            saya_agent::UsageCall::Answer,
+            TokenUsage::new(4, 2),
+        ))
+        .await;
+    let out = orchestrate(2, &runner, &executor, D, &receipts, &cancellation, &scope)
+        .await
+        .expect("the settled clarification is returned");
+
+    assert_eq!(
+        runner.calls(),
+        2,
+        "the errored attempt did not stop the loop; the clarification did"
+    );
+    assert_eq!(
+        executor.calls(),
+        0,
+        "no vote segment began: the executor is never called"
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "no consensus may be fabricated for a paused question"
+    );
+    assert_eq!(out.answer_sql.as_deref(), Some(sql));
+    assert!(
+        out.events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. })),
+        "the paused attempt's evidence is preserved: {:?}",
+        out.events
+    );
+    assert_eq!(
+        out.usage.input_tokens, 4,
+        "the earlier paid usage survives on the paused output"
+    );
+    assert_eq!(out.usage.output_tokens, 2, "same, for output tokens");
+    assert!(
+        !out.truncated,
+        "a settled clarification is not a truncation: {:?}",
+        out.truncated
+    );
+}
+
+// ===========================================================================
+// A budget stop between attempts: the stop-return keeps the last settled
+// answer, but the retained output must carry the actual stop — partial
+// (`truncated: true`) with the typed `AnsweringBudgetStopped` event naming the
+// real dimension — not come back looking like a natural completion. Before the
+// repair the returned output has `truncated: false` and no budget-stop event.
+// ===========================================================================
+
+#[tokio::test]
+async fn a_budget_stop_before_verification_marks_the_retained_output_partial_with_a_typed_event() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    // Attempt 1 settles naturally; the elapsed budget latches the token the
+    // moment it completes — before any verification could begin.
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_sql(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after_with(
+        1,
+        token.clone(),
+        CancellationReason::Budget(BudgetDimension::ElapsedTime),
+    );
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert_eq!(
+        runner.calls(),
+        1,
+        "the stop between attempts kept attempt 2 from starting"
+    );
+    assert!(
+        out.truncated,
+        "the retained answer is partial, not a natural completion"
+    );
+    assert!(
+        out.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::AnsweringBudgetStopped {
+                dimension: BudgetDimension::ElapsedTime
+            }
+        )),
+        "the retained events carry the typed budget stop for the real dimension: {:?}",
+        out.events
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "no consensus may be fabricated over a stopped run"
+    );
+}
+
+// ===========================================================================
+// A budget stop during the vote's verification work: the decision dies with
+// the stop, the consensus emit is skipped, and the retained answer comes back
+// partial with the typed event — not as a natural completion.
+// ===========================================================================
+
+#[tokio::test]
+async fn a_budget_stop_during_the_vote_returns_the_answer_as_partial_with_no_consensus() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_sql(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ]);
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = StopDuringVoteExecutor {
+        calls: AtomicUsize::new(0),
+        results,
+        reason: CancellationReason::Budget(BudgetDimension::ElapsedTime),
+        token: token.clone(),
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        events: events.clone(),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert_eq!(runner.calls(), 2, "both attempts settled naturally");
+    assert!(executor.calls() >= 1, "the vote ran its verification work");
+    assert!(
+        out.truncated,
+        "the retained answer is partial, not a natural completion"
+    );
+    assert!(
+        out.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::AnsweringBudgetStopped {
+                dimension: BudgetDimension::ElapsedTime
+            }
+        )),
+        "the retained events carry the typed budget stop: {:?}",
+        out.events
+    );
+    assert_eq!(
+        consensus_count(&events.lock().expect("events lock")),
+        0,
+        "a stopped question never emits a consensus"
+    );
+}
+
+// ===========================================================================
+// Green-side pins for the retained-output stop rules. (These cannot be red:
+// two of them pass by accident on the un-repaired code, which never touched
+// the output; they pin what the repair must keep true.)
+// ===========================================================================
+
+/// An `AgentOutput` the answering loop itself budget-stopped: partial, with
+/// its own typed event already in the retained events.
+fn budget_stopped_output(sql: &str) -> AgentOutput {
+    let mut out = output_with_sql(sql);
+    out.truncated = true;
+    out.events.push(AgentEvent::answering_budget_stopped(
+        BudgetDimension::ElapsedTime,
+    ));
+    out
+}
+
+/// An `AgentOutput` already truncated for a non-budget reason — the legacy
+/// truncation shape (e.g. a salvaged partial from a truncated provider
+/// response): partial, no typed budget event.
+fn legacy_truncated_output(sql: &str) -> AgentOutput {
+    let mut out = output_with_sql(sql);
+    out.truncated = true;
+    out
+}
+
+/// A loop budget-stop is kept once: the token's Budget reason must not append
+/// a second typed event to an output that already carries its own.
+#[tokio::test]
+async fn a_retained_output_already_budget_stopped_is_not_marked_twice() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(budget_stopped_output(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after_with(
+        1,
+        token.clone(),
+        CancellationReason::Budget(BudgetDimension::ElapsedTime),
+    );
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert!(out.truncated, "the loop's own partial marking stands");
+    let stops = out
+        .events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::AnsweringBudgetStopped { .. }))
+        .count();
+    assert_eq!(
+        stops, 1,
+        "the loop's budget-stop event is kept, not duplicated: {:?}",
+        out.events
+    );
+}
+
+/// A legacy truncation is never relabelled as a configured-budget stop: the
+/// token's Budget reason must not fabricate a typed event onto an output that
+/// was already truncated for some other reason.
+#[tokio::test]
+async fn a_legacy_truncated_output_is_not_relabelled_as_a_budget_stop() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(legacy_truncated_output(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after_with(
+        1,
+        token.clone(),
+        CancellationReason::Budget(BudgetDimension::ElapsedTime),
+    );
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert!(out.truncated, "the legacy truncation stands");
+    assert!(
+        !out.events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AnsweringBudgetStopped { .. })),
+        "a legacy truncation is not relabelled as a configured-budget stop: {:?}",
+        out.events
+    );
+}
+
+/// A User stop leaves the retained output untouched — no partial marking, no
+/// typed event; the ask adapter classifies a user stop from the token itself.
+#[tokio::test]
+async fn a_user_stop_leaves_the_retained_output_untouched() {
+    let token = CancellationToken::new();
+    let sql = "SELECT a FROM t WHERE id = 1";
+    let runner = ScriptedRunner::new(vec![
+        Outcome::Ok(output_with_sql(sql)),
+        Outcome::Ok(output_with_sql(sql)),
+    ])
+    .cancel_after(1, token.clone());
+    let mut results = HashMap::new();
+    results.insert(sql.to_string(), rows_result(&["a"], vec![json!([1])]));
+    let executor = ScriptedExecutor { results };
+    let sink = RecordingSink {
+        events: Arc::new(Mutex::new(Vec::new())),
+    };
+
+    let out = orchestrate_test(2, &runner, &executor, &sink, &token)
+        .await
+        .expect("the retained answer returns");
+
+    assert!(
+        !out.truncated,
+        "a user stop does not mark the answer partial"
+    );
+    assert!(
+        !out.events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::AnsweringBudgetStopped { .. })),
+        "a user stop never fabricates a budget-stop event: {:?}",
+        out.events
+    );
 }

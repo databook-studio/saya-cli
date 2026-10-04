@@ -156,16 +156,26 @@ fn run_pending_approval_cancellation(label: &str, elapsed_seconds: u64, input: O
         }
     }
     let status = child.try_wait().unwrap().expect("child settled");
-    let expected_exit = if input.is_some() { 5 } else { 0 };
+    // The typed stop classes: a user-cancelled pending approval latches the
+    // question token with User and exits the cancelled class (130); a question
+    // stopped by its configured elapsed budget latches Budget and exits the
+    // partial/paused class (6). The ask adapter classifies from the token's
+    // first stop reason.
+    let expected_exit = if input.is_some() { 130 } else { 6 };
     assert_eq!(
         status.exit_code(),
         expected_exit,
-        "cancelled question has its established exit class: {terminal}"
+        "cancelled question has its truthful stop class: {terminal}"
     );
     if input.is_some() {
         assert!(
             terminal.contains("request cancelled"),
             "bare Esc must reach the shared cancellation path: {terminal}"
+        );
+    } else {
+        assert!(
+            terminal.contains("elapsed-time budget"),
+            "the budget-stopped question names its configured budget: {terminal}"
         );
     }
     assert_eq!(

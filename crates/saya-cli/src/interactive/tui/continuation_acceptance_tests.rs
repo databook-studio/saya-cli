@@ -205,6 +205,7 @@ async fn agent_turn(
             history: state.provider_request_history(),
             sink: &Sink,
             cancellation: CancellationToken::new(),
+            question_scope: None,
             state_db: None::<SqliteStateStore>,
             decider: Some(Arc::new(saya_agent::AllowReadOnlyApproval)),
             last_sql: None,

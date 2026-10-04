@@ -1,6 +1,9 @@
-use crate::{RenderFormat, TerminalEvent, render::Rendered, render_event};
+use crate::{
+    RenderFormat, TerminalEvent, answering_receipts::AnsweringReceipts, render::Rendered,
+    render_event,
+};
 use async_trait::async_trait;
-use saya_agent::{AgentEvent, AgentEventSink, TokenUsage};
+use saya_agent::{AgentEvent, AgentEventSink};
 use std::{
     io::{self, Write},
     sync::Mutex,
@@ -10,7 +13,7 @@ pub(crate) struct TerminalSink {
     format: RenderFormat,
     text_open: Mutex<bool>,
     group: Mutex<TextGroupState>,
-    answering_usage: Mutex<Option<TokenUsage>>,
+    answering_usage: AnsweringReceipts,
 }
 impl TerminalSink {
     pub(crate) fn new(format: RenderFormat) -> Self {
@@ -18,43 +21,19 @@ impl TerminalSink {
             format,
             text_open: Mutex::new(false),
             group: Mutex::new(TextGroupState::new()),
-            answering_usage: Mutex::new(None),
+            answering_usage: AnsweringReceipts::default(),
         }
     }
 
-    pub(crate) fn take_answering_usage(&self) -> Option<TokenUsage> {
-        self.answering_usage.lock().expect("terminal state").take()
+    pub(crate) fn take_answering_usage(&self) -> Option<saya_agent::TokenUsage> {
+        self.answering_usage.take()
     }
 }
 
 #[async_trait]
 impl AgentEventSink for TerminalSink {
     async fn emit(&self, event: AgentEvent) {
-        match &event {
-            AgentEvent::Usage {
-                call: saya_agent::UsageCall::Answer,
-                usage,
-            }
-            | AgentEvent::FailedAttemptUsage { usage } => {
-                let mut total = self.answering_usage.lock().expect("terminal state");
-                let accumulated = total.get_or_insert_default();
-                accumulated.input_tokens =
-                    accumulated.input_tokens.saturating_add(usage.input_tokens);
-                accumulated.output_tokens = accumulated
-                    .output_tokens
-                    .saturating_add(usage.output_tokens);
-                sum_optional(
-                    &mut accumulated.cached_input_tokens,
-                    usage.cached_input_tokens,
-                );
-                sum_optional(
-                    &mut accumulated.cache_creation_input_tokens,
-                    usage.cache_creation_input_tokens,
-                );
-                sum_optional(&mut accumulated.reasoning_tokens, usage.reasoning_tokens);
-            }
-            _ => {}
-        }
+        self.answering_usage.record(&event);
         let rendered = render_text_stream(
             event,
             self.format,
@@ -65,12 +44,6 @@ impl AgentEventSink for TerminalSink {
         eprint!("{}", rendered.stderr);
         let _ = io::stdout().flush();
         let _ = io::stderr().flush();
-    }
-}
-
-fn sum_optional(total: &mut Option<u64>, value: Option<u64>) {
-    if let Some(value) = value {
-        *total = Some(total.unwrap_or(0).saturating_add(value));
     }
 }
 

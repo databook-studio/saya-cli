@@ -280,6 +280,7 @@ async fn a_truncated_model_view_is_refused_from_tool_execution_to_the_drain_pair
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     });
     app.drain_stream(&mut state);
     assert!(

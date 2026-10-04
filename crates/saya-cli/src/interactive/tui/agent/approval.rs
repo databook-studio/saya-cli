@@ -1,6 +1,7 @@
 //! The turn's approval decider: the modal over a channel.
 
 use super::messages::StreamMsg;
+use crate::agent::question_scope::QuestionScope;
 use crate::agent::runtime::PromptOverrides;
 use crate::approval_facts::ApprovalFacts;
 use crate::config::runtime::RuntimeConfig;
@@ -191,6 +192,10 @@ pub(crate) struct StreamRequest {
     pub(crate) prior_tool_outcomes:
         Option<crate::interactive::session_continuation::PriorToolOutcomes>,
     pub(crate) compaction_summary: Option<String>,
+    /// The question scope this turn began with: `Some` on the session paths —
+    /// the runtime runs on the scope's token and the stream-finalize settles
+    /// by its identity. `None` only where no session question was begun.
+    pub(crate) question_scope: Option<QuestionScope>,
 }
 
 /// What the TUI states about itself at the turn boundary, as the

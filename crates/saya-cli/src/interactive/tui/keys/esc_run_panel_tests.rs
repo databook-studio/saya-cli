@@ -54,6 +54,7 @@ fn esc_says_stop_requested_not_stopped() {
         rx,
         cancel: CancellationToken::new(),
         prompt: "a prompt".into(),
+        question_scope: None,
     });
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     let texts: Vec<&str> = app
@@ -94,6 +95,7 @@ fn esc_cancels_the_agent_stream_before_touching_the_panel() {
             agent_mode: saya_agent::AgentMode::Build,
             prior_tool_outcomes: None,
             compaction_summary: None,
+            question_scope: None,
         });
     app.request.stream = Some(stream);
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

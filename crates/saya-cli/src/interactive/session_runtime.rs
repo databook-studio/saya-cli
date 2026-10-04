@@ -14,6 +14,7 @@ use saya_store::{BypassSource, SessionJournal};
 
 use super::session_paths::create_state_dir;
 use super::session_universe::{SessionComposition, SessionUniverse};
+use crate::agent::question_scope::QuestionScope;
 
 pub(crate) struct SessionRuntime {
     universe: Arc<SessionUniverse>,
@@ -51,6 +52,16 @@ pub(crate) struct SessionRuntime {
     /// notice seam the surfaces already print. Later failures are said by
     /// the site that made the consent.
     journal_failure: Mutex<Option<String>>,
+    /// Runtime-only question authority. It deliberately never rides
+    /// `SessionState`, so a saved narrative cannot restore a cancellation
+    /// token or answering wallet after resume.
+    question: QuestionLifecycle,
+}
+
+enum QuestionLifecycle {
+    Idle,
+    Active(QuestionScope),
+    PendingClarification(QuestionScope),
 }
 
 /// The acquisition's inputs, including the trust seam: `trusted: None` is
@@ -157,7 +168,55 @@ impl SessionRuntime {
             state_dir: state_dir.clone(),
             journal: Arc::new(SessionJournal::open(&state_dir)),
             journal_failure: Mutex::new(None),
+            question: QuestionLifecycle::Idle,
         })
+    }
+
+    pub(crate) fn begin_question(
+        &mut self,
+        runtime: &crate::config::runtime::RuntimeConfig,
+    ) -> Result<QuestionScope, String> {
+        let scope = match std::mem::replace(&mut self.question, QuestionLifecycle::Idle) {
+            QuestionLifecycle::Idle => {
+                QuestionScope::new(runtime, saya_agent::CancellationToken::new())
+            }
+            QuestionLifecycle::PendingClarification(scope) => scope,
+            QuestionLifecycle::Active(scope) => {
+                self.question = QuestionLifecycle::Active(scope);
+                return Err("an answering question is already active".into());
+            }
+        };
+        self.question = QuestionLifecycle::Active(scope.clone());
+        Ok(scope)
+    }
+
+    /// Settles the question that actually completed. Only the scope
+    /// `begin_question` handed out may settle itself: a completion of any
+    /// other scope — and any completion while idle or pending clarification
+    /// — is ignored outright, so a late completion of a stale question can
+    /// never restore or change the live question's state.
+    pub(crate) fn settle_question(&mut self, completed: &QuestionScope, clarification: bool) {
+        let settling = match &self.question {
+            QuestionLifecycle::Active(scope) if scope.is_same_question(completed) => scope.clone(),
+            _ => return,
+        };
+        if clarification && !settling.cancellation().is_cancelled() {
+            self.question = QuestionLifecycle::PendingClarification(settling);
+        } else {
+            settling.finish_segment();
+            self.question = QuestionLifecycle::Idle;
+        }
+    }
+
+    pub(crate) fn abandon_question(&mut self) {
+        let previous = std::mem::replace(&mut self.question, QuestionLifecycle::Idle);
+        match previous {
+            QuestionLifecycle::Active(scope) | QuestionLifecycle::PendingClarification(scope) => {
+                scope.cancellation().cancel();
+                scope.finish_segment();
+            }
+            QuestionLifecycle::Idle => {}
+        }
     }
 
     /// Swaps the composed universe for a startup trust answer given
@@ -339,8 +398,12 @@ impl SessionRuntime {
             mode,
             &self.sessions_root,
         )?;
-        // Only reached when the new session is fully held and composed; the
+        // Only reached when the new session is fully held and composed, so
+        // failure is impossible past this point: the swap first abandons the
+        // old session's question — the same effect `abandon_question` has —
+        // and a failed swap above returned early, leaving it untouched. The
         // swap drops this lock last.
+        self.abandon_question();
         *self = replacement;
         Ok(())
     }
@@ -430,3 +493,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "session_runtime_question_tests.rs"]
+mod question_tests;

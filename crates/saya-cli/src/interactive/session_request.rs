@@ -1,6 +1,7 @@
 use crate::{
     agent::{
         self,
+        question_scope::QuestionScope,
         runtime::{AgentRuntimeError, PromptOverrides},
     },
     config::runtime::RuntimeConfig,
@@ -8,8 +9,7 @@ use crate::{
     stream_render::TerminalSink,
 };
 use saya_agent::{
-    AgentMode, AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage,
-    SessionPolicy, TokenUsage,
+    AgentMode, AgentOutput, ApprovalDecider, ApprovalPolicy, ChatMessage, SessionPolicy, TokenUsage,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
@@ -59,8 +59,9 @@ pub(crate) async fn run(
     agent_mode: AgentMode,
     prior_tool_outcomes: Option<super::session_continuation::PriorToolOutcomes>,
     compaction_summary: Option<String>,
+    scope: QuestionScope,
 ) -> Result<PromptResult, AgentRuntimeError> {
-    let cancellation = CancellationToken::new();
+    let cancellation = scope.cancellation();
     let sink = TerminalSink::new(format);
     // The decider is the terminal ask over the session's policy: the mode
     // resolves there, and a session grant recorded by an answer lands in the
@@ -93,6 +94,7 @@ pub(crate) async fn run(
         history,
         sink: &sink,
         cancellation: cancellation.clone(),
+        question_scope: Some(scope),
         state_db: Some(state_db.clone()),
         decider: Some(decider),
         last_sql: None,

@@ -1,4 +1,5 @@
 use super::knowledge_event::knowledge_supplied_event;
+use super::question_scope::QuestionScope;
 use super::tools;
 #[cfg(test)]
 pub(crate) use super::turn_config::query_data_allowed;
@@ -29,6 +30,9 @@ pub(crate) struct SinkPrompt<'a> {
     pub(crate) history: Vec<ChatMessage>,
     pub(crate) sink: &'a dyn AgentEventSink,
     pub(crate) cancellation: CancellationToken,
+    /// Present when an outer question owns the budget across several runtime
+    /// invocations (candidate attempts or a clarification continuation).
+    pub(crate) question_scope: Option<QuestionScope>,
     pub(crate) state_db: Option<SqliteStateStore>,
     pub(crate) decider: Option<Arc<dyn ApprovalDecider>>,
     pub(crate) last_sql: Option<String>,
@@ -50,6 +54,7 @@ pub(crate) struct TurnPrompt<'a> {
     pub(crate) history: Vec<ChatMessage>,
     pub(crate) sink: &'a dyn AgentEventSink,
     pub(crate) cancellation: CancellationToken,
+    pub(crate) question_scope: Option<QuestionScope>,
     pub(crate) state_db: Option<SqliteStateStore>,
     pub(crate) decider: Option<Arc<dyn ApprovalDecider>>,
     pub(crate) last_sql: Option<String>,
@@ -83,6 +88,7 @@ pub(crate) async fn run_prompt_with_sink(
     history: Vec<ChatMessage>,
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
+    question_scope: Option<QuestionScope>,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn ApprovalDecider>>,
     last_sql: Option<String>,
@@ -107,6 +113,7 @@ pub(crate) async fn run_prompt_with_sink(
         history,
         sink,
         cancellation,
+        question_scope,
         state_db,
         decider,
         last_sql,
@@ -120,20 +127,36 @@ pub(crate) async fn run_prompt_with_sink(
 }
 
 pub(crate) async fn run_prompt_with_sink_and_outcomes(
-    request: SinkPrompt<'_>,
+    mut request: SinkPrompt<'_>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    let deadline = finite_seconds(
-        request
-            .runtime
-            .resolved
-            .investigation_budgets
-            .elapsed_seconds,
-    );
+    if let Some(scope) = request.question_scope.as_ref() {
+        request.cancellation = scope.cancellation();
+    }
     let cancellation = request.cancellation.clone();
+    if cancellation.is_cancelled() {
+        return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
+    let scope = request.question_scope.clone();
+    let deadline = match scope.as_ref() {
+        Some(scope) => scope.begin_segment(),
+        None => finite_seconds(
+            request
+                .runtime
+                .resolved
+                .investigation_budgets
+                .elapsed_seconds,
+        ),
+    };
+    if cancellation.is_cancelled() {
+        if let Some(scope) = scope.as_ref() {
+            scope.finish_segment();
+        }
+        return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
     let (answering_settled_tx, mut answering_settled) = tokio::sync::oneshot::channel();
     let work = run_prompt_after_question_start(request, Some(answering_settled_tx));
     tokio::pin!(work);
-    match deadline {
+    let result = match deadline {
         Some(duration) => tokio::select! {
             biased;
             result = &mut work => result,
@@ -144,7 +167,13 @@ pub(crate) async fn run_prompt_with_sink_and_outcomes(
             }
         },
         None => work.await,
+    };
+    // The answering owner normally finishes before learning. This is the
+    // idempotent fallback for an earlier preparation or composition error.
+    if let Some(scope) = scope {
+        scope.finish_segment();
     }
+    result
 }
 
 fn finite_seconds(limit: BudgetLimit) -> Option<std::time::Duration> {
@@ -168,6 +197,7 @@ async fn run_prompt_after_question_start(
         history,
         sink,
         cancellation,
+        question_scope,
         state_db,
         decider,
         last_sql,
@@ -177,9 +207,15 @@ async fn run_prompt_after_question_start(
         prior_tool_outcomes,
         compaction_summary,
     } = request;
-    let inputs = prepare_turn(runtime, &overrides, can_prompt)
-        .await
-        .map_err(with_next_step)?;
+    let inputs = match prepare_turn(runtime, &overrides, can_prompt).await {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            if let Some(scope) = question_scope.as_ref() {
+                scope.finish_segment();
+            }
+            return Err(with_next_step(error));
+        }
+    };
     run_prompt_with_continuation_inputs_with_signal(
         TurnPrompt {
             runtime,
@@ -191,6 +227,7 @@ async fn run_prompt_after_question_start(
             history,
             sink,
             cancellation,
+            question_scope,
             state_db,
             decider,
             last_sql,
@@ -241,6 +278,7 @@ pub(crate) async fn run_prompt_with_inputs(
             history,
             sink,
             cancellation,
+            question_scope: None,
             state_db,
             decider,
             last_sql,
@@ -269,6 +307,7 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         history,
         sink,
         cancellation,
+        question_scope,
         state_db,
         decider,
         last_sql,
@@ -548,14 +587,16 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
             runtime.resolved.investigation_budgets.known_reported_tokens,
         ),
     };
-    let mut output = run_agent_with_control(
-        &*provider,
-        executor.as_ref(),
-        request,
-        definitions,
-        AgentRunControl::new(limits, answering, approver, sink, cancellation.clone()),
-    )
-    .await;
+    let control = AgentRunControl::new(limits, answering, approver, sink, cancellation.clone());
+    let control = match question_scope.as_ref() {
+        Some(scope) => control.with_answering_scope(scope.answering_scope()),
+        None => control,
+    };
+    let mut output =
+        run_agent_with_control(&*provider, executor.as_ref(), request, definitions, control).await;
+    if let Some(scope) = question_scope.as_ref() {
+        scope.finish_segment();
+    }
     if let Some(answering_settled) = answering_settled {
         let _ = answering_settled.send(());
     }

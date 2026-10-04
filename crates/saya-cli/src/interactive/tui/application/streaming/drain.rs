@@ -6,15 +6,22 @@ use super::super::super::transcript::BlockKind;
 use super::super::super::types::{
     App, LastQuery, MAX_PENDING_QUERIES, PendingApproval, PendingQuery,
 };
+use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
 use crate::interactive::tui::capture_agent::{AgentCaptureOutcome, promote_agent_capture};
 use crate::render::tool_groups::is_failure_summary;
 use saya_agent::{AgentEvent, ProviderRecoveryPhase, UsageCall};
 
 impl App {
-    /// Drains any queued agent-stream messages into the transcript. Returns true
-    /// when the request just finished (so the caller can persist the session).
-    pub(crate) fn drain_stream(&mut self, state: &mut SessionState) -> bool {
+    /// The drain loop proper: pulls the stream's channel messages into the
+    /// transcript. The two entry points — with and without the session
+    /// runtime — live in `question.rs`, beside the question settle they
+    /// drive.
+    pub(super) fn drain_inner(
+        &mut self,
+        state: &mut SessionState,
+        mut session: Option<&mut SessionRuntime>,
+    ) -> bool {
         let mut messages = Vec::new();
         if let Some(stream) = self.request.stream.as_mut() {
             while let Ok(msg) = stream.rx.try_recv() {
@@ -241,7 +248,9 @@ impl App {
                     });
                 }
                 StreamMsg::Done(result) => {
-                    self.settle_done(result, state, prompt.clone());
+                    // One stream posts exactly one `Done`; the settle takes
+                    // the session handle out of the loop's Option.
+                    self.settle_done(result, state, prompt.clone(), session.take());
                     finished = true;
                 }
             }

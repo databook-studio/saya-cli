@@ -3,10 +3,11 @@
 
 use super::super::decide::CandidateExecutor;
 use super::super::profile;
+use super::super::question_scope::QuestionScope;
 use super::super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
 use super::AttemptRunner;
 use async_trait::async_trait;
-use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_store::SqliteStateStore;
 use saya_types::{QueryRequest, QueryResult, SqlDialect};
@@ -21,6 +22,7 @@ pub(super) async fn build_executor(
     runtime: &crate::config::runtime::RuntimeConfig,
     overrides: &PromptOverrides,
     can_prompt: bool,
+    scope: &QuestionScope,
 ) -> Result<(LiveCandidateExecutor, SqlDialect), AgentRuntimeError> {
     let (_name, profile) = profile::selected(runtime, overrides.profile.as_ref())?;
     let Some(profile) = profile else {
@@ -46,6 +48,7 @@ pub(super) async fn build_executor(
         LiveCandidateExecutor {
             connector,
             max_rows: runtime.resolved.max_rows,
+            cancellation: scope.cancellation(),
         },
         dialect,
     ))
@@ -66,15 +69,26 @@ pub(super) async fn build_executor(
 pub(super) struct LiveCandidateExecutor {
     connector: Box<dyn DatabaseConnector>,
     max_rows: usize,
+    cancellation: saya_agent::CancellationToken,
 }
 
 #[async_trait]
 impl CandidateExecutor for LiveCandidateExecutor {
     async fn run(&self, sql: &str) -> Option<QueryResult> {
-        self.connector
-            .execute(QueryRequest::new(sql, self.max_rows))
-            .await
-            .ok()
+        if self.cancellation.is_cancelled() {
+            return None;
+        }
+        let execution = self
+            .connector
+            .execute(QueryRequest::new(sql, self.max_rows));
+        tokio::pin!(execution);
+        tokio::select! {
+            result = &mut execution => (!self.cancellation.is_cancelled()).then(|| result.ok()).flatten(),
+            _ = self.cancellation.cancelled() => {
+                let (_cancel, _settled) = tokio::join!(self.connector.request_cancel(), execution);
+                None
+            }
+        }
     }
 }
 
@@ -90,7 +104,7 @@ pub(crate) struct LiveAttemptRunner<'a> {
     can_obtain_approval: bool,
     overrides: PromptOverrides,
     sink: &'a dyn saya_agent::AgentEventSink,
-    cancellation: CancellationToken,
+    scope: QuestionScope,
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
@@ -108,7 +122,7 @@ impl<'a> LiveAttemptRunner<'a> {
         can_obtain_approval: bool,
         overrides: PromptOverrides,
         sink: &'a dyn saya_agent::AgentEventSink,
-        cancellation: CancellationToken,
+        scope: QuestionScope,
         state_db: Option<SqliteStateStore>,
         decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
         last_sql: Option<String>,
@@ -123,7 +137,7 @@ impl<'a> LiveAttemptRunner<'a> {
             can_obtain_approval,
             overrides,
             sink,
-            cancellation,
+            scope,
             state_db,
             decider,
             last_sql,
@@ -145,7 +159,8 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
             self.overrides.clone(),
             Vec::new(),
             self.sink,
-            self.cancellation.clone(),
+            self.scope.cancellation(),
+            Some(self.scope.clone()),
             self.state_db.clone(),
             self.decider.clone(),
             self.last_sql.clone(),
@@ -156,3 +171,7 @@ impl AttemptRunner for LiveAttemptRunner<'_> {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;
