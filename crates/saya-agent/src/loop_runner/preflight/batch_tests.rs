@@ -35,9 +35,7 @@ fn context_refusal_keeps_one_literal_paired_reply_for_every_valid_id() {
             .collect::<Vec<_>>(),
         [Some("call-a"), Some("call-b")]
     );
-    assert!(
-        replies
-            .iter()
-            .all(|message| { message.content == r#"{"error":"request context limit reached"}"# })
-    );
+    assert!(replies.iter().all(|message| {
+        message.content == r#"{"error":"not executed: request context limit reached"}"#
+    }));
 }

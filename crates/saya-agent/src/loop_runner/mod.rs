@@ -151,13 +151,14 @@ async fn run_agent_loop(
     if controlled {
         admission.check(&cancellation)?;
     }
-    let mut messages = crate::history::build_messages(
-        request.system_prompt.as_deref(),
-        &request.context_blocks,
-        &request.prompt,
-        &request.history,
-        limits.context_byte_budget,
-    )?;
+    let (mut messages, mut ordinary_history_pairs) =
+        crate::history::build_messages_with_history_count(
+            request.system_prompt.as_deref(),
+            &request.context_blocks,
+            &request.prompt,
+            &request.history,
+            limits.context_byte_budget,
+        )?;
     let mut events = Vec::new();
     let mut used_bounded_sql_query = false;
     let mut tool_metadata = Vec::new();
@@ -172,7 +173,7 @@ async fn run_agent_loop(
     // The last statement that completed successfully, so a run that exhausts its
     // budget without nominating can still surface its best available answer.
     let mut last_successful_sql: Option<String> = None;
-    let mut designation = designation::State::new(limits.context_byte_budget);
+    let mut designation = designation::State::new();
     loop {
         if let Err(error) = admission.check(&cancellation) {
             if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
@@ -197,6 +198,7 @@ async fn run_agent_loop(
                 provider,
                 &request.model,
                 &mut messages,
+                &mut ordinary_history_pairs,
                 &[],
                 limits.context_byte_budget,
                 request_preflight,
@@ -221,6 +223,7 @@ async fn run_agent_loop(
             provider,
             model: &request.model,
             messages: &mut messages,
+            ordinary_history_pairs: &mut ordinary_history_pairs,
             definitions: &definitions,
             context_byte_budget: limits.context_byte_budget,
             request_preflight,
@@ -307,7 +310,7 @@ async fn run_agent_loop(
             .await);
         }
         let mut response_limits = limits;
-        if !assistant.tool_calls.is_empty() {
+        let result_caps = if !assistant.tool_calls.is_empty() {
             let result_budget = match preflight::reserve_tool_batch(
                 &request.model,
                 &mut messages,
@@ -344,7 +347,10 @@ async fn run_agent_loop(
             };
             response_limits.context_byte_budget =
                 response_limits.context_byte_budget.min(result_budget);
-        }
+            tool_batch::turn_result_caps(result_budget, assistant.tool_calls.len())
+        } else {
+            Vec::new()
+        };
         // Forward the turn's captured chain-of-thought onto the event stream as
         // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
         // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
@@ -362,10 +368,10 @@ async fn run_agent_loop(
         }
         messages.push(assistant.clone());
         // Designation arm: see `designation` for the bounded prose recovery.
-        designation.set_context_byte_budget(response_limits.context_byte_budget);
         match designation::handle(
             &mut designation,
             &assistant,
+            &result_caps,
             (&mut events, sink, &cancellation),
             &mut messages,
             (usage, used_bounded_sql_query, &mut tool_metadata),
@@ -384,6 +390,7 @@ async fn run_agent_loop(
             &assistant,
             &definitions,
             &response_limits,
+            &result_caps,
             approval,
             tools,
             &designation,
@@ -431,6 +438,7 @@ async fn run_agent_loop(
                 provider,
                 &request.model,
                 &mut messages,
+                &mut ordinary_history_pairs,
                 &assistant.tool_calls,
                 limits.context_byte_budget,
                 request_preflight,
@@ -451,6 +459,7 @@ async fn run_agent_loop(
             tools,
             assistant,
             &definitions,
+            &result_caps,
             &response_limits,
             approval,
             sink,

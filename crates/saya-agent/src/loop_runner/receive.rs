@@ -15,6 +15,7 @@ pub(super) struct ReceiveContext<'a> {
     pub(super) provider: &'a dyn ChatProvider,
     pub(super) model: &'a str,
     pub(super) messages: &'a mut Vec<ChatMessage>,
+    pub(super) ordinary_history_pairs: &'a mut usize,
     pub(super) definitions: &'a [ToolDefinition],
     pub(super) context_byte_budget: usize,
     pub(super) request_preflight: Option<super::preflight::RequestPreflightConfig>,
@@ -31,6 +32,7 @@ pub(super) async fn receive(
         provider,
         model,
         messages,
+        ordinary_history_pairs,
         definitions,
         context_byte_budget,
         request_preflight,
@@ -49,6 +51,7 @@ pub(super) async fn receive(
     if let Err(error) = preflight::fit_request(
         model,
         messages,
+        ordinary_history_pairs,
         definitions,
         context_byte_budget,
         request_preflight,

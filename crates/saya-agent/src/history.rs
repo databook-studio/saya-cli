@@ -33,6 +33,19 @@ pub fn build_messages(
     history: &[ChatMessage],
     byte_budget: usize,
 ) -> Result<Vec<ChatMessage>, AgentError> {
+    build_messages_with_history_count(system_extra, context_blocks, prompt, history, byte_budget)
+        .map(|(messages, _)| messages)
+}
+
+/// Builds the same request as [`build_messages`] and returns how many complete
+/// replay-history pairs occupy the removable prefix after the system message.
+pub(crate) fn build_messages_with_history_count(
+    system_extra: Option<&str>,
+    context_blocks: &[ContextBlock],
+    prompt: &str,
+    history: &[ChatMessage],
+    byte_budget: usize,
+) -> Result<(Vec<ChatMessage>, usize), AgentError> {
     let system_content = system_content(system_extra);
     let user_content = render_context(context_blocks, prompt);
     let current = [
@@ -53,10 +66,25 @@ pub fn build_messages(
         chosen.push(pair.to_vec());
     }
     chosen.reverse();
+    let history_pair_count = chosen.len();
     let mut messages = vec![current[0].clone()];
     messages.extend(chosen.into_iter().flatten());
     messages.push(current[1].clone());
-    Ok(messages)
+    Ok((messages, history_pair_count))
+}
+
+/// Removes the oldest selected replay pair without touching the fixed system
+/// or current-user messages. Later conversation groups follow that prefix.
+pub(crate) fn discard_oldest_history_pair(
+    messages: &mut Vec<ChatMessage>,
+    pair_count: &mut usize,
+) -> bool {
+    if *pair_count == 0 {
+        return false;
+    }
+    messages.drain(1..3);
+    *pair_count -= 1;
+    true
 }
 
 /// The system message content [`build_messages`] would assemble from optional

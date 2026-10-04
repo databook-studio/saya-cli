@@ -267,5 +267,7 @@ mod basics;
 mod follow_ons;
 #[path = "request_preflight/history.rs"]
 mod history;
+#[path = "request_preflight/shortcuts.rs"]
+mod shortcuts;
 #[path = "request_preflight/tool_batches.rs"]
 mod tool_batches;

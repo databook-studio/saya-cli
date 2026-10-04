@@ -43,6 +43,8 @@ async fn continuation_designation_and_salvage_share_the_pre_dispatch_guard() {
                     max_turns: Some(1),
                     ..AgentLimits::default()
                 };
+                let mut query = definition("query");
+                query.description = "q".into();
                 (
                     vec![
                         turn_with_usage(
@@ -56,7 +58,7 @@ async fn continuation_designation_and_salvage_share_the_pre_dispatch_guard() {
                         ),
                         turn("must not dispatch", Vec::new()),
                     ],
-                    vec![definition("query")],
+                    vec![query],
                     limits,
                     855,
                 )
@@ -64,6 +66,19 @@ async fn continuation_designation_and_salvage_share_the_pre_dispatch_guard() {
         };
         limits.context_byte_budget = 16 * 1024;
         let (provider, requests) = ScriptedProvider::new(turns);
+        let mut agent_request = request(
+            "same user question",
+            matches!(route, Route::Salvage).then(|| "required system ".repeat(3)),
+        );
+        if matches!(route, Route::Designation) {
+            agent_request.history = vec![
+                ChatMessage::text(
+                    "user",
+                    format!("OLD_ORDINARY_PAIR {}", "older ".repeat(250)),
+                ),
+                ChatMessage::text("assistant", "old answer ".repeat(250)),
+            ];
+        }
         let executor = RecordingExecutor::with_result(serde_json::json!({
             "columns":["value"],"rows":[[42]],"row_count":1,
             "truncated":false,"executed_sql":"SELECT 1"
@@ -72,10 +87,7 @@ async fn continuation_designation_and_salvage_share_the_pre_dispatch_guard() {
         let output = run(
             &provider,
             &executor,
-            request(
-                "same user question",
-                matches!(route, Route::Salvage).then(|| "required system ".repeat(3)),
-            ),
+            agent_request,
             definitions,
             control(
                 limits,
@@ -102,6 +114,14 @@ async fn continuation_designation_and_salvage_share_the_pre_dispatch_guard() {
                         .iter()
                         .all(|request| provider_projection_bytes(request) <= 4_000)
                 );
+                let recovery = requests.last().unwrap();
+                assert!(recovery.messages.iter().any(|message| {
+                    message.role == "user" && message.content.contains("same user question")
+                }));
+                assert!(recovery.messages.iter().all(|message| {
+                    !message.content.contains("OLD_ORDINARY_PAIR")
+                        && !message.content.contains("old answer")
+                }));
                 assert_eq!(
                     sink.observations
                         .lock()

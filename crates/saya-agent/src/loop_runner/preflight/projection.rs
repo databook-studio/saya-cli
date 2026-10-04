@@ -17,7 +17,7 @@ pub(super) enum BatchReplies {
     Empty,
 }
 
-pub(super) const REFUSAL: &str = r#"{"error":"request context limit reached"}"#;
+pub(super) const REFUSAL: &str = r#"{"error":"not executed: request context limit reached"}"#;
 
 #[derive(Serialize)]
 struct Projection<'a> {

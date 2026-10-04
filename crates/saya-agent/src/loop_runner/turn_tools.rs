@@ -14,6 +14,7 @@ pub(super) async fn run_turn_tools(
     tools: &dyn ToolExecutor,
     assistant: ChatMessage,
     definitions: &[ToolDefinition],
+    result_caps: &[usize],
     limits: &AgentLimits,
     approval: &dyn ApprovalDecider,
     sink: &dyn AgentEventSink,
@@ -25,8 +26,6 @@ pub(super) async fn run_turn_tools(
     failed: &mut failed_statements::FailedStatements,
     last_successful_sql: &mut Option<String>,
 ) -> Result<(), AgentError> {
-    let result_caps =
-        tools::turn_result_caps(limits.context_byte_budget, assistant.tool_calls.len());
     // A batch overlaps only when every member opted in and is allowed without
     // a per-call approval. Prompted calls stay serial, preserving approval
     // authority and prompt order.
@@ -78,7 +77,7 @@ pub(super) async fn run_turn_tools(
             tools,
             &assistant.tool_calls,
             definitions,
-            &result_caps,
+            result_caps,
             cancellation,
         )
         .await;
@@ -116,7 +115,11 @@ pub(super) async fn run_turn_tools(
         }
         return Ok(());
     }
-    for (call, cap) in assistant.tool_calls.into_iter().zip(result_caps) {
+    for (call, cap) in assistant
+        .tool_calls
+        .into_iter()
+        .zip(result_caps.iter().copied())
+    {
         if let Some(reason) = tools::invalid_reason(&call, definitions) {
             if call.id.trim().is_empty() {
                 return Err(AgentError::InvalidToolCall);

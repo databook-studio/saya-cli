@@ -31,6 +31,7 @@ pub(super) enum PreflightError {
 pub(super) fn fit_request(
     model: &str,
     messages: &mut Vec<ChatMessage>,
+    ordinary_history_pairs: &mut usize,
     definitions: &[ToolDefinition],
     byte_limit: usize,
     config: Option<RequestPreflightConfig>,
@@ -52,6 +53,20 @@ pub(super) fn fit_request(
         projection::Measurement::Exceeded => return Err(PreflightError::Budget(dimension)),
         projection::Measurement::Serialization => return Err(PreflightError::Serialization),
     };
+    while crate::history::discard_oldest_history_pair(messages, ordinary_history_pairs) {
+        match projection::measure(
+            model,
+            projection::Messages::Slice(messages),
+            definitions,
+            cap,
+        ) {
+            projection::Measurement::Fits(_) => return Ok(()),
+            projection::Measurement::Serialization => {
+                return Err(PreflightError::Serialization);
+            }
+            projection::Measurement::Exceeded => {}
+        }
+    }
     super::output::trim_to_budget(messages, cap.saturating_sub(fixed));
     match projection::measure(
         model,
