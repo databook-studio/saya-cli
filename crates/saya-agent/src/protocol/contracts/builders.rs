@@ -4,7 +4,8 @@
 
 use super::{
     BudgetDimension, KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, ToolEffect, UsageCall,
+    ProviderContinuationPhase, ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto,
+    ToolEffect, UsageCall,
 };
 use crate::AgentEvent;
 use crate::protocol::streaming::TokenUsage;
@@ -54,6 +55,18 @@ impl AgentEvent {
             phase,
             reason,
             attempt,
+            limit,
+        }
+    }
+
+    /// Builds the typed provider-continuation transition. The caller is
+    /// `receive` at the admitted continuation (`Continuing`, carrying the
+    /// pending `ContinuationProgress` values) or the loop's truncation guard
+    /// when the allowance is spent (`Exhausted`).
+    pub fn provider_continuation(phase: ProviderContinuationPhase, index: u32, limit: u32) -> Self {
+        Self::ProviderContinuation {
+            phase,
+            index,
             limit,
         }
     }
