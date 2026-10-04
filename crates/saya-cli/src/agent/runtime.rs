@@ -587,11 +587,13 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
             runtime.resolved.investigation_budgets.known_reported_tokens,
         ),
     };
+    let preflight = super::preflight_config::request_preflight_config(&ai)?;
     let control = AgentRunControl::new(limits, answering, approver, sink, cancellation.clone());
     let control = match question_scope.as_ref() {
         Some(scope) => control.with_answering_scope(scope.answering_scope()),
         None => control,
-    };
+    }
+    .with_request_preflight(preflight);
     let mut output =
         run_agent_with_control(&*provider, executor.as_ref(), request, definitions, control).await;
     if let Some(scope) = question_scope.as_ref() {
