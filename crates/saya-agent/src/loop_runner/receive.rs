@@ -5,7 +5,8 @@ use super::{
 use crate::{
     AgentEvent, AgentEventSink, AgentMetric, AgentMetricCount, AgentMetricOutcome,
     AgentMetricPhase, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
-    ProviderRecoveryPhase, ProviderRecoveryReason, TokenUsage, ToolDefinition, UsageCall,
+    ProviderContinuationPhase, ProviderRecoveryPhase, ProviderRecoveryReason, TokenUsage,
+    ToolDefinition, UsageCall,
 };
 use std::time::Duration;
 
@@ -99,6 +100,16 @@ pub(super) async fn receive(
         debug_assert!(progress.index > 0 && progress.index <= progress.limit);
         sink.metric(AgentMetric::Count(AgentMetricCount::AdmittedContinuation))
             .await;
+        emit(
+            events,
+            sink,
+            AgentEvent::provider_continuation(
+                ProviderContinuationPhase::Continuing,
+                progress.index as u32,
+                progress.limit as u32,
+            ),
+        )
+        .await;
         if let Err(error) = admission.check(cancellation) {
             return Err(attempt::ReceiveFailure {
                 error,
