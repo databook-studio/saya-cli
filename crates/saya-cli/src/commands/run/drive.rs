@@ -303,6 +303,28 @@ pub(super) async fn drive(inputs: DriveInputs<'_>) -> Result<i32, Box<dyn std::e
                 format,
             )
         }
+        Err(
+            error @ (saya_harness::engine::EpisodeError::CancelledDiagnostic { .. }
+            | saya_harness::engine::EpisodeError::CancelPersistenceFailed { .. }
+            | saya_harness::engine::EpisodeError::Transition { .. }),
+        ) if matches!(
+            sink.state(),
+            saya_harness::engine::RunState::Completed
+                | saya_harness::engine::RunState::Failed
+                | saya_harness::engine::RunState::Cancelled
+                | saya_harness::engine::RunState::Paused
+        ) =>
+        {
+            exit::settle_diagnostic(
+                Settled {
+                    state: sink.state(),
+                    code: exit::failure_code_of(&error),
+                },
+                &error,
+                &run_id,
+                format,
+            )
+        }
         Err(error)
             if matches!(
                 sink.state(),

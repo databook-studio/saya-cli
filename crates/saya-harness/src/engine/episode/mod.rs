@@ -246,10 +246,23 @@ impl<'a> EpisodeDriver<'a> {
     ) -> Result<(), EpisodeError> {
         match reason {
             CancellationReason::User => {
-                sink.record(TransitionEvent::Cancel)
-                    .await
-                    .map_err(|source| EpisodeError::Transition { source })?;
-                Err(EpisodeError::Cancelled { step })
+                let diagnostic = sink.take_diagnostic();
+                match sink.record(TransitionEvent::Cancel).await {
+                    Ok(_) => match diagnostic {
+                        Some(diagnostic) => {
+                            Err(EpisodeError::CancelledDiagnostic { step, diagnostic })
+                        }
+                        None => Err(EpisodeError::Cancelled { step }),
+                    },
+                    Err(source) => match diagnostic {
+                        Some(diagnostic) => Err(EpisodeError::CancelPersistenceFailed {
+                            step,
+                            diagnostic,
+                            transition: std::sync::Arc::new(source),
+                        }),
+                        None => Err(EpisodeError::Transition { source }),
+                    },
+                }
             }
             CancellationReason::Budget(dimension) => {
                 let reason = if dimension == BudgetDimension::ElapsedTime {

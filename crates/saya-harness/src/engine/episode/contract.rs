@@ -35,6 +35,26 @@ pub enum EpisodeError {
     #[error("run cancelled during step {step}")]
     Cancelled { step: usize },
 
+    /// The user cancellation was recorded, and an independent sink diagnostic
+    /// was retained while the active source settled.
+    #[error("run cancelled during step {step}; diagnostic: {diagnostic}")]
+    CancelledDiagnostic {
+        step: usize,
+        diagnostic: Arc<EngineSinkError>,
+    },
+
+    /// A retained sink diagnostic preceded a failed cancellation transition.
+    /// The transition may have reached the journal before its store mirror
+    /// failed; callers must consult the authoritative state and surface both.
+    #[error(
+        "run cancellation persistence failed during step {step}; original diagnostic: {diagnostic}; transition: {transition}"
+    )]
+    CancelPersistenceFailed {
+        step: usize,
+        diagnostic: Arc<EngineSinkError>,
+        transition: Arc<EngineSinkError>,
+    },
+
     /// A budget stopped the run after the active episode had settled.
     #[error("run paused during step {step}: {reason:?}")]
     BudgetStopped { step: usize, reason: PauseReason },

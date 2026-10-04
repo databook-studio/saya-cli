@@ -181,7 +181,7 @@ pub(crate) async fn start_for_panel(
         super::cancel::CancelOutcome::Recorded => Ok(130),
         super::cancel::CancelOutcome::AlreadyFinished(
             saya_harness::engine::RunState::Cancelled,
-        ) => Ok(130),
+        ) => result,
         super::cancel::CancelOutcome::AlreadyFinished(saya_harness::engine::RunState::Paused) => {
             result
         }

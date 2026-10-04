@@ -259,6 +259,29 @@ async fn continue_run(
                     format,
                 );
             }
+            if matches!(
+                &error,
+                saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::CancelledDiagnostic { .. }
+                } | saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::CancelPersistenceFailed { .. }
+                } | saya_harness::engine::ResumeError::Episode {
+                    source: saya_harness::engine::EpisodeError::Transition { .. }
+                }
+            ) && matches!(
+                tail_state,
+                RunState::Completed | RunState::Failed | RunState::Cancelled | RunState::Paused
+            ) {
+                return super::exit::settle_diagnostic(
+                    Settled {
+                        state: tail_state,
+                        code,
+                    },
+                    &error,
+                    &run_id,
+                    format,
+                );
+            }
             match tail_state {
                 RunState::Completed | RunState::Failed | RunState::Cancelled | RunState::Paused => {
                     settle(

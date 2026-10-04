@@ -340,6 +340,7 @@ struct ReceiptThenTool {
     journal_path: PathBuf,
     kept_journal: PathBuf,
     calls: AtomicUsize,
+    cancel_first: Option<CancellationToken>,
 }
 
 #[async_trait]
@@ -351,6 +352,9 @@ impl ChatProvider for ReceiptThenTool {
     async fn complete(&self, _: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let first = self.calls.fetch_add(1, Ordering::SeqCst) == 0;
         if first {
+            if let Some(cancellation) = &self.cancel_first {
+                cancellation.cancel_with_reason(CancellationReason::User);
+            }
             fs::copy(&self.journal_path, &self.kept_journal).unwrap();
             fs::remove_file(&self.journal_path).unwrap();
             fs::create_dir(&self.journal_path).unwrap();
@@ -377,6 +381,7 @@ async fn accounting_append_failure_stops_before_the_next_tool_and_keeps_journal_
         journal_path,
         kept_journal: kept_journal.clone(),
         calls: AtomicUsize::new(0),
+        cancel_first: None,
     };
     let executor = Arc::new(RecordingTools::default());
     let tools = vec![toolset(
@@ -457,6 +462,58 @@ async fn accounting_append_failure_stops_before_the_next_tool_and_keeps_journal_
             .unwrap()
             .is_dir()
     );
+    let _ = fs::remove_dir_all(run.root);
+}
+
+#[tokio::test]
+async fn user_first_cancel_write_failure_keeps_nonterminal_state() {
+    let run = approved_run("user-accounting-journal-failure").await;
+    let journal_path = run.run_dir.join("events.ndjson");
+    let kept_journal = run.run_dir.join("events-before-failure.ndjson");
+    let cancellation = CancellationToken::default();
+    let provider = ReceiptThenTool {
+        journal_path,
+        kept_journal: kept_journal.clone(),
+        calls: AtomicUsize::new(0),
+        cancel_first: Some(cancellation.clone()),
+    };
+    let executor = Arc::new(RecordingTools::default());
+    let tools = vec![toolset(
+        executor.clone(),
+        vec![def("probe", LocalStateEffect::None)],
+    )];
+    let driver = deadline_driver(&run, &provider, &tools, cancellation.clone());
+    let sink = deadline_sink(&run, cancellation.clone(), Duration::from_secs(2));
+    let plan = RunPlan::new(vec![step(
+        "user stop before usage append failure",
+        Capabilities::default(),
+    )])
+    .unwrap();
+
+    let error = driver
+        .run_step(&sink, &plan, 0, &run.workspace())
+        .await
+        .unwrap_err();
+
+    assert_eq!(cancellation.reason(), Some(CancellationReason::User));
+    assert!(executor.calls().is_empty());
+    assert!(matches!(
+        &error,
+        EpisodeError::Transition {
+            source: saya_harness::engine::EngineSinkError::Journal { .. }
+        }
+    ));
+    assert_eq!(sink.state(), RunState::Executing);
+    let retained = fs::read_to_string(kept_journal).unwrap();
+    let retained_events = retained
+        .lines()
+        .map(|line| serde_json::from_str::<RunEvent>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert!(retained_events.contains(&RunEvent::StepStarted { step: 0 }));
+    assert!(!retained_events.iter().any(|event| matches!(
+        event,
+        RunEvent::Usage { .. } | RunEvent::Cancelled | RunEvent::Completed
+    )));
     let _ = fs::remove_dir_all(run.root);
 }
 
@@ -585,6 +642,133 @@ impl RunStore for HoldFinalFailedMirror {
     async fn list_steps(&self, id: &RunId) -> Result<Vec<RunStepRecord>, StoreError> {
         RunStore::list_steps(self.inner.as_ref(), id).await
     }
+}
+
+struct FailCompleteMirror {
+    inner: Arc<SqliteStateStore>,
+}
+
+#[async_trait]
+impl RunStore for FailCompleteMirror {
+    async fn create_run(&self, run: NewRun) -> Result<RunRecord, StoreError> {
+        RunStore::create_run(self.inner.as_ref(), run).await
+    }
+
+    async fn get_run(&self, id: &RunId) -> Result<Option<RunRecord>, StoreError> {
+        RunStore::get_run(self.inner.as_ref(), id).await
+    }
+
+    async fn list_runs(&self) -> Result<Vec<RunSummary>, StoreError> {
+        RunStore::list_runs(self.inner.as_ref()).await
+    }
+
+    async fn set_run_status(
+        &self,
+        id: &RunId,
+        status: RunStatus,
+        failure_code: Option<saya_types::RunFailureCode>,
+    ) -> Result<(), StoreError> {
+        if status == RunStatus::Completed {
+            return Err(StoreError::Unavailable);
+        }
+        RunStore::set_run_status(self.inner.as_ref(), id, status, failure_code).await
+    }
+
+    async fn set_run_usage(&self, id: &RunId, usage: RunUsage) -> Result<(), StoreError> {
+        RunStore::set_run_usage(self.inner.as_ref(), id, usage).await
+    }
+
+    async fn upsert_step(
+        &self,
+        id: &RunId,
+        step: usize,
+        status: RunStepStatus,
+    ) -> Result<(), StoreError> {
+        RunStore::upsert_step(self.inner.as_ref(), id, step, status).await
+    }
+
+    async fn set_step_usage(
+        &self,
+        id: &RunId,
+        step: usize,
+        usage: RunUsage,
+    ) -> Result<(), StoreError> {
+        RunStore::set_step_usage(self.inner.as_ref(), id, step, usage).await
+    }
+
+    async fn list_steps(&self, id: &RunId) -> Result<Vec<RunStepRecord>, StoreError> {
+        RunStore::list_steps(self.inner.as_ref(), id).await
+    }
+}
+
+#[tokio::test]
+async fn complete_journal_remains_authority_when_store_mirror_fails() {
+    let run = approved_run("complete-mirror-failure").await;
+    let store: Arc<dyn RunStore> = Arc::new(FailCompleteMirror {
+        inner: run.store.clone(),
+    });
+    let provider = ScriptProvider::new(vec![Turn::Answer("done")]);
+    let tools = vec![toolset(Arc::new(RecordingTools::default()), Vec::new())];
+    let cancellation = CancellationToken::default();
+    let driver = EpisodeDriver::new(
+        EpisodeCollaborators {
+            provider: &provider,
+            approval: &AllowApproval,
+            toolsets: &tools,
+            cancellation: cancellation.clone(),
+        },
+        EpisodeRun {
+            run_id: run.run_id.clone(),
+            store: store.clone(),
+            journal: Journal::open(&run.run_dir),
+        },
+        EpisodeRequest {
+            model: "mock-model".into(),
+            profile_names: Vec::new(),
+            memory_allows_candidate_writes: false,
+        },
+        bounds(),
+    );
+    let sink = EngineEventSink::new(
+        run.run_id.clone(),
+        RunState::Approved,
+        Journal::open(&run.run_dir),
+        store,
+        SinkBudgets {
+            wall_clock: None,
+            token_ceiling: None,
+            download_budget: None,
+            carried_usage: UsageTotals::default(),
+        },
+        std::time::Instant::now,
+    )
+    .with_cancellation(cancellation);
+    let plan = RunPlan::new(vec![step(
+        "complete with mirror fault",
+        Capabilities::default(),
+    )])
+    .unwrap();
+
+    let error = driver
+        .run_step(&sink, &plan, 0, &run.workspace())
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        EpisodeError::Transition {
+            source: saya_harness::engine::EngineSinkError::Store {
+                source: StoreError::Unavailable
+            }
+        }
+    ));
+    assert_eq!(sink.state(), RunState::Completed);
+    assert_eq!(
+        Journal::open(&run.run_dir).read().unwrap().last(),
+        Some(&RunEvent::Completed),
+        "the appended terminal journal event remains authoritative"
+    );
+    let _ = fs::remove_dir_all(run.root);
 }
 
 #[tokio::test]
