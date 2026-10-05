@@ -207,7 +207,17 @@ async fn run_prompt_after_question_start(
         prior_tool_outcomes,
         compaction_summary,
     } = request;
-    let inputs = match prepare_turn(runtime, &overrides, can_prompt).await {
+    let inputs = match prepare_turn(
+        runtime,
+        &overrides,
+        can_prompt,
+        question_scope
+            .as_ref()
+            .and_then(|scope| scope.metrics())
+            .as_deref(),
+    )
+    .await
+    {
         Ok(inputs) => inputs,
         Err(error) => {
             if let Some(scope) = question_scope.as_ref() {
