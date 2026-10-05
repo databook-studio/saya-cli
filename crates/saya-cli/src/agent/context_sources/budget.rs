@@ -2,18 +2,19 @@
 //! bytes. The preflight (`fit_request`) evicts history only — it never trims
 //! block bodies — so the projection fits its own blocks here, with the
 //! accounting the request build enforces: [`turn_bytes`], the exact
-//! post-escape, post-wrapper size of the user turn. Later sources are fitted
-//! first, mirroring the loader's personal-then-project order: the earlier
-//! source is the more stable prefix, so the later one yields first.
+//! post-escape, post-wrapper size of the user turn — and the aggregate
+//! post-redaction text cap. Later sources yield first, mirroring the loader's
+//! personal-then-project order: the earlier source is the more stable prefix.
 
 use super::{
     InstructionProjection, MIN_BLOCK_BODY_BYTES, OmittedReason, OmittedSource, SourceReceipt,
     UNTRUSTED_PREFIX,
 };
 use saya_agent::{ContextBlock, turn_bytes};
+use saya_config::ResolvedInstructions;
 use saya_harness::instructions::{InstructionOrigin, SkippedSource};
 
-/// The user-turn labels for the two instruction origins.
+/// The user-turn label for an instruction origin.
 fn label_of(origin: InstructionOrigin) -> &'static str {
     match origin {
         InstructionOrigin::Personal => "personal-instructions",
@@ -21,8 +22,7 @@ fn label_of(origin: InstructionOrigin) -> &'static str {
     }
 }
 
-/// One admitted source prepared for the request fit: the redacted body text
-/// plus the whole-file identity the receipt carries.
+/// One admitted source prepared for the request fit.
 pub(super) struct Admitted {
     pub(super) origin: InstructionOrigin,
     pub(super) file_name: &'static str,
@@ -33,14 +33,12 @@ pub(super) struct Admitted {
     pub(super) redactions: usize,
 }
 
-/// One block body: the fixed untrusted framing line, a blank line, then the
-/// redacted source text truncated to `text_bytes`.
+/// One block body: framing line, blank line, redacted text cut to `text_bytes`.
 fn body(text: &str, text_bytes: usize) -> String {
     format!("{UNTRUSTED_PREFIX}\n\n{}", &text[..text_bytes])
 }
 
-/// The exact post-escape byte cost these blocks add to the user turn,
-/// measured with [`turn_bytes`] against an empty-turn baseline.
+/// The exact post-escape byte cost these blocks add to the user turn.
 fn blocks_cost(blocks: &[ContextBlock]) -> usize {
     turn_bytes(None, blocks, "").saturating_sub(turn_bytes(None, &[], ""))
 }
@@ -54,12 +52,12 @@ fn floor_boundary(text: &str, upper: usize) -> usize {
     end
 }
 
-/// Fits the admitted sources into `remaining` request bytes, later source
-/// first. Earlier sources are measured at full length with the worst-case
-/// truncation wrapper, so a block that fits its search fits the final
-/// request; drops record a [`OmittedReason::NoBudget`] omission.
+/// Fits the admitted sources into `remaining` request bytes and the
+/// aggregate post-redaction text cap, later source first; earlier sources
+/// are measured at full length with the worst-case truncation wrapper.
 pub(super) fn fit_to_request_bytes(
     admitted: Vec<Admitted>,
+    settings: &ResolvedInstructions,
     remaining: usize,
     skipped: Vec<SkippedSource>,
 ) -> InstructionProjection {
@@ -67,6 +65,10 @@ pub(super) fn fit_to_request_bytes(
     let mut omitted_rev: Vec<OmittedSource> = Vec::new();
     for index in (0..admitted.len()).rev() {
         let source = &admitted[index];
+        let mut pinned_text = suffix.iter().map(|(_, r)| r.included_bytes).sum::<usize>();
+        for earlier in &admitted[..index] {
+            pinned_text += earlier.text.len();
+        }
         let fits = |text_bytes: usize| -> bool {
             let mut blocks: Vec<ContextBlock> = admitted[..index]
                 .iter()
@@ -83,6 +85,7 @@ pub(super) fn fit_to_request_bytes(
             });
             blocks.extend(suffix.iter().map(|(block, _)| block.clone()));
             blocks_cost(&blocks) <= remaining
+                && pinned_text + text_bytes <= settings.total_max_bytes
         };
         let full = source.text.len();
         let Some(kept) = keep_bytes(source, full, fits) else {
@@ -123,9 +126,7 @@ pub(super) fn fit_to_request_bytes(
     }
 }
 
-/// The byte length of the source text the block keeps, or `None` when even
-/// the framing line does not fit or the fit would leave a stub below
-/// [`MIN_BLOCK_BODY_BYTES`].
+/// The kept source-text length, or `None` when the fit leaves a stub.
 fn keep_bytes(source: &Admitted, full: usize, fits: impl Fn(usize) -> bool) -> Option<usize> {
     if fits(full) {
         return Some(full);

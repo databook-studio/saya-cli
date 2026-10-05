@@ -351,6 +351,42 @@ fn redaction_scrubs_secret_shaped_text_and_counts_it() {
 }
 
 #[test]
+fn redaction_that_lengthens_the_text_never_trips_the_invariants() {
+    let root = stamp("redact-growth");
+    let personal = root.join("personal");
+    let project = root.join("project");
+    let contents = "API_KEY=a\npassword=b\n";
+    write_file(&project.join("AGENTS.md"), contents);
+
+    // The real redactor must LENGTHEN this text: the invariant defect only
+    // bites when the redacted body outgrows the whole file it came from.
+    let (redacted, count) = saya_types::redact_counted(contents);
+    assert!(count >= 2, "both secrets are scrubbed: {redacted:?}");
+    assert!(
+        redacted.len() > contents.len(),
+        "the fixture must grow under redaction: {} -> {} bytes",
+        contents.len(),
+        redacted.len()
+    );
+
+    let mut settings = settings();
+    settings.personal_enabled = false;
+    let projection = project_instructions(&settings, Some(&project), &personal, 48 * 1024);
+
+    assert_eq!(projection.blocks.len(), 1);
+    let body = &projection.blocks[0].body;
+    assert!(body.contains("[redacted]"), "secrets are scrubbed: {body}");
+    assert!(
+        !body.contains("=a") && !body.contains("=b"),
+        "no raw secret values: {body}"
+    );
+    let receipt = &projection.sources[0];
+    assert!(receipt.redactions >= 1, "the replacements are counted");
+    assert_eq!(receipt.file_size, contents.len() as u64);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn hostile_sentinel_renders_exactly_one_real_close_delimiter() {
     let root = stamp("hostile");
     let personal = root.join("personal");

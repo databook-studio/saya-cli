@@ -100,7 +100,8 @@ pub(crate) fn project_instructions(
             }
         })
         .collect();
-    let projection = fit_to_request_bytes(admitted, remaining_request_bytes, loaded.skipped);
+    let projection =
+        fit_to_request_bytes(admitted, settings, remaining_request_bytes, loaded.skipped);
     assert_projection_invariants(&projection, settings);
     projection
 }
@@ -122,14 +123,13 @@ fn assert_projection_invariants(
     debug_assert!(
         sources.iter().map(|s| s.included_bytes).sum::<usize>() <= settings.total_max_bytes
             && sources.iter().all(|s| {
-                s.included_bytes <= s.file_size as usize
-                    && s.redactions <= s.file_size as usize
-                    && s.sha256.len() == 64
-                    && (!s.truncated || (s.file_size as usize) > s.included_bytes)
+                s.sha256.len() == 64
+                    && (!s.truncated || s.file_size > 0)
+                    && (s.redactions == 0 || s.included_bytes >= 10)
                     && named(s.origin, s.file_name)
             })
             && sources.iter().map(is_project).is_sorted(),
-        "receipts bounded by the aggregate cap, whole-file, in loader order"
+        "aggregate cap bounds receipts; digest and sound size reads hold, in loader order"
     );
     debug_assert!(
         sources.len() + skipped.len() + omitted.len() <= 2
