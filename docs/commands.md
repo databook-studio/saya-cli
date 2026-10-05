@@ -432,6 +432,33 @@ picker never writes to the store.
 command: the fields you pass replace the stored ones and the next run needs
 `--revalidate`.
 
+## Saved sessions: `saya sessions`
+
+`saya sessions list` prints one line per stored session, newest first: the
+id, its size in KiB, a status (`ok`, or `near-limit` at the store's warning
+band), and its age. Sessions whose deletion is pending — a previous `delete`
+could not remove every path — are listed separately as
+`pending deletion: <id>` instead of reappearing as rows, and the last line
+names the storage root. A pending deletion shown by `saya sessions list`
+is finished by running `saya sessions delete <id>` again.
+
+`saya sessions delete <id>` deletes exactly one saved session — its record,
+its state directory, and its staged temps and quarantined copies — through
+the same lifecycle owner the interactive session holds its lock with. It
+never prompts, so scripted runs behave identically. A session another
+process holds live is refused with the holder's pid and nothing is deleted;
+deleting the id of the session you are running is refused the same way.
+When some paths could not be removed, the command says so (`N paths could
+not be removed; run the same command again to retry`) and a repeat run
+converges. What the command deliberately does not delete: **"Project
+preferences and typed database knowledge are stored separately and were not
+deleted."** Deleting an id that has no saved session says so and creates
+nothing.
+
+Exit codes follow the global scheme: `0` on success; `2` for every refusal
+or failure — unknown or invalid id, live session, the current session, an
+incomplete cleanup, or a store error.
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the

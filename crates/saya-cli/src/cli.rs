@@ -224,6 +224,13 @@ pub enum Command {
         #[command(subcommand)]
         command: ConnectionCommand,
     },
+    /// Manage saved interactive sessions: list the stored sessions with
+    /// their sizes, or delete one explicitly. Never automatic, never
+    /// prompted.
+    Sessions {
+        #[command(subcommand)]
+        command: SessionsCommand,
+    },
     /// Ask one natural-language question about the database; the agent writes
     /// and runs the bounded read-only SQL itself. For raw SQL, use `saya query`.
     Ask {
@@ -342,6 +349,18 @@ pub enum McpCommand {
         /// the server starts empty.
         #[arg(long = "profile", value_name = "P")]
         profile: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum SessionsCommand {
+    /// List saved sessions with their sizes.
+    List,
+    /// Delete one saved session by id (never prompts; refuses a live session).
+    Delete {
+        /// The id of the saved session to delete.
+        #[arg(value_name = "SESSION_ID")]
+        id: String,
     },
 }
 
