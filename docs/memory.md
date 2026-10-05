@@ -146,8 +146,12 @@ session. Recall and `/remember` keep working regardless — only the automatic p
 stops.
 
 If you want to see the boundary itself, `--verbose` (or `SAYA_EXTRACTION_TRACE=1`) reports the gate
-decision, how many objects the turn involved, the outcome, and how many facts were recorded. It is
-off by default and never prints the model's raw response, which can carry your data.
+decision, how many objects the turn involved, the outcome, and how many facts were recorded. The
+same flag also prints the full diagnostics section — per-phase timings and counters, the learning
+gate among them — for `ask`, the REPL, and the TUI. In `ask` it lands on stderr after the answer;
+in an interactive session it prints after the loop ends, once the terminal is restored. It is
+stderr only: nothing is persisted and the exit code is unchanged. Off by default, it never prints
+the model's raw response, which can carry your data.
 
 ## Shared context: export and import
 

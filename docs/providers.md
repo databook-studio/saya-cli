@@ -46,3 +46,10 @@ gated by the approval policy before they run.
 Provider output is streamed as stable text, JSON, or NDJSON events. A partially
 consumed HTTP response is not retried because replaying it cannot be proved
 action-free.
+
+A reply cut at the output cap is typed, not silent: every provider maps its own
+limit signal (`max_tokens`, `length`, `MAX_TOKENS`) to
+`ProviderError::OutputTruncated` carrying the partial output. The turn ends
+there rather than retrying, and any usage the provider reported ahead of the
+cut is still charged. Each truncation is counted and surfaces in the
+`--verbose` metrics section.
