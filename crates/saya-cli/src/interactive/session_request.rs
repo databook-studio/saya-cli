@@ -5,6 +5,7 @@ use crate::{
         runtime::{AgentRuntimeError, PromptOverrides},
     },
     config::runtime::RuntimeConfig,
+    metrics_sink::MetricsSink,
     render::RenderFormat,
     stream_render::TerminalSink,
 };
@@ -62,7 +63,8 @@ pub(crate) async fn run(
     scope: QuestionScope,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = scope.cancellation();
-    let sink = TerminalSink::new(format);
+    let terminal = TerminalSink::new(format);
+    let sink = MetricsSink::new(&terminal, scope.metrics());
     // The decider is the terminal ask over the session's policy: the mode
     // resolves there, and a session grant recorded by an answer lands in the
     // one store every turn shares. It holds the session universe's primary
@@ -108,7 +110,7 @@ pub(crate) async fn run(
     tokio::select! {
         result = &mut work => match result {
             Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
-            Err(error) => Ok(PromptResult::Failed(error, sink.take_answering_usage())),
+            Err(error) => Ok(PromptResult::Failed(error, terminal.take_answering_usage())),
         },
         _ = tokio::signal::ctrl_c() => {
             cancellation.cancel();
@@ -117,7 +119,7 @@ pub(crate) async fn run(
                 Err(_) => None,
             };
             Ok(PromptResult::Cancelled {
-                answering_usage: sink.take_answering_usage(),
+                answering_usage: terminal.take_answering_usage(),
                 learning_usage,
             })
         }

@@ -5,6 +5,7 @@ use crate::{
     },
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
+    metrics_sink::MetricsSink,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
@@ -43,6 +44,7 @@ pub(super) async fn ask(
     let cancellation = CancellationToken::new();
     let scope = QuestionScope::new(runtime, cancellation.clone());
     let sink = TerminalSink::new(format);
+    let sink = MetricsSink::new(&sink, scope.metrics());
     // The one-shot `ask` path composes no session universe at all — writes
     // stay hidden, reads deny — so both capabilities ride the same
     // live-terminal fact: stdin readability and approval obtainability are
