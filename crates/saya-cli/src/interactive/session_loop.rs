@@ -879,6 +879,25 @@ fn handle_line_verbatim(
         block_on(store.save(state.redacted()))?;
         return Ok(TurnOutcome::Completed);
     }
+    if let SessionAction::Context = action {
+        // `/context` shows the instruction sources the next request would
+        // load — names, sizes, short digests, truncation and redaction
+        // flags, and skip/omit reasons — through the one shared renderer
+        // the TUI prints too. Never the file text. The view needs the
+        // runtime's settings and the session's workspace root, so it is
+        // intercepted here like /grants.
+        super::session_emit::emit_action(
+            SessionAction::Message(super::session_context::context_view(
+                runtime,
+                session.root(),
+            )),
+            format,
+            state,
+            store,
+        )?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(TurnOutcome::Completed);
+    }
     if let SessionAction::Run(tail) = action {
         // `/run --seed-grants <tail…>` seeds the child's `--allow` from this
         // session's grants on request: only tokens the run's parser accepts

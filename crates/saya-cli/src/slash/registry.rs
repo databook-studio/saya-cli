@@ -39,6 +39,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "run",
     "runs",
     "allow",
+    "context",
     "grants",
     "doctor",
     "usage",

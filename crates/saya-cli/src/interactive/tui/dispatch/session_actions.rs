@@ -36,6 +36,7 @@ pub(super) fn apply_session_action(
         Some(
             SessionAction::History
                 | SessionAction::Doctor
+                | SessionAction::Context
                 | SessionAction::Resume(_)
                 | SessionAction::Sql(_)
                 | SessionAction::Contracts(_)
@@ -51,6 +52,16 @@ pub(super) fn apply_session_action(
         SessionAction::History => list_sessions(transcript, store),
         SessionAction::Doctor => {
             transcript.push(BlockKind::System, crate::config::doctor::summary(runtime))
+        }
+        SessionAction::Context => {
+            // `/context` shows the instruction sources the next request
+            // would load through the one shared renderer the headless loop
+            // prints too — names, sizes, short digests, reasons; never the
+            // file text.
+            transcript.push(
+                BlockKind::System,
+                crate::interactive::session_context::context_view(runtime, session.root()),
+            );
         }
         SessionAction::Resume(id) => resume(transcript, state, runtime, store, session, &id),
         SessionAction::Sql(sql) => {

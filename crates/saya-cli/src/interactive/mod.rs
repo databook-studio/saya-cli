@@ -17,6 +17,7 @@ pub(crate) mod session_compact_call;
 #[cfg(test)]
 #[path = "session_compact_tests.rs"]
 mod session_compact_tests;
+pub(crate) mod session_context;
 #[cfg(test)]
 #[path = "session_narrative_feed_tests.rs"]
 mod session_narrative_feed_tests;
