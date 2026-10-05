@@ -33,13 +33,13 @@ async fn build_registry_primary_and_secondary_succeed() {
     let secondaries = vec![("sec_db".to_string(), secondary_prof)];
 
     let result = build_registry(
-        &resolver,
-        cache_scope,
+        (&resolver, cache_scope),
         30,
         false,
         "pri_db",
         &primary_prof,
         &secondaries,
+        None,
     )
     .await;
 
@@ -74,13 +74,13 @@ async fn build_registry_soft_skips_failed_secondary() {
     let secondaries = vec![("bad_sec".to_string(), bad_secondary_prof)];
 
     let result = build_registry(
-        &resolver,
-        cache_scope,
+        (&resolver, cache_scope),
         30,
         false,
         "pri_db",
         &primary_prof,
         &secondaries,
+        None,
     )
     .await;
 
@@ -121,13 +121,13 @@ async fn build_registry_multiple_good_secondaries_connect() {
     ];
 
     let result = build_registry(
-        &resolver,
-        cache_scope,
+        (&resolver, cache_scope),
         30,
         false,
         "pri_db",
         &primary_prof,
         &secondaries,
+        None,
     )
     .await;
 
@@ -171,13 +171,13 @@ async fn build_registry_bad_secondary_does_not_abort_good_secondaries() {
     ];
 
     let result = build_registry(
-        &resolver,
-        cache_scope,
+        (&resolver, cache_scope),
         30,
         false,
         "pri_db",
         &primary_prof,
         &secondaries,
+        None,
     )
     .await;
 
