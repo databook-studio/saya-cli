@@ -29,7 +29,7 @@ async fn fresh_database_reaches_latest_version() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     // Step 6 dropped the legacy `contract_*` tables; a fresh database has none.
     assert_eq!(contract_tables(&db).await.len(), 0);
     assert!(
@@ -59,7 +59,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     // Step 6 drops the legacy tables even on a v1 upgrade path.
     assert_eq!(contract_tables(&db).await.len(), 0);
     let pool = read_pool(&db).await;
@@ -104,7 +104,7 @@ async fn upgrade_from_version_two_drops_contract_tables_keeps_survivors() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     assert!(
         table_exists(&db, "schema_cache").await,
         "schema_cache dropped"
@@ -135,7 +135,7 @@ async fn upgrade_from_version_four_adds_knowledge_items_and_drops_contract_table
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     assert!(
         table_exists(&db, "knowledge_items").await,
         "upgrade did not add knowledge_items"
@@ -180,7 +180,7 @@ async fn upgrade_from_version_six_adds_run_tables() {
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     assert!(table_exists(&db, "runs").await, "upgrade did not add runs");
     assert!(
         table_exists(&db, "run_steps").await,
@@ -199,15 +199,15 @@ async fn upgrade_from_version_six_adds_run_tables() {
 }
 
 /// A version ahead of the highest step the migration knows about fails closed.
-/// Step 8 makes `user_version = 8` supported, so the future-version sentinel is
-/// now 8 — anything the running build cannot migrate *to* must be refused, not
+/// Step 9 makes `user_version = 9` supported, so the future-version sentinel is
+/// now 10 — anything the running build cannot migrate *to* must be refused, not
 /// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 9")
+    sqlx::query("PRAGMA user_version = 10")
         .execute(&pool)
         .await
         .unwrap();
@@ -228,11 +228,11 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 8);
+    assert_eq!(user_version(&db).await, 9);
     let _ = fs::remove_dir_all(root);
 }
 

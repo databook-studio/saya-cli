@@ -22,6 +22,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         1 => {
@@ -32,6 +33,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         2 => {
@@ -41,6 +43,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         3 => {
@@ -49,6 +52,7 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         4 => {
@@ -56,24 +60,32 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         5 => {
             step6(&mut connection).await?;
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         6 => {
             step7(&mut connection).await?;
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
         7 => {
             step8(&mut connection).await?;
+            step9(&mut connection).await?;
             true
         }
-        8 => false,
+        8 => {
+            step9(&mut connection).await?;
+            true
+        }
+        9 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);
@@ -315,6 +327,32 @@ async fn step8(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError
         .map_err(|_| StoreError::Unavailable)?;
     }
     sqlx::query("PRAGMA user_version = 8")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}
+
+/// Step 9 (M02): the `project_preferences` table — explicit, user-confirmed
+/// project guidance scoped to one canonical worktree, in a table of its own.
+/// It is not the typed `user_preferences` table (a setting, never prose) and
+/// not typed database knowledge (`knowledge_items` is untouched); a preference
+/// row carries no authority. `record_json` holds the whole validated record
+/// and `text_bytes` the byte count the aggregate recall cap sums; the index
+/// serves a worktree's list ordered by creation.
+///
+/// A new step, not an amendment: `user_version = 8` is a real state a
+/// developer's database may hold, so the ladder arms `8 => step9` and every
+/// earlier arm runs it too. An older binary opening this file is refused
+/// (`VersionUnsupported`) — a downgrade must restore from a pre-upgrade
+/// backup, never rewrite the rows.
+async fn step9(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE IF NOT EXISTS project_preferences(id TEXT PRIMARY KEY, worktree TEXT NOT NULL, text_bytes INTEGER NOT NULL, record_json TEXT NOT NULL, created_unix_ms INTEGER NOT NULL, updated_unix_ms INTEGER NOT NULL)").execute(&mut **connection).await.map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS project_preferences_worktree ON project_preferences(worktree, created_unix_ms, id)")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 9")
         .execute(&mut **connection)
         .await
         .map_err(|_| StoreError::Unavailable)?;
