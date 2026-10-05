@@ -5,6 +5,7 @@ use super::{
     session_resume::{SessionDefaults, block_on, load_session},
     session_runtime::SessionRuntime,
 };
+use crate::budget_wording::{budget_dimension, budget_partial_message};
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
     render::TerminalEvent,
@@ -668,14 +669,20 @@ fn handle_line_verbatim(
                         state.usage.answering.record_call(&usage);
                     }
                     state.usage.record_learning(learning_usage);
-                    SessionAction::Cancelled
+                    match budget_dimension(completed.cancellation().reason()) {
+                        Some(dimension) => SessionAction::Error(budget_partial_message(dimension)),
+                        None => SessionAction::Cancelled,
+                    }
                 }
                 Ok(PromptResult::Failed(error, usage)) => {
                     session.abandon_question();
                     if let Some(usage) = usage {
                         state.usage.answering.record_call(&usage);
                     }
-                    SessionAction::Error(error.to_string())
+                    match budget_dimension(completed.cancellation().reason()) {
+                        Some(dimension) => SessionAction::Error(budget_partial_message(dimension)),
+                        None => SessionAction::Error(error.to_string()),
+                    }
                 }
                 Err(error) => {
                     session.abandon_question();
