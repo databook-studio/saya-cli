@@ -8,9 +8,12 @@
 
 use saya_agent::ToolError;
 use saya_harness::HarnessError;
+use saya_types::EditSource;
 
 use super::DatabaseTools;
+use super::checkpoint::{Capture, classify_write};
 use super::redaction_guard;
+use super::workspace_edit::WORKSPACE_EDIT_MAX_FILE_BYTES;
 use super::workspace_edit_anchor::hex_digest;
 
 /// The bound on a workspace write's `content`, matched to
@@ -27,19 +30,19 @@ pub(crate) const WORKSPACE_WRITE_MAX_BYTES: usize = 64 * 1024;
 /// The refusal when a no-digest write names an existing entry. It tells the
 /// model how to replace, and never carries the file's current digest or
 /// content — the model has not been shown the file's state yet.
-const FILE_EXISTS_REQUIRES_DIGEST: &str = "file already exists; replacing it requires \
+pub(in crate::agent::tools) const FILE_EXISTS_REQUIRES_DIGEST: &str = "file already exists; replacing it requires \
     expected_digest from a fresh workspace_read (or the previous write/edit result); \
     the file was not changed";
 
 /// The refusal when the guarded replace's fresh re-read hashes to a digest
 /// the model did not observe: the file moved since it was seen. No digests
 /// in the text — the model re-reads with `workspace_read` and retries.
-const FILE_CHANGED_SINCE_OBSERVED: &str = "the file changed since it was observed; \
+pub(in crate::agent::tools) const FILE_CHANGED_SINCE_OBSERVED: &str = "the file changed since it was observed; \
     re-read it with workspace_read and retry; the file was not changed";
 
 /// The refusal when a digest-carrying write names an absent path: a guarded
 /// replace is not a create — omitting `expected_digest` is the create form.
-const MISSING_FILE_NOT_A_REPLACE: &str =
+pub(in crate::agent::tools) const MISSING_FILE_NOT_A_REPLACE: &str =
     "the file does not exist; omit expected_digest to create it";
 
 impl DatabaseTools {
@@ -95,24 +98,79 @@ impl DatabaseTools {
             content.as_bytes(),
             ToolError::WorkspaceWrite,
         )?;
-        match expected_digest {
+        // Checkpoint capture around the commit: the recorder gates each branch
+        // below — a capture refusal prevents the write, a refused commit
+        // settles the record (clean refusal drops it, an ambiguous one
+        // stays `Uncertain`), and a landed commit is finalized with the
+        // digest of the bytes the call carried.
+        let recorder = self
+            .checkpoints
+            .as_ref()
+            .filter(|recorder| recorder.active());
+        let label = match expected_digest {
             // Create-if-absent: an existing entry refuses whole and is left
             // byte-identical; replacing goes through the guarded branch.
             None => {
-                workspace
+                let capture =
+                    recorder.map(|recorder| recorder.begin(rel, EditSource::WorkspaceWrite, None));
+                if let Some(text) = capture.as_ref().and_then(Capture::refused_text) {
+                    return Err(ToolError::WorkspaceWrite(text.to_owned()));
+                }
+                if let Err(error) = workspace
                     .create_new(rel, content.as_bytes())
                     .map_err(|error| match error {
                         HarnessError::AlreadyExists { .. } => {
                             ToolError::WorkspaceWrite(FILE_EXISTS_REQUIRES_DIGEST.to_owned())
                         }
                         other => ToolError::WorkspaceWrite(other.to_string()),
-                    })?;
+                    })
+                {
+                    if let (Some(recorder), Some(Capture::Recorded(pending))) =
+                        (recorder, capture.as_ref())
+                    {
+                        recorder.settle(pending, classify_write(&error));
+                    }
+                    return Err(error);
+                }
+                recorder.and_then(|recorder| {
+                    recorder.finish_label(
+                        capture.as_ref(),
+                        &hex_digest(content.as_bytes()),
+                        content.len() as u64,
+                    )
+                })
             }
             // Guarded replace: the file must exist and its fresh re-read
             // must still hash to the digest the model observed. A missing
             // file is not a create, and a changed file is never clobbered.
+            // With a recorder the file is read first, so the digest
+            // precondition is checked before any snapshot is prepared and
+            // the capture holds the exact before-image.
             Some(digest) => {
-                workspace
+                let capture = match recorder {
+                    None => None,
+                    Some(recorder) => {
+                        let file = workspace.read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES).map_err(
+                            |error| {
+                                if error.is_not_found() {
+                                    ToolError::WorkspaceWrite(MISSING_FILE_NOT_A_REPLACE.to_owned())
+                                } else {
+                                    ToolError::WorkspaceWrite(error.to_string())
+                                }
+                            },
+                        )?;
+                        if file.digest != digest {
+                            return Err(ToolError::WorkspaceWrite(
+                                FILE_CHANGED_SINCE_OBSERVED.to_owned(),
+                            ));
+                        }
+                        Some(recorder.begin(rel, EditSource::WorkspaceWrite, Some(&file.bytes)))
+                    }
+                };
+                if let Some(text) = capture.as_ref().and_then(Capture::refused_text) {
+                    return Err(ToolError::WorkspaceWrite(text.to_owned()));
+                }
+                if let Err(error) = workspace
                     .write_guarded(rel, &digest, content.as_bytes())
                     .map_err(|error| {
                         if error.is_not_found() {
@@ -125,17 +183,36 @@ impl DatabaseTools {
                                 other => ToolError::WorkspaceWrite(other.to_string()),
                             }
                         }
-                    })?;
+                    })
+                {
+                    if let (Some(recorder), Some(Capture::Recorded(pending))) =
+                        (recorder, capture.as_ref())
+                    {
+                        recorder.settle(pending, classify_write(&error));
+                    }
+                    return Err(error);
+                }
+                recorder.and_then(|recorder| {
+                    recorder.finish_label(
+                        capture.as_ref(),
+                        &hex_digest(content.as_bytes()),
+                        content.len() as u64,
+                    )
+                })
             }
-        }
+        };
         // The digest of what landed is the digest of the bytes the call
         // carried — the harness published exactly these bytes — so no second
         // read is needed; the model chains this digest into a later edit.
-        Ok(serde_json::json!({
+        let mut result = serde_json::json!({
             "path": rel,
             "bytes_written": content.len(),
             "size": content.len(),
             "digest": hex_digest(content.as_bytes()),
-        }))
+        });
+        if let Some(label) = label {
+            result["recovery"] = serde_json::Value::String(label);
+        }
+        Ok(result)
     }
 }

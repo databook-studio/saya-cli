@@ -98,5 +98,9 @@ mod workspace_edit_continuation_tests;
 mod workspace_edit_docs_tests;
 
 #[cfg(test)]
+#[path = "tools/workspace_checkpoint_tests.rs"]
+mod workspace_checkpoint_tests;
+
+#[cfg(test)]
 #[path = "tools/workspace_read_digest_tests.rs"]
 mod workspace_read_digest_tests;

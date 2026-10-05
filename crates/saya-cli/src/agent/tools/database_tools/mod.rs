@@ -10,6 +10,9 @@ use crate::local_metrics::LocalMetrics;
 
 mod capture;
 mod chart_tool;
+// `pub(super)` so the sibling checkpoint tests (registered under
+// `agent::tools`) can reach the recorder and its pure refusal mapping.
+pub(super) mod checkpoint;
 mod column_health;
 mod definitions;
 mod dispatch;
@@ -122,6 +125,11 @@ pub(crate) struct DatabaseTools {
     /// Default result cap for direct executor calls. Agent-loop calls receive
     /// their exact per-call share through `ToolExecutor::execute_with_result_cap`.
     pub(super) context_byte_budget: usize,
+    /// The session's checkpoint recorder for direct file-tool edits. `None`
+    /// — every current construction, until the session wiring attaches one
+    /// (next packet) — leaves behaviour identical: no capture, no cleanup,
+    /// no `recovery` field in any result.
+    pub(super) checkpoints: Option<checkpoint::CheckpointRecorder>,
 }
 
 impl DatabaseTools {
@@ -168,6 +176,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            checkpoints: None,
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
@@ -196,6 +205,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            checkpoints: None,
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
@@ -224,6 +234,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            checkpoints: None,
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
@@ -276,6 +287,19 @@ impl DatabaseTools {
         self
     }
 
+    /// Attaches the session's checkpoint recorder for direct file-tool
+    /// edits. Test-only until the session wiring packet builds the recorder
+    /// and owns the enable flag; every production construction leaves the
+    /// field `None`, so behaviour is identical without it.
+    #[cfg(test)]
+    pub(in crate::agent::tools) fn with_checkpoints(
+        mut self,
+        checkpoints: Option<checkpoint::CheckpointRecorder>,
+    ) -> Self {
+        self.checkpoints = checkpoints;
+        self
+    }
+
     #[cfg(test)]
     pub(super) fn with_registry_and_fan_out_limits(
         registry: ConnectionRegistry,
@@ -298,6 +322,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            checkpoints: None,
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
@@ -325,6 +350,7 @@ impl DatabaseTools {
             override_log: None,
             workspace: None,
             capture_hook: None,
+            checkpoints: None,
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
