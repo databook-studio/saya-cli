@@ -237,6 +237,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 crate::local_metrics_format::format_snapshot(&snapshot)
             );
         }
+        crate::local_metrics_format::print_metrics_section(&session.session_metrics());
         if let Ok(super::tui::TrustOutcome::Answered(dir)) = &outcome {
             let _ = dir;
         }
