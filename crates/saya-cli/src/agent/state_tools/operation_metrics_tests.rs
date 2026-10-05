@@ -11,6 +11,7 @@ use saya_agent::{
     ToolExecutor,
 };
 use saya_connectors::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector, SqliteConnector};
+use saya_store::{SchemaStore, SqliteStateStore};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -78,6 +79,29 @@ impl DatabaseConnector for FailingConnector {
 
     async fn execute(&self, _: QueryRequest) -> Result<QueryResult, ConnectionError> {
         Err(ConnectionError::query_failed("syntax error near FROM"))
+    }
+}
+
+/// A connector whose live metadata operation always fails; its execute still
+/// succeeds so the lease-holding execute tests are unaffected.
+struct FailingSchemaConnector;
+
+#[async_trait]
+impl DatabaseConnector for FailingSchemaConnector {
+    fn dialect(&self) -> SqlDialect {
+        SqlDialect::Sqlite
+    }
+
+    async fn connect(&self) -> Result<(), ConnectionError> {
+        Ok(())
+    }
+
+    async fn schema(&self) -> Result<SchemaTree, ConnectionError> {
+        Err(ConnectionError::query_failed("metadata query failed"))
+    }
+
+    async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        Ok(QueryResult::empty(request.sql))
     }
 }
 
@@ -162,6 +186,26 @@ fn lease_tools(
         },
     );
     Arc::new(DatabaseTools::with_registry(registry, 100, true, None).with_metrics(metrics))
+}
+
+/// One-connection tools around an arbitrary connector, with the profile
+/// identity and state store the schema tool's cached-fallback path reads.
+fn registry_tools(
+    connector: Box<dyn DatabaseConnector>,
+    profile_id: Option<String>,
+    store: Option<SqliteStateStore>,
+    metrics: Option<Arc<LocalMetrics>>,
+) -> DatabaseTools {
+    let mut registry = ConnectionRegistry::new("primary");
+    registry.insert(
+        "primary",
+        ConnectionEntry {
+            connector,
+            dialect: SqlDialect::Sqlite,
+            profile_id,
+        },
+    );
+    DatabaseTools::with_registry(registry, 100, true, store).with_metrics(metrics)
 }
 
 fn tool_context(cancellation: CancellationToken) -> ToolExecutionContext {
@@ -517,4 +561,283 @@ async fn failing_connector_execute_records_a_failed_execute_sample() {
         1,
         "the connector error settles the execute as failed: {snapshot:?}"
     );
+}
+
+/// (a) An uncontended real SQLite schema discovery records exactly one
+/// succeeded DatabaseWait sample and one succeeded SchemaDiscovery sample,
+/// and no DatabaseExecute sample at all.
+#[tokio::test]
+async fn uncontended_sqlite_schema_records_one_wait_and_one_discovery_sample() {
+    let root = temp_root("schema-uncontended");
+    let metrics = Arc::new(LocalMetrics::new());
+    let tools = sqlite_tools(&root, Some(Arc::clone(&metrics))).await;
+    let result = tools
+        .execute_with_context(
+            "schema_discovery",
+            json!({}),
+            tool_context(CancellationToken::new()),
+        )
+        .await
+        .expect("uncontended schema discovery succeeds");
+    assert!(
+        result.is_object(),
+        "the model received a schema: {result:?}"
+    );
+    let snapshot = metrics.snapshot();
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::DatabaseWait,
+            AgentMetricOutcome::Succeeded
+        ),
+        1,
+        "one succeeded lease wait: {snapshot:?}"
+    );
+    assert_eq!(
+        samples_in(&snapshot, AgentMetricPhase::SchemaDiscovery),
+        1,
+        "one discovery sample: {snapshot:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::SchemaDiscovery,
+            AgentMetricOutcome::Succeeded
+        ),
+        1,
+        "the live discovery settled: {snapshot:?}"
+    );
+    assert_eq!(
+        samples_in(&snapshot, AgentMetricPhase::DatabaseExecute),
+        0,
+        "discovery runs no query tool: {snapshot:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// (b) A schema waiter cancelled while the entry lease is held records one
+/// cancelled DatabaseWait sample and no SchemaDiscovery sample at all — the
+/// discovery window never opened; the holder's execute still settles.
+#[tokio::test]
+async fn cancelled_schema_waiter_records_no_discovery_sample() {
+    let started = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let executions = Arc::new(AtomicUsize::new(0));
+    let cancel_requests = Arc::new(AtomicUsize::new(0));
+    let metrics = Arc::new(LocalMetrics::new());
+    let tools = lease_tools(
+        Arc::clone(&started),
+        Arc::clone(&release),
+        Arc::clone(&executions),
+        Arc::clone(&cancel_requests),
+        Some(Arc::clone(&metrics)),
+    );
+    let holder_started = started.notified();
+    let holder = {
+        let tools = Arc::clone(&tools);
+        tokio::spawn(async move {
+            tools
+                .execute_with_context(
+                    "bounded_sql_query",
+                    json!({"sql": "SELECT 1"}),
+                    tool_context(CancellationToken::new()),
+                )
+                .await
+        })
+    };
+    holder_started.await;
+
+    let waiter_token = CancellationToken::new();
+    let waiter_cancellation = waiter_token.clone();
+    let waiter = {
+        let tools = Arc::clone(&tools);
+        tokio::spawn(async move {
+            tools
+                .execute_with_context(
+                    "schema_discovery",
+                    json!({}),
+                    tool_context(waiter_cancellation),
+                )
+                .await
+        })
+    };
+    let mut waiter = waiter;
+    assert_pending(&mut waiter, "schema waiter").await;
+    waiter_token.cancel();
+    waiter
+        .await
+        .expect("waiter task joins")
+        .expect_err("cancelled schema waiter is refused");
+    let after_cancel = metrics.snapshot();
+    assert_eq!(
+        outcome_in(
+            &after_cancel,
+            AgentMetricPhase::DatabaseWait,
+            AgentMetricOutcome::Cancelled
+        ),
+        1,
+        "the cancelled lease wait is counted once: {after_cancel:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &after_cancel,
+            AgentMetricPhase::DatabaseWait,
+            AgentMetricOutcome::Succeeded
+        ),
+        1,
+        "the holder's wait is the only succeeded one: {after_cancel:?}"
+    );
+    assert_eq!(
+        samples_in(&after_cancel, AgentMetricPhase::SchemaDiscovery),
+        0,
+        "no discovery sample when the lease was never granted: {after_cancel:?}"
+    );
+    release.notify_waiters();
+    holder
+        .await
+        .expect("holder task joins")
+        .expect("holder query succeeds");
+    let settled = metrics.snapshot();
+    assert_eq!(
+        samples_in(&settled, AgentMetricPhase::SchemaDiscovery),
+        0,
+        "still no discovery sample after the holder settles: {settled:?}"
+    );
+}
+
+/// (c) A failing live discovery with no cache behind it records exactly one
+/// failed SchemaDiscovery sample — never a cached fallback, never a success.
+#[tokio::test]
+async fn failing_live_schema_without_cache_records_a_failed_discovery_sample() {
+    let metrics = Arc::new(LocalMetrics::new());
+    let tools = registry_tools(
+        Box::new(FailingSchemaConnector),
+        None,
+        None,
+        Some(Arc::clone(&metrics)),
+    );
+    let result = tools
+        .execute_with_context(
+            "schema_discovery",
+            json!({}),
+            tool_context(CancellationToken::new()),
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "the failing live discovery is reported: {result:?}"
+    );
+    let snapshot = metrics.snapshot();
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::DatabaseWait,
+            AgentMetricOutcome::Succeeded
+        ),
+        1,
+        "the lease was acquired before the discovery: {snapshot:?}"
+    );
+    assert_eq!(
+        samples_in(&snapshot, AgentMetricPhase::SchemaDiscovery),
+        1,
+        "one discovery sample: {snapshot:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::SchemaDiscovery,
+            AgentMetricOutcome::Failed
+        ),
+        1,
+        "the failed live attempt settles as failed: {snapshot:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::SchemaDiscovery,
+            AgentMetricOutcome::CachedFallback
+        ),
+        0,
+        "no cached fallback without a cache: {snapshot:?}"
+    );
+}
+
+/// (d) A failing live discovery whose cached schema serves records exactly
+/// one SchemaDiscovery sample with the cached-fallback outcome — zero
+/// succeeded samples, no second failed sample — and the call still returns
+/// the cached schema with its diagnostic.
+#[tokio::test]
+async fn failing_live_schema_with_cached_fallback_records_one_cached_fallback_sample() {
+    let root = temp_root("schema-fallback");
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let profile = format!("p-{}", "a".repeat(64));
+    store
+        .upsert_schema(&profile, &SchemaTree::default())
+        .await
+        .expect("seed the cached schema");
+    let metrics = Arc::new(LocalMetrics::new());
+    let tools = registry_tools(
+        Box::new(FailingSchemaConnector),
+        Some(profile),
+        Some(store),
+        Some(Arc::clone(&metrics)),
+    );
+    let result = tools
+        .execute_with_context(
+            "schema_discovery",
+            json!({}),
+            tool_context(CancellationToken::new()),
+        )
+        .await
+        .expect("the cached schema serves the call");
+    assert!(
+        result
+            .get("diagnostic")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|diagnostic| diagnostic.contains("using cached schema")),
+        "the cached fallback is announced: {result:?}"
+    );
+    let snapshot = metrics.snapshot();
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::DatabaseWait,
+            AgentMetricOutcome::Succeeded
+        ),
+        1,
+        "the lease was acquired before the discovery: {snapshot:?}"
+    );
+    assert_eq!(
+        samples_in(&snapshot, AgentMetricPhase::SchemaDiscovery),
+        1,
+        "exactly one discovery sample: {snapshot:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::SchemaDiscovery,
+            AgentMetricOutcome::CachedFallback
+        ),
+        1,
+        "the served fallback is the one outcome: {snapshot:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::SchemaDiscovery,
+            AgentMetricOutcome::Succeeded
+        ),
+        0,
+        "the fallback is never a success: {snapshot:?}"
+    );
+    assert_eq!(
+        outcome_in(
+            &snapshot,
+            AgentMetricPhase::SchemaDiscovery,
+            AgentMetricOutcome::Failed
+        ),
+        0,
+        "no second failed sample for the same call: {snapshot:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
