@@ -11,12 +11,26 @@ use crate::interactive::session_state::SessionState;
 use saya_store::FsSessionStore;
 
 /// A successful resume is a context change: the previous session's ephemeral
-/// SQL capture and last query are invalidated with it (the spec rule that a
-/// context change retires the old query/capture/receipt). Refusals and failed
-/// loads change nothing — the old capture stays usable.
+/// SQL capture and last query are invalidated with it, along with the
+/// agent-capture gap that names the old session's promoted query (the spec
+/// rule that a context change retires the old query/capture/receipt).
+/// Refusals and failed loads change nothing — the old capture stays usable.
 pub(crate) fn clear_query_state(app: &mut App) {
     app.captured = None;
     app.last_query = None;
+    app.agent_captures.clear_gap();
+}
+
+/// The shared tail of a successful resume (picker or typed): the old
+/// session's query state retires with it, the app adopts the resumed
+/// session's universe (seeded with the task list), and the runtime metrics
+/// collector is re-taken — `reacquire` replaced the runtime, so the startup
+/// handle would otherwise keep counting into the retired collector.
+pub(crate) fn adopt_resumed_session(app: &mut App, state: &SessionState, session: &SessionRuntime) {
+    clear_query_state(app);
+    app.session = session.universe();
+    app.session.seed_tasks(state.task_list.clone());
+    app.session_metrics = session.session_metrics();
 }
 
 pub(crate) fn tick_resume(
@@ -54,8 +68,7 @@ pub(crate) fn tick_resume(
                             runtime.resolved.ai.base_url.as_deref(),
                         );
                         clear_query_state(app);
-                        app.session = session.universe();
-                        app.session.seed_tasks(state.task_list.clone());
+                        adopt_resumed_session(app, state, session);
                         app.reload_at_refs(state);
                         if state.turns.is_empty() {
                             app.transcript.clear();
@@ -97,3 +110,7 @@ mod session_privacy_receipt_tests;
 #[cfg(test)]
 #[path = "../resume_capture_tests.rs"]
 mod resume_capture_tests;
+
+#[cfg(test)]
+#[path = "../typed_resume_capture_tests.rs"]
+mod typed_resume_capture_tests;
