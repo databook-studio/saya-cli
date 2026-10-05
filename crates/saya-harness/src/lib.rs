@@ -129,6 +129,12 @@ pub enum HarnessError {
     #[error("workspace path does not exist: {path}")]
     NotFound { path: String },
 
+    /// A create-if-absent refused: the final component already names some
+    /// entry — a file or a directory — and creating would clobber it. The
+    /// existing entry is left untouched.
+    #[error("workspace path already exists: {path}")]
+    AlreadyExists { path: String },
+
     /// A newline-terminated line in the run journal does not parse as a
     /// `RunEvent` — corruption, or an event written by a build that knows
     /// more variants than this one. Fails closed rather than guessed at.
