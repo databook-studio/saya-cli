@@ -3,6 +3,7 @@
 use super::approval::{ChannelApproval, ChannelSink, StreamRequest, approval_capabilities};
 use super::messages::{Stream, StreamMsg};
 use crate::agent::tools::{CaptureEvent, CaptureHook};
+use crate::metrics_sink::MetricsSink;
 use saya_agent::{ApprovalDecider, CancellationToken};
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -73,9 +74,13 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
     // The capture hook rides the same channel: a successful agent query
     // hands the TUI the typed result the model saw (C1; the pairing is C2).
     let capture = capture_hook(tx.clone());
+    // The question's collector rides the sink wrap: each metric the turn
+    // records lands in the collector exactly once, then forwards onward.
+    let metrics = question_scope.as_ref().and_then(|scope| scope.metrics());
 
     std::thread::spawn(move || {
-        let sink = ChannelSink { tx: tx.clone() };
+        let channel = ChannelSink { tx: tx.clone() };
+        let sink = MetricsSink::new(&channel, metrics);
         let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::with_cancellation(
             tx.clone(),
             policy,

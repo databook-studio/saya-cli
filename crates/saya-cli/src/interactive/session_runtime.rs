@@ -15,6 +15,7 @@ use saya_store::{BypassSource, SessionJournal};
 use super::session_paths::create_state_dir;
 use super::session_universe::{SessionComposition, SessionUniverse};
 use crate::agent::question_scope::QuestionScope;
+use crate::local_metrics::LocalPhaseSnapshot;
 
 pub(crate) struct SessionRuntime {
     universe: Arc<SessionUniverse>,
@@ -56,6 +57,9 @@ pub(crate) struct SessionRuntime {
     /// `SessionState`, so a saved narrative cannot restore a cancellation
     /// token or answering wallet after resume.
     question: QuestionLifecycle,
+    /// The last settled question's fixed local-metrics snapshot for the
+    /// print-after-restore seam: runtime-only, never serialized, last only.
+    last_question_metrics: Option<LocalPhaseSnapshot>,
 }
 
 enum QuestionLifecycle {
@@ -169,6 +173,7 @@ impl SessionRuntime {
             journal: Arc::new(SessionJournal::open(&state_dir)),
             journal_failure: Mutex::new(None),
             question: QuestionLifecycle::Idle,
+            last_question_metrics: None,
         })
     }
 
@@ -217,6 +222,16 @@ impl SessionRuntime {
             }
             QuestionLifecycle::Idle => {}
         }
+    }
+
+    /// Keeps the just-settled question's metrics snapshot; only the last is held.
+    pub(crate) fn remember_question_metrics(&mut self, snapshot: LocalPhaseSnapshot) {
+        self.last_question_metrics = Some(snapshot);
+    }
+
+    /// Takes the kept snapshot once, for the print-after-restore site.
+    pub(crate) fn take_question_metrics(&mut self) -> Option<LocalPhaseSnapshot> {
+        self.last_question_metrics.take()
     }
 
     /// Swaps the composed universe for a startup trust answer given
