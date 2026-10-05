@@ -10,10 +10,16 @@ use super::tasks::{
 };
 use super::{AgentCaptures, CapturedResult};
 use crate::config::runtime::RuntimeConfig;
+use crate::local_metrics::LocalMetrics;
 use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::sync::Arc;
+
+// `application` is private to the TUI tree; the compaction-worker tests at
+// the `interactive` level reach the shared idle-app fixture through here.
+#[cfg(test)]
+pub(crate) use crate::interactive::tui::application::tests_support::idle_app;
 
 /// Interactive application state.
 pub(crate) struct App {
@@ -55,6 +61,9 @@ pub(crate) struct App {
     /// In-flight `/compact` running off-thread; polled each loop tick so the
     /// UI never blocks on the summariser. `None` until `/compact` runs.
     pub(crate) compact_task: Option<std::sync::mpsc::Receiver<CompactOutcome>>,
+    /// The runtime-only collector shared with the session; `None` unless
+    /// --verbose. The compaction worker records its Compaction phase here.
+    pub(crate) session_metrics: Option<Arc<LocalMetrics>>,
     /// In-flight `/investigation run` replay (D13), running off-thread like
     /// the direct-SQL task; polled each loop tick so the UI never blocks on
     /// the replay. The `Instant` is when the replay was dispatched, for the
