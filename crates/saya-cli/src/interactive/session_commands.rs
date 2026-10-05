@@ -182,6 +182,7 @@ impl SessionState {
                 self.task_list = Default::default();
                 self.compaction_summary = None;
                 self.compacted_turns = 0;
+                self.observations = Default::default();
                 self.usage = Default::default();
                 self.context_warned = false;
                 self.auto_compact_failed = false;
