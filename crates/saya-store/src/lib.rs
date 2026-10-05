@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 mod audit_store;
 mod bounded;
+mod continuation;
 mod contracts;
 mod error;
 mod filesystem;
@@ -22,6 +23,7 @@ mod sqlite;
 mod sqlite_support;
 mod state_contracts;
 
+pub use continuation::StoredContinuation;
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
 pub use error::StoreError;
 pub use filesystem::{FsSessionStore, MAX_SESSION_BYTES};
@@ -109,6 +111,14 @@ pub struct RedactedSession {
     pub profile_names: Vec<String>,
     #[serde(default)]
     pub messages: Vec<RedactedMessage>,
+    /// The session's optional continuation, additive at `SESSION_VERSION` 2
+    /// beside `task_list` — legacy records carry none and re-serialize
+    /// without the key. A typed record is redacted and revalidated at the
+    /// save boundary; a continuation this binary does not understand loads
+    /// as [`StoredContinuation::Unsupported`], is preserved verbatim, and
+    /// cannot be overwritten by a save that would drop it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<StoredContinuation>,
 }
 
 impl Default for RedactedSession {
@@ -130,6 +140,7 @@ impl Default for RedactedSession {
             turns: Vec::new(),
             profile_names: Vec::new(),
             messages: Vec::new(),
+            continuation: None,
         }
     }
 }

@@ -298,6 +298,7 @@ impl SessionState {
             turns: self.turns.clone(),
             profile_names: self.profile_names(),
             messages: Vec::new(),
+            continuation: None,
         }
     }
 
