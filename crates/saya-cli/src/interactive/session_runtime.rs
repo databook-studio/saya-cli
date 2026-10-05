@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use saya_agent::{ApprovalPolicy, SessionPolicy};
-use saya_harness::lock::RunLock;
+use saya_harness::session_lifecycle::SessionLock;
 use saya_store::{BypassSource, SessionJournal};
 
 use super::session_paths::create_state_dir;
@@ -30,7 +30,7 @@ pub(crate) struct SessionRuntime {
     policy_mode: ApprovalPolicy,
     /// Held, never read: the lock's purpose is its lifetime — dropping the
     /// runtime releases it.
-    _lock: RunLock,
+    _lock: SessionLock,
     /// The explicit `--workspace` statement, carried so a mid-session
     /// `/resume` re-binds the same way the launch did.
     explicit: Option<PathBuf>,
@@ -134,15 +134,32 @@ impl SessionRuntime {
             sessions_root,
             trusted,
         } = args;
+        let store = saya_store::FsSessionStore::new(sessions_root);
+        // The tombstone gate precedes every filesystem claim: a deleted or
+        // being-deleted id never gets a state directory back, and the lock
+        // is claimed through the lifecycle owner, which re-checks the
+        // tombstone once the lock is held.
+        saya_harness::session_lifecycle::ensure_not_deleted(&store, id).map_err(
+            |error| match error {
+                saya_harness::HarnessError::SessionDeleted { .. } => {
+                    format!("session {id} was deleted; it cannot be opened")
+                }
+                other => format!("could not check the session state: {other}"),
+            },
+        )?;
         let state_dir = create_state_dir(sessions_root, id)?;
-        let lock = RunLock::acquire(state_dir.join("lock")).map_err(|error| match error {
-            // The same words a run's second writer reads, with the same pid.
-            saya_harness::HarnessError::LockHeld { pid } => format!(
-                "session {id} is already running (pid {pid}): a session's scratch and \
-                 transcript are single-writer; stop the other process or start a new session"
-            ),
-            other => format!("could not claim the session lock: {other}"),
-        })?;
+        let lock = saya_harness::session_lifecycle::acquire_session_lock(&store, &state_dir, id)
+            .map_err(|error| match error {
+                // The same words a run's second writer reads, with the same pid.
+                saya_harness::HarnessError::LockHeld { pid } => format!(
+                    "session {id} is already running (pid {pid}): a session's scratch and \
+                     transcript are single-writer; stop the other process or start a new session"
+                ),
+                saya_harness::HarnessError::SessionDeleted { .. } => {
+                    format!("session {id} was deleted; it cannot be opened")
+                }
+                other => format!("could not claim the session lock: {other}"),
+            })?;
         let walk_when_unpinned = fresh;
         // The trusted directory binds exactly like an explicit
         // `--workspace` — but only where no explicit statement exists, and
