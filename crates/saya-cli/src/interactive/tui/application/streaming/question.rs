@@ -53,6 +53,10 @@ pub(crate) fn settle_stream_question(
     // settlement on every outcome — Done ok, err, or cancel — so the
     // print-after-restore seam can say what the turn measured. A question
     // without a collector records nothing.
+    // A user-requested stop records its one cancellation-to-local-settlement
+    // sample here, before the snapshot below, so the printed section
+    // includes the settlement measure. No captured instant records nothing.
+    scope.record_stop_settlement();
     if let Some(collector) = scope.metrics() {
         session.remember_question_metrics(collector.snapshot());
     }
