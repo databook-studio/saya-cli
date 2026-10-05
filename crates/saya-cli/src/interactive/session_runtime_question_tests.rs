@@ -33,6 +33,7 @@ fn temp_sessions_root_named(tag: &str) -> PathBuf {
 fn test_runtime() -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),

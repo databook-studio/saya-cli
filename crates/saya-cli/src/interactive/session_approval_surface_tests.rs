@@ -43,6 +43,7 @@ fn worktree(label: &str) -> PathBuf {
 fn session_runtime() -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: saya_config::ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),

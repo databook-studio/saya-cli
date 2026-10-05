@@ -58,6 +58,14 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     apply!(memory.max_contracts);
     apply!(memory.max_claims_per_contract);
     apply!(memory.max_context_bytes);
+    // `[instructions]` merges per field like the other scalar sections; the
+    // trust boundary in `revert_untrusted` reverts all five keys, since they
+    // decide what instruction context the model is assembled from.
+    apply!(instructions.project);
+    apply!(instructions.personal);
+    apply!(instructions.project_max_bytes);
+    apply!(instructions.personal_max_bytes);
+    apply!(instructions.total_max_bytes);
     // `[[ai.endpoints]]` is a set of named entries, not a scalar: a layer's
     // entry for an existing name overlays that endpoint's fields (absent
     // field = leave the lower layer's value, matching `apply!`), a new name
@@ -227,6 +235,16 @@ pub(crate) struct ProtectedSettings {
     ai_investigation_max_elapsed_seconds: Option<toml::Value>,
     ai_investigation_max_known_reported_tokens: Option<toml::Value>,
     run_read_only: Option<bool>,
+    /// The `[instructions]` keys, protected one field at a time: they decide
+    /// which instruction files are read and how many bytes of them the
+    /// model's context is assembled from, so an untrusted layer must not
+    /// disable a source, raise a ceiling, or (there is no path key to abuse)
+    /// steer any of it.
+    instructions_project: Option<bool>,
+    instructions_personal: Option<bool>,
+    instructions_project_max_bytes: Option<usize>,
+    instructions_personal_max_bytes: Option<usize>,
+    instructions_total_max_bytes: Option<usize>,
     /// The whole `[jobs.interpreter]` sub-table as the trusted layers
     /// declared it: which interpreters may ever resolve, and by extension
     /// which bytes answer them.
@@ -262,6 +280,11 @@ pub(crate) fn snapshot_protected(file: &ConfigFile) -> ProtectedSettings {
             .investigation_max_known_reported_tokens
             .clone(),
         run_read_only: file.run.read_only,
+        instructions_project: file.instructions.project,
+        instructions_personal: file.instructions.personal,
+        instructions_project_max_bytes: file.instructions.project_max_bytes,
+        instructions_personal_max_bytes: file.instructions.personal_max_bytes,
+        instructions_total_max_bytes: file.instructions.total_max_bytes,
         jobs_interpreter: file.jobs.interpreter.clone(),
         endpoints: file
             .ai
@@ -324,6 +347,40 @@ pub(crate) fn revert_untrusted(file: &mut ConfigFile, before: &ProtectedSettings
         file.run.read_only = before.run_read_only;
         ignored.push("run.read_only".into());
     }
+    // Instruction enablement and limits are protected per field: which
+    // instruction files load, and how many bytes of them may reach the
+    // model's context, is trusted-layer business. Reported by dotted name so
+    // the user is told what was ignored.
+    revert_instruction(
+        &mut file.instructions.project,
+        &before.instructions_project,
+        "project",
+        &mut ignored,
+    );
+    revert_instruction(
+        &mut file.instructions.personal,
+        &before.instructions_personal,
+        "personal",
+        &mut ignored,
+    );
+    revert_instruction(
+        &mut file.instructions.project_max_bytes,
+        &before.instructions_project_max_bytes,
+        "project_max_bytes",
+        &mut ignored,
+    );
+    revert_instruction(
+        &mut file.instructions.personal_max_bytes,
+        &before.instructions_personal_max_bytes,
+        "personal_max_bytes",
+        &mut ignored,
+    );
+    revert_instruction(
+        &mut file.instructions.total_max_bytes,
+        &before.instructions_total_max_bytes,
+        "total_max_bytes",
+        &mut ignored,
+    );
     // The interpreter universe is protected as a whole sub-table: which
     // interpreters may ever resolve, and by extension which bytes answer
     // them, is trusted-layer business. Reported by its dotted name so the
@@ -371,6 +428,18 @@ fn revert_ai_budget(
     if value != trusted {
         *value = trusted.clone();
         ignored.push(format!("ai.{name}"));
+    }
+}
+
+fn revert_instruction<T: Clone + PartialEq>(
+    value: &mut Option<T>,
+    trusted: &Option<T>,
+    name: &'static str,
+    ignored: &mut Vec<String>,
+) {
+    if value != trusted {
+        *value = trusted.clone();
+        ignored.push(format!("instructions.{name}"));
     }
 }
 
