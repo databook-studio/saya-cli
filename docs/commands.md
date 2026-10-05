@@ -84,7 +84,7 @@ of assuming: the turn ends with a `clarification_needed` event (the TUI
 renders it as a Question block), and `saya ask` exits `6` — the paused
 class, "needs input", not an error — so a script can tell the two apart.
 A settled `ask` classifies on the question token's first stop reason: a user
-Ctrl-C exits `130` ("request cancelled"); a budget stop exits `6` with the
+Ctrl-C exits `130`; a budget stop exits `6` with the
 truthful wording "the run stopped on its `<dimension>` budget; any answer it
 produced is partial or absent" (`logical-requests`, `requested-tool-calls`,
 `elapsed-time`, `reported-tokens`, `download-bytes`); an owner failure — the
