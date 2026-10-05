@@ -63,6 +63,10 @@ pub(crate) async fn run(
     scope: QuestionScope,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = scope.cancellation();
+    // The collector arc is taken before the scope moves into the run: the
+    // settled boundary below prints the snapshot the run just finished
+    // filling — the same collector the clarification reply turn reuses.
+    let metrics = scope.metrics();
     let terminal = TerminalSink::new(format);
     let sink = MetricsSink::new(&terminal, scope.metrics());
     // The decider is the terminal ask over the session's policy: the mode
@@ -108,20 +112,26 @@ pub(crate) async fn run(
     });
     tokio::pin!(work);
     tokio::select! {
-        result = &mut work => match result {
-            Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
-            Err(error) => Ok(PromptResult::Failed(error, terminal.take_answering_usage())),
-        },
+        result = &mut work => {
+            let result = match result {
+                Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
+                Err(error) => Ok(PromptResult::Failed(error, terminal.take_answering_usage())),
+            };
+            crate::local_metrics_format::print_metrics_section(&metrics);
+            result
+        }
         _ = tokio::signal::ctrl_c() => {
             cancellation.cancel();
             let learning_usage = match work.await {
                 Ok(output) => output.learning_usage,
                 Err(_) => None,
             };
-            Ok(PromptResult::Cancelled {
+            let result = Ok(PromptResult::Cancelled {
                 answering_usage: terminal.take_answering_usage(),
                 learning_usage,
-            })
+            });
+            crate::local_metrics_format::print_metrics_section(&metrics);
+            result
         }
     }
 }
