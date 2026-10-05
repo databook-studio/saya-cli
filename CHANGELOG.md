@@ -565,12 +565,8 @@ over the real value.
   window would either refuse work that would have succeeded or promise headroom
   that does not exist. A new `[ai] context_window_tokens` setting declares the
   window for a model the table will never list (a private gateway's own naming),
-  and a declared value wins over the table. The window is now acted on: request
-  preflight measures every provider request against the window minus the output
-  reservation minus 1,024 tokens of slack, sheds oldest history and trims
-  remaining content, and refuses a turn that still exceeds it with a typed
-  context-window budget error; an unknown window keeps the older
-  `context_byte_budget` cap.
+  and a declared value wins over the table. Nothing blocks or truncates on the
+  answer yet — knowing a window and acting on it are separate changes.
 
 - **`saya ask --format ndjson` now reports token and cache usage.** The stream
   gains a `usage` event carrying the token counts the provider reported for a
