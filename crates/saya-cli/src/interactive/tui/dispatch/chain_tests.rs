@@ -25,6 +25,10 @@ use std::path::PathBuf;
 
 const STARTED_UNIX_MS: i64 = 1_700_000_000_000;
 
+/// Body text written into the fixture's AGENTS.md; `/context` must name the
+/// file and never this text.
+const CONTEXT_SENTINEL: &str = "SENTINEL-INSTRUCTION-BODY";
+
 /// Removes the throwaway root when the fixture drops. Declared after the
 /// session runtime in the fixture so the lock file is released before the
 /// directory goes.
@@ -150,6 +154,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
         "run" => "/run survey the data",
         "runs" => "/runs",
         "allow" => "/allow none",
+        "context" => "/context",
         "grants" => "/grants",
         "doctor" => "/doctor",
         "usage" => "/usage",
@@ -442,5 +447,71 @@ fn report_through_dispatch_writes() {
     assert!(
         msg.contains("Wrote report to") && msg.contains("(2 rows included)"),
         "the success message counts the rows: {msg}"
+    );
+}
+
+/// `/context` through the real dispatch: the workspace-root AGENTS.md is
+/// named with its whole-file size and truncation flag, and the body text is
+/// never printed — the view shows receipts, not contents.
+#[test]
+fn context_dispatch_lists_the_loaded_source_and_never_its_body() {
+    let mut fx = ChainFixture::build("context-lists");
+    let body = format!("guidance with {CONTEXT_SENTINEL} inside\n");
+    std::fs::write(fx.root.0.join("AGENTS.md"), &body).unwrap();
+    assert!(
+        matches!(dispatch_line("/context", &mut fx), Dispatch::Handled),
+        "/context is handled by the dispatch chain"
+    );
+    let view =
+        last_block(&fx.app.transcript, BlockKind::System).expect("/context pushes a system block");
+    assert!(
+        view.contains("AGENTS.md"),
+        "the loaded source is named: {view}"
+    );
+    assert!(
+        view.contains(&format!("{} B file", body.len())),
+        "the whole-file size is shown: {view}"
+    );
+    assert!(
+        view.contains("truncated: no"),
+        "the truncation flag is shown: {view}"
+    );
+    assert!(
+        view.contains("never permissions"),
+        "the guidance-never-permissions note is stated: {view}"
+    );
+    assert!(
+        !view.contains(CONTEXT_SENTINEL),
+        "the source body must never appear: {view}"
+    );
+}
+
+/// A symlinked AGENTS.md is refused by the loader, and `/context` says so by
+/// name and reason — never printing the target's text.
+#[cfg(unix)]
+#[test]
+fn context_dispatch_names_a_skipped_symlink_source() {
+    use std::os::unix::fs::symlink;
+    let mut fx = ChainFixture::build("context-symlink");
+    let outside = fx.root.0.join("outside-agents.md");
+    std::fs::write(&outside, "secret rules outside the workspace\n").unwrap();
+    symlink(&outside, fx.root.0.join("AGENTS.md")).unwrap();
+    assert!(
+        matches!(dispatch_line("/context", &mut fx), Dispatch::Handled),
+        "/context is handled by the dispatch chain"
+    );
+    let view =
+        last_block(&fx.app.transcript, BlockKind::System).expect("/context pushes a system block");
+    assert!(
+        view.contains("AGENTS.md"),
+        "the skipped source is named: {view}"
+    );
+    assert!(
+        view.contains("symlink refused"),
+        "the skip reason is shown: {view}"
+    );
+    assert!(
+        !view.contains("secret rules"),
+        "no text from the refused target leaks: {view}"
     );
 }

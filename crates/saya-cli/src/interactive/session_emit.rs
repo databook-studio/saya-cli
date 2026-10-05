@@ -36,9 +36,12 @@ pub(crate) fn emit_action(
         // runtime, and the nested run's output never passes through this
         // seam); the arms keep the match exhaustive. `/allow` and `/grants`
         // are intercepted too — they seed and read the session's grant
-        // store, which lives in the runtime.
+        // store, which lives in the runtime. `/context` is intercepted as
+        // well: the view needs the runtime's settings and the session's
+        // workspace root.
         | SessionAction::Allow(_)
         | SessionAction::Grants
+        | SessionAction::Context
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)

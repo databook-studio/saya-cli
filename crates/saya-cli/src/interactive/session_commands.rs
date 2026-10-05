@@ -64,6 +64,11 @@ pub enum SessionAction {
     /// `/grants` — the session grant store listed verbatim by the shared
     /// `session_grants::listing`.
     Grants,
+    /// `/context` — the instruction-source view through the shared
+    /// `session_context::context_view`. Intercepted in the loop (it needs
+    /// the runtime's settings and the session's root); the arm here keeps
+    /// the match exhaustive.
+    Context,
     Exit,
 }
 
@@ -256,6 +261,7 @@ impl SessionState {
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
             SlashCommand::Grants => SessionAction::Grants,
+            SlashCommand::Context => SessionAction::Context,
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

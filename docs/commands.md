@@ -3,9 +3,15 @@
 Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts `/help`, `/connect`, `/connections`, `/include`,
 `/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
-`/grants`, `/schema`,
+`/grants`, `/context`, `/schema`,
 `/sql`, `/chart`, `/explain`, `/export`, `/report`, `/investigation`,
 `/investigations`, `/clear`, `/history`, `/resume <id>`, and `/exit`.
+
+`/context` shows which project and personal instruction files are loaded
+into requests: names, sizes, truncation and redaction counts, never their
+text, plus why any source was skipped (symlink, not a regular file, too
+large, not UTF-8, unreadable) or omitted for budget, and the effective
+settings. These files carry project guidance, never permissions.
 
 Examples:
 

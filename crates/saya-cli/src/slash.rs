@@ -103,6 +103,13 @@ pub enum SlashCommand {
     /// `/grants` — the session's grant store listed verbatim: one token per
     /// line, sorted, under a header stating the lifetime.
     Grants,
+    /// `/context` — the instruction sources as they would load for the next
+    /// request: per source the origin, file name, whole-file size, bytes
+    /// included, short digest, truncation and redaction flags; per skipped
+    /// source the origin and reason; per omitted source the origin and the
+    /// budget reason. Never the file text. Parsed bare; trailing text is
+    /// ignored like `/grants`.
+    Context,
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
     /// Show session token usage totals and cache hit rate.
@@ -404,6 +411,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             }
             SlashCommand::Allow(arg.split_whitespace().map(str::to_string).collect())
         }
+        "context" => SlashCommand::Context,
         "grants" => SlashCommand::Grants,
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "tasks" => match arg.as_str() {
@@ -924,6 +932,19 @@ mod tests {
         assert!(
             error.0.contains("not a listing") && error.0.contains("/grants"),
             "the error points at the listing, got: {error}"
+        );
+    }
+
+    /// `/context` parses bare and ignores trailing text, like `/grants`.
+    #[test]
+    fn test_parse_context() {
+        assert_eq!(
+            parse_slash_command("/context"),
+            Ok(Some(SlashCommand::Context))
+        );
+        assert_eq!(
+            parse_slash_command("/context extra"),
+            Ok(Some(SlashCommand::Context))
         );
     }
 

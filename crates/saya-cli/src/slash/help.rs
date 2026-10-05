@@ -93,6 +93,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "allow",
         "Seed pre-authorised scopes into this session's grant store",
     ),
+    (
+        "context",
+        "Show the instruction sources loaded into requests, never their text",
+    ),
     ("grants", "List the session's granted scopes"),
     ("help", "Show help for slash commands"),
     ("exit", "Exit the REPL"),
@@ -195,6 +199,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("history", "/history"),
             ("sessions", "/sessions"),
             ("resume", "/resume <id>"),
+            ("context", "/context"),
             ("doctor", "/doctor"),
             ("usage", "/usage"),
             ("workspace", "/workspace"),
@@ -337,6 +342,14 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         "sessions" => {
             Some("sessions — browse saved sessions; opens a picker in the TUI. Example: /sessions")
         }
+        "context" => Some(
+            "context — show which project and personal instruction files are loaded into \
+             requests: names, whole-file and included sizes, short digests, truncation and \
+             redaction counts, plus why any source was skipped (symlink, not a regular file, \
+             too large, not UTF-8, unreadable) or omitted for budget, and the effective \
+             settings. Never their text: the files carry project guidance only and grant no \
+             permissions. Example: /context",
+        ),
         "doctor" => Some(
             "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
         ),
@@ -552,6 +565,35 @@ mod tests {
                 "{name} is registered but has no description"
             );
         }
+    }
+
+    /// `/context` is registered, listed, described, and has per-command help
+    /// that states its one hard bound: the instruction sources are shown by
+    /// name, size, digest, and reason — their text is never shown.
+    #[test]
+    fn context_has_help_listing_and_description() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"context"),
+            "context is registered"
+        );
+        assert!(
+            description_for("context").is_some(),
+            "context has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/context"),
+            "the listing shows the /context usage: {listing}"
+        );
+        let help = command_help("context").expect("context has per-command help");
+        assert!(
+            help.contains("Never their text"),
+            "the /context help states what it never shows: {help}"
+        );
+        assert!(
+            help.contains("permissions"),
+            "the /context help states the files grant no permissions: {help}"
+        );
     }
 
     /// `/columns` is a slash command, so it needs a `/help` entry, a listing
