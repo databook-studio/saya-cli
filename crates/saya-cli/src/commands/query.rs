@@ -3,6 +3,7 @@ use crate::{
         question_scope::QuestionScope,
         runtime::{AgentRuntimeError, PromptOverrides},
     },
+    budget_wording::budget_partial_message,
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
     local_metrics_format::print_metrics_section,
@@ -11,8 +12,7 @@ use crate::{
     stream_render::TerminalSink,
 };
 use saya_agent::{
-    AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, BudgetDimension, CancellationReason,
-    CancellationToken,
+    AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, CancellationReason, CancellationToken,
 };
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::ConnectionError;
@@ -126,22 +126,6 @@ fn settle_ask(
             Err(error) => failure_message(5, error.to_string(), format),
         },
     }
-}
-
-/// The fixed truthful wording for a budget stop: the run stopped on its
-/// configured budget, so whatever answer it produced is partial or absent.
-fn budget_partial_message(dimension: BudgetDimension) -> String {
-    let what = match dimension {
-        BudgetDimension::LogicalRequests => "logical-requests".to_string(),
-        BudgetDimension::RequestedToolCalls => "requested-tool-calls".to_string(),
-        BudgetDimension::ElapsedTime => "elapsed-time".to_string(),
-        BudgetDimension::ReportedTokens => "reported-tokens".to_string(),
-        BudgetDimension::DownloadBytes => "download-bytes".to_string(),
-        // A dimension added later keeps the truthful class and shape; its
-        // debug name stands in for the words it does not have yet.
-        other => format!("{other:?}").to_lowercase(),
-    };
-    format!("the run stopped on its {what} budget; any answer it produced is partial or absent")
 }
 
 /// The exit code a finished `ask` run returns: 6 — the paused class — when

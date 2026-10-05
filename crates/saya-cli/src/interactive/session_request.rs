@@ -4,6 +4,7 @@ use crate::{
         question_scope::QuestionScope,
         runtime::{AgentRuntimeError, PromptOverrides},
     },
+    budget_wording::{budget_dimension, emit_partial_diagnostic},
     config::runtime::RuntimeConfig,
     metrics_sink::MetricsSink,
     render::RenderFormat,
@@ -117,11 +118,15 @@ pub(crate) async fn run(
     tokio::pin!(work);
     tokio::select! {
         result = &mut work => {
+            let budget = budget_dimension(cancellation.reason());
             let result = match result {
                 Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
                 Err(error) => Ok(PromptResult::Failed(error, terminal.take_answering_usage())),
             };
             crate::local_metrics_format::print_metrics_section(&metrics);
+            if matches!(result, Ok(PromptResult::Completed(_))) {
+                emit_partial_diagnostic(budget, format);
+            }
             result
         }
         _ = tokio::signal::ctrl_c() => {
