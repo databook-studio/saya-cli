@@ -17,7 +17,7 @@ use super::read_only_policy::{
 
 mod rewrite;
 
-use rewrite::{collect_names, rewrite_markers};
+use rewrite::{SENTINEL_PREFIX, collect_names, rewrite_markers, text_order_prepared};
 
 /// The bind-marker style a dialect natively accepts.
 pub(super) enum Marker {
@@ -48,8 +48,8 @@ fn parameters_unsupported(dialect: SqlDialect) -> ConnectionError {
 }
 
 /// A prepared read-only query: the rewritten SQL text and the values in
-/// marker order. Values live here only; nothing may persist them. The
-/// Debug output redacts the values via [`ParamValue`]'s Debug.
+/// the order the printed markers appear. Values live here only; nothing
+/// may persist them. The Debug output redacts the values via [`ParamValue`].
 #[derive(Debug)]
 pub struct PreparedQuery {
     pub sql: String,
@@ -67,7 +67,7 @@ pub fn sql_placeholders(sql: &str, dialect: SqlDialect) -> Result<Vec<String>, C
 /// Prepares read-only `sql` for a run that binds `params`: the guard, the
 /// allow-list, and the row cap are exactly `prepare`'s; the placeholder
 /// names must equal the bound names; each `:name` node becomes the
-/// dialect's native marker and the values come back in marker order.
+/// dialect's native marker, and the values follow the printed markers.
 pub fn prepare_with_params(
     sql: &str,
     max_rows: usize,
@@ -76,14 +76,22 @@ pub fn prepare_with_params(
 ) -> Result<PreparedQuery, ConnectionError> {
     let (policy, style) = support(dialect).ok_or_else(|| parameters_unsupported(dialect))?;
     let bound = checked_bindings(params)?;
+    let question = matches!(style, Marker::Question);
+    if question && sql.contains(SENTINEL_PREFIX) {
+        return Err(ConnectionError::query_failed(format!(
+            "the query contains the reserved marker prefix {SENTINEL_PREFIX}; remove or rename it"
+        )));
+    }
     let mut statement = parse_guarded(sql, max_rows, parser_dialect(dialect), policy)?;
     let names = collect_names(&statement)?;
     refuse_unbalanced(&names, &bound)?;
-    let values = rewrite_markers(&mut statement, style, &bound);
-    Ok(PreparedQuery {
-        sql: statement.to_string(),
-        values,
-    })
+    let slots = rewrite_markers(&mut statement, style, &bound);
+    let (sql, values) = if question {
+        text_order_prepared(&statement.to_string(), &slots)
+    } else {
+        (statement.to_string(), slots)
+    };
+    Ok(PreparedQuery { sql, values })
 }
 
 /// The placeholder-name set and the bound-name set must be equal: every
