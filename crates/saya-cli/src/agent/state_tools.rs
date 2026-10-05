@@ -337,7 +337,15 @@ pub(crate) async fn operation_execute(
     request: QueryRequest,
     context: &ToolExecutionContext,
 ) -> Result<QueryResult, ToolError> {
-    match operation::execute(operation_entry, request, &context.cancellation, None).await {
+    match operation::execute(
+        operation_entry,
+        request,
+        &context.cancellation,
+        None,
+        operation_entry.metrics,
+    )
+    .await
+    {
         Ok(result) if !context.cancellation.is_cancelled() => Ok(result),
         Ok(_) | Err(operation::OperationError::Cancelled | operation::OperationError::TimedOut) => {
             Err(cancelled_tool_error())
@@ -380,6 +388,7 @@ pub(crate) async fn query_typed(
         QueryRequest::new(sql, model_rows),
         &context.cancellation,
         timeout,
+        operation_entry.metrics,
     )
     .await
     {
@@ -467,3 +476,7 @@ async fn audit(
 #[cfg(test)]
 #[path = "state_tools_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "state_tools/operation_metrics_tests.rs"]
+mod operation_metrics_tests;

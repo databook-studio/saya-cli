@@ -1,13 +1,12 @@
 use std::future::{Future, pending};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::poll;
-use saya_agent::CancellationToken;
+use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase as Phase, CancellationToken};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree};
 use tokio::sync::MutexGuard;
 
-use crate::connection::OperationEntry;
-
+use crate::{connection::OperationEntry, local_metrics::LocalMetrics};
 /// An operation settled after the caller cancelled or its local deadline won.
 pub(super) enum OperationError {
     Cancelled,
@@ -15,20 +14,61 @@ pub(super) enum OperationError {
     Connector(ConnectionError),
 }
 
+fn record(
+    metrics: Option<&LocalMetrics>,
+    phase: Phase,
+    started: Instant,
+    outcome: AgentMetricOutcome,
+) {
+    if let Some(metrics) = metrics {
+        metrics.record(&AgentMetric::Phase {
+            phase,
+            elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            outcome,
+        });
+    }
+}
+
 pub(super) async fn execute(
     operation: &OperationEntry<'_>,
     request: QueryRequest,
     cancellation: &CancellationToken,
     timeout: Option<Duration>,
+    metrics: Option<&LocalMetrics>,
 ) -> Result<QueryResult, OperationError> {
-    let _lease = acquire(operation, cancellation).await?;
-    settle(
+    let wait_started = Instant::now();
+    let lease = acquire(operation, cancellation).await;
+    record(
+        metrics,
+        Phase::DatabaseWait,
+        wait_started,
+        if lease.is_ok() {
+            AgentMetricOutcome::Succeeded
+        } else {
+            AgentMetricOutcome::Cancelled
+        },
+    );
+    let _lease = lease?;
+    let execute_started = Instant::now();
+    let result = settle(
         operation.entry.connector.as_ref(),
         operation.entry.connector.execute(request),
         cancellation,
         timeout,
     )
-    .await
+    .await;
+    let execute_outcome = match &result {
+        Ok(_) => AgentMetricOutcome::Succeeded,
+        Err(OperationError::Cancelled) => AgentMetricOutcome::Cancelled,
+        Err(OperationError::TimedOut | OperationError::Connector(_)) => AgentMetricOutcome::Failed,
+    };
+    record(
+        metrics,
+        Phase::DatabaseExecute,
+        execute_started,
+        execute_outcome,
+    );
+    result
 }
 
 pub(super) async fn schema(

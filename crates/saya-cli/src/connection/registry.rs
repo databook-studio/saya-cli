@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::fmt;
 use tokio::sync::Mutex;
 
+use crate::local_metrics::LocalMetrics;
+
 /// Represents a live database connection entry.
 #[allow(dead_code)]
 pub(crate) struct ConnectionEntry {
@@ -24,6 +26,9 @@ pub(crate) struct ConnectionEntry {
 pub(crate) struct OperationEntry<'a> {
     pub(crate) entry: &'a ConnectionEntry,
     pub(crate) lease: &'a Mutex<()>,
+    /// The turn's local metrics collector, stamped by the caller that resolved
+    /// the operation. `None` records no phase samples.
+    pub(crate) metrics: Option<&'a LocalMetrics>,
 }
 
 impl fmt::Debug for ConnectionEntry {
@@ -141,7 +146,11 @@ impl ConnectionRegistry {
         let Some(lease) = self.leases.get(target) else {
             return Err(ToolError::NoConnectionSelected);
         };
-        Ok(OperationEntry { entry, lease })
+        Ok(OperationEntry {
+            entry,
+            lease,
+            metrics: None,
+        })
     }
 
     /// Every registered connector with its own operation lease, in insertion
@@ -153,7 +162,14 @@ impl ConnectionRegistry {
             .filter_map(|name| {
                 let entry = self.map.get(name)?;
                 let lease = self.leases.get(name)?;
-                Some((name.as_str(), OperationEntry { entry, lease }))
+                Some((
+                    name.as_str(),
+                    OperationEntry {
+                        entry,
+                        lease,
+                        metrics: None,
+                    },
+                ))
             })
             .collect()
     }

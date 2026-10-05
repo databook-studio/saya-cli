@@ -101,7 +101,8 @@ impl DatabaseTools {
         let connection = arguments
             .get("connection")
             .and_then(serde_json::Value::as_str);
-        let operation = self.registry.resolve_for_operation(connection)?;
+        let mut operation = self.registry.resolve_for_operation(connection)?;
+        operation.metrics = self.metrics.as_deref();
         let entry = operation.entry;
         match name {
             "schema_discovery" => {

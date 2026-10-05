@@ -6,6 +6,7 @@ use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
+use crate::local_metrics::LocalMetrics;
 
 mod capture;
 mod chart_tool;
@@ -87,6 +88,11 @@ pub(crate) struct DatabaseTools {
     // `Arc` lets the application operation that creates the log keep a handle to
     // drain it after the turn while the tools hold their own reference.
     pub(super) observations: Option<Arc<ObservationLog>>,
+    /// Request-scoped local metrics collector for the turn's question scope.
+    /// `None` — every construction that has not called [`Self::with_metrics`]
+    /// — leaves behaviour identical: the operation owner records no phase
+    /// samples. An `Arc` so the question scope and the tools share one cell.
+    pub(super) metrics: Option<Arc<LocalMetrics>>,
     /// Qualified `catalog.schema.object` names of objects whose claims were
     /// supplied to the model this turn via recall.
     pub(super) supplied_objects: Vec<String>,
@@ -156,6 +162,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
+            metrics: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
@@ -183,6 +190,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: None,
+            metrics: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
@@ -210,6 +218,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations,
+            metrics: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
@@ -217,6 +226,14 @@ impl DatabaseTools {
             capture_hook: None,
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
+    }
+
+    /// Attaches the turn's question-scope metrics collector. `None` — the
+    /// default in every constructor — records nothing; behavior is otherwise
+    /// identical with and without a collector.
+    pub(crate) fn with_metrics(mut self, metrics: Option<Arc<LocalMetrics>>) -> Self {
+        self.metrics = metrics;
+        self
     }
 
     /// Returns a reference to the active connection registry.
@@ -275,6 +292,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: max_concurrent_fan_out_queries.max(1),
             fan_out_query_timeout,
             observations: None,
+            metrics: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
@@ -301,6 +319,7 @@ impl DatabaseTools {
             max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: Some(observations),
+            metrics: None,
             supplied_objects: Vec::new(),
             recall_receipt: None,
             override_log: None,
