@@ -349,7 +349,9 @@ pub(crate) fn spawn_script_server(
                 }
             }
             drop(stream);
-            if index >= 8 {
+            // The latch rows script up to ten requests (fail, /compact
+            // re-arm, /clear re-arm); bound runaway loops well past that.
+            if index >= 16 {
                 break;
             }
         }

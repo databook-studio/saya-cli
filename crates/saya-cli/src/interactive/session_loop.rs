@@ -901,6 +901,13 @@ fn handle_line_verbatim(
             &session.universe(),
         ));
         state.usage.record_learning(outcome.usage);
+        // A validated manual success re-arms the automatic trigger (the TUI
+        // poll clears the latch on the same validated success, and the
+        // session-state doc names "any successful compaction"); a manual
+        // failure or a no-work result leaves the latch exactly as it was.
+        if !outcome.failed && outcome.summary.is_some() {
+            state.auto_compact_failed = false;
+        }
         let failed = outcome.failed;
         let action = if failed {
             SessionAction::Error(outcome.message)
