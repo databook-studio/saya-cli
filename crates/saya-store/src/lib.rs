@@ -15,6 +15,7 @@ mod investigations;
 mod knowledge_items;
 mod migration;
 mod private_file;
+mod project_preferences;
 mod redaction;
 mod replace;
 mod runs;
@@ -44,6 +45,7 @@ pub use knowledge_items::{
     MAX_PENDING_BATCH_ITEMS, MAX_SCHEMA_BINDING_BYTES, NewKnowledgeItem, knowledge_item_id_for,
     validate_new_item,
 };
+pub use project_preferences::ProjectPreferenceStore;
 pub use redaction::redact;
 pub use runs::{
     NewRun, RunBudgets, RunCapabilityFlags, RunRecord, RunStatus, RunStepRecord, RunStepStatus,
