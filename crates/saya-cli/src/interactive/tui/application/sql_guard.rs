@@ -110,20 +110,21 @@ impl App {
         }
     }
 
-    /// Detaches the in-flight replay the same way: the receiver is dropped,
-    /// so a late completion is discarded — it never replaces the capture,
-    /// the selectable query, or the transcript. The message names the
-    /// investigation and says the query may still be running server-side;
-    /// nothing claims cancellation.
+    /// Cancels and detaches the in-flight replay (FIX-S1d): the token the
+    /// worker passed to the shared operation is cancelled, the receiver is
+    /// dropped so a late completion is discarded — it never replaces the
+    /// capture, the selectable query, or the transcript — and the message
+    /// says cancellation was requested while staying honest that the query
+    /// may still settle on the server.
     pub(crate) fn detach_replay_task(&mut self) {
         if let Some((_, task, started)) = self.replay_task.take() {
+            task.cancellation.cancel();
             self.request.started = None;
             self.request.activity = None;
             self.transcript.push(
                 BlockKind::System,
                 format!(
-                    "Detached the running investigation {} ({}s elapsed) — the query may still \
-                     be running on the server; its result will be discarded.",
+                    "Cancellation requested; the investigation {} was detached ({}s elapsed) and may still be running on the server; its result will be discarded.",
                     task.id,
                     started.elapsed().as_secs()
                 ),
