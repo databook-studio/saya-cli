@@ -23,6 +23,7 @@ struct QuestionInner {
     answering: AnsweringScope,
     active_time: Mutex<ActiveTime>,
     metrics: Option<Arc<LocalMetrics>>,
+    stop_requested_at: Mutex<Option<Instant>>,
 }
 
 struct ActiveTime {
@@ -68,6 +69,7 @@ impl QuestionScope {
                     active_since: None,
                 }),
                 metrics,
+                stop_requested_at: Mutex::new(None),
             }),
         }
     }
@@ -142,3 +144,6 @@ fn finite(limit: BudgetLimit) -> Option<u64> {
         BudgetLimit::Unlimited => None,
     }
 }
+
+#[path = "question_scope_cancel.rs"]
+mod question_scope_cancel;
