@@ -768,7 +768,7 @@ async fn an_unbound_investigation_replay_refuses_and_writes_no_binding() {
         other => panic!("a tool refusal is a complete result, not {other:?}"),
     };
     assert!(
-        rendered.contains("not been reviewed on this machine"),
+        rendered.contains("no local review binding"),
         "the refusal names the missing human review: {rendered}"
     );
     assert!(

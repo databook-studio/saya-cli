@@ -899,7 +899,7 @@ async fn machine_driven_run_of_an_unbound_investigation_is_refused_without_execu
     assert_eq!(outcome.code, 2, "out: {out} err: {err}");
     assert!(outcome.replay.is_none(), "a refusal carries no replay");
     assert!(
-        err.contains("not been reviewed on this machine"),
+        err.contains("no local review binding"),
         "the refusal names the missing human review: {err}"
     );
     assert!(
@@ -916,7 +916,7 @@ async fn machine_driven_run_of_an_unbound_investigation_is_refused_without_execu
 }
 
 #[tokio::test]
-async fn machine_driven_run_of_a_legacy_binding_is_refused_and_leaves_it_byte_identical() {
+async fn machine_driven_run_of_a_legacy_binding_succeeds_and_leaves_it_byte_identical() {
     let root = temp_root("machine-legacy");
     let runtime = runtime_at(&root, &single_profile_toml(&root));
     let repo = repo_at(&root);
@@ -924,7 +924,8 @@ async fn machine_driven_run_of_a_legacy_binding_is_refused_and_leaves_it_byte_id
     let id = saved_id(&repo, &runtime).await;
     let state_db = SqliteStateStore::new(root.join("state.sqlite3"));
     // The save-time binding predates fingerprinting: a reviewed revision,
-    // no schema fingerprint — a machine run may not complete that review.
+    // no schema fingerprint — a human review; a machine replay may run it
+    // but never completes that review.
     let binding_before = fs::read(binding_path(&root, &id)).unwrap();
     assert!(
         repo.get_binding(&InvestigationId::parse(&id).unwrap())
@@ -939,20 +940,28 @@ async fn machine_driven_run_of_a_legacy_binding_is_refused_and_leaves_it_byte_id
     let (outcome, out, err) =
         run_outcome_machine_driven(&repo, run_command(&id), &runtime, &state_db, &cancellation)
             .await;
-    assert_eq!(outcome.code, 2, "out: {out} err: {err}");
-    assert!(outcome.replay.is_none(), "a refusal carries no replay");
+    assert_eq!(outcome.code, 0, "out: {out} err: {err}");
     assert!(
-        err.contains("not been reviewed on this machine"),
-        "the refusal names the missing human review: {err}"
+        outcome.replay.is_some(),
+        "a legacy binding replays under a machine-driven run"
+    );
+    assert_eq!(
+        state_db.recent_audit(20).await.unwrap().len(),
+        1,
+        "the legacy replay executed once"
     );
     assert!(
-        state_db.recent_audit(20).await.unwrap().is_empty(),
-        "nothing executed: no audit row"
+        repo.get_binding(&InvestigationId::parse(&id).unwrap())
+            .unwrap()
+            .expect("the save wrote a binding")
+            .reviewed_schema_fingerprint
+            .is_none(),
+        "a machine replay never completes the legacy review"
     );
     assert_eq!(
         fs::read(binding_path(&root, &id)).unwrap(),
         binding_before,
-        "a refused machine run leaves the binding byte-identical"
+        "a machine replay leaves the legacy binding byte-identical"
     );
     let _ = fs::remove_dir_all(root);
 }

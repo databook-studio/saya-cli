@@ -85,18 +85,17 @@ pub(super) async fn run(
         Err(error) => return no_replay(store_failure(error, id.as_str(), format)),
     };
     // A machine-driven replay (the MCP tool) can never establish review
-    // authority (FIX-S6a): the binding this same run just read must carry a
-    // schema fingerprint — a human step wrote it — or the replay refuses
-    // before anything executes (no re-read to disagree; id only, no values).
-    if request.machine_driven
-        && !binding
-            .as_ref()
-            .is_some_and(|binding| binding.reviewed_schema_fingerprint.is_some())
-    {
+    // authority (FIX-S6a): an UNBOUND investigation refuses here — an
+    // imported team file leaves the binding to a human, and success would
+    // otherwise write one for a model-supplied profile. A present binding —
+    // save-time or human-refreshed, fingerprint or not — runs as before,
+    // still gated for staleness against the explicit target below, and is
+    // never written by this run (id only, no values).
+    if request.machine_driven && binding.is_none() {
         return no_replay(failure_message(
             EXIT_INVESTIGATION_ERROR,
             format!(
-                "this investigation has not been reviewed on this machine yet; review it once with `saya investigation run {} --connection <profile>` (a human step) before a tool can replay it",
+                "this investigation has no local review binding on this machine; review it once with `saya investigation run {} --connection <profile>` (a human step) before a tool can replay it",
                 id.as_str(),
             ),
             format,
