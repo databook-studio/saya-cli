@@ -41,8 +41,8 @@ impl ChatProvider for GeminiProvider {
     }
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        self.complete_with_cancellation(request, CancellationToken::new())
-            .await
+        let value = self.fetch_value(request, CancellationToken::new()).await?;
+        gemini_response::parse(value)
     }
 
     async fn stream(
@@ -50,9 +50,21 @@ impl ChatProvider for GeminiProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
-        let response = self
-            .complete_with_cancellation(request, cancellation)
-            .await?;
+        let value = self.fetch_value(request, cancellation).await?;
+        let response = match gemini_response::parse(value.clone()) {
+            Ok(response) => response,
+            Err(error @ ProviderError::OutputTruncated { .. }) => {
+                // The paid usage of a capped response is delivered ahead of
+                // the typed error: the loop charges only usage a stream emits.
+                let mut items = Vec::with_capacity(2);
+                if let Some(usage) = gemini_response::usage(&value) {
+                    items.push(Ok(ProviderEvent::Usage(usage)));
+                }
+                items.push(Err(error));
+                return Ok(Box::pin(stream::iter(items)));
+            }
+            Err(error) => return Err(error),
+        };
         let mut events = if response.message.tool_calls.is_empty() {
             vec![
                 ProviderEvent::TextDelta(response.message.content),
@@ -72,11 +84,11 @@ impl ChatProvider for GeminiProvider {
 }
 
 impl GeminiProvider {
-    async fn complete_with_cancellation(
+    async fn fetch_value(
         &self,
         request: ChatRequest,
         cancellation: CancellationToken,
-    ) -> Result<ChatResponse, ProviderError> {
+    ) -> Result<serde_json::Value, ProviderError> {
         let model = request.model.clone();
         let body = gemini_request::build_body(
             request,
@@ -120,6 +132,6 @@ impl GeminiProvider {
                 )))??,
         };
 
-        gemini_response::parse(value)
+        Ok(value)
     }
 }
