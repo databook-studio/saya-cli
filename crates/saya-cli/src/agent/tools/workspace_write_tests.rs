@@ -429,8 +429,11 @@ async fn workspace_write_refuses_content_over_the_bound_and_leaves_no_file() {
     );
 }
 
-/// Writing over an existing file replaces it whole: the path never holds a
-/// mix of old and new content, and no temp file survives the replace.
+/// Writing over an existing file with the digest the model observed replaces
+/// it whole: the path never holds a mix of old and new content, and no temp
+/// file survives the replace. (Premise updated by E03: replacement now
+/// requires `expected_digest`, so the second call carries the digest from a
+/// fresh read.)
 #[tokio::test]
 async fn workspace_write_replaces_an_existing_file_whole() {
     let sandbox = Sandbox::new("replace");
@@ -442,13 +445,21 @@ async fn workspace_write_replaces_an_existing_file_whole() {
         )
         .await
         .expect("the first write must succeed");
+    let observed = tools
+        .execute("workspace_read", serde_json::json!({"path": "report.md"}))
+        .await
+        .expect("the file must read back");
     tools
         .execute(
             "workspace_write",
-            serde_json::json!({"path": "report.md", "content": "hi"}),
+            serde_json::json!({
+                "path": "report.md",
+                "content": "hi",
+                "expected_digest": observed["digest"],
+            }),
         )
         .await
-        .expect("a permitted replace must succeed");
+        .expect("a permitted digest-guarded replace must succeed");
     assert_eq!(
         fs::read(sandbox.ws_root().join("report.md")).expect("file must exist"),
         b"hi",
@@ -465,6 +476,307 @@ async fn workspace_write_replaces_an_existing_file_whole() {
         })
         .collect();
     assert_eq!(leftovers, vec!["report.md"], "no temp file may survive");
+}
+
+// -- create-if-absent and digest-guarded replacement (E03) --------------------
+
+/// A no-digest write to an absent path creates the file, and the result now
+/// carries `size` and the whole-file `digest` — the value a later guarded
+/// replace or edit chains from.
+#[tokio::test]
+async fn write_creates_a_new_file_and_returns_size_and_digest() {
+    let sandbox = Sandbox::new("create-new");
+    let tools = sandbox.tools();
+    let result = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "notes/new.md", "content": "fresh bytes"}),
+        )
+        .await
+        .expect("a no-digest write to an absent path must create the file");
+    assert_eq!(result["size"], 11);
+    let digest = result["digest"].as_str().expect("digest must be a string");
+    assert_eq!(digest.len(), 64, "the digest must be sha256 hex");
+    assert!(
+        digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "the digest must be lowercase hex: {digest}"
+    );
+    let observed = tools
+        .execute(
+            "workspace_read",
+            serde_json::json!({"path": "notes/new.md"}),
+        )
+        .await
+        .expect("the file must read back");
+    assert_eq!(
+        result["digest"], observed["digest"],
+        "the result's digest must be the file's real digest"
+    );
+    assert_eq!(result["size"], observed["size"]);
+}
+
+/// The defining refusal: writing over an existing file without a digest
+/// changes nothing, and the refusal tells the model how to proceed —
+/// `expected_digest` from a fresh `workspace_read` — without leaking the
+/// file's current digest or content.
+#[tokio::test]
+async fn write_over_an_existing_file_without_a_digest_changes_nothing() {
+    let sandbox = Sandbox::new("no-digest-replace");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "report.md", "content": "original secret bytes"}),
+        )
+        .await
+        .expect("the creating write must succeed");
+    let observed = tools
+        .execute("workspace_read", serde_json::json!({"path": "report.md"}))
+        .await
+        .expect("the file must read back");
+    let current_digest = observed["digest"].as_str().expect("a digest").to_owned();
+    let error = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "report.md", "content": "clobbered"}),
+        )
+        .await
+        .expect_err("replacing an existing file without a digest must refuse");
+    match error {
+        ToolError::WorkspaceWrite(message) => {
+            assert!(
+                message.contains("expected_digest") && message.contains("workspace_read"),
+                "the refusal must tell the model how to replace: {message}"
+            );
+            assert!(
+                !message.contains(&current_digest),
+                "the refusal must not leak the file's current digest: {message}"
+            );
+            assert!(
+                !message.contains("original secret bytes"),
+                "the refusal must not leak the file's content: {message}"
+            );
+        }
+        other => panic!("expected a typed workspace-write error, got: {other}"),
+    }
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("report.md")).expect("file must survive"),
+        b"original secret bytes",
+        "the file must be byte-identical after the refused replace"
+    );
+}
+
+/// With the digest the model observed the file is replaced, and the result
+/// names the new state so the model can chain the next guarded edit.
+#[tokio::test]
+async fn write_with_the_observed_digest_replaces_the_file() {
+    let sandbox = Sandbox::new("guarded-replace");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "report.md", "content": "first version"}),
+        )
+        .await
+        .expect("the creating write must succeed");
+    let observed = tools
+        .execute("workspace_read", serde_json::json!({"path": "report.md"}))
+        .await
+        .expect("the file must read back");
+    let result = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({
+                "path": "report.md",
+                "content": "second version",
+                "expected_digest": observed["digest"],
+            }),
+        )
+        .await
+        .expect("a digest-guarded replace of an unchanged file must succeed");
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("report.md")).expect("file must exist"),
+        b"second version",
+    );
+    let reread = tools
+        .execute("workspace_read", serde_json::json!({"path": "report.md"}))
+        .await
+        .expect("the file must read back");
+    assert_eq!(
+        result["digest"], reread["digest"],
+        "the result's digest must be what landed"
+    );
+    assert_eq!(result["size"], reread["size"]);
+}
+
+/// A same-size overwrite between the model's read and its write is caught by
+/// the digest: the stale digest refuses and the file keeps the other
+/// writer's bytes — never last-writer-wins.
+#[tokio::test]
+async fn write_with_a_stale_same_size_digest_is_refused() {
+    let sandbox = Sandbox::new("stale-digest");
+    let tools = sandbox.tools();
+    tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "stale.txt", "content": "hello world"}),
+        )
+        .await
+        .expect("the creating write must succeed");
+    let observed = tools
+        .execute("workspace_read", serde_json::json!({"path": "stale.txt"}))
+        .await
+        .expect("the file must read back");
+    // A non-cooperating writer lands a same-size change a length check
+    // cannot see — exactly what the digest precondition exists for.
+    sandbox
+        .ws
+        .write("stale.txt", b"hell0 world")
+        .expect("the external same-size overwrite must land");
+    let error = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({
+                "path": "stale.txt",
+                "content": "clobber",
+                "expected_digest": observed["digest"],
+            }),
+        )
+        .await
+        .expect_err("a stale digest must refuse the replace");
+    match error {
+        ToolError::WorkspaceWrite(message) => {
+            assert!(
+                message.contains("changed") && message.contains("workspace_read"),
+                "the refusal must send the model back to a fresh read: {message}"
+            );
+            assert!(
+                !message.contains("hello world") && !message.contains("hell0 world"),
+                "the refusal must not carry file content: {message}"
+            );
+        }
+        other => panic!("expected a typed workspace-write error, got: {other}"),
+    }
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("stale.txt")).expect("file must survive"),
+        b"hell0 world",
+        "the other writer's bytes must survive a refused stale replace"
+    );
+}
+
+/// A digest-carrying write to an absent path is refused, never a create:
+/// `expected_digest` says "replace", and there is nothing to replace.
+#[tokio::test]
+async fn write_with_a_digest_for_a_missing_file_is_refused_not_created() {
+    let sandbox = Sandbox::new("digest-missing");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({
+                "path": "notes/missing.md",
+                "content": "never lands",
+                "expected_digest": "0".repeat(64),
+            }),
+        )
+        .await
+        .expect_err("a digest-carrying write to a missing file must refuse");
+    match error {
+        ToolError::WorkspaceWrite(message) => {
+            assert!(
+                message.contains("does not exist") && message.contains("expected_digest"),
+                "the refusal must point at the digest-vs-create confusion: {message}"
+            );
+        }
+        other => panic!("expected a typed workspace-write error, got: {other}"),
+    }
+    assert!(
+        !sandbox.ws_root().join("notes").exists(),
+        "a refused digest write must create nothing, not even the parent"
+    );
+}
+
+/// The creation race: another writer wins the path before the tool's
+/// no-digest call commits — the tool refuses and the winner's bytes survive,
+/// never clobbered. The executor cannot interleave two of its own calls, so
+/// the race's winner is planted through the harness's own create-if-absent
+/// (`Workspace::create_new`, the same commit gate the tool's create holds);
+/// what the test asserts is the tool's side of the race: refuse, never
+/// overwrite the winner.
+#[tokio::test]
+async fn a_creation_race_never_clobbers_the_winner() {
+    let sandbox = Sandbox::new("create-race");
+    let tools = sandbox.tools();
+    sandbox
+        .ws
+        .create_new("race.txt", b"winner bytes")
+        .expect("the concurrent creator must win the race");
+    let error = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "race.txt", "content": "loser bytes"}),
+        )
+        .await
+        .expect_err("a no-digest write over an existing file must refuse");
+    assert!(matches!(error, ToolError::WorkspaceWrite(_)));
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("race.txt")).expect("file must survive"),
+        b"winner bytes",
+        "the concurrent creator's bytes must survive"
+    );
+}
+
+/// The definition advertises `expected_digest` (optional, string-typed) and
+/// still requires only `path` and `content` — omitting the digest is the
+/// create form, so it must not be mandatory.
+#[test]
+fn workspace_write_definition_advertises_expected_digest() {
+    let definition = workspace_write_definition();
+    let properties = &definition.parameters["properties"];
+    assert_eq!(properties["expected_digest"]["type"], "string");
+    assert!(
+        properties["expected_digest"]["description"]
+            .as_str()
+            .expect("expected_digest must carry a description")
+            .contains("workspace_read"),
+        "the argument's description must say where the digest comes from"
+    );
+    assert_eq!(
+        definition.parameters["required"],
+        serde_json::json!(["path", "content"]),
+        "expected_digest stays optional: omitting it is the create form"
+    );
+    assert!(
+        definition.description.contains("expected_digest"),
+        "the tool description must state the digest precondition: {}",
+        definition.description
+    );
+}
+
+/// A non-string `expected_digest` is its own typed error, like the edit
+/// tool's parser; an explicit `null` counts as absent, not mistyped.
+#[tokio::test]
+async fn workspace_write_rejects_a_non_string_expected_digest() {
+    let sandbox = Sandbox::new("digest-type");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "notes.md", "content": "hi", "expected_digest": 7}),
+        )
+        .await
+        .expect_err("a non-string digest must be rejected at validation");
+    assert_eq!(error, ToolError::ExpectedDigestNotString);
+    let result = tools
+        .execute(
+            "workspace_write",
+            serde_json::json!({"path": "notes.md", "content": "hi", "expected_digest": null}),
+        )
+        .await
+        .expect("an explicit null digest is the create form, not a mistyped one");
+    assert_eq!(result["path"], "notes.md");
 }
 
 /// No workspace attached (the state before a run engine opens one): the tool
