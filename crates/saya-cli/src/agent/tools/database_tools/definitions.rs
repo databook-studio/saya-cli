@@ -355,11 +355,16 @@ impl DatabaseTools {
                 name: "workspace_write".into(),
                 description: "Write one file into this run's workspace — the contained \
                     directory holding this run's files. Pass `path` relative to the workspace \
-                    root and `content` as the full text to store; the file is written \
+                    root and `content` as the full text to store. The write is \
+                    create-if-absent: it creates the file only when nothing names it yet. To \
+                    replace an existing file you must also pass `expected_digest`, the sha256 \
+                    hex `digest` you observed from a fresh `workspace_read` or the previous \
+                    write/edit result — the write refuses when the file has changed since, so \
+                    a concurrent writer's bytes are never clobbered. The file is written \
                     atomically — replaced whole or not at all, never partially. Absolute \
-                    paths, `..` escapes, and symlinks are refused, content over the write \
-                    bound is refused whole, and existing files are replaced by the new \
-                    content. Returns the `path` and `bytes_written`."
+                    paths, `..` escapes, and symlinks are refused, and content over the write \
+                    bound is refused whole. Returns the `path`, `bytes_written`, `size`, and \
+                    `digest`."
                     .into(),
                 read_only: false,
                 parameters: serde_json::json!({
@@ -371,8 +376,14 @@ impl DatabaseTools {
                         },
                         "content": {
                             "type": "string",
-                            "description": "The full text to store in the file, replacing \
-                                any previous content."
+                            "description": "The full text to store in the file."
+                        },
+                        "expected_digest": {
+                            "type": "string",
+                            "description": "Required to replace an existing file: the sha256 hex \
+                                `digest` from a fresh `workspace_read` or from the previous \
+                                write/edit result. Omit it only to create a new file; writing \
+                                over an existing file without it is refused."
                         }
                     },
                     "required": ["path", "content"],
@@ -652,7 +663,7 @@ pub(super) fn validate_arguments(
         "request_clarification" => (&["question", "options"][..], false),
         "workspace_read" => (&["path"][..], false),
         "workspace_list" => (&["path"][..], false),
-        "workspace_write" => (&["path", "content"][..], false),
+        "workspace_write" => (&["path", "content", "expected_digest"][..], false),
         "glob" => (&["pattern"][..], false),
         "grep" => (&["pattern", "case_insensitive"][..], false),
         "bounded_sql_query" => (&["connection", "sql"][..], true),
@@ -697,8 +708,10 @@ pub(super) fn validate_arguments(
     {
         return Err(ToolError::PathNotString);
     }
-    // Both `workspace_write` arguments are required strings; each names its
-    // own typed error so the model can fix the right one.
+    // Both required `workspace_write` arguments are strings; each names its
+    // own typed error so the model can fix the right one. `expected_digest`
+    // is optional and string-typed when present — an explicit null counts as
+    // absent (the create form), as in `workspace_edit`'s parser.
     if name == "workspace_write" {
         if !object.get("path").is_some_and(serde_json::Value::is_string) {
             return Err(ToolError::PathNotString);
@@ -708,6 +721,12 @@ pub(super) fn validate_arguments(
             .is_some_and(serde_json::Value::is_string)
         {
             return Err(ToolError::ContentNotString);
+        }
+        if object
+            .get("expected_digest")
+            .is_some_and(|value| !value.is_null() && !value.is_string())
+        {
+            return Err(ToolError::ExpectedDigestNotString);
         }
     }
     // `workspace_list`'s path is optional — absent means the root — so only a
