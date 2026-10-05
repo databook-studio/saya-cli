@@ -6,6 +6,7 @@
 
 use super::session_compact::{self, COMPACT_MIN_TURNS};
 use super::session_compact_call;
+use super::session_continuation::digest_resolver;
 use super::session_state::SessionState;
 use super::session_universe::SessionUniverse;
 use crate::agent::provider;
@@ -52,10 +53,11 @@ pub(crate) async fn run(
 pub(crate) async fn run_with_trigger(
     runtime: &RuntimeConfig,
     state: &mut SessionState,
-    _session: &SessionUniverse,
+    session: &SessionUniverse,
     automatic: bool,
     metrics: Option<&LocalMetrics>,
 ) -> CompactResult {
+    let digest_of = digest_resolver(session.workspace());
     let no_work = |message: String| {
         record_compaction(metrics, saya_agent::AgentMetricOutcome::Skipped, 0);
         CompactResult {
@@ -101,7 +103,12 @@ pub(crate) async fn run_with_trigger(
         ));
     }
     let result = match session_compact_call::summarise(&*provider, &ai.model, &plan).await {
-        Ok(outcome) => match session_compact::apply(state, &plan, &outcome.summary) {
+        Ok(outcome) => match session_compact::apply_with_continuation(
+            state,
+            &plan,
+            &outcome.summary,
+            &digest_of,
+        ) {
             Ok(()) => CompactResult {
                 message: session_compact::success_message(plan.compacted_turns, &outcome.summary),
                 failed: false,
@@ -221,6 +228,7 @@ fn start_with_trigger(app: &mut App, state: &SessionState, automatic: bool) {
 pub(crate) fn poll(app: &mut App, state: &mut SessionState) {
     use super::auto_compact::{auto_failure_message, auto_success_message};
     use crate::interactive::tui::transcript::BlockKind;
+    let digest_of = digest_resolver(app.session.workspace());
     let ready = app
         .compact_task
         .as_ref()
@@ -246,7 +254,10 @@ pub(crate) fn poll(app: &mut App, state: &mut SessionState) {
                         if applicable
                             && let Some(plan) =
                                 session_compact::plan(&state.turns, &state.provider_history())
-                            && session_compact::apply(state, &plan, summary).is_ok()
+                            && session_compact::apply_with_continuation(
+                                state, &plan, summary, &digest_of,
+                            )
+                            .is_ok()
                         {
                             state.auto_compact_failed = false;
                             app.transcript.push(
@@ -278,7 +289,10 @@ pub(crate) fn poll(app: &mut App, state: &mut SessionState) {
                         if applicable
                             && let Some(plan) =
                                 session_compact::plan(&state.turns, &state.provider_history())
-                            && session_compact::apply(state, &plan, summary).is_ok()
+                            && session_compact::apply_with_continuation(
+                                state, &plan, summary, &digest_of,
+                            )
+                            .is_ok()
                         {
                             state.auto_compact_failed = false;
                         }

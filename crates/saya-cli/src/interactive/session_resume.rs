@@ -99,6 +99,12 @@ pub(crate) fn state_from_redacted(
     } else {
         saya_types::SessionTaskList::default()
     };
+    // The continuation and its parent link ride the record verbatim. No
+    // validation here: the store already validated a typed record on load,
+    // and an unsupported one must stay opaque — a reader that does not
+    // understand it must neither drop nor rewrite it.
+    state.continuation = value.continuation;
+    state.parent = value.parent;
     state.messages = value
         .messages
         .into_iter()

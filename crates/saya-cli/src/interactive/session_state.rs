@@ -1,11 +1,14 @@
 use crate::interactive::tui::types::SessionUsage;
 use saya_agent::{AgentOutput, ChatMessage, ToolMetadata};
 use saya_store::{
-    RedactedSession, RedactedToolMetadata, RedactedToolResultShape, RedactedTurn, SESSION_VERSION,
+    ParentLink, RedactedSession, RedactedToolMetadata, RedactedToolResultShape, RedactedTurn,
+    SESSION_VERSION, StoredContinuation,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// `continuation` holds the store's typed-or-unknown view (`serde_json::Value`
+// behind `Unsupported`), so the state is `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionState {
     pub id: String,
     pub profile: Option<String>,
@@ -59,6 +62,20 @@ pub struct SessionState {
     /// it — and `/clear` empties it with the conversation.
     #[serde(skip)]
     pub(crate) observations: super::session_continuation::SessionObservations,
+    /// The session's optional continuation, as the store typed it on load or
+    /// a compaction built it: a record this binary understands, or the
+    /// verbatim JSON of one it does not (`Unsupported` — a newer binary's
+    /// data, carried opaquely and never replaced). Runtime-carried
+    /// (`#[serde(skip)]`, the `observations` precedent): `redacted()` hands
+    /// it to the store so the next save persists it, and a resume reads it
+    /// back verbatim.
+    #[serde(skip)]
+    pub(crate) continuation: Option<StoredContinuation>,
+    /// The session's rotation lineage link to its parent, carried through
+    /// `redacted()` the same way. LINEAGE ONLY: the link records where the
+    /// session came from and grants nothing.
+    #[serde(skip)]
+    pub(crate) parent: Option<ParentLink>,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
     /// The `/compact` summary of the older turns, replayed ahead of the
@@ -140,6 +157,8 @@ impl SessionState {
             task_list: saya_types::SessionTaskList::default(),
             prior_tool_outcomes: None,
             observations: super::session_continuation::SessionObservations::default(),
+            continuation: None,
+            parent: None,
             messages: Vec::new(),
             turns: Vec::new(),
             compaction_summary: None,
@@ -308,8 +327,8 @@ impl SessionState {
             turns: self.turns.clone(),
             profile_names: self.profile_names(),
             messages: Vec::new(),
-            continuation: None,
-            parent: None,
+            continuation: self.continuation.clone(),
+            parent: self.parent.clone(),
         }
     }
 

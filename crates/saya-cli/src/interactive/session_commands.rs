@@ -237,6 +237,16 @@ impl SessionState {
                 self.usage = Default::default();
                 self.context_warned = false;
                 self.auto_compact_failed = false;
+                // A typed continuation described the cleared conversation: it
+                // goes with it. An `Unsupported` one is a newer binary's data
+                // and survives; the parent link is lineage, not conversation,
+                // and survives too.
+                if matches!(
+                    self.continuation,
+                    Some(saya_store::StoredContinuation::Current(_))
+                ) {
+                    self.continuation = None;
+                }
                 // The transcript keeps what was said; the model's working
                 // memory does not. Say so, since there is no undo.
                 SessionAction::Message(

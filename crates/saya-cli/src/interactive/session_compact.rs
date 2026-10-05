@@ -14,7 +14,9 @@
 //! a rewrite on a hope is worse than no rewrite.
 
 use saya_agent::{ChatMessage, TokenUsage};
-use saya_store::RedactedTurn;
+use saya_store::{RedactedTurn, StoredContinuation};
+
+use super::session_continuation::assemble_continuation;
 
 /// Turns kept verbatim at the end of the conversation. The newest tail is the
 /// freshest context — including the newest tool-result group(s) whose size and
@@ -98,11 +100,31 @@ pub(crate) fn plan(turns: &[RedactedTurn], history: &[ChatMessage]) -> Option<Co
 /// Applies a validated summary: stores it and the compacted-turn count on the
 /// session. The transcript (`messages`) is untouched — only working memory
 /// changes. Callers must run [`validate`] first; this function re-checks and
-/// refuses a summary that lost a pinned token.
+/// refuses a summary that lost a pinned token. No continuation is assembled:
+/// the digest resolver resolves nothing. Production callers use
+/// [`apply_with_continuation`]; this test-only spelling keeps the old
+/// entry point for the tests that exercise the plain compaction.
+#[cfg(test)]
 pub(crate) fn apply(
     state: &mut super::session_state::SessionState,
     plan: &CompactionPlan,
     summary: &str,
+) -> Result<(), String> {
+    apply_with_continuation(state, plan, summary, &|_| None)
+}
+
+/// The same working-memory change as [`apply`], plus the session's
+/// continuation: the record assembled from the deterministic facts, with the
+/// summary as the generated narrative only when it survives redaction
+/// unchanged. A `Current` continuation is replaced by the new record; an
+/// `Unsupported` one is a newer binary's data and is never replaced — the
+/// assembled facts are then simply not saved. An assembly that cannot
+/// validate leaves the previous continuation untouched.
+pub(crate) fn apply_with_continuation(
+    state: &mut super::session_state::SessionState,
+    plan: &CompactionPlan,
+    summary: &str,
+    digest_of: &dyn Fn(&str) -> Option<String>,
 ) -> Result<(), String> {
     validate(summary, &plan.pinned)?;
     state.compaction_summary = Some(summary.to_string());
@@ -110,6 +132,11 @@ pub(crate) fn apply(
     // The one-shot warning measures live answering usage, which a shorter
     // replay legitimately lowers: re-arm so the next crossing warns again.
     state.context_warned = false;
+    if let Some(record) = assemble_continuation(state, summary, digest_of)
+        && !matches!(state.continuation, Some(StoredContinuation::Unsupported(_)))
+    {
+        state.continuation = Some(StoredContinuation::Current(record));
+    }
     Ok(())
 }
 
