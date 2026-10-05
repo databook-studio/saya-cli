@@ -5,6 +5,7 @@
 //! its own types: scratch never shares connector plumbing (ADR 0003).
 
 use duckdb::Connection;
+use saya_agent::CancellationToken;
 use saya_types::QueryResult;
 use serde_json::Value;
 use tokio::time::timeout;
@@ -33,15 +34,23 @@ const MAX_DETAIL: usize = 300;
 const EXPLAINABLE: [&str; 3] = ["Catalog Error:", "Binder Error:", "Parser Error:"];
 
 impl ScratchDb {
-    /// Runs one validated statement. Timed out, the DuckDB interrupt handle is
-    /// the cancellation primitive — `JoinHandle::abort` cannot stop blocking
+    /// Runs one validated statement under the caller's cancellation token.
+    /// Timed out or cancelled, the DuckDB interrupt handle is the
+    /// cancellation primitive — `JoinHandle::abort` cannot stop blocking
     /// native work — and awaiting the task proves the query released the
-    /// connection mutex before the timeout error is surfaced.
+    /// connection mutex before either error is surfaced. A token already
+    /// cancelled before the call starts the statement not at all; a
+    /// statement that completed before cancellation is observed returns its
+    /// real outcome, truthful for effects.
     pub(super) async fn execute(
         &self,
         validated: Validated,
         original_sql: &str,
+        cancellation: &CancellationToken,
     ) -> Result<QueryResult, ScratchError> {
+        if cancellation.is_cancelled() {
+            return Err(ScratchError::Cancelled);
+        }
         let connection = self.connection.clone();
         let sql = validated.sql;
         let original = original_sql.to_string();
@@ -56,16 +65,26 @@ impl ScratchDb {
                 run_effect(&connection, &sql, &original)
             }
         });
-        match timeout(self.query_timeout, &mut task).await {
-            Ok(result) => result.map_err(|_| ScratchError::Execution {
-                message: "statement task failed".into(),
-            })?,
-            Err(_) => {
+        tokio::select! {
+            biased;
+            settled = timeout(self.query_timeout, &mut task) => match settled {
+                Ok(result) => result.map_err(|_| ScratchError::Execution {
+                    message: "statement task failed".into(),
+                })?,
+                Err(_) => {
+                    self.interrupt.interrupt();
+                    // Awaiting proves the interrupted query released the mutex
+                    // before the timeout error is surfaced.
+                    let _ = task.await;
+                    Err(ScratchError::TimedOut)
+                }
+            },
+            _ = cancellation.cancelled() => {
                 self.interrupt.interrupt();
                 // Awaiting proves the interrupted query released the mutex
-                // before the timeout error is surfaced.
+                // before the cancelled error is surfaced.
                 let _ = task.await;
-                Err(ScratchError::TimedOut)
+                Err(ScratchError::Cancelled)
             }
         }
     }
