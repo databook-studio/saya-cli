@@ -462,6 +462,18 @@ pub(crate) fn spawn_child_with_config(
     config_toml: &str,
     tag: &str,
 ) -> SpawnedChild {
+    spawn_child_with_config_extra(base_url, config_toml, tag, &[])
+}
+
+/// Spawns the REPL against `base_url` with the caller's full config TOML and
+/// any extra CLI arguments (e.g. `--verbose` for the metrics-section rows).
+#[cfg(unix)]
+pub(crate) fn spawn_child_with_config_extra(
+    base_url: &str,
+    config_toml: &str,
+    tag: &str,
+    extra_args: &[&str],
+) -> SpawnedChild {
     use std::{
         io::Read,
         process::{Command, Stdio},
@@ -475,6 +487,7 @@ pub(crate) fn spawn_child_with_config(
     std::fs::write(config_root.join("saya").join("config.toml"), config_toml).unwrap();
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
+    command.args(extra_args);
     // The session composition reads PATH for the host-command lane; the
     // harness clears the environment for hermeticity, so restore the real
     // PATH (Row B passed without it only because nothing it ran needed the

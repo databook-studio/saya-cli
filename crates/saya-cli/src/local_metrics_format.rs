@@ -1,5 +1,6 @@
-use crate::local_metrics::{CoverageCell, LocalPhaseSnapshot, PhaseCell};
+use crate::local_metrics::{CoverageCell, LocalMetrics, LocalPhaseSnapshot, PhaseCell};
 use saya_agent::AgentMetricUseful;
+use std::sync::Arc;
 
 /// The one header the section opens with: it names the fixed field contract
 /// and declines any benchmark reading up front.
@@ -79,6 +80,15 @@ pub(crate) fn format_snapshot(snapshot: &LocalPhaseSnapshot) -> String {
     out.push_str(&snapshot.unrecognized.to_string());
     out.push('\n');
     out
+}
+
+/// Prints the fixed diagnostics section for a settled turn: stderr only,
+/// and only when the question carried a collector. The one boundary shared
+/// by the `ask` subcommand and the plain REPL's settled turns.
+pub(crate) fn print_metrics_section(metrics: &Option<Arc<LocalMetrics>>) {
+    if let Some(metrics) = metrics {
+        eprintln!("{}", format_snapshot(&metrics.snapshot()));
+    }
 }
 
 /// One phase line: the bare `unavailable` word for a never-recorded cell, or
