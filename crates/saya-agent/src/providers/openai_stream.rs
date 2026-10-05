@@ -41,8 +41,9 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
-        if let Some(error) = value.1.deferred.take() {
+        if value.1.deferred.is_some() && (value.1.done || !value.1.draining) {
             value.1.done = true;
+            let error = value.1.deferred.take()?;
             return Some((Err(error), value));
         }
         if value.1.done {
@@ -55,6 +56,9 @@ where
                 Ok(item) => item,
                 Err(_) => {
                     value.1.done = true;
+                    if value.1.draining {
+                        continue;
+                    }
                     return Some((
                         Err(ProviderError::Request("provider stream stalled".into())),
                         value,
@@ -64,12 +68,18 @@ where
         };
         let Some(chunk) = item else {
             value.1.done = true;
+            if value.1.draining {
+                continue;
+            }
             return Some((Err(ProviderError::InvalidResponse), value));
         };
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(_) => {
                 value.1.done = true;
+                if value.1.draining {
+                    continue;
+                }
                 return Some((
                     Err(ProviderError::Request("network request failed".into())),
                     value,
@@ -77,8 +87,17 @@ where
             }
         };
         if let Err(error) = value.1.push(&chunk) {
-            value.1.done = true;
-            return Some((Err(error), value));
+            if value.1.draining {
+                // A bad trailer never replaces the typed truncation.
+                value.1.done = true;
+                continue;
+            }
+            if value.1.pending.is_empty() {
+                value.1.done = true;
+                return Some((Err(error), value));
+            }
+            // Events queued earlier in this read (usage) are delivered first.
+            value.1.deferred = Some(error);
         }
     }
 }
@@ -95,6 +114,8 @@ struct State {
     done: bool,
     /// Truncation error held back until the driver has drained `pending`.
     deferred: Option<ProviderError>,
+    /// A length truncation was seen: later frames are read for their usage only.
+    draining: bool,
     assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
@@ -154,6 +175,11 @@ impl State {
                 apply_usage(&mut self.usage, &usage);
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
             }
+            if self.draining {
+                // After a truncation only usage matters: the content, the
+                // tool deltas and an empty `choices` list are all ignored.
+                continue;
+            }
             let Some(choice) = chunk.choices.into_iter().next() else {
                 // The trailing usage-only chunk carries an empty choices list.
                 if !current_usage_reported {
@@ -172,7 +198,8 @@ impl State {
                         std::mem::take(&mut self.text),
                         self.tools.partial_json(),
                     ));
-                    break;
+                    self.draining = true;
+                    continue;
                 }
                 return Err(ProviderError::InvalidResponse);
             }
@@ -207,7 +234,7 @@ impl State {
         if consumed > 0 {
             self.bytes.drain(..consumed);
         }
-        if self.done {
+        if self.done && !self.draining {
             if !whitespace(&self.bytes) || (!self.content && self.tools.is_empty()) {
                 return Err(ProviderError::InvalidResponse);
             }

@@ -254,6 +254,16 @@ precedence.
 context_byte_budget = 524288   # 512 KiB; default is 256 KiB
 ```
 
+`max_output_tokens` sets the reply budget: the provider is asked to cap its
+completion at it, and it doubles as the output reservation subtracted from a
+known context window during request preflight. The default is 4096; a value of
+`0` is rejected as a typed configuration error rather than treated as unset.
+
+`compaction` chooses how context compaction behaves once the window fills:
+`auto` (the default; summarise on crossing the compact threshold), `manual`
+(only an explicit `/compact`), or `off` (no automatic trigger and no context
+warning). `SAYA_COMPACTION` overrides it in the environment.
+
 `context_window_tokens` declares the model's context window in tokens. saya
 keeps a small built-in table of published models — GLM, GPT, Claude, Gemini,
 and the common Ollama families — and looks a model up by exact name, so
@@ -261,8 +271,12 @@ and the common Ollama families — and looks a model up by exact name, so
 any configuration. A model the table does not know stays **unknown**: most
 saya users run through a gateway serving models the table will never list, and
 guessing a window for one would either refuse work that would have succeeded or
-promise headroom that does not exist. Nothing blocks or truncates on this value
-yet; it establishes the fact that a later change can act on.
+promise headroom that does not exist. A known window is enforced at request
+preflight: each provider request is measured against the window minus the
+output reservation (`max_output_tokens` above) minus 1,024 tokens of slack,
+and an oversized request first sheds the oldest history and trims remaining
+content before the turn is refused with a typed context-window budget error.
+An unknown window keeps the request capped by `context_byte_budget` alone.
 
 For a gateway model the table will never hear of, declare the window yourself —
 a declared value wins over the table, because it says something about *your*
@@ -281,13 +295,20 @@ Interactive investigations also resolve four budget ceilings from `[ai]`:
 `investigation_max_requested_tool_calls` (64),
 `investigation_max_elapsed_seconds` (300), and
 `investigation_max_known_reported_tokens` (250,000). These are conservative starting
-policy values, not production percentile measurements. Each accepts a positive
+policy values, not production percentile measurements. The elapsed ceiling is an
+active-time wallet rather than a wall-clock total: it starts before connector
+setup, stops before post-turn learning, and only active answering segments debit
+it, so ancillary work neither consumes the wallet nor is cancelled by it. One
+wallet serves every answering invocation for the question — candidates and
+clarification replies included. Each accepts a positive
 integer or the exact string `"unlimited"`; zero, negative values, other strings,
 and non-integer TOML values are errors. Integer literals beyond TOML's signed
 64-bit range are invalid TOML and fail while parsing. A repository project config cannot
 change these trusted budgets unless `--trust-project-config` is supplied. No
-environment aliases are defined for them. This slice establishes the resolved
-configuration contract; runtime budget enforcement follows separately.
+environment aliases are defined for them. Enforcement is live: each answering
+invocation admits against these limits, and a crossed ceiling stops the run
+with a typed budget stop reason naming the dimension — requests, tool calls,
+reported tokens, or elapsed time.
 
 ```toml
 [ai]

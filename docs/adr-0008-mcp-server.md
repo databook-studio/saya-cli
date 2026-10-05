@@ -91,7 +91,7 @@ Five tools, all annotated read-only
 | --- | --- | --- | --- |
 | `list_profiles` | none (arguments refused) | allowlist names + dialects only | always |
 | `schema` | `profile` | live discovery with the state-store cache fallback | always |
-| `contracts` | `profile`, `table?` (`catalog.schema.object`, exactly three parts) | **Active claims only**, through the identity-dropping contract view; absent contract → an empty `claims` list with a note | always |
+| `contracts` | `profile`, `table?` (`catalog.schema.object`, exactly three parts) | **Active claims only**, through the identity-dropping contract view; a schema-stale contract is dropped and counted in `excluded_by_schema`, never handed to a model as a current fact; absent contract → an empty `claims` list with a note | always |
 | `query` | `profile`, `sql` | bounded rows (`max_rows` from config), `columns`/`rows`/`truncated`, evidence with no connection identity | **data sharing on** |
 | `investigation_run` | `id`, `profile?`, `params?` (`{"name": "value"}` strings) | the replay's `{result, evidence, connection}` | **data sharing on** |
 
@@ -104,8 +104,13 @@ the dispatch refuses them too, so a stale tool list cannot be exploited.
 `investigation_run` reuses the CLI's typed replay operation with
 `revalidate` hardcoded `false`: a stale review is an `isError` result
 carrying the CLI's own message (`review is stale (…); pass --revalidate …`
-— words the MCP client reads, a flag it cannot pass), and a successful MCP
-replay never rewrites the review binding. Declared parameters bind through
+— words the MCP client reads, a flag it cannot pass). The replay is
+machine-driven: it is refused only when the investigation has no local
+review binding on this machine — an imported team file leaves the binding
+to a human — while a present binding, saved by the human or refreshed,
+runs as before, still gated for staleness against the explicit target; and
+a machine-driven run never writes, refreshes, or completes a binding.
+Declared parameters bind through
 an optional `params` map of `{"name": "value"}` strings — the same
 `name=value` grammar the CLI's `--param` parses (the literal `null` binds a
 typed null, values are parsed as their declared types, and a missing
