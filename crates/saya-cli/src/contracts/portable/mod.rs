@@ -51,6 +51,10 @@ pub(crate) enum PortableError {
         "this import maps {0} items; the store accepts at most {1} per import — split the document or narrow the selection"
     )]
     TooManyMappedItems(usize, usize),
+    #[error(
+        "the store would refuse the claim for {0} (its text has a credential-adjacent shape, a path, a header or SQL); an import is all-or-nothing, so nothing was written — fix or remove that item and retry"
+    )]
+    ItemRefused(String),
     #[error("the store refused the import: {0}")]
     Store(#[from] KnowledgeStoreError),
 }

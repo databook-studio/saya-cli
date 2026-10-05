@@ -872,9 +872,9 @@ async fn context_import_is_idempotent_and_atomic() {
         "a skipped import writes nothing"
     );
 
-    // Per-item refusal: the one item the store's admission gate refuses (an
-    // absolute path is machine state, not business context) is reported
-    // unavailable and writes nothing; its valid sibling still files.
+    // Atomicity: a document that validates but carries one item the store's
+    // admission gate refuses (an absolute path is machine state, not business
+    // context) must write NOTHING — not even its valid sibling.
     let poisoned = vec![
         context_item(
             "analytics",
@@ -902,14 +902,13 @@ async fn context_import_is_idempotent_and_atomic() {
         RenderFormat::Text,
     )
     .await;
-    assert_eq!(code, 0, "one refused item does not abort the import: {out}{err}");
-    assert!(out.contains("unavailable 1"), "the refused item is reported: {out}");
-    assert!(
-        out.contains("the store would refuse this claim") && !out.contains("/home/alice"),
-        "the report names the refusal, never the claim text: {out}"
-    );
+    assert_ne!(code, 0, "a refused batch exits non-zero: {out}{err}");
     let after = stored_items(&store, &runtime, None, "analytics.public.orders").await;
-    assert_eq!(after.len(), 3, "the valid sibling landed: {after:?}");
+    assert_eq!(after.len(), 2, "the whole batch rolled back: {after:?}");
+    assert!(
+        !out.contains("never-lands") || out.contains("refused"),
+        "no partial success may be reported: {out}"
+    );
 
     drop(store);
     let _ = fs::remove_dir_all(root);

@@ -82,6 +82,15 @@ pub(crate) async fn import_document(
             MAX_PENDING_BATCH_ITEMS,
         ));
     }
+    // The store's admission predicate, applied before any store access: an
+    // item the store would refuse aborts the whole import in preview and
+    // apply alike — the all-or-nothing rule the batch transaction enforces.
+    // The error names the object, never the claim text.
+    for planned in &mapped.planned {
+        if saya_store::validate_new_item(&planned.item).is_err() {
+            return Err(PortableError::ItemRefused(planned.label.clone()));
+        }
+    }
     let mut outcome = ImportOutcome {
         inserted: Vec::new(),
         skipped: Vec::new(),

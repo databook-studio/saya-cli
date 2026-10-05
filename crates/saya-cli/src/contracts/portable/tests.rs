@@ -279,11 +279,12 @@ async fn export_and_import_round_trip_through_the_file() {
     drop(store);
     let _ = std::fs::remove_dir_all(root);
 }
-/// A claim the store's own per-item predicate refuses (an admission shape,
-/// not a credential marker) is reported unavailable; the clean items beside
-/// it still import, in preview and apply alike.
+/// A claim the store's admission predicate refuses (an admission shape, not a
+/// credential marker) aborts the whole import — preview and apply alike —
+/// with the same typed error naming the object, never the claim text, and
+/// nothing written, not even the clean items beside it.
 #[tokio::test]
-async fn one_store_refused_item_imports_the_rest_and_reports_itself() {
+async fn a_store_refused_item_aborts_preview_and_apply_alike() {
     let root = std::env::temp_dir().join(format!(
         "saya-portable-refusal-{}-{:?}",
         std::process::id(),
@@ -306,23 +307,22 @@ async fn one_store_refused_item_imports_the_rest_and_reports_itself() {
             &ClaimPayload::table_description("Select the latest row from each customer.").unwrap(),
         ),
     ];
-    let reason =
-        "the store would refuse this claim: its text has a credential, path, header or SQL shape";
-    let preview = import_document(&store, &identity(), &items, &schema, true)
-        .await
-        .unwrap();
-    assert_eq!(preview.inserted.len(), 2, "{:?}", preview.unavailable);
-    assert_eq!(preview.unavailable.len(), 1);
-    assert_eq!(preview.unavailable[0].label, "analytics.public.customers");
-    assert_eq!(preview.unavailable[0].reason, reason);
-    let applied = import_document(&store, &identity(), &items, &schema, false)
-        .await
-        .unwrap();
-    assert_eq!(applied.inserted.len(), 2);
-    assert_eq!(applied.unavailable.len(), 1);
-    assert_eq!(applied.unavailable[0].reason, reason);
+    for preview in [true, false] {
+        let outcome = import_document(&store, &identity(), &items, &schema, preview).await;
+        let Err(error) = &outcome else {
+            panic!("preview={preview} must refuse, not land items");
+        };
+        let PortableError::ItemRefused(label) = error else {
+            panic!("preview={preview} must refuse with ItemRefused, got {error}");
+        };
+        assert_eq!(label, "analytics.public.customers");
+        assert!(
+            !error.to_string().contains("Select the latest row"),
+            "the refusal names the object, never the claim text: {error}"
+        );
+    }
     let rows = store.knowledge_for_profile(&identity()).await.unwrap();
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 0, "nothing written, not even the clean items");
     drop(store);
     let _ = std::fs::remove_dir_all(root);
 }
