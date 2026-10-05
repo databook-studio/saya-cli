@@ -299,6 +299,7 @@ impl SessionState {
             profile_names: self.profile_names(),
             messages: Vec::new(),
             continuation: None,
+            parent: None,
         }
     }
 
