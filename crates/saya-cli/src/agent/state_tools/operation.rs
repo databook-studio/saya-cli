@@ -1,13 +1,14 @@
 use std::future::{Future, pending};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::poll;
-use saya_agent::CancellationToken;
-use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree};
+use saya_agent::{AgentMetricOutcome, AgentMetricPhase as Phase, CancellationToken};
+use saya_types::{ConnectionError, QueryRequest, QueryResult};
 use tokio::sync::MutexGuard;
 
-use crate::connection::OperationEntry;
+use crate::{connection::OperationEntry, local_metrics::LocalMetrics};
 
+use super::operation_metrics::{SchemaAttempt, record, wait_outcome};
 /// An operation settled after the caller cancelled or its local deadline won.
 pub(super) enum OperationError {
     Cancelled,
@@ -20,29 +21,68 @@ pub(super) async fn execute(
     request: QueryRequest,
     cancellation: &CancellationToken,
     timeout: Option<Duration>,
+    metrics: Option<&LocalMetrics>,
 ) -> Result<QueryResult, OperationError> {
-    let _lease = acquire(operation, cancellation).await?;
-    settle(
+    let _lease = acquire_and_record(operation, cancellation, metrics).await?;
+    let execute_started = Instant::now();
+    let result = settle(
         operation.entry.connector.as_ref(),
         operation.entry.connector.execute(request),
         cancellation,
         timeout,
     )
-    .await
+    .await;
+    let execute_outcome = match &result {
+        Ok(_) => AgentMetricOutcome::Succeeded,
+        Err(OperationError::Cancelled) => AgentMetricOutcome::Cancelled,
+        Err(OperationError::TimedOut | OperationError::Connector(_)) => AgentMetricOutcome::Failed,
+    };
+    record(
+        metrics,
+        Phase::DatabaseExecute,
+        execute_started,
+        execute_outcome,
+    );
+    result
 }
 
+/// Measures the live schema attempt: the DatabaseWait sample is recorded
+/// here, and the measured discovery window returns to the caller, which
+/// records its one SchemaDiscovery sample after the cached-fallback decision.
 pub(super) async fn schema(
     operation: &OperationEntry<'_>,
     cancellation: &CancellationToken,
-) -> Result<SchemaTree, OperationError> {
-    let _lease = acquire(operation, cancellation).await?;
-    settle(
+) -> SchemaAttempt {
+    let _lease = match acquire_and_record(operation, cancellation, operation.metrics).await {
+        Ok(lease) => lease,
+        Err(_) => return SchemaAttempt::NotStarted,
+    };
+    let discovery_started = Instant::now();
+    let settled = settle(
         operation.entry.connector.as_ref(),
         operation.entry.connector.schema(),
         cancellation,
         None,
     )
-    .await
+    .await;
+    SchemaAttempt::Measured(discovery_started.elapsed(), settled)
+}
+
+/// Acquires the entry lease, recording its DatabaseWait sample either way.
+async fn acquire_and_record<'a>(
+    operation: &'a OperationEntry<'_>,
+    cancellation: &CancellationToken,
+    metrics: Option<&LocalMetrics>,
+) -> Result<MutexGuard<'a, ()>, OperationError> {
+    let wait_started = Instant::now();
+    let lease = acquire(operation, cancellation).await;
+    record(
+        metrics,
+        Phase::DatabaseWait,
+        wait_started,
+        wait_outcome(lease.is_ok()),
+    );
+    lease
 }
 
 async fn acquire<'a>(

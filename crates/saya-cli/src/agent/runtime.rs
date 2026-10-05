@@ -473,6 +473,7 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
             state_db,
             learning.observations,
         )
+        .with_metrics(question_scope.as_ref().and_then(|scope| scope.metrics()))
         .with_supplied_objects(receipt.supplied.iter().map(|c| c.object.clone()).collect())
         .with_recall_receipt(Some(receipt.clone()), Some(override_log.clone()))
         // The session's bound workspace — the only file I/O the read tools
