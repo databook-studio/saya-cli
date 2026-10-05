@@ -22,6 +22,9 @@ mod host_h4_tests;
 mod host_red_tests;
 mod interactive;
 mod local_metrics;
+mod local_metrics_format;
+#[cfg(test)]
+mod local_metrics_format_tests;
 mod local_metrics_index;
 #[cfg(test)]
 mod local_metrics_tests;
