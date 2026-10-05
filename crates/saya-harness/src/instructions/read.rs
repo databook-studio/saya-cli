@@ -11,7 +11,9 @@ use super::{InstructionOrigin, InstructionSource, SkipReason, SkippedSource};
 
 /// Reads one named file through a contained [`Workspace`] open of `dir`,
 /// pushing either a source or a skip and returning the admitted body's byte
-/// length for the aggregate cap.
+/// length for the aggregate cap. A missing source directory is silent
+/// exactly like a missing file; a directory that exists but cannot be
+/// opened is `Unreadable`.
 pub(super) fn read_one(
     dir: &Path,
     origin: InstructionOrigin,
@@ -22,6 +24,9 @@ pub(super) fn read_one(
 ) -> usize {
     let workspace = match Workspace::open(dir) {
         Ok(workspace) => workspace,
+        // A missing directory is absent, not broken: the normal case for a
+        // user with no personal configuration, silent like a missing file.
+        Err(error) if error.is_not_found() => return 0,
         Err(_) => {
             skipped.push(SkippedSource {
                 origin,

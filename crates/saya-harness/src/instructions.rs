@@ -75,12 +75,12 @@ pub struct LoadedInstructions {
 }
 
 /// Loads at most two instruction files. A `None` root or dir disables that
-/// source and it is never touched; a missing file is silent — neither a
-/// source nor a skip. Personal is read first with `personal_max_bytes`; the
-/// project cap is the smaller of `project_max_bytes` and `total_max_bytes`
-/// minus the admitted personal body (saturating), so the aggregate never
-/// exceeds `total_max_bytes`. Never panics, never errors: every refusal is
-/// data.
+/// source and it is never touched; a missing file or missing source
+/// directory is silent — neither a source nor a skip. Personal is read
+/// first with `personal_max_bytes`; the project cap is the smaller of
+/// `project_max_bytes` and `total_max_bytes` minus the admitted personal
+/// body (saturating), so the aggregate never exceeds `total_max_bytes`.
+/// Never panics, never errors: every refusal is data.
 pub fn load_instructions(
     project_root: Option<&Path>,
     personal_dir: Option<&Path>,

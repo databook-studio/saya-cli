@@ -352,3 +352,31 @@ fn path_typed_args_flow_through() {
     let loaded = load_instructions(Some(project), None, &LIMITS);
     assert_eq!(loaded.sources.len(), 1);
 }
+
+#[test]
+fn a_missing_personal_directory_is_silent() {
+    let sandbox = Sandbox::new("missing-personal-dir");
+    let absent = sandbox.outer.join("does-not-exist");
+    let loaded = load_instructions(None, Some(&absent), &LIMITS);
+    assert!(loaded.sources.is_empty());
+    assert!(
+        loaded.skipped.is_empty(),
+        "a missing directory is absent, not unreadable: {loaded:?}"
+    );
+}
+
+#[test]
+fn a_personal_dir_that_is_a_file_is_unreadable() {
+    let sandbox = Sandbox::new("personal-dir-file");
+    let file = sandbox.outer.join("not-a-dir");
+    fs::write(&file, CONTENT).unwrap();
+    let loaded = load_instructions(None, Some(&file), &LIMITS);
+    assert!(loaded.sources.is_empty());
+    assert_eq!(
+        loaded.skipped,
+        vec![SkippedSource {
+            origin: InstructionOrigin::Personal,
+            reason: SkipReason::Unreadable,
+        }]
+    );
+}
