@@ -458,7 +458,8 @@ impl Drop for MockProvider {
 }
 
 fn accept_request(listener: &TcpListener, stop: &mpsc::Receiver<()>) -> std::io::Result<TcpStream> {
-    let deadline = Instant::now() + Duration::from_secs(4);
+    // The mock must outlive a slow child start; the test's overall DEADLINE is the real bound.
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         match listener.accept() {
             Ok((stream, _)) => return Ok(stream),
