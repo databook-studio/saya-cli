@@ -2,18 +2,24 @@ use saya_agent::ToolError;
 
 use super::workspace_edit::{WORKSPACE_EDIT_MAX_BYTES, WORKSPACE_EDIT_MAX_FILE_BYTES};
 use super::workspace_edit_anchor::hex_digest;
+use super::workspace_edit_args::APPEND_REQUIRES_DIGEST;
 use super::workspace_edit_shared::{commit_splice, workspace_probe, write_new};
 use super::{DatabaseTools, redaction_guard};
 
 impl DatabaseTools {
     /// The `append` half of [`DatabaseTools::workspace_edit`]: an empty
     /// range at EOF with `offset` as the positional precondition, committed
-    /// through the same [`Workspace::patch_range`] the replace half uses.
-    /// Offset 0 on an absent path creates the file; any mismatch refuses,
-    /// writes nothing, and reports the current size and digest. A supplied
-    /// `expected_size` is a second precondition checked like the replace
-    /// half's: a file that moved under the model refuses before the offset
-    /// check, so a stated guard never silently passes.
+    /// through the guarded `Workspace::patch_range_guarded` the replace
+    /// half uses — the digest the model observed is re-verified at the
+    /// commit's own fresh read, so a same-size change between this read
+    /// and the commit is refused too. Appending to an existing file
+    /// requires the observed `expected_digest`, refused read-first before
+    /// anything read-derived leaves the function; offset 0 on an absent
+    /// path creates the file through `Workspace::create_new`. Any mismatch
+    /// refuses, writes nothing, and reports the current size and digest. A
+    /// supplied `expected_size` is a second precondition checked like the
+    /// replace half's: a file that moved under the model refuses before
+    /// the offset check, so a stated guard never silently passes.
     pub(super) async fn workspace_append(
         &self,
         rel: &str,
@@ -32,7 +38,17 @@ impl DatabaseTools {
         let Some(workspace) = &self.workspace else {
             return Err(ToolError::WorkspaceUnavailable);
         };
-        let target_size = match workspace_probe(workspace, rel)? {
+        let probed = workspace_probe(workspace, rel)?;
+        // The existing-file branch's first line: the digest precondition is
+        // raised before anything read-derived leaves the function (so the
+        // message cannot leak the file's current digest) and before the
+        // offset check (whose payload does carry it) — a missing digest is
+        // a read-first refusal, never an offset refusal. The absent branch
+        // stays digest-free: offset 0 there creates the file.
+        if probed.is_some() && expected_digest.is_none() {
+            return Err(ToolError::WorkspaceEdit(APPEND_REQUIRES_DIGEST.to_owned()));
+        }
+        let target_size = match probed {
             None => {
                 // Absent path: only offset 0 creates. Anything else is a
                 // mismatch against the (empty, absent) current state. A
@@ -139,7 +155,19 @@ impl DatabaseTools {
             &[file.bytes.as_slice(), chunk.as_bytes()].concat(),
             ToolError::WorkspaceEdit,
         )?;
-        commit_splice(workspace, rel, size..size, size, None, chunk.as_bytes())?;
+        // The observed digest anchors the commit: a same-size change
+        // between the read above and the commit's own fresh re-read is
+        // refused as the typed moved error. `expected_digest` is Some by
+        // the precondition check above (the absent branch never reaches
+        // this line).
+        commit_splice(
+            workspace,
+            rel,
+            size..size,
+            size,
+            expected_digest.as_deref(),
+            chunk.as_bytes(),
+        )?;
         let after = workspace
             .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
             .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;

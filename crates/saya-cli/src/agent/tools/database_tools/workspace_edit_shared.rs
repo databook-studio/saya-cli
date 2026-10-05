@@ -119,17 +119,40 @@ pub(super) fn workspace_probe(
     }
 }
 
-/// Creates the absent path the append half names, through the same atomic
-/// temp+rename commit the splice uses: the harness's contained write, never
-/// a second mechanism. The parent walk still refuses escapes and links.
+/// Creates the absent path the append half names, through the harness's
+/// create-if-absent commit — [`Workspace::create_new`], never an
+/// unconditional replace. Losing a creation race (a file appeared between
+/// the probe and the create) refuses typed as the offset mismatch the
+/// model re-anchors from, after re-probing the winner's state; the
+/// winner's bytes are never clobbered. The parent walk still refuses
+/// escapes and links.
 pub(super) fn write_new(
     workspace: &saya_harness::workspace::Workspace,
     rel: &str,
     bytes: &[u8],
 ) -> Result<(), ToolError> {
     workspace
-        .write(rel, bytes)
-        .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))
+        .create_new(rel, bytes)
+        .map_err(|error| match error {
+            saya_harness::HarnessError::AlreadyExists { .. } => {
+                // A creator won the race between the probe and the create:
+                // re-probe so the refusal names the state the model re-anchors
+                // from. The read cannot fail in the motivating race (the file
+                // was just created); if it ever does, the absent fallback is
+                // the honest answer rather than an invented digest.
+                let (size, digest) = match workspace.read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES) {
+                    Ok(file) => (file.size, hex_digest(&file.bytes)),
+                    Err(_) => (0, hex_digest(&[])),
+                };
+                ToolError::WorkspaceAppendOffset {
+                    path: rel.to_string(),
+                    expected_offset: 0,
+                    current_size: size,
+                    current_digest: digest,
+                }
+            }
+            other => ToolError::WorkspaceEdit(other.to_string()),
+        })
 }
 
 #[cfg(test)]
@@ -183,6 +206,48 @@ mod tests {
             std::fs::read(root.join("notes.md")).expect("file must survive"),
             b"HELLO WORLD",
             "a refused commit leaves the file byte-identical"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Losing a creation race never clobbers: the append half's create
+    /// helper is create-if-absent, so a file that appeared between the
+    /// probe and the create refuses typed (the offset mismatch the model
+    /// re-anchors from, naming the winner's state) and the winner's bytes
+    /// are left untouched — never an unconditional replace. Focused here
+    /// (not through the tool executor) because `write_new` is
+    /// `pub(super)`: no public API can make a file appear between the
+    /// tool's own probe and its create inside one call.
+    #[test]
+    fn losing_a_creation_race_never_clobbers() {
+        let root = std::env::temp_dir().join(format!("saya-create-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("sandbox directory must create");
+        let workspace = Workspace::open(&root).expect("workspace must open");
+        let winner = b"the racing creator's bytes";
+        workspace
+            .write("notes.md", winner)
+            .expect("seed must write");
+        let error = write_new(&workspace, "notes.md", b"loser bytes")
+            .expect_err("creating over an existing file must refuse");
+        match error {
+            ToolError::WorkspaceAppendOffset {
+                path,
+                expected_offset,
+                current_size,
+                current_digest,
+            } => {
+                assert_eq!(path, "notes.md");
+                assert_eq!(expected_offset, 0);
+                assert_eq!(current_size, winner.len() as u64);
+                assert_eq!(current_digest.len(), 64);
+            }
+            other => panic!("expected the typed creation-race refusal, got: {other}"),
+        }
+        assert_eq!(
+            std::fs::read(root.join("notes.md")).expect("file must survive"),
+            winner,
+            "the losing creation leaves the winner's bytes untouched"
         );
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -52,6 +52,17 @@ impl Drop for Sandbox {
     }
 }
 
+/// The digest the model observes from a fresh read: appending to an
+/// existing file requires it as `expected_digest`, so every append to a
+/// seeded file names it from a real harness read of the current bytes.
+fn observed_digest(sandbox: &Sandbox, path: &str) -> String {
+    sandbox
+        .ws
+        .read(path, 0)
+        .expect("the seeded file must read")
+        .digest
+}
+
 /// An offset mismatch refuses, writes nothing, and reports the current size —
 /// that read-back is what lets the model resume from the right place rather
 /// than guess.
@@ -71,6 +82,7 @@ async fn an_offset_mismatch_writes_nothing_and_reports_the_size() {
                 "path": "log.txt",
                 "offset": 3,
                 "chunk": "chunk-two;",
+                "expected_digest": observed_digest(&sandbox, "log.txt"),
             }),
         )
         .await
@@ -111,6 +123,7 @@ async fn an_expected_size_mismatch_refuses_an_append_without_writing() {
                 "offset": 10,
                 "chunk": "chunk-two;",
                 "expected_size": 3,
+                "expected_digest": observed_digest(&sandbox, "log.txt"),
             }),
         )
         .await
@@ -147,18 +160,23 @@ async fn a_chunked_write_reassembles_byte_exact() {
         )
         .await
         .expect("offset 0 on an absent path creates the file");
-    // Chunked: each chunk names the size the previous chunk left.
+    // Chunked: each chunk names the size the previous chunk left. The first
+    // chunk creates the file at offset 0 (no digest); every later chunk
+    // appends to the existing file, so it names the digest the previous
+    // chunk's result reported.
     let mut offset = 0u64;
+    let mut observed: Option<String> = None;
     for chunk in ["alpha;", "beta;", "gamma;", "delta;"] {
+        let mut arguments = serde_json::json!({
+            "path": "chunked.txt",
+            "offset": offset,
+            "chunk": chunk,
+        });
+        if let Some(digest) = &observed {
+            arguments["expected_digest"] = serde_json::json!(digest);
+        }
         let result = tools
-            .execute(
-                "workspace_edit",
-                serde_json::json!({
-                    "path": "chunked.txt",
-                    "offset": offset,
-                    "chunk": chunk,
-                }),
-            )
+            .execute("workspace_edit", arguments)
             .await
             .unwrap_or_else(|error| {
                 panic!("chunk {chunk:?} at offset {offset} must land: {error}")
@@ -167,10 +185,9 @@ async fn a_chunked_write_reassembles_byte_exact() {
         offset = result["size"]
             .as_u64()
             .expect("the result carries the new size");
+        observed = result["digest"].as_str().map(str::to_owned);
         assert!(
-            result["digest"]
-                .as_str()
-                .is_some_and(|digest| digest.len() == 64),
+            observed.as_ref().is_some_and(|digest| digest.len() == 64),
             "the result carries the digest of what landed"
         );
     }
@@ -189,6 +206,7 @@ async fn a_chunked_write_reassembles_byte_exact() {
                     "path": "chunked.txt",
                     "offset": offset,
                     "chunk": "",
+                    "expected_digest": observed,
                 }),
             )
             .await
@@ -278,6 +296,7 @@ async fn append_to_an_existing_file_refuses_a_chunk_with_the_marker() {
                 "path": "log.txt",
                 "offset": seed.len() as u64,
                 "chunk": " leaked: [redacted]",
+                "expected_digest": observed_digest(&sandbox, "log.txt"),
             }),
         )
         .await
@@ -357,6 +376,7 @@ async fn an_over_bound_chunk_refuses_whole() {
                 "path": "log.txt",
                 "offset": 5,
                 "chunk": exact,
+                "expected_digest": observed_digest(&sandbox, "log.txt"),
             }),
         )
         .await
@@ -388,6 +408,7 @@ async fn append_and_replace_share_one_write_path() {
                 "path": "shared.txt",
                 "offset": 3,
                 "chunk": "tail;",
+                "expected_digest": observed_digest(&sandbox, "shared.txt"),
             }),
         )
         .await
@@ -456,6 +477,7 @@ async fn an_append_error_payload_never_carries_file_content() {
                 "path": "notes.md",
                 "offset": 1,
                 "chunk": "tail;",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -472,6 +494,7 @@ async fn an_append_error_payload_never_carries_file_content() {
                 "path": "notes.md",
                 "offset": seed.len(),
                 "chunk": "tail;",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -581,5 +604,153 @@ async fn append_rejects_mixed_and_mistyped_arguments() {
         fs::read(sandbox.ws_root().join("notes.md")).expect("file must survive"),
         before,
         "missing and mixed variants are rejected before mutation"
+    );
+}
+
+/// An append to an existing file without `expected_digest` refuses before
+/// anything is read back: the typed message names the read-first remedy
+/// (`expected_digest`, `workspace_read`) and never carries the file's
+/// current digest, and the check precedes the offset check — a wrong
+/// offset without a digest gets the same read-first refusal, not an
+/// offset payload that would carry the current digest.
+#[tokio::test]
+async fn an_append_to_an_existing_file_without_a_digest_changes_nothing() {
+    let sandbox = Sandbox::new("append-no-digest");
+    let seed = b"chunk-one;";
+    sandbox
+        .ws
+        .write("log.txt", seed)
+        .expect("seed write must succeed");
+    let before = fs::read(sandbox.ws_root().join("log.txt")).expect("seed file must exist");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "log.txt",
+                "offset": seed.len() as u64,
+                "chunk": "chunk-two;",
+            }),
+        )
+        .await
+        .expect_err("appending to an existing file without a digest must refuse");
+    let saya_agent::ToolError::WorkspaceEdit(message) = error else {
+        panic!("a missing digest must refuse with the typed message, got: {error}");
+    };
+    assert!(
+        message.contains("expected_digest") && message.contains("workspace_read"),
+        "the refusal must name the read-first remedy: {message}"
+    );
+    let real = observed_digest(&sandbox, "log.txt");
+    assert!(
+        !message.contains(&real),
+        "the refusal must never name the file's current digest: {message}"
+    );
+    // The read-first check precedes the offset check: a wrong offset with
+    // no digest gets the same message, not an offset refusal.
+    let error = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "log.txt",
+                "offset": 0,
+                "chunk": "chunk-two;",
+            }),
+        )
+        .await
+        .expect_err("a wrong offset without a digest still refuses read-first");
+    let saya_agent::ToolError::WorkspaceEdit(message) = error else {
+        panic!("the wrong-offset call must still refuse read-first, got: {error}");
+    };
+    assert!(
+        message.contains("expected_digest") && message.contains("workspace_read"),
+        "the wrong-offset call refuses read-first, not with an offset payload: {message}"
+    );
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("log.txt")).expect("file must survive"),
+        before,
+        "a refused append leaves the file byte-identical"
+    );
+}
+
+/// A stale same-size digest refuses the append: the model observed one
+/// state, the file changed (same size) before the append, and the digest
+/// precondition refuses as the typed moved error — the file is never
+/// extended from a stale anchor.
+#[tokio::test]
+async fn an_append_with_a_stale_same_size_digest_is_refused() {
+    let sandbox = Sandbox::new("append-stale-digest");
+    sandbox
+        .ws
+        .write("log.txt", b"hello world")
+        .expect("seed write must succeed");
+    let observed = observed_digest(&sandbox, "log.txt");
+    // Same-size (11 bytes) overwrite between the observation and the append.
+    sandbox
+        .ws
+        .write("log.txt", b"HELLO WORLD")
+        .expect("overwrite must write");
+    let before = fs::read(sandbox.ws_root().join("log.txt")).expect("file must exist");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "log.txt",
+                "offset": 11u64,
+                "chunk": "tail;",
+                "expected_digest": observed,
+            }),
+        )
+        .await
+        .expect_err("a stale same-size digest must refuse the append");
+    let saya_agent::ToolError::WorkspaceEditMoved { current_size, .. } = error else {
+        panic!("a stale digest must refuse with the typed moved error, got: {error}");
+    };
+    assert_eq!(current_size, 11);
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("log.txt")).expect("file must survive"),
+        before,
+        "a refused append leaves the file byte-identical"
+    );
+}
+
+/// The digest observed from a fresh read admits the append: the file is
+/// extended by exactly the chunk, and the result reports the new size and
+/// digest so the next turn resumes from what landed.
+#[tokio::test]
+async fn an_append_with_the_observed_digest_extends_the_file() {
+    let sandbox = Sandbox::new("append-with-digest");
+    let seed = b"chunk-one;";
+    sandbox
+        .ws
+        .write("log.txt", seed)
+        .expect("seed write must succeed");
+    let observed = observed_digest(&sandbox, "log.txt");
+    let tools = sandbox.tools();
+    let result = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "log.txt",
+                "offset": seed.len() as u64,
+                "chunk": "chunk-two;",
+                "expected_digest": observed,
+            }),
+        )
+        .await
+        .expect("the observed digest must admit the append");
+    assert_eq!(result["path"], "log.txt");
+    assert_eq!(result["size"], (seed.len() + "chunk-two;".len()) as u64);
+    assert!(
+        result["digest"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 64),
+        "the result carries the digest of what landed"
+    );
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("log.txt")).expect("file must exist"),
+        b"chunk-one;chunk-two;",
+        "the append extends the file by exactly the chunk"
     );
 }
