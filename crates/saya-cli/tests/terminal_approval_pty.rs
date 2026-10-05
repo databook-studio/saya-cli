@@ -13,7 +13,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::PathBuf,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, Once, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -22,19 +22,48 @@ const DEADLINE: Duration = Duration::from_secs(15);
 
 #[test]
 fn elapsed_deadline_cancels_pending_terminal_approval_without_a_second_request() {
+    warm_up_saya();
     run_pending_approval_cancellation("deadline", 1, None);
 }
 
 #[test]
 fn bare_esc_cancels_pending_terminal_approval_before_a_long_deadline() {
+    warm_up_saya();
     run_pending_approval_cancellation("esc", 60, Some(b"\x1b"));
 }
 
 #[test]
 fn modified_keys_do_not_approve_and_plain_a_approves_the_real_sql_result() {
+    warm_up_saya();
     run_approval_key("ctrl-a", b"\x01\r", false);
     run_approval_key("alt-a", b"\x1ba\r", false);
     run_approval_key("plain-a", b"a\r", true);
+}
+
+fn warm_up_saya() {
+    // The first launch of a freshly linked binary can be slow on macOS (OS scan);
+    // pay that one-time cost here, outside the tests' 15s timed windows.
+    static WARM_UP: Once = Once::new();
+    WARM_UP.call_once(|| {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("saya --version spawns");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            if let Some(status) = child.try_wait().expect("saya --version is pollable") {
+                assert!(status.success(), "saya --version exits successfully");
+                return;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!("saya did not start within 120s");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
 }
 
 fn run_pending_approval_cancellation(label: &str, elapsed_seconds: u64, input: Option<&[u8]>) {
