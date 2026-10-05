@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 mod audit_store;
 mod bounded;
+mod checkpoints;
 mod continuation;
 mod contracts;
 mod error;
@@ -24,6 +25,7 @@ mod sqlite;
 mod sqlite_support;
 mod state_contracts;
 
+pub use checkpoints::{CheckpointStoreError, NewCheckpoint, RecoveryReport, ScreenRefusal};
 pub use continuation::StoredContinuation;
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
 pub use error::StoreError;
