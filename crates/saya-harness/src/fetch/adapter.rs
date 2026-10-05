@@ -25,7 +25,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use saya_agent::{ContextBlock, ToolError, ToolExecutor, render_untrusted_block};
+use saya_agent::{
+    CancellationToken, ContextBlock, ToolError, ToolExecutionContext, ToolExecutor,
+    render_untrusted_block,
+};
 use serde_json::Value;
 
 use super::budget::DownloadBudget;
@@ -85,10 +88,18 @@ impl FetchTools {
     }
 
     /// One bounded fetch, delivered as the honest envelope around the
-    /// rendered untrusted block.
-    async fn run_fetch(&self, arguments: Value) -> Result<Value, ToolError> {
+    /// rendered untrusted block, under the turn's cancellation token.
+    async fn run_fetch(
+        &self,
+        arguments: Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, ToolError> {
         let url = string_argument(&arguments, "url")?;
-        let outcome = self.fetch.fetch(&url).await.map_err(lane_error)?;
+        let outcome = self
+            .fetch
+            .fetch_cancellable(&url, cancellation)
+            .await
+            .map_err(lane_error)?;
         let mut block = outcome.block;
         let cap = FetchLimits::tool_lane_cap();
         bounded_fetch_envelope(&outcome.url, &mut block, cap).ok_or_else(|| {
@@ -136,9 +147,23 @@ impl FetchTools {
 impl ToolExecutor for FetchTools {
     async fn execute(&self, name: &str, arguments: Value) -> Result<Value, ToolError> {
         match name {
-            "http_fetch" => self.run_fetch(arguments).await,
+            "http_fetch" => self.run_fetch(arguments, &CancellationToken::new()).await,
             "http_download" => self.run_download(arguments).await,
             _ => Err(ToolError::UnsupportedTool),
+        }
+    }
+
+    /// The loop's entry point: `http_fetch` rides the turn's cancellation
+    /// token; every other tool keeps the plain `execute` path.
+    async fn execute_with_context(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: ToolExecutionContext,
+    ) -> Result<Value, ToolError> {
+        match name {
+            "http_fetch" => self.run_fetch(arguments, &context.cancellation).await,
+            _ => self.execute(name, arguments).await,
         }
     }
 }

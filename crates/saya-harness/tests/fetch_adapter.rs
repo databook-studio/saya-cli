@@ -15,18 +15,20 @@ use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use saya_agent::{
     AgentLimits, AgentRequest, CancellationToken, ChatProvider, ChatRequest, ChatResponse,
-    ProviderError, ProviderEvent, ProviderStream, ToolCall, ToolError, ToolExecutor,
-    run_agent_with_sink,
+    ProviderError, ProviderEvent, ProviderStream, ToolCall, ToolError, ToolExecutionContext,
+    ToolExecutor, run_agent_with_sink,
 };
 use saya_harness::fetch::{
     DownloadBudget, DownloadLimits, FetchBody, FetchDestination, FetchLimits, FetchPolicy,
     FetchRequest, FetchTools, FetchTransport, FetchTransportError, WireResponse,
 };
 use saya_harness::workspace::Workspace;
+use tokio::sync::Notify;
 
 const OPEN: &str = "<<<CONTEXT_BLOCK_BEGIN>>>";
 const CLOSE: &str = "<<<CONTEXT_BLOCK_END>>>";
@@ -116,7 +118,7 @@ fn workspace(label: &str) -> (PathBuf, Arc<Workspace>) {
 /// The step's adapter, as the composition root builds it: the step's policy
 /// over the run's shared transport, workspace, and wallet.
 fn adapter(
-    transport: StaticNet,
+    transport: impl FetchTransport + 'static,
     workspace: Arc<Workspace>,
     budget: DownloadBudget,
     limits: FetchLimits,
@@ -488,4 +490,333 @@ async fn the_loop_delivers_the_fetched_block_contained_in_the_tool_message() {
         content.contains("source: http-fetch files.example.org"),
         "the in-band label the tool built rides the block: {content}"
     );
+}
+
+// --- turn cancellation -------------------------------------------------------
+//
+// The loop hands every call a `ToolExecutionContext` carrying the turn's
+// token, and `http_fetch` rides it: a cancelled turn stops waiting on the
+// transport, never begins another redirect hop, and never reports a result
+// that only finished after cancellation. Every case is under a timeout guard
+// so a regression hangs into a failure instead of stalling the suite.
+
+const ABORT: Duration = Duration::from_secs(5);
+
+/// The loop-assigned context, as `turn_tools` builds it: the lane's cap and
+/// the turn's token.
+fn context(token: &CancellationToken) -> ToolExecutionContext {
+    ToolExecutionContext {
+        result_cap: FetchLimits::tool_lane_cap(),
+        cancellation: token.clone(),
+    }
+}
+
+/// A transport whose request/headers wait never resolves, signalling the
+/// test when `get` is entered so the cancel lands while the fetch waits.
+struct HeldHeadersNet {
+    entered: Arc<Notify>,
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl FetchTransport for HeldHeadersNet {
+    async fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, FetchTransportError> {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7))])
+    }
+
+    async fn get(&self, request: FetchRequest) -> Result<WireResponse, FetchTransportError> {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(request.url.as_str().to_owned());
+        self.entered.notify_one();
+        std::future::pending().await
+    }
+}
+
+/// Headers arrive, one body chunk is served, and the next chunk never
+/// resolves — the cancel must land mid-body-wait.
+struct HeldBodyNet {
+    first_chunk_served: Arc<Notify>,
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl FetchTransport for HeldBodyNet {
+    async fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, FetchTransportError> {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7))])
+    }
+
+    async fn get(&self, request: FetchRequest) -> Result<WireResponse, FetchTransportError> {
+        self.calls
+            .lock()
+            .expect("calls")
+            .push(request.url.as_str().to_owned());
+        Ok(WireResponse {
+            status: 200,
+            location: None,
+            content_range: None,
+            body: Box::new(HeldBody {
+                first_chunk_served: Arc::clone(&self.first_chunk_served),
+                served: false,
+            }),
+        })
+    }
+}
+
+struct HeldBody {
+    first_chunk_served: Arc<Notify>,
+    served: bool,
+}
+
+#[async_trait]
+impl FetchBody for HeldBody {
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, FetchTransportError> {
+        if self.served {
+            std::future::pending().await
+        } else {
+            self.served = true;
+            self.first_chunk_served.notify_one();
+            Ok(Some(b"chunk".to_vec()))
+        }
+    }
+}
+
+/// Hop 1 answers 302 and cancels the turn's token before returning, as a
+/// real cancel racing the redirect would: hop 2 must never be requested.
+struct RedirectCancelNet {
+    calls: Arc<Mutex<Vec<String>>>,
+    token: CancellationToken,
+}
+
+#[async_trait]
+impl FetchTransport for RedirectCancelNet {
+    async fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, FetchTransportError> {
+        Ok(vec![IpAddr::V4(Ipv4Addr::new(192, 0, 2, 7))])
+    }
+
+    async fn get(&self, request: FetchRequest) -> Result<WireResponse, FetchTransportError> {
+        let requested = request.url.as_str().to_owned();
+        self.calls.lock().expect("calls").push(requested.clone());
+        if requested == url("/doc") {
+            self.token.cancel();
+            Ok(WireResponse {
+                status: 302,
+                location: Some(url("/next")),
+                content_range: None,
+                body: Box::new(CannedBody {
+                    chunks: VecDeque::new(),
+                }),
+            })
+        } else {
+            Ok(WireResponse {
+                status: 200,
+                location: None,
+                content_range: None,
+                body: Box::new(CannedBody {
+                    chunks: VecDeque::from(vec![b"hop two".to_vec()]),
+                }),
+            })
+        }
+    }
+}
+
+/// A cancelled turn aborts a fetch stuck waiting for request/headers: the
+/// lane's typed cancellation instead of a hang, and the transport saw the
+/// turn's one call and nothing after.
+#[tokio::test]
+async fn a_cancelled_turn_aborts_a_fetch_waiting_on_headers() {
+    let (_root, workspace) = workspace("cancel-headers");
+    let entered = Arc::new(Notify::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let tools = adapter(
+        HeldHeadersNet {
+            entered: Arc::clone(&entered),
+            calls: Arc::clone(&calls),
+        },
+        workspace,
+        DownloadBudget::default(),
+        FetchLimits::for_tool_lane(),
+    );
+    let token = CancellationToken::new();
+    let task = tokio::spawn({
+        let token = token.clone();
+        async move {
+            tools
+                .execute_with_context(
+                    "http_fetch",
+                    serde_json::json!({"url": url("/doc")}),
+                    context(&token),
+                )
+                .await
+        }
+    });
+    entered.notified().await; // the fetch is inside `get`, now waiting
+    token.cancel();
+    let error = tokio::time::timeout(ABORT, task)
+        .await
+        .expect("a cancelled fetch aborts instead of hanging")
+        .expect("the fetch task joins")
+        .expect_err("cancellation is an error, never a result");
+    let ToolError::Fetch(detail) = error else {
+        panic!("the fetch lane's typed error, got: {error:?}")
+    };
+    assert_eq!(detail, "fetch cancelled", "the lane's cancellation detail");
+    assert_eq!(
+        calls.lock().expect("calls").clone(),
+        vec![url("/doc")],
+        "the cancelled turn's one transport call"
+    );
+}
+
+/// The same through the body read: one chunk arrives, the next wait is
+/// pending, the cancel lands there, and the fetch returns cancelled.
+#[tokio::test]
+async fn a_cancelled_turn_aborts_a_fetch_waiting_on_body_chunks() {
+    let (_root, workspace) = workspace("cancel-body");
+    let first_chunk_served = Arc::new(Notify::new());
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let tools = adapter(
+        HeldBodyNet {
+            first_chunk_served: Arc::clone(&first_chunk_served),
+            calls: Arc::clone(&calls),
+        },
+        workspace,
+        DownloadBudget::default(),
+        FetchLimits::for_tool_lane(),
+    );
+    let token = CancellationToken::new();
+    let task = tokio::spawn({
+        let token = token.clone();
+        async move {
+            tools
+                .execute_with_context(
+                    "http_fetch",
+                    serde_json::json!({"url": url("/doc")}),
+                    context(&token),
+                )
+                .await
+        }
+    });
+    first_chunk_served.notified().await; // one chunk read; the next wait is pending
+    token.cancel();
+    let error = tokio::time::timeout(ABORT, task)
+        .await
+        .expect("a cancelled fetch aborts instead of hanging")
+        .expect("the fetch task joins")
+        .expect_err("cancellation is an error, never a result");
+    let ToolError::Fetch(detail) = error else {
+        panic!("the fetch lane's typed error, got: {error:?}")
+    };
+    assert_eq!(detail, "fetch cancelled", "the lane's cancellation detail");
+    assert_eq!(
+        calls.lock().expect("calls").clone(),
+        vec![url("/doc")],
+        "the cancelled turn's one transport call"
+    );
+}
+
+/// A cancel racing the redirect: hop 1 answers 302 after cancelling the
+/// turn's token, and the fetch must return cancelled having requested no
+/// second hop — the recorded transport calls end at the first URL.
+#[tokio::test]
+async fn a_cancelled_turn_never_begins_another_redirect_hop() {
+    let (_root, workspace) = workspace("cancel-redirect");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let token = CancellationToken::new();
+    let tools = adapter(
+        RedirectCancelNet {
+            calls: Arc::clone(&calls),
+            token: token.clone(),
+        },
+        workspace,
+        DownloadBudget::default(),
+        FetchLimits::for_tool_lane(),
+    );
+    let error = tokio::time::timeout(
+        ABORT,
+        tools.execute_with_context(
+            "http_fetch",
+            serde_json::json!({"url": url("/doc")}),
+            context(&token),
+        ),
+    )
+    .await
+    .expect("a cancelled redirect aborts instead of hanging")
+    .expect_err("cancellation is an error, never a result");
+    let ToolError::Fetch(detail) = error else {
+        panic!("the fetch lane's typed error, got: {error:?}")
+    };
+    assert_eq!(detail, "fetch cancelled", "the lane's cancellation detail");
+    assert_eq!(
+        calls.lock().expect("calls").clone(),
+        vec![url("/doc")],
+        "hop 2 must never be requested after cancellation"
+    );
+}
+
+/// A token cancelled before the call: the fetch refuses at once and never
+/// touches the transport.
+#[tokio::test]
+async fn a_precancelled_turn_makes_no_transport_calls() {
+    let (_root, workspace) = workspace("precancelled");
+    let (net, calls) = StaticNet::serve(b"unused", 4_096);
+    let tools = adapter(
+        net,
+        workspace,
+        DownloadBudget::default(),
+        FetchLimits::for_tool_lane(),
+    );
+    let token = CancellationToken::new();
+    token.cancel();
+    let error = tokio::time::timeout(
+        ABORT,
+        tools.execute_with_context(
+            "http_fetch",
+            serde_json::json!({"url": url("/doc")}),
+            context(&token),
+        ),
+    )
+    .await
+    .expect("a pre-cancelled fetch refuses at once")
+    .expect_err("cancellation is an error, never a result");
+    let ToolError::Fetch(detail) = error else {
+        panic!("the fetch lane's typed error, got: {error:?}")
+    };
+    assert_eq!(detail, "fetch cancelled", "the lane's cancellation detail");
+    assert!(
+        calls.lock().expect("calls").is_empty(),
+        "a pre-cancelled turn never touches the transport"
+    );
+}
+
+/// The regression pin: a token that is never cancelled leaves the fetch
+/// path exactly as it was — whole body, contained block, final URL.
+#[tokio::test]
+async fn an_uncancelled_turn_still_returns_the_whole_body() {
+    let (_root, workspace) = workspace("cancel-regression");
+    let (net, _calls) = StaticNet::serve(b"an ordinary page", 4_096);
+    let tools = adapter(
+        net,
+        workspace,
+        DownloadBudget::default(),
+        FetchLimits::for_tool_lane(),
+    );
+    let value = tokio::time::timeout(
+        ABORT,
+        tools.execute_with_context(
+            "http_fetch",
+            serde_json::json!({"url": url("/doc")}),
+            context(&CancellationToken::new()),
+        ),
+    )
+    .await
+    .expect("an uncancelled fetch completes")
+    .expect("the uncancelled path is unchanged");
+    let content = value["content"].as_str().expect("the lane's content");
+    assert!(
+        content.contains("an ordinary page") && content.contains(OPEN) && content.contains(CLOSE),
+        "the whole body rides the contained block: {content}"
+    );
+    assert_eq!(value["url"].as_str().unwrap(), url("/doc"));
 }
