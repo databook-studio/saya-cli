@@ -16,6 +16,7 @@ pub mod engine;
 pub mod fetch;
 pub mod file_source;
 pub mod host;
+pub mod instructions;
 pub mod journal;
 pub mod lock;
 pub mod paths;
