@@ -21,7 +21,12 @@ mod host_h4_tests;
 #[cfg(test)]
 mod host_red_tests;
 mod interactive;
+mod local_metrics;
+mod local_metrics_index;
+#[cfg(test)]
+mod local_metrics_tests;
 mod mcp;
+mod metrics_sink;
 mod open;
 mod render;
 pub mod render_run;

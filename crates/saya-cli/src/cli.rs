@@ -129,7 +129,8 @@ pub struct GlobalOptions {
     #[arg(long, global = true)]
     pub show_thinking: bool,
     /// Print extraction-trace diagnostics: why a learned fact was or was not
-    /// recorded after a turn (the "memory didn't record" gate).
+    /// recorded after a turn (the "memory didn't record" gate). It also
+    /// enables local phase timing diagnostics for agent turns.
     #[arg(long, short, global = true)]
     pub verbose: bool,
 }

@@ -1,6 +1,7 @@
 //! The one answering budget and stop source owned by one user question.
 
 use crate::config::runtime::RuntimeConfig;
+use crate::local_metrics::LocalMetrics;
 use saya_agent::{
     AnsweringLimits, AnsweringScope, BudgetDimension, CancellationReason, CancellationToken,
 };
@@ -21,6 +22,7 @@ pub(crate) struct QuestionScope {
 struct QuestionInner {
     answering: AnsweringScope,
     active_time: Mutex<ActiveTime>,
+    metrics: Option<Arc<LocalMetrics>>,
 }
 
 struct ActiveTime {
@@ -30,6 +32,18 @@ struct ActiveTime {
 
 impl QuestionScope {
     pub(crate) fn new(runtime: &RuntimeConfig, cancellation: CancellationToken) -> Self {
+        Self::with_metrics(
+            runtime,
+            cancellation,
+            crate::local_metrics::enabled().then(|| Arc::new(LocalMetrics::new())),
+        )
+    }
+
+    pub(crate) fn with_metrics(
+        runtime: &RuntimeConfig,
+        cancellation: CancellationToken,
+        metrics: Option<Arc<LocalMetrics>>,
+    ) -> Self {
         Self {
             inner: Arc::new(QuestionInner {
                 answering: AnsweringScope::new(
@@ -53,8 +67,13 @@ impl QuestionScope {
                     remaining: elapsed(runtime.resolved.investigation_budgets.elapsed_seconds),
                     active_since: None,
                 }),
+                metrics,
             }),
         }
+    }
+
+    pub(crate) fn metrics(&self) -> Option<Arc<LocalMetrics>> {
+        self.inner.metrics.clone()
     }
 
     pub(crate) fn cancellation(&self) -> CancellationToken {

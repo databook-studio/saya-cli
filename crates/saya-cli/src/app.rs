@@ -41,6 +41,7 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         if cli.options.non_interactive {
             return Err("non-interactive mode requires a subcommand".into());
         }
+        crate::local_metrics::set_enabled(cli.options.verbose);
         return interactive::run(cli);
     };
     if let Command::Completions { shell } = command {

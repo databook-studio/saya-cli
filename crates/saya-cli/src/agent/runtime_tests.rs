@@ -45,6 +45,9 @@ use std::{
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::{RecallOutcomeKind, RecallReceipt};
 
+#[cfg(test)]
+#[path = "runtime_metrics_tests.rs"]
+mod metrics_tests;
 #[path = "runtime_preflight_tests.rs"]
 mod preflight_tests;
 #[path = "runtime_timer_tests.rs"]
