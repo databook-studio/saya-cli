@@ -1,5 +1,7 @@
 use saya_agent::ToolError;
+use saya_types::EditSource;
 
+use super::checkpoint::{Capture, classify_edit};
 use super::workspace_edit::{WORKSPACE_EDIT_MAX_BYTES, WORKSPACE_EDIT_MAX_FILE_BYTES};
 use super::workspace_edit_anchor::hex_digest;
 use super::workspace_edit_args::APPEND_REQUIRES_DIGEST;
@@ -82,15 +84,44 @@ impl DatabaseTools {
                     chunk.as_bytes(),
                     ToolError::WorkspaceEdit,
                 )?;
-                write_new(workspace, rel, chunk.as_bytes())?;
+                // The create's capture is prepared before the write: no before-image
+                // exists (the file is absent), so only the path/source are
+                // recorded.
+                let recorder = self
+                    .checkpoints
+                    .as_ref()
+                    .filter(|recorder| recorder.active());
+                let capture =
+                    recorder.map(|recorder| recorder.begin(rel, EditSource::WorkspaceEdit, None));
+                if let Some(text) = capture.as_ref().and_then(Capture::refused_text) {
+                    return Err(ToolError::WorkspaceEdit(text.to_owned()));
+                }
+                if let Err(error) = write_new(workspace, rel, chunk.as_bytes()) {
+                    if let (Some(recorder), Some(Capture::Recorded(pending))) =
+                        (recorder, capture.as_ref())
+                    {
+                        recorder.settle(pending, classify_edit(&error));
+                    }
+                    return Err(error);
+                }
                 let after = workspace
                     .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
                     .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
-                return Ok(serde_json::json!({
+                let mut result = serde_json::json!({
                     "path": rel,
                     "size": after.size,
                     "digest": hex_digest(&after.bytes),
-                }));
+                });
+                if let Some(recorder) = recorder
+                    && let Some(label) = recorder.finish_label(
+                        capture.as_ref(),
+                        &hex_digest(&after.bytes),
+                        after.size,
+                    )
+                {
+                    result["recovery"] = serde_json::Value::String(label);
+                }
+                return Ok(result);
             }
             Some(size) => size,
         };
@@ -160,21 +191,48 @@ impl DatabaseTools {
         // refused as the typed moved error. `expected_digest` is Some by
         // the precondition check above (the absent branch never reaches
         // this line).
-        commit_splice(
+        // Checkpoint capture before the guarded commit, with the existing
+        // file's exact bytes.
+        let recorder = self
+            .checkpoints
+            .as_ref()
+            .filter(|recorder| recorder.active());
+        let capture = recorder
+            .map(|recorder| recorder.begin(rel, EditSource::WorkspaceEdit, Some(&file.bytes)));
+        if let Some(text) = capture.as_ref().and_then(Capture::refused_text) {
+            return Err(ToolError::WorkspaceEdit(text.to_owned()));
+        }
+        let after = match commit_splice(
             workspace,
             rel,
             size..size,
             size,
             expected_digest.as_deref(),
             chunk.as_bytes(),
-        )?;
-        let after = workspace
-            .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
-            .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
-        Ok(serde_json::json!({
+        ) {
+            Ok(()) => workspace
+                .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
+                .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?,
+            Err(error) => {
+                if let (Some(recorder), Some(Capture::Recorded(pending))) =
+                    (recorder, capture.as_ref())
+                {
+                    recorder.settle(pending, classify_edit(&error));
+                }
+                return Err(error);
+            }
+        };
+        let mut result = serde_json::json!({
             "path": rel,
             "size": after.size,
             "digest": hex_digest(&after.bytes),
-        }))
+        });
+        if let Some(recorder) = recorder
+            && let Some(label) =
+                recorder.finish_label(capture.as_ref(), &hex_digest(&after.bytes), after.size)
+        {
+            result["recovery"] = serde_json::Value::String(label);
+        }
+        Ok(result)
     }
 }
