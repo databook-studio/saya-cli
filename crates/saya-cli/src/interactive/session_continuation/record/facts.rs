@@ -69,7 +69,7 @@ pub(crate) fn build_continuation_facts(
 /// assistant text through the same redaction the store applies on save — so
 /// it tracks what a resumed session would replay, and two sources that
 /// differ only by a secret hash alike.
-fn source_digest(turns: &[RedactedTurn]) -> String {
+pub(crate) fn source_digest(turns: &[RedactedTurn]) -> String {
     let redacted: Vec<RedactedTurn> = turns
         .iter()
         .map(|turn| RedactedTurn {

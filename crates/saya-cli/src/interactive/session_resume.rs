@@ -118,6 +118,12 @@ pub(crate) fn state_from_redacted(
     } else {
         value.turns
     };
+    // A persisted continuation is validated against the session as it is
+    // now; only one that still describes this session restores its
+    // narrative as the live compaction state. The outcome is intentionally
+    // unused here: a rejected record resumes exactly as before and stays on
+    // the state for the next save.
+    let _ = crate::interactive::session_continuation::restore_continuation(&mut state);
     state
 }
 
