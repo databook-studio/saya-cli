@@ -10,6 +10,7 @@ pub mod evidence;
 pub mod investigation;
 mod params;
 mod profile;
+mod project_preference;
 mod query;
 mod redaction;
 mod run;
@@ -60,6 +61,11 @@ pub use params::{
     ParamType, ParamValue, ParameterSpec, is_valid_param_name,
 };
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
+pub use project_preference::{
+    MAX_PREFERENCE_RECALL_BYTES, MAX_PREFERENCE_RECORD_BYTES, MAX_PREFERENCE_TEXT_BYTES,
+    MAX_PROJECT_PREFERENCES, PROJECT_PREFERENCE_VERSION, PreferenceError, PreferenceId,
+    PreferenceSource, ProjectPreference, WorktreeId, validate_set,
+};
 pub use query::{QueryRequest, QueryResult};
 pub use redaction::{CREDENTIAL_ENV_PREFIX, redact, redact_counted};
 pub use run::{
