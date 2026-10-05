@@ -413,6 +413,7 @@ async fn append_and_replace_share_one_write_path() {
                 "old_text": "anchor",
                 "new_text": "ANCHOR",
                 "expected_size": 3,
+                "expected_digest": sandbox.ws.read("shared.txt", 0).unwrap().digest,
             }),
         )
         .await

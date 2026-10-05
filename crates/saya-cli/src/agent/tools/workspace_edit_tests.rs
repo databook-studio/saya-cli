@@ -1,8 +1,9 @@
 //! Tests for the `workspace_edit` tool (`replace` variant only): the
 //! model-facing anchored edit that resolves `old_text` to exactly one byte
-//! range and commits through `Workspace::patch_range`. Every row of the
-//! failure contract (§4) is a named property here; every refusal leaves the
-//! file byte-identical.
+//! range and commits through the guarded `Workspace::patch_range_guarded` —
+//! the replace variant must carry the digest the model observed. Every row
+//! of the failure contract (§4) is a named property here; every refusal
+//! leaves the file byte-identical.
 
 use std::{fs, path::PathBuf, sync::Arc};
 
@@ -64,11 +65,28 @@ fn workspace_edit_definition() -> ToolDefinition {
         .expect("workspace_edit is advertised when workspace writes are permitted")
 }
 
-fn edit_call(path: &str, old_text: &str, new_text: &str) -> ToolCall {
+/// The digest the model observes from a fresh read: the replace variant
+/// requires it as `expected_digest`, so every replace call site seeds it
+/// from a real harness read of the seeded file.
+fn observed_digest(sandbox: &Sandbox, path: &str) -> String {
+    sandbox
+        .ws
+        .read(path, 0)
+        .expect("the seeded file must read")
+        .digest
+}
+
+fn edit_call(sandbox: &Sandbox, path: &str, old_text: &str, new_text: &str) -> ToolCall {
+    let digest = observed_digest(sandbox, path);
     ToolCall {
         id: "c1".into(),
         name: "workspace_edit".into(),
-        arguments: serde_json::json!({"path": path, "old_text": old_text, "new_text": new_text}),
+        arguments: serde_json::json!({
+            "path": path,
+            "old_text": old_text,
+            "new_text": new_text,
+            "expected_digest": digest,
+        }),
     }
 }
 
@@ -158,6 +176,7 @@ async fn zero_matches_writes_nothing() {
                 "path": "notes.md",
                 "old_text": "no such anchor anywhere",
                 "new_text": "replacement",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -196,6 +215,7 @@ async fn multiple_matches_writes_nothing_and_reports_the_lines() {
                 "path": "notes.md",
                 "old_text": "needle here",
                 "new_text": "replacement",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -237,6 +257,7 @@ async fn a_moved_anchor_refuses_on_the_precondition() {
                 "old_text": "anchor",
                 "new_text": "replacement",
                 "expected_size": 9999,
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -271,6 +292,133 @@ async fn a_moved_anchor_refuses_on_the_precondition() {
     );
 }
 
+/// Replacing an existing file without `expected_digest` refuses before any
+/// file access and changes nothing: the digest must be one the model
+/// observed, so the refusal names the precondition — never the file's
+/// current digest.
+#[tokio::test]
+async fn a_replace_without_a_digest_changes_nothing() {
+    let sandbox = Sandbox::new("no-digest");
+    let seed = b"hello workspace\n";
+    sandbox
+        .ws
+        .write("notes.md", seed)
+        .expect("seed write must succeed");
+    let before = fs::read(sandbox.ws_root().join("notes.md")).expect("seed file must exist");
+    let real_digest = observed_digest(&sandbox, "notes.md");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "notes.md",
+                "old_text": "workspace",
+                "new_text": "ANCHOR",
+            }),
+        )
+        .await
+        .expect_err("a replace without a digest must refuse");
+    match &error {
+        saya_agent::ToolError::WorkspaceEdit(text) => {
+            assert!(
+                text.contains("expected_digest"),
+                "the refusal must name the required argument: {text}"
+            );
+            assert!(
+                text.contains("workspace_read"),
+                "the refusal must say where the digest comes from: {text}"
+            );
+            assert!(
+                text.contains("not changed"),
+                "the refusal must state the file was not changed: {text}"
+            );
+        }
+        other => panic!("expected the typed missing-digest refusal, got: {other}"),
+    }
+    let text = error.to_string();
+    assert!(
+        !text.contains(&real_digest),
+        "the refusal must not hand the model the digest it never observed: {text}"
+    );
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("notes.md")).expect("file must survive"),
+        before,
+        "a refused edit leaves the file byte-identical"
+    );
+}
+
+/// A same-size change between the model's observation and the tool call is
+/// still caught by the digest precondition: the stale digest mismatches, the
+/// refusal is the typed moved-anchor error, and the bytes are untouched.
+#[tokio::test]
+async fn a_replace_with_a_stale_same_size_digest_is_refused() {
+    let sandbox = Sandbox::new("stale-same-size");
+    sandbox
+        .ws
+        .write("notes.md", b"hello world")
+        .expect("seed write must succeed");
+    let observed = observed_digest(&sandbox, "notes.md");
+    // Same size (11 bytes), different bytes — a size guard alone cannot see
+    // this; the digest guard must.
+    sandbox
+        .ws
+        .write("notes.md", b"HELLO WORLD")
+        .expect("same-size overwrite must succeed");
+    let tools = sandbox.tools();
+    let error = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "notes.md",
+                "old_text": "WORLD",
+                "new_text": "SPACE!",
+                "expected_digest": observed,
+            }),
+        )
+        .await
+        .expect_err("a stale same-size digest must refuse");
+    match error {
+        saya_agent::ToolError::WorkspaceEditMoved { .. } => {}
+        other => panic!("expected a typed moved-anchor refusal, got: {other}"),
+    }
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("notes.md")).expect("file must survive"),
+        b"HELLO WORLD",
+        "a refused edit leaves the file byte-identical"
+    );
+}
+
+/// The happy path of the new precondition: a digest observed from a fresh
+/// read lets the replace proceed and change exactly the intended bytes.
+#[tokio::test]
+async fn a_replace_with_the_observed_digest_changes_the_intended_bytes() {
+    let sandbox = Sandbox::new("observed-digest");
+    sandbox
+        .ws
+        .write("notes.md", b"hello anchor world\n")
+        .expect("seed write must succeed");
+    let observed = observed_digest(&sandbox, "notes.md");
+    let tools = sandbox.tools();
+    let result = tools
+        .execute(
+            "workspace_edit",
+            serde_json::json!({
+                "path": "notes.md",
+                "old_text": "anchor",
+                "new_text": "ANCHOR",
+                "expected_digest": observed,
+            }),
+        )
+        .await
+        .expect("the observed digest must admit the replace");
+    assert_eq!(result["path"], "notes.md");
+    assert_eq!(
+        fs::read(sandbox.ws_root().join("notes.md")).expect("file must exist"),
+        b"hello ANCHOR world\n",
+        "the intended bytes change and nothing else"
+    );
+}
+
 /// An empty anchor matches everywhere, so it is a validation error — never
 /// an edit, never a write.
 #[tokio::test]
@@ -288,6 +436,7 @@ async fn an_empty_anchor_is_rejected() {
                 "path": "notes.md",
                 "old_text": "",
                 "new_text": "replacement",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -323,6 +472,7 @@ async fn a_replacement_over_the_bound_refuses_whole() {
                 "path": "notes.md",
                 "old_text": "anchor",
                 "new_text": oversized,
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -348,6 +498,7 @@ async fn a_replacement_over_the_bound_refuses_whole() {
                 "path": "notes.md",
                 "old_text": "anchor",
                 "new_text": exact,
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -373,6 +524,7 @@ async fn an_anchor_over_the_bound_refuses_whole() {
                 "path": "notes.md",
                 "old_text": oversized,
                 "new_text": "replacement",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -413,6 +565,7 @@ async fn an_error_payload_never_carries_file_content() {
                 "path": "notes.md",
                 "old_text": "no such anchor",
                 "new_text": "replacement",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -435,6 +588,7 @@ async fn an_error_payload_never_carries_file_content() {
                 "path": "dup.md",
                 "old_text": "dup one",
                 "new_text": "replacement",
+                "expected_digest": observed_digest(&sandbox, "dup.md"),
             }),
         )
         .await
@@ -484,9 +638,10 @@ fn the_tool_is_hidden_when_writes_are_not_permitted() {
         .expect("workspace_edit schema must expose its variants with oneOf");
     assert_eq!(variants.len(), 2);
     assert!(
-        variants
-            .iter()
-            .any(|variant| { variant["required"] == serde_json::json!(["old_text", "new_text"]) })
+        variants.iter().any(|variant| {
+            variant["required"] == serde_json::json!(["old_text", "new_text", "expected_digest"])
+        }),
+        "the replace variant must require the observed digest"
     );
     assert!(
         variants
@@ -514,6 +669,7 @@ async fn a_successful_edit_changes_only_the_matched_range() {
                 "path": "notes.md",
                 "old_text": "anchor",
                 "new_text": "ANCHOR",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await
@@ -547,7 +703,7 @@ async fn workspace_edit_is_denied_by_the_loop_by_default_and_writes_nothing() {
         .expect("seed write must succeed");
     let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let provider = OneCallProvider {
-        call: edit_call("notes.md", "anchor", "ANCHOR"),
+        call: edit_call(&sandbox, "notes.md", "anchor", "ANCHOR"),
         turn: std::sync::Mutex::new(0),
     };
     let token = saya_agent::CancellationToken::new();
@@ -593,7 +749,7 @@ async fn workspace_edit_runs_in_the_loop_when_writes_are_permitted() {
         .write("notes.md", b"hello anchor world\n")
         .expect("seed write must succeed");
     let provider = OneCallProvider {
-        call: edit_call("notes.md", "anchor", "ANCHOR"),
+        call: edit_call(&sandbox, "notes.md", "anchor", "ANCHOR"),
         turn: std::sync::Mutex::new(0),
     };
     let token = saya_agent::CancellationToken::new();
@@ -646,6 +802,7 @@ async fn workspace_edit_denies_when_no_workspace_is_attached() {
                 "path": "notes.md",
                 "old_text": "anchor",
                 "new_text": "replacement",
+                "expected_digest": "stale-placeholder-digest-no-workspace",
             }),
         )
         .await
@@ -741,6 +898,7 @@ async fn workspace_edit_refuses_a_non_utf8_target() {
                 "path": "blob.bin",
                 "old_text": "fo",
                 "new_text": "bar",
+                "expected_digest": observed_digest(&sandbox, "blob.bin"),
             }),
         )
         .await
@@ -772,6 +930,7 @@ async fn workspace_edit_refuses_a_dot_dot_escape() {
                 "path": "../outside.txt",
                 "old_text": "sentinel",
                 "new_text": "overwritten",
+                "expected_digest": "placeholder-digest-outside-the-workspace",
             }),
         )
         .await
@@ -810,6 +969,7 @@ async fn workspace_edit_refuses_to_add_redaction_placeholders() {
                 "path": "a.py",
                 "old_text": "token=real_value",
                 "new_text": "token=[redacted]",
+                "expected_digest": observed_digest(&sandbox, "a.py"),
             }),
         )
         .await
@@ -845,6 +1005,7 @@ async fn a_file_that_already_holds_the_marker_can_still_be_edited() {
                 "path": "notes.md",
                 "old_text": "other: line",
                 "new_text": "other: replaced",
+                "expected_digest": observed_digest(&sandbox, "notes.md"),
             }),
         )
         .await

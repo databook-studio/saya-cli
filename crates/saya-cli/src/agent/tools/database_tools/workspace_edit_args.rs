@@ -2,6 +2,14 @@ use saya_agent::ToolError;
 
 use super::workspace_edit::WorkspaceEditRequest;
 
+/// The replace variant's missing-digest refusal, raised before any file
+/// access: replacing an existing file requires the digest the model
+/// observed from a fresh `workspace_read` (or from the previous edit's
+/// result) — never the file's current digest, which the model has not seen.
+pub(super) const REPLACE_REQUIRES_DIGEST: &str = "editing an existing file requires \
+    expected_digest from a fresh workspace_read (or the previous edit's result); \
+    the file was not changed";
+
 pub(super) fn parse_arguments(
     arguments: &serde_json::Value,
 ) -> Result<WorkspaceEditRequest, ToolError> {
@@ -71,6 +79,9 @@ pub(super) fn parse_arguments(
         .and_then(serde_json::Value::as_str)
         .ok_or(ToolError::NewTextNotString)?
         .to_owned();
+    let Some(expected_digest) = expected_digest else {
+        return Err(ToolError::WorkspaceEdit(REPLACE_REQUIRES_DIGEST.to_owned()));
+    };
     Ok(WorkspaceEditRequest::Replace {
         path,
         old_text,

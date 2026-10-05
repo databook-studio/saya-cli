@@ -7,15 +7,17 @@ use super::{DatabaseTools, redaction_guard};
 
 impl DatabaseTools {
     /// The `replace` half of [`DatabaseTools::workspace_edit`]: resolve
-    /// `old_text` to exactly one byte range, then commit the splice through
-    /// `Workspace::patch_range`.
+    /// `old_text` to exactly one byte range, verify the observed digest,
+    /// then commit the splice through the guarded
+    /// `Workspace::patch_range_guarded` — so a same-size change between
+    /// this read and the commit is refused too.
     pub(super) async fn workspace_replace(
         &self,
         rel: &str,
         old_text: &str,
         new_text: &str,
         expected_size: Option<u64>,
-        expected_digest: Option<String>,
+        expected_digest: &str,
     ) -> Result<serde_json::Value, ToolError> {
         if old_text.is_empty() {
             return Err(ToolError::WorkspaceEditEmptyAnchor {
@@ -70,18 +72,16 @@ impl DatabaseTools {
                 path: rel.to_string(),
                 expected_size: Some(want),
                 current_size: size,
-                expected_digest: expected_digest.clone(),
+                expected_digest: Some(expected_digest.to_string()),
                 current_digest: digest,
             });
         }
-        if let Some(want) = expected_digest.as_deref()
-            && want != digest
-        {
+        if expected_digest != digest {
             return Err(ToolError::WorkspaceEditMoved {
                 path: rel.to_string(),
                 expected_size,
                 current_size: size,
-                expected_digest: expected_digest.clone(),
+                expected_digest: Some(expected_digest.to_string()),
                 current_digest: digest,
             });
         }
@@ -118,7 +118,14 @@ impl DatabaseTools {
             resulting.as_bytes(),
             ToolError::WorkspaceEdit,
         )?;
-        commit_splice(workspace, rel, start..end, size, new_text.as_bytes())?;
+        commit_splice(
+            workspace,
+            rel,
+            start..end,
+            size,
+            Some(expected_digest),
+            new_text.as_bytes(),
+        )?;
         let after = workspace
             .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
             .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
