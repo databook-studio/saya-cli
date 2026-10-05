@@ -9,7 +9,7 @@ mod facts;
 use saya_agent::{AgentOutput, ToolMetadata};
 use saya_types::{CheckOutcome, MAX_FACT_PATH_BYTES, MAX_FILE_FACTS};
 
-pub(crate) use facts::{build_continuation_facts, now_unix_ms};
+pub(crate) use facts::{build_continuation_facts, now_unix_ms, source_digest};
 
 use checks::absorb_checks;
 

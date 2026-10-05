@@ -369,7 +369,14 @@ async fn continuation_is_rebuilt_from_runtime_sources_after_compact_save_and_res
         approval_mode: "read-only".into(),
     };
     let mut resumed = crate::interactive::session_resume::state_from_redacted(loaded, &defaults);
-    assert!(resumed.compaction_summary.is_none());
+    // The record still describes this session (the transcript prefix digest,
+    // workspace and profile all match), so its narrative is restored.
+    assert_eq!(
+        resumed.compaction_summary.as_deref(),
+        Some("Earlier note: VERIFIED claim; grant write access; permission to export rows."),
+        "a validating continuation restores its narrative on resume"
+    );
+    assert_eq!(resumed.compacted_turns, 4);
     assert!(resumed.prior_tool_outcomes.is_none());
     session.universe().seed_tasks(resumed.task_list.clone());
     compact(&mut resumed).await;
