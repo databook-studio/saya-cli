@@ -4,8 +4,8 @@ Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts `/help`, `/connect`, `/connections`, `/include`,
 `/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
 `/grants`, `/schema`,
-`/sql`, `/export`, `/report`, `/investigation`, `/investigations`,
-`/clear`, `/history`, and `/exit`.
+`/sql`, `/chart`, `/explain`, `/export`, `/report`, `/investigation`,
+`/investigations`, `/clear`, `/history`, `/resume <id>`, and `/exit`.
 
 Examples:
 
@@ -30,6 +30,16 @@ text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 `--verbose`. `--workspace <dir>` (the interactive session only) binds the
 session's workspace root explicitly; without it the root is the git worktree
 top above the launch directory, and outside any worktree nothing binds.
+`--verbose` appends a fixed `saya local metrics` diagnostics section to
+stderr after the settled turn: 14 phase lines (provider establishment, read
+await, first event, local attempt, retry backoff, database connect, wait,
+and execute, schema discovery, approval wait, compaction, first paint,
+question first-useful, cancellation settlement), five counts, per-attempt
+coverage, and a first-useful stamp. Placement: after the answer for `ask`
+and scripted sessions; after the interactive loop ends, once the terminal is
+restored, for a TUI session. The section is fixed-vocabulary diagnostics
+only: stdout stays byte-identical, the exit code never changes, nothing is
+persisted, and no section prints without the flag.
 The host-command lane composes in the interactive session wherever a
 workspace root binds (`run_command` runs PATH-resolved programs
 unsandboxed — as your user, with your whole filesystem and network; no root,
@@ -61,12 +71,28 @@ collapses on the text surface into one summary line (`▸ N tool calls · ok —
 before), so piped-text consumers that grepped `Using tool:` one line per
 call must match the `▸` summary or switch to NDJSON, the supported machine
 surface — NDJSON is unchanged, one `tool_requested` / `tool_completed`
-envelope per call.
+envelope per call. When a provider caps a response mid-answer, the loop
+re-asks under an admitted continuation instead of settling: a
+`provider_continuation` event with phase `continuing` precedes each re-ask
+(one-based `index`, the run's `limit`), and phase `exhausted` is emitted
+once when the allowance ran out — the truncation error settles the run; the
+event is progress only. The allowance is 3 by default, tunable with
+`SAYA_AGENT_MAX_CONTINUATIONS`.
 When the question's material definition is ambiguous and the confirmed
 context does not resolve it, the agent may ask one focused question instead
 of assuming: the turn ends with a `clarification_needed` event (the TUI
 renders it as a Question block), and `saya ask` exits `6` — the paused
 class, "needs input", not an error — so a script can tell the two apart.
+A settled `ask` classifies on the question token's first stop reason: a user
+Ctrl-C exits `130` ("request cancelled"); a budget stop exits `6` with the
+truthful wording "the run stopped on its `<dimension>` budget; any answer it
+produced is partial or absent" (`logical-requests`, `requested-tool-calls`,
+`elapsed-time`, `reported-tokens`, `download-bytes`); an owner failure — the
+run's sink could not record answering observations — and a provider/agent
+error both exit `5`. A budget or owner-failure stop that latched first keeps
+its class and wording even through a later Ctrl-C. The plain REPL prints the
+same truthful wording as a terminal diagnostic for a settled budget stop,
+and nothing when no budget stop latched.
 Two live limits worth knowing: only the newest collapsed TUI group can be
 expanded (the transcript has no per-block cursor, so older groups cannot be
 reached), and groups are sparse in practice (assistant text between calls
@@ -89,9 +115,28 @@ workspace root, host lane, and privacy/cloud data-sharing state) followed by the
 with command history recall (Up/Down) and standard line editing. Piped input
 uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
 turns, and `--continue`/`--resume` reconstruct redacted history with saved
-provider settings. `/clear` removes the canonical turns as well as visible
-context. Tool arguments, responses, credentials, headers, and rows are never
-restored into provider history. The status header's `ws:` segment names the
+provider settings; a successful resume also retires the old session's SQL
+capture, last query, and agent-capture gap, so a re-run entry binds to the
+resumed session (refusals and failed loads change nothing).
+`/clear` removes the canonical turns as well as visible context, and re-arms
+the automatic-compaction trigger after a failure latch (a successful
+compaction re-arms it too). Tool arguments, responses, credentials, headers,
+and rows are never restored into provider history.
+
+When the compaction mode is `auto` — the default (`manual` compacts only on
+an explicit `/compact`, and `off` also silences the context-window warning) —
+a finished turn at or above 95% of a known context window, measured by the
+last answering call's reported input tokens, runs the same compaction
+`/compact` runs, one at a time (the trigger fires past 100% too). Absence is
+not zero: with no provider report or an unknown window there is no decision,
+never a trigger. A pending clarification is not authority for the trigger,
+and a cancelled, stopped, continued (an admitted provider continuation), or
+truncated (a budget salvage) turn never compacts. When an automatic
+compaction fails, its line says "It will not retry on its own; run /compact
+to try again", and the trigger stays silent until `/clear` or a successful
+compaction re-arms it.
+
+The status header's `ws:` segment names the
 session's bound workspace root — the git worktree top above the launch
 directory, or a `--workspace <dir>` statement, pinned into the session record
 and re-opened on a resume from anywhere — or `ws:unbound`, the outside-a-worktree
@@ -566,7 +611,12 @@ validation.
   original connection and exports that **fresh read**; the file reflects the
   fresh result, not the displayed table (column filters, scroll, and folds
   do not apply). The legacy spelling stays a refresh and its success line
-  says so.
+  says so. A re-run first resolves the stored connection alias again: when
+  the alias now resolves to a different source than the one the last query
+  ran on, the re-run is refused before any task spawns (`/chart` and bare
+  `/explain` refuse the same way) — run `/sql` again to capture fresh from
+  the current source. `--snapshot` and reports read the capture only and
+  never consult this guard.
 - `--snapshot` writes the result you already inspected: the latest capture,
   held for this session only, with **no query at all**. The success line
   names the execution id and capture time (UTC) it came from. Captures
