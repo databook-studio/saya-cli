@@ -40,7 +40,7 @@ mod partial;
 pub use adapter::FetchTools;
 pub use budget::{DEFAULT_MAX_RUN_BYTES, DownloadBudget};
 pub use definition::{http_download_definition, http_fetch_definition};
-pub use download::http_download;
+pub use download::{DownloadCall, http_download, http_download_cancellable};
 pub use download_error::{DownloadError, DownloadOutcome};
 pub use download_limits::{DEFAULT_MAX_FILE_BYTES, DEFAULT_REQUEST_TIMEOUT, DownloadLimits};
 pub use limits::{ENVELOPE_SLACK, FetchLimits};
