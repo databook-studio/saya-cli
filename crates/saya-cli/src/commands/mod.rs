@@ -8,6 +8,7 @@ mod output;
 mod query;
 pub(crate) mod query_input;
 pub(crate) mod run;
+pub(crate) mod sessions;
 mod state;
 
 use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
@@ -61,6 +62,7 @@ pub async fn run(
         Command::Connection { command } => {
             connection::run(command, runtime, format, can_prompt, &state).await
         }
+        Command::Sessions { command } => sessions::run(command, format).await,
         Command::Ask { prompt, file } => {
             query::ask(
                 prompt,
