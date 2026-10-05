@@ -32,7 +32,7 @@ use saya_agent::{
 use serde_json::Value;
 
 use super::budget::DownloadBudget;
-use super::download::http_download;
+use super::download::{DownloadCall, http_download_cancellable};
 use super::download_error::DownloadError;
 use super::download_limits::DownloadLimits;
 use super::limits::FetchLimits;
@@ -111,10 +111,15 @@ impl FetchTools {
     }
 
     /// One bounded, resumable download into the workspace under the shared
-    /// budget. The result is metadata — destination, bytes, digest — never
-    /// page bytes. Without a workspace bound there is no destination: the
-    /// call refuses typed, naming the missing root.
-    async fn run_download(&self, arguments: Value) -> Result<Value, ToolError> {
+    /// budget and the turn's cancellation token. The result is metadata —
+    /// destination, bytes, digest — never page bytes. Without a workspace
+    /// bound there is no destination: the call refuses typed, naming the
+    /// missing root.
+    async fn run_download(
+        &self,
+        arguments: Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value, ToolError> {
         let Some(workspace) = self.workspace.as_ref() else {
             return Err(ToolError::Fetch(
                 "no workspace is bound, so there is nowhere to download to: bind a \
@@ -124,15 +129,16 @@ impl FetchTools {
         };
         let url = string_argument(&arguments, "url")?;
         let destination = string_argument(&arguments, "destination")?;
-        let outcome = http_download(
-            &self.policy,
-            self.transport.as_ref(),
+        let outcome = http_download_cancellable(DownloadCall {
+            policy: &self.policy,
+            transport: self.transport.as_ref(),
             workspace,
-            &destination,
-            &url,
-            self.download_limits,
-            &self.budget,
-        )
+            destination: &destination,
+            url: &url,
+            limits: self.download_limits,
+            budget: &self.budget,
+            cancellation,
+        })
         .await
         .map_err(ToolError::from)?;
         Ok(serde_json::json!({
@@ -148,13 +154,17 @@ impl ToolExecutor for FetchTools {
     async fn execute(&self, name: &str, arguments: Value) -> Result<Value, ToolError> {
         match name {
             "http_fetch" => self.run_fetch(arguments, &CancellationToken::new()).await,
-            "http_download" => self.run_download(arguments).await,
+            "http_download" => {
+                self.run_download(arguments, &CancellationToken::new())
+                    .await
+            }
             _ => Err(ToolError::UnsupportedTool),
         }
     }
 
-    /// The loop's entry point: `http_fetch` rides the turn's cancellation
-    /// token; every other tool keeps the plain `execute` path.
+    /// The loop's entry point: `http_fetch` and `http_download` ride the
+    /// turn's cancellation token; every other tool keeps the plain `execute`
+    /// path.
     async fn execute_with_context(
         &self,
         name: &str,
@@ -163,6 +173,7 @@ impl ToolExecutor for FetchTools {
     ) -> Result<Value, ToolError> {
         match name {
             "http_fetch" => self.run_fetch(arguments, &context.cancellation).await,
+            "http_download" => self.run_download(arguments, &context.cancellation).await,
             _ => self.execute(name, arguments).await,
         }
     }

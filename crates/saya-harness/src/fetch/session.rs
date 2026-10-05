@@ -12,6 +12,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
+use saya_agent::CancellationToken;
 use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 
@@ -68,6 +69,15 @@ pub(super) fn fresh(
     })
 }
 
+/// The bounds one streaming attempt runs under: the per-file and wall-clock
+/// limits, the run's shared download wallet, and the turn's cancellation
+/// token — bundled so the stream stays under the argument lint cap.
+pub(super) struct Bounds<'a> {
+    pub(super) limits: DownloadLimits,
+    pub(super) budget: &'a DownloadBudget,
+    pub(super) cancellation: &'a CancellationToken,
+}
+
 /// Streams one response body into the open partial under every bound. Each
 /// error path persists the sidecar best-effort, so the partial on disk stays
 /// resumable no matter how the attempt ends.
@@ -77,13 +87,26 @@ pub(super) async fn stream_body(
     workspace: &Workspace,
     destination: &str,
     url: &str,
-    limits: DownloadLimits,
-    budget: &DownloadBudget,
+    bounds: Bounds<'_>,
 ) -> Result<(), DownloadError> {
+    let limits = bounds.limits;
     let deadline = Instant::now() + limits.request_timeout;
     let mut body = response.body;
     loop {
-        let chunk = match under_deadline(limits.request_timeout, deadline, body.next_chunk()).await
+        // Top of every chunk wait: a cancelled turn writes and claims no
+        // further chunk — persist the partial exactly as every other error
+        // exit does, then stop.
+        if bounds.cancellation.is_cancelled() {
+            let _ = session.persist(workspace, destination, url);
+            return Err(DownloadError::Cancelled);
+        }
+        let chunk = match under_deadline(
+            limits.request_timeout,
+            deadline,
+            bounds.cancellation,
+            body.next_chunk(),
+        )
+        .await
         {
             Ok(chunk) => chunk,
             Err(error) => {
@@ -100,10 +123,10 @@ pub(super) async fn stream_body(
                 limit: limits.max_file_bytes,
             });
         }
-        if !budget.claim(chunk.len() as u64) {
+        if !bounds.budget.claim(chunk.len() as u64) {
             let _ = session.persist(workspace, destination, url);
             return Err(DownloadError::BudgetExhausted {
-                limit: budget.limit(),
+                limit: bounds.budget.limit(),
                 received: session.total,
             });
         }
