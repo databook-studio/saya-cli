@@ -10,6 +10,15 @@ pub(super) const REPLACE_REQUIRES_DIGEST: &str = "editing an existing file requi
     expected_digest from a fresh workspace_read (or the previous edit's result); \
     the file was not changed";
 
+/// The append variant's missing-digest refusal for an existing file,
+/// raised before the file's bytes are read into any payload: appending to
+/// an existing file requires the digest the model observed from a fresh
+/// `workspace_read` (or from the previous edit's result) — never the
+/// file's current digest, which the model has not seen.
+pub(super) const APPEND_REQUIRES_DIGEST: &str = "appending to an existing file requires \
+    expected_digest from a fresh workspace_read (or the previous edit's result); \
+    the file was not changed";
+
 pub(super) fn parse_arguments(
     arguments: &serde_json::Value,
 ) -> Result<WorkspaceEditRequest, ToolError> {

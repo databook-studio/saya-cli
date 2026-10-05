@@ -384,6 +384,7 @@ async fn a_stale_resume_offset_refuses_and_preserves_bytes() {
                 "path": "report.txt",
                 "offset": stale,
                 "chunk": CHUNK_TWO,
+                "expected_digest": sandbox.ws.read("report.txt", 0).expect("seed must read").digest,
             }),
         )
         .await

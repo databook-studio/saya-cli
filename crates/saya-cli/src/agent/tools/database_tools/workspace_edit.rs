@@ -1,21 +1,24 @@
 //! The model-facing anchored edit (`replace` and `append` variants): the
 //! replace variant resolves `old_text` to exactly one byte range of a
 //! contained workspace file; the append variant splices `chunk` at an empty
-//! range at EOF guarded by `offset`. The replace variant commits through
-//! `Workspace::patch_range_guarded` — the digest the model observed is
-//! re-verified at the commit's own fresh read — and the append variant
-//! commits through `Workspace::patch_range`: append *is* a range replace,
-//! not a second write path. Path resolution, the no-follow open, and the
-//! atomic commit are the harness's — never re-derived here. This tool's own
-//! jobs are argument typing, the byte bounds, the `expected_*` precondition,
-//! and typed refusals that carry counts, line numbers, sizes and digests —
-//! never file content.
+//! range at EOF guarded by `offset`. Both variants require the digest the
+//! model observed from a fresh read — a replace always; an append whenever
+//! the path names an existing file (offset 0 on an absent path is
+//! create-if-absent through `Workspace::create_new`) — and both commit
+//! through `Workspace::patch_range_guarded`: the observed digest is
+//! re-verified at the commit's own fresh read, so a same-size change
+//! between the tool's read and the commit is refused too. Append *is* a
+//! range replace, not a second write path. Path resolution, the no-follow
+//! open, and the atomic commit are the harness's — never re-derived here.
+//! This tool's own jobs are argument typing, the byte bounds, the
+//! `expected_*` preconditions, and typed refusals that carry counts, line
+//! numbers, sizes and digests — never file content.
 //!
 //! Failure contract (DESIGN.md §4): every row refuses loudly and writes nothing.
-//! Replacing an existing file without the digest the model observed refuses
-//! (`WorkspaceEdit` — read first with `workspace_read`, then pass
-//! `expected_digest`; no write, and the refusal never names the file's
-//! current digest). Zero matches refuses (`NoMatch`, with the current
+//! Replacing or appending to an existing file without the digest the model
+//! observed refuses (`WorkspaceEdit` — read first with `workspace_read`,
+//! then pass `expected_digest`; no write, and the refusal never names the
+//! file's current digest). Zero matches refuses (`NoMatch`, with the current
 //! size and digest so the model re-anchors); multiple matches refuses
 //! (`Ambiguous`, with bounded line numbers only, excerpts within 2 KiB —
 //! never "first wins"); a moved anchor refuses (`expected_size` or
@@ -26,12 +29,13 @@
 //! nothing (a truncated tool-call argument never parses or validates; a
 //! crashed commit leaves the old file — temp+rename is atomic with
 //! post-write re-verification); a non-UTF-8 target is refused (`NotText` —
-//! reads are lossy, so byte-exact anchors cannot be trusted);
-//! concurrent writers are last-writer-wins for the append variant unless
-//! `expected_*` is supplied, while the replace variant commits behind the
-//! guarded fresh-read check, so a same-size change between the tool's own
-//! read and the commit is refused as the moved-anchor refusal too (no
-//! locking, no merge); an empty anchor is rejected (it matches everywhere).
+//! reads are lossy, so byte-exact anchors cannot be trusted); concurrent writers
+//! are refused — never last-writer-wins — because both variants commit behind
+//! the guarded fresh-read check, so a same-size change between the tool's own
+//! read and the commit is refused as the moved-anchor refusal (no locking, no
+//! merge); a creation race on the absent path refuses typed and never
+//! clobbers the winner's bytes; an empty anchor is rejected (it matches
+//! everywhere).
 //!
 //! What this does not do: it does not recover from an output-token cap on
 //! its own — the continuation loop is unbuilt, so a stopped response resumes
@@ -83,17 +87,21 @@ pub(super) enum WorkspaceEditRequest {
 impl DatabaseTools {
     /// Replaces the single occurrence of `old_text` in the contained file
     /// `path` with `new_text`, atomically: zero or multiple matches refuse
-    /// with a typed error and write nothing — never "first wins". The
-    /// optional `expected_size`/`expected_digest` precondition refuses with a
-    /// typed error when the file's current state no longer matches what the
-    /// model measured, so a moved anchor cannot splice against stale offsets.
-    /// With `offset`+`chunk` instead, appends `chunk` at EOF under the
-    /// positional precondition `offset == current size` (offset 0 on an
-    /// absent path creates the file); a mismatch refuses with the current
-    /// size so the model resumes from `offset` rather than guessing. Both
-    /// variants commit the same way, through `Workspace::patch_range`:
-    /// append is the empty range `size..size` with `offset` as the
-    /// precondition, never a second write path.
+    /// with a typed error and write nothing — never "first wins".
+    /// Replacing requires `expected_digest`, the digest the model observed
+    /// from a fresh read; a file whose current state no longer matches
+    /// what the model measured refuses with a typed error, so a moved
+    /// anchor cannot splice against stale offsets. With `offset`+`chunk`
+    /// instead, appends `chunk` at EOF under the positional precondition
+    /// `offset == current size` (offset 0 on an absent path creates the
+    /// file): appending to an existing file requires the same observed
+    /// `expected_digest`, and a mismatch refuses with the current size so
+    /// the model resumes from `offset` rather than guessing. Both variants
+    /// commit behind the guarded fresh-read check —
+    /// `Workspace::patch_range_guarded` — so a same-size change between
+    /// the tool's own read and the commit is refused as the moved-anchor
+    /// refusal; the absent path's offset-0 creation goes through
+    /// `Workspace::create_new`.
     /// Like the workspace read tools this never touches a connection —
     /// dispatch routes it before connection resolution — and it records
     /// nothing into the knowledge store: a workspace edit is not evidence
