@@ -1,6 +1,7 @@
 //! Shared public contracts for SAYA CLI.
 
 mod context_doc;
+mod continuation;
 mod contract;
 mod dialect;
 mod error;
@@ -18,6 +19,12 @@ pub use context_doc::{
     CONTEXT_FORMAT, CONTEXT_FORMAT_VERSION, ContextDocumentV1, ContextError, ContextItem,
     MAX_DOCUMENT_BYTES, MAX_ITEM_BYTES, MAX_ITEMS, MAX_ORIGIN_NOTE_BYTES, PortableObject,
     PortablePayload,
+};
+pub use continuation::{
+    CONTINUATION_VERSION, CheckFact, CheckOutcome, ContinuationError, FactProvenance, FileFact,
+    GeneratedNarrative, MAX_CHECK_FACTS, MAX_CHECK_LABEL_CHARS, MAX_CONTINUATION_BYTES,
+    MAX_FACT_PATH_BYTES, MAX_FILE_FACTS, MAX_NARRATIVE_BYTES, MAX_USER_NOTES_BYTES,
+    NarrativeSource, SessionContinuationV1, SourceBoundary,
 };
 pub use contract::{
     BindingValidity, CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload,
