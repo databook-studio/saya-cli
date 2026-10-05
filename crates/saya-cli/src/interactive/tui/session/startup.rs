@@ -32,6 +32,7 @@ pub(crate) fn build_app(
         state_db.clone(),
         session.universe(),
     );
+    app.session_metrics = session.session_metrics();
     // A startup fact the user must read: a pinned root that vanished, or any
     // other composition notice, said once into the transcript — the trust
     // answer's echo beside it where this launch trusted a folder — and,

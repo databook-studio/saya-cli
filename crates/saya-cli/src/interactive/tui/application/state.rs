@@ -41,6 +41,7 @@ impl App {
             session_save: None,
             sql_task: None,
             compact_task: None,
+            session_metrics: None,
             replay_task: None,
             pending_session_save: None,
             last_query: None,
