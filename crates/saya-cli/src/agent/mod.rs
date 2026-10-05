@@ -2,6 +2,7 @@
 // tests) but not yet consumed by the production caller; the rest of the module
 // is wired in via `candidates`.
 pub(crate) mod candidates;
+pub(crate) mod context_sources;
 #[allow(dead_code)]
 pub(crate) mod decide;
 pub(crate) mod extraction_trace;
