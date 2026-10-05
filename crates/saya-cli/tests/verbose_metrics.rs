@@ -4,9 +4,10 @@
 //! and at the provider, while stderr never leaks a sentinel the turn
 //! legitimately carried and the plain run prints no metrics header.
 //!
-//! The positive proof (the fixed metrics section appearing on stderr) needs
-//! the `--verbose` gate to reach the ask subcommand; that wiring lives in
-//! app.rs and is reported separately by this packet's REFERENCE report.
+//! The positive proof: with `--verbose` the fixed metrics section appears on
+//! stderr — the header, the provider-establishment and local-attempt phase
+//! lines with numeric samples, and no sentinel inside the section. The gate
+//! is app.rs dispatch enabling the collector for subcommands too.
 
 #[path = "verbose_metrics/harness.rs"]
 mod harness;
@@ -103,6 +104,26 @@ fn the_verbose_ask_changes_nothing_outside_stderr_and_adds_no_leak() {
         "no metrics header without --verbose: stderr={}",
         plain.stderr
     );
+    // The positive proof: the fixed metrics section is on stderr under
+    // --verbose, from the header line to the end of the stream.
+    let header_at = verbose
+        .stderr
+        .find("saya local metrics")
+        .unwrap_or_else(|| {
+            panic!(
+                "the metrics header is on stderr with --verbose: stderr={}",
+                verbose.stderr
+            )
+        });
+    let section = &verbose.stderr[header_at..];
+    assert_phase_with_samples(section, "provider_establishment");
+    assert_phase_with_samples(section, "local_attempt");
+    for sentinel in ["SENTINEL-PROMPT-1", "SENTINEL-ANSWER-2", "sentinel_orders"] {
+        assert!(
+            !section.contains(sentinel),
+            "the sentinel {sentinel} never reaches the metrics section: {section}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&fixture.root);
     assert_no_leaks(&plain.stderr, &verbose.stderr);
 }
@@ -119,4 +140,23 @@ fn assert_no_leaks(plain_stderr: &str, verbose_stderr: &str) {
             );
         }
     }
+}
+
+/// The phase line for `label` is in the section and carries a numeric
+/// sample count, spelled exactly as `local_metrics_format.rs` prints a
+/// recorded phase: `phase <label> samples=<n> ...`.
+fn assert_phase_with_samples(section: &str, label: &str) {
+    let prefix = format!("phase {label} ");
+    let line = section
+        .lines()
+        .find(|line| line.starts_with(&prefix))
+        .unwrap_or_else(|| panic!("a {label} phase line is in the metrics section: {section}"));
+    let digits = line
+        .split_once(" samples=")
+        .map(|(_, rest)| rest.chars().take_while(char::is_ascii_digit).count())
+        .unwrap_or(0);
+    assert!(
+        digits > 0,
+        "the {label} phase line carries a numeric sample count: {line}"
+    );
 }
