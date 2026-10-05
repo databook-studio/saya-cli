@@ -38,10 +38,14 @@ pub(crate) fn emit_action(
         // are intercepted too — they seed and read the session's grant
         // store, which lives in the runtime. `/context` is intercepted as
         // well: the view needs the runtime's settings and the session's
-        // workspace root.
+        // workspace root. `/sessions list` and `/sessions delete <id>` are
+        // intercepted too — the shared saved-session operations run in the
+        // loop, which owns the store and the sessions root.
         | SessionAction::Allow(_)
         | SessionAction::Grants
         | SessionAction::Context
+        | SessionAction::SessionsList
+        | SessionAction::SessionsDelete(_)
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)

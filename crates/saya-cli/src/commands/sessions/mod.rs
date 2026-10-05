@@ -10,7 +10,7 @@ mod operations;
 pub(crate) mod render;
 pub(crate) mod subcommand;
 
-pub(crate) use operations::{delete_saved_session, list_sessions};
+pub(crate) use operations::{delete_saved_session, list_sessions, unix_ms_now};
 pub(crate) use render::{render_delete, render_listing};
 pub(crate) use subcommand::run;
 
