@@ -231,6 +231,13 @@ pub enum Command {
         #[command(subcommand)]
         command: SessionsCommand,
     },
+    /// Manage explicit project preferences: per-worktree guidance you
+    /// confirmed yourself, stored separately from database knowledge.
+    /// Preferences are guidance, never permissions.
+    Preferences {
+        #[command(subcommand)]
+        command: PreferencesCommand,
+    },
     /// Ask one natural-language question about the database; the agent writes
     /// and runs the bounded read-only SQL itself. For raw SQL, use `saya query`.
     Ask {
@@ -362,6 +369,43 @@ pub enum SessionsCommand {
         #[arg(value_name = "SESSION_ID")]
         id: String,
     },
+}
+
+/// Project-preference subcommands: one explicit, bounded CRUD family over
+/// per-worktree guidance the user confirmed — never created by the model,
+/// never an authority.
+#[derive(Debug, Clone, Subcommand)]
+pub enum PreferencesCommand {
+    /// List this worktree's project preferences: explicit, per-worktree
+    /// guidance; never permissions.
+    List,
+    /// Add one preference: explicit, per-worktree guidance; never
+    /// permissions.
+    Add {
+        /// The preference text: plain text the user confirmed, no secrets.
+        #[arg(value_name = "TEXT")]
+        text: String,
+    },
+    /// Replace one preference's text: explicit, per-worktree guidance;
+    /// never permissions.
+    Edit {
+        /// The preference id to edit, from `saya preferences list`.
+        #[arg(value_name = "ID")]
+        id: String,
+        /// The replacement text.
+        #[arg(value_name = "TEXT")]
+        text: String,
+    },
+    /// Forget one preference: explicit, per-worktree guidance; never
+    /// permissions.
+    Forget {
+        /// The preference id to forget, from `saya preferences list`.
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    /// Forget every preference in this worktree: explicit, per-worktree
+    /// guidance; never permissions.
+    ForgetAll,
 }
 
 #[derive(Debug, Clone, Subcommand)]

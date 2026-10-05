@@ -5,6 +5,7 @@ mod connection_schema_cache;
 mod contracts;
 mod investigation;
 mod output;
+pub(crate) mod preferences;
 mod query;
 pub(crate) mod query_input;
 pub(crate) mod run;
@@ -63,6 +64,7 @@ pub async fn run(
             connection::run(command, runtime, format, can_prompt, &state).await
         }
         Command::Sessions { command } => sessions::run(command, format).await,
+        Command::Preferences { command } => preferences::run(command, format, &state).await,
         Command::Ask { prompt, file } => {
             query::ask(
                 prompt,

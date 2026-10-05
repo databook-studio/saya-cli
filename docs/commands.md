@@ -467,6 +467,38 @@ with the same words, and reports pending cleanup the same way. Bare
 `/sessions` keeps its per-surface meaning: the text history list in the
 headless REPL, and the session picker in the TUI.
 
+## Project preferences: `saya preferences`
+
+`saya preferences` manages explicit, per-worktree guidance you confirmed
+yourself: short text notes scoped to the current git worktree, stored in
+saya's state database separately from typed database knowledge
+(`saya contracts`) and from saved sessions. **"Project preferences are
+explicit guidance you confirmed for this worktree. They never grant
+permissions and are stored separately from database knowledge
+(`saya contracts`)."** Nothing is created automatically — never by the
+model — and a preference carries no execution authority.
+
+```bash
+saya preferences list                   # what this worktree holds
+saya preferences add "prefer tabs"      # confirm one preference
+saya preferences edit <id> "new text"   # replace one preference's text
+saya preferences forget <id>            # remove one
+saya preferences forget-all             # remove every preference in this worktree
+```
+
+Ids are `pp-…`, printed by `list`. The text must be 1–1024 bytes of plain
+text with no control characters, and secret-shaped text (keys, tokens,
+passwords, credentials in URLs) is refused, never stored. A worktree holds
+at most 64 preferences with a 16 KiB aggregate. The identity is the
+canonical worktree root, so a run from a subdirectory of the same worktree
+sees the same preferences, and a sibling worktree sees none of them.
+`forget` of an id this worktree does not hold is a refusal that changes
+nothing. The command never prompts and never reads stdin.
+
+Exit codes follow the global scheme: `0` on success; `2` for every refusal
+— no project worktree, refused text, an unknown or malformed id, either
+bound, or a store error.
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the
