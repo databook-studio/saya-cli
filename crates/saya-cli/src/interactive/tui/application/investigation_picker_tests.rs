@@ -151,6 +151,7 @@ fn r_refuses_when_a_replay_is_already_running() {
             },
             format: RenderFormat::Text,
             state_db: SqliteStateStore::new(PathBuf::new()),
+            cancellation: saya_agent::CancellationToken::new(),
         },
         std::time::Instant::now(),
     ));

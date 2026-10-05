@@ -18,6 +18,7 @@ pub use contracts::run_contracts;
 pub use investigation::run_investigation;
 // The replay-outcome seam (D12/C3): the TUI's saved-replay adapter consumes
 // the typed outcome instead of re-parsing rendered output.
+pub(crate) use investigation::run_investigation_outcome_cancellable;
 pub use investigation::{Replay, RunOutcome, run_investigation_outcome};
 pub use output::{capture_output_start, capture_output_take, failure_message, result};
 pub use run::run_management;

@@ -98,6 +98,7 @@ fn replay_task(id: &str) -> ReplayTask {
         // store is the right fixture here; the end-to-end test composes the
         // real one.
         state_db: SqliteStateStore::new(PathBuf::new()),
+        cancellation: saya_agent::CancellationToken::new(),
     }
 }
 
@@ -274,8 +275,9 @@ fn replay_runs_in_background_and_loop_keeps_ticking() {
 }
 
 /// Esc detaches a running replay exactly like a SQL task: the receiver is
-/// dropped, the message is honest (may still be running server-side, result
-/// discarded — never "cancelled"), and the late completion changes nothing.
+/// dropped, cancellation is requested, the message stays honest (may still
+/// be running server-side, result discarded), and the late completion
+/// changes nothing.
 #[test]
 fn detached_replay_late_completion_changes_nothing() {
     let mut app = idle_app();
@@ -296,16 +298,16 @@ fn detached_replay_late_completion_changes_nothing() {
     assert_eq!(app.request.activity, None);
     let message = last_block(&app.transcript, BlockKind::System).expect("detach is said");
     assert!(
-        message.contains("Detached the running investigation recent-orders"),
-        "the detach message names the investigation: {message}"
+        message.contains("Cancellation requested; the investigation recent-orders was detached"),
+        "the detach message names the cancellation: {message}"
     );
     assert!(
         message.contains("may still be running on the server") && message.contains("discarded"),
         "the detach message is honest about the server-side query: {message}"
     );
     assert!(
-        !message.contains("cancel"),
-        "detach never claims cancellation: {message}"
+        message.contains("elapsed"),
+        "the detach message still reports the elapsed time: {message}"
     );
 
     // The worker finishes late; its outcome lands on a dropped channel.
@@ -967,6 +969,7 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
         command: run_command(&id),
         format: RenderFormat::Text,
         state_db: state_db.clone(),
+        cancellation: saya_agent::CancellationToken::new(),
     });
     assert!(app.is_busy(), "the replay is in flight");
     assert_eq!(
@@ -1007,4 +1010,85 @@ async fn replay_worker_runs_the_shared_operation_and_delivers_the_outcome() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+// -- detach cancels the replay's token (FIX-S1d) -----------------------------
+
+/// Esc/Ctrl+C detach gives a replay the same real cancellation the direct-SQL
+/// path has: the task's token is cancelled and the message says so, while it
+/// stays honest that the query may still settle server-side.
+#[test]
+fn detaching_a_replay_cancels_its_token() {
+    let mut app = idle_app();
+    let (gate, body) = gated(done(0, "the replay result", None));
+    put_running_replay(
+        &mut app,
+        spawn_with(WorkerPermit::for_tests(), body),
+        "recent-orders",
+    );
+    let token = app
+        .replay_task
+        .as_ref()
+        .expect("the replay is in flight")
+        .1
+        .cancellation
+        .clone();
+
+    app.detach_replay_task();
+    assert!(
+        app.replay_task.is_none(),
+        "detach clears the in-flight replay"
+    );
+    assert!(
+        token.is_cancelled(),
+        "detach must cancel the replay's cancellation token"
+    );
+    let message = last_block(&app.transcript, BlockKind::System).expect("detach is said");
+    assert!(
+        message.contains("Cancellation requested; the investigation recent-orders was detached"),
+        "the detach message names the cancellation: {message}"
+    );
+    assert!(
+        message.contains("may still be running on the server") && message.contains("discarded"),
+        "the detach message stays honest about the server-side query: {message}"
+    );
+    let _ = gate.release.send(());
+}
+
+/// A normally completed replay never cancels its token: only the detach arm
+/// cancels; the poll/completion path stays untouched.
+#[test]
+fn a_completed_replay_does_not_cancel_its_token() {
+    let mut app = idle_app();
+    let mut state = SessionState::new("test", None, "model");
+    let store = session_store(temp_dir("completed-no-cancel").as_path());
+    let (gate, body) = gated(done(0, "the replay result", Some(replay())));
+    put_running_replay(
+        &mut app,
+        spawn_with(WorkerPermit::for_tests(), body),
+        "recent-orders",
+    );
+    let token = app
+        .replay_task
+        .as_ref()
+        .expect("in flight")
+        .1
+        .cancellation
+        .clone();
+
+    gate.release.send(()).expect("release the replay worker");
+    gate.handed
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the worker handed off its outcome");
+    tick_until(&mut app, &store, &mut state, |app| {
+        app.replay_task.is_none()
+    });
+    assert!(
+        last_block(&app.transcript, BlockKind::Table).is_some(),
+        "the replay completed normally"
+    );
+    assert!(
+        !token.is_cancelled(),
+        "a completed replay must not cancel its token"
+    );
 }

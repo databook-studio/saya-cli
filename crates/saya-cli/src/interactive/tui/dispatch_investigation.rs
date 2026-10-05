@@ -28,6 +28,7 @@ use crate::commands::{
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_resume::block_on;
 use crate::render::RenderFormat;
+use saya_agent::CancellationToken;
 
 /// Bare `/investigations` — no subcommand, no flags — opens the TUI's
 /// searchable picker instead of the text listing. Any tail (`--list`,
@@ -122,6 +123,7 @@ pub(super) fn run_investigation(
             command,
             format,
             state_db: state_db.clone(),
+            cancellation: CancellationToken::new(),
         }));
     }
     // The shared dispatcher returns Ok(code) for every typed outcome (a store

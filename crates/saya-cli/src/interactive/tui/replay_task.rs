@@ -13,22 +13,23 @@
 //! composed runtime's, so the replay's audit row and review binding are
 //! written exactly as a foreground run writes them.
 //!
-//! Detach, not cancel: Esc/Ctrl+C drop the receiver (`App::detach_replay_task`)
-//! and the UI moves on. The worker is never joined and no cancellation token
-//! is wired, so the query may keep running server-side; its [`ReplayDone`]
-//! lands on a dropped channel and is discarded. Detached or not, the worker
-//! holds one process-wide worker permit (`super::worker_permits`) from just
-//! before its spawn until its thread function returns, so detached replays
-//! still count against the cap.
+//! Esc/Ctrl+C detach (`App::detach_replay_task`) drops the receiver and
+//! cancels the task's token (FIX-S1d): the worker's SQL settles early instead
+//! of running to completion server-side. The worker is never joined; a
+//! detached replay's [`ReplayDone`] lands on a dropped channel and is
+//! discarded. Detached or not, the worker holds one process-wide worker
+//! permit (`super::worker_permits`) from just before its spawn until its
+//! thread function returns, so detached replays still count against the cap.
 
 use super::capture::CapturedResult;
 use super::transcript::{BlockKind, Transcript};
 use super::types::LastQuery;
 use super::worker_permits::WorkerPermit;
 use crate::cli::InvestigationCommand;
-use crate::commands::{Replay, run_investigation_outcome};
+use crate::commands::{Replay, run_investigation_outcome_cancellable};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use saya_agent::CancellationToken;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
@@ -42,6 +43,9 @@ pub(crate) struct ReplayTask {
     pub(crate) command: InvestigationCommand,
     pub(crate) format: RenderFormat,
     pub(crate) state_db: saya_store::SqliteStateStore,
+    /// Shared across clones: the app holds the task's original while the
+    /// worker runs a clone, so a detach cancels the running operation.
+    pub(crate) cancellation: CancellationToken,
 }
 
 impl std::fmt::Debug for ReplayTask {
@@ -52,6 +56,7 @@ impl std::fmt::Debug for ReplayTask {
             .field("command", &self.command)
             .field("format", &self.format)
             .field("state_db", &"SqliteStateStore")
+            .field("cancellation", &"CancellationToken")
             .finish()
     }
 }
@@ -109,7 +114,7 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
         .build()
     {
         Ok(handle) => {
-            handle.block_on(run_investigation_outcome(
+            handle.block_on(run_investigation_outcome_cancellable(
                 task.command,
                 runtime,
                 task.format,
@@ -117,6 +122,7 @@ fn run_replay(runtime: &RuntimeConfig, task: ReplayTask) -> ReplayDone {
                 // secret surfaces as an error rather than a stdin prompt.
                 false,
                 &task.state_db,
+                &task.cancellation,
             ))
         }
         Err(error) => Err(Box::new(error) as Box<dyn std::error::Error>),

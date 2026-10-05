@@ -77,13 +77,40 @@ pub async fn run_investigation_outcome(
     can_prompt: bool,
     state_db: &SqliteStateStore,
 ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
-    run_investigation_outcome_in(
+    run_investigation_outcome_cancellable(
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+        &CancellationToken::new(),
+    )
+    .await
+}
+
+/// The replay worker's cancellable seam (FIX-S1d): the same path as
+/// [`run_investigation_outcome`] — the composed roots, the captured `emit`
+/// output — with the adapter's cancellation token riding `RunControl`, so a
+/// detached replay's SQL cancels exactly like the direct-SQL path's does.
+pub(crate) async fn run_investigation_outcome_cancellable(
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+    cancellation: &CancellationToken,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    run_investigation_outcome_controlled_in(
         &InvestigationRepository::new(runtime.investigations_root.clone()),
         command,
         runtime,
         format,
         can_prompt,
         state_db,
+        RunControl {
+            cancellation: Some(cancellation),
+            machine_driven: false,
+        },
     )
     .await
 }
@@ -99,21 +126,6 @@ pub(crate) async fn run_investigation_in(
     can_prompt: bool,
     state_db: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    run_investigation_outcome_in(repo, command, runtime, format, can_prompt, state_db)
-        .await
-        .map(|outcome| outcome.code)
-}
-
-/// The one dispatcher: every adapter maps what it needs from the outcome —
-/// the exit code (headless CLI) or the whole outcome (TUI replay capture).
-async fn run_investigation_outcome_in(
-    repo: &InvestigationRepository,
-    command: InvestigationCommand,
-    runtime: &RuntimeConfig,
-    format: RenderFormat,
-    can_prompt: bool,
-    state_db: &SqliteStateStore,
-) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     run_investigation_outcome_controlled_in(
         repo,
         command,
@@ -127,6 +139,7 @@ async fn run_investigation_outcome_in(
         },
     )
     .await
+    .map(|outcome| outcome.code)
 }
 
 /// How one controlled run is driven: the optional cancellation source the
