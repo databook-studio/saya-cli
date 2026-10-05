@@ -90,7 +90,9 @@ to the active profile):
    refuses to pick among several candidates: portable objects carry no
    quoting, so dialect folding could not be applied soundly; a resolved
    candidate keeps the tree's spelling. Unresolved or ambiguous items are
-   reported as **unavailable** — never written.
+   reported as **unavailable** — never written. What mapped is also bounded
+   before any store access: more than the store's 500-item batch cap
+   refuses the whole import, in preview and apply alike.
 3. **File every mapped item as Pending**, with origin `team_file` —
    regardless of any approval the document claims. The store's batch helper
    has no way to write an Active row; the document's approvals carry no
@@ -115,7 +117,11 @@ to the active profile):
    a storage failure mid-batch rolls back everything, leaving the store
    byte-identical.
 
-`--preview` runs steps 1–2 and reports without opening a transaction.
+`--preview` runs steps 1–2 and reports without opening a transaction —
+under the same admission rules as an applied import: an item the store's
+admission predicate would refuse (a path, header, PEM, or SQL shape)
+aborts the whole import in preview and apply alike, naming the item, never
+its text.
 Memory mode `off` still allows import — claims land Pending and recall stays
 off — and the report says so rather than implying the facts took effect. An
 import where items were offered but none landed exits 2.
@@ -151,7 +157,9 @@ and text that is oversize or carries control characters fails **per item**
 never loosened and never fatal to the whole import. Provenance is recorded
 as `origin_note = "dbt <version> <unique_id>"` (the manifest's
 `dbt_version`, else `"unknown"`). A relationship's `ref()`/`source()` target
-is resolved **name-only against the selection**; an unparseable, missing, or
+is resolved **name-only against the selection**: a two-argument `ref`
+resolves by its last argument — the model name — and the package argument
+is not carried and does not narrow the match; an unparseable, missing, or
 ambiguous target is counted (`unresolved_target` / `ambiguous_target` /
 `malformed_target`) — the safe failure, not a guess.
 

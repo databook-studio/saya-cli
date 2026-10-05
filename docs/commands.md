@@ -503,7 +503,8 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
 
 - **Tools.** `list_profiles` (allowlist names + SQL dialects only), `schema`
   (live discovery with the state-store cache fallback), and `contracts`
-  (Active claims only) are always available. `query` (one bounded read-only
+  (Active claims only; a schema-stale contract is dropped and counted in
+  `excluded_by_schema`) are always available. `query` (one bounded read-only
   statement → `columns`/`rows`/`truncated` plus evidence) and
   `investigation_run` (replay a saved investigation → result, evidence,
   connection; `params` binds its declared parameters as `{"name": "value"}`
