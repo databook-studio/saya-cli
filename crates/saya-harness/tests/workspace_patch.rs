@@ -11,7 +11,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Barrier,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -66,6 +66,7 @@ fn is_rejection(error: &HarnessError) -> bool {
             | HarnessError::NotRegularFile { .. }
             | HarnessError::RangeOutOfBounds { .. }
             | HarnessError::LengthMismatch { .. }
+            | HarnessError::ContentChanged { .. }
             | HarnessError::NotFound { .. }
             | HarnessError::Io { .. }
     )
@@ -214,6 +215,136 @@ fn patch_range_splices_mid_insert_delete_and_eof_append_shapes() {
         .patch_range("victim.txt", 0..len, len, b"replaced")
         .unwrap();
     assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"replaced");
+}
+
+/// The guarded patch: a caller that observed the file's content digest and
+/// pins it commits when the fresh re-read still hashes to that digest.
+#[test]
+fn guarded_patch_with_matching_digest_commits() {
+    let sandbox = Sandbox::new("guarded-ok");
+    sandbox.ws.write("victim.txt", b"hello world").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+    assert_eq!(observed.size, 11);
+    assert!(!observed.truncated);
+
+    sandbox
+        .ws
+        .patch_range_guarded("victim.txt", 6..11, 11, &observed.digest, b"there")
+        .expect("patch with the observed digest must commit");
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"hello there");
+}
+
+/// The same-size stale edit a length precondition cannot see: the file was
+/// replaced with equal-length content between the observation and the patch,
+/// so the size still matches and only the digest can refuse. The refusal
+/// must leave the newer bytes in place and create no temp file at all.
+#[test]
+fn guarded_patch_refuses_same_size_changed_content() {
+    let sandbox = Sandbox::new("guarded-stale");
+    sandbox.ws.write("victim.txt", b"hello world").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+    sandbox.ws.write("victim.txt", b"HELLO WORLD").unwrap();
+
+    let error = sandbox
+        .ws
+        .patch_range_guarded("victim.txt", 6..11, 11, &observed.digest, b"there")
+        .expect_err("same-size stale content must refuse");
+    assert!(
+        matches!(
+            &error,
+            HarnessError::ContentChanged { path, expected, current }
+                if path == "victim.txt" && *expected == observed.digest && !current.is_empty()
+        ),
+        "{error:?}"
+    );
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"HELLO WORLD");
+    let strays: Vec<String> = fs::read_dir(sandbox.root())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name != "victim.txt")
+        .collect();
+    assert!(strays.is_empty(), "stray files after refusal: {strays:?}");
+}
+
+/// The append shape (empty range at EOF) checks the digest like any other
+/// guarded patch: with the observed digest it commits, and against a stale
+/// digest — content replaced same-size, so the positional precondition still
+/// passes — it refuses and leaves the bytes unchanged.
+#[test]
+fn guarded_append_at_eof_checks_the_digest() {
+    let sandbox = Sandbox::new("guarded-append");
+    sandbox.ws.write("victim.txt", b"hello").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+
+    sandbox
+        .ws
+        .patch_range_guarded("victim.txt", 5..5, 5, &observed.digest, b"!")
+        .expect("append with the observed digest must commit");
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"hello!");
+
+    let before = sandbox.ws.read("victim.txt", 4096).unwrap();
+    sandbox.ws.write("victim.txt", b"WORLD!").unwrap();
+    let error = sandbox
+        .ws
+        .patch_range_guarded("victim.txt", 6..6, 6, &before.digest, b"?")
+        .expect_err("stale-digest append must refuse");
+    assert!(
+        matches!(&error, HarnessError::ContentChanged { .. }),
+        "{error:?}"
+    );
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"WORLD!");
+}
+
+/// Eight writers race one guarded patch of the same range, each with a
+/// different same-size replacement, all pinning the digest observed before
+/// the spawn. The commit gate serializes the fresh-read → compare → publish
+/// window, so exactly one commit is admitted, the other seven report
+/// `ContentChanged`, and the file ends as one whole patched result.
+#[test]
+fn concurrent_guarded_writers_admit_exactly_one() {
+    let sandbox = Sandbox::new("guarded-race");
+    sandbox.ws.write("victim.txt", b"....abcd....").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+
+    let replacements: [&[u8]; 8] = [
+        b"AAAA", b"BBBB", b"CCCC", b"DDDD", b"EEEE", b"FFFF", b"GGGG", b"HHHH",
+    ];
+    let barrier = Arc::new(Barrier::new(replacements.len()));
+    let handles: Vec<_> = replacements
+        .iter()
+        .copied()
+        .map(|replacement| {
+            let ws = sandbox.ws.clone();
+            let barrier = Arc::clone(&barrier);
+            let digest = observed.digest.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                ws.patch_range_guarded("victim.txt", 4..8, 12, &digest, replacement)
+            })
+        })
+        .collect();
+
+    let (mut wins, mut stale) = (0usize, 0usize);
+    for handle in handles {
+        match handle.join().unwrap() {
+            Ok(()) => wins += 1,
+            Err(HarnessError::ContentChanged { .. }) => stale += 1,
+            Err(other) => panic!("unexpected concurrent failure: {other:?}"),
+        }
+    }
+    assert_eq!(wins, 1, "exactly one of the eight writers must commit");
+    assert_eq!(stale, 7, "the seven losers must all report ContentChanged");
+
+    let final_bytes = bytes_of(&sandbox.ws, "victim.txt");
+    assert!(
+        replacements.iter().any(|replacement| {
+            let mut whole = b"....abcd....".to_vec();
+            whole[4..8].copy_from_slice(replacement);
+            final_bytes == whole
+        }),
+        "committed content must be one whole patched result: {final_bytes:?}"
+    );
 }
 
 #[cfg(windows)]

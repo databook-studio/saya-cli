@@ -9,10 +9,21 @@
 //! variant express "empty range at EOF" through this same path: the caller
 //! states the size it measured, and a file that no longer has that size is
 //! refused untouched rather than spliced against stale offsets.
+//!
+//! A caller may additionally pin the content it observed with a digest via
+//! [`Workspace::patch_range_guarded`]: the patch then refuses when the fresh
+//! re-read hashes differently — same size included. Every patch writer,
+//! guarded or not, holds the process-wide commit gate (`commit_gate`) across
+//! the fresh-read → compare → publish window: an optimistic stale-version
+//! guard among Saya's own serialized writers, not a portable atomic
+//! compare-and-swap against external programs.
 
 #[cfg(unix)]
 use std::io::Read as _;
 
+use sha2::{Digest, Sha256};
+
+use super::commit_gate::hold;
 use super::contain::Workspace;
 use crate::HarnessError;
 
@@ -44,6 +55,37 @@ impl Workspace {
         expected_len: u64,
         replacement: &[u8],
     ) -> Result<(), HarnessError> {
+        self.patch_range_inner(rel, range, expected_len, None, replacement)
+    }
+
+    /// Like [`Workspace::patch_range`], but with a content precondition: the
+    /// caller passes the lowercase hex SHA-256 digest of the file's whole
+    /// bytes it observed (e.g. `ReadFile::digest`), and a file whose fresh
+    /// re-read hashes differently — same size included — is refused with
+    /// [`HarnessError::ContentChanged`] before any byte is written anywhere.
+    /// An expected digest of the wrong shape simply mismatches.
+    pub fn patch_range_guarded(
+        &self,
+        rel: &str,
+        range: std::ops::Range<u64>,
+        expected_len: u64,
+        expected_sha256: &str,
+        replacement: &[u8],
+    ) -> Result<(), HarnessError> {
+        self.patch_range_inner(rel, range, expected_len, Some(expected_sha256), replacement)
+    }
+
+    /// The one patch routine — bounds, the optional digest guard, and the
+    /// platform dispatch — so `patch_range` and `patch_range_guarded` cannot
+    /// drift apart.
+    fn patch_range_inner(
+        &self,
+        rel: &str,
+        range: std::ops::Range<u64>,
+        expected_len: u64,
+        expected_digest: Option<&str>,
+        replacement: &[u8],
+    ) -> Result<(), HarnessError> {
         if replacement.len() > PATCH_REPLACEMENT_MAX_BYTES {
             return Err(HarnessError::BoundsExceeded {
                 path: rel.to_string(),
@@ -52,10 +94,35 @@ impl Workspace {
             });
         }
         #[cfg(unix)]
-        return self.patch_range_anchored(rel, range, expected_len, replacement);
+        return self.patch_range_anchored(rel, range, expected_len, expected_digest, replacement);
 
         #[cfg(not(unix))]
-        return self.patch_range_by_path(rel, range, expected_len, replacement);
+        return self.patch_range_by_path(rel, range, expected_len, expected_digest, replacement);
+    }
+
+    /// The content-level guard that catches same-size stale edits a length
+    /// check cannot see: the bytes just read must hash to the digest the
+    /// caller observed. Fires before any temp file exists.
+    fn digest_checked(
+        rel: &str,
+        expected_digest: Option<&str>,
+        current: &[u8],
+    ) -> Result<(), HarnessError> {
+        let Some(expected) = expected_digest else {
+            return Ok(());
+        };
+        let current_digest: String = Sha256::digest(current)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if current_digest != expected {
+            return Err(HarnessError::ContentChanged {
+                path: rel.to_string(),
+                expected: expected.to_string(),
+                current: current_digest,
+            });
+        }
+        Ok(())
     }
 
     /// Splices `replacement` into `current` at `range`, after the
@@ -98,8 +165,12 @@ impl Workspace {
         rel: &str,
         range: std::ops::Range<u64>,
         expected_len: u64,
+        expected_digest: Option<&str>,
         replacement: &[u8],
     ) -> Result<(), HarnessError> {
+        // The gate is held from before the fresh read to after the publish,
+        // so no other Saya patch writer can interleave its own window.
+        let _gate = hold();
         let anchor = self.anchor(rel, false)?;
         let stat = super::anchored::final_stat(&anchor, "patch workspace file", rel)?;
         if stat.is_symlink() {
@@ -125,6 +196,7 @@ impl Workspace {
             .take(PATCH_MAX_FILE_BYTES.saturating_add(1))
             .read_to_end(&mut current)
             .map_err(|error| io_error("read workspace file", anchor.path(), error))?;
+        Self::digest_checked(rel, expected_digest, &current)?;
         let patched = Self::splice(rel, range, expected_len, replacement, &current)?;
         anchor.commit_bytes(rel, &patched)
     }
@@ -135,10 +207,14 @@ impl Workspace {
         rel: &str,
         range: std::ops::Range<u64>,
         expected_len: u64,
+        expected_digest: Option<&str>,
         replacement: &[u8],
     ) -> Result<(), HarnessError> {
         use std::io::Read as _;
 
+        // The gate is held from before the fresh read to after the publish,
+        // so no other Saya patch writer can interleave its own window.
+        let _gate = hold();
         let path = self.target(rel, false)?;
         let pre = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -172,6 +248,7 @@ impl Workspace {
             .take(PATCH_MAX_FILE_BYTES.saturating_add(1))
             .read_to_end(&mut current)
             .map_err(|error| crate::io_error("read workspace file", &path, error))?;
+        Self::digest_checked(rel, expected_digest, &current)?;
         let patched = Self::splice(rel, range, expected_len, replacement, &current)?;
         let parent = path.parent().unwrap_or(self.root()).to_path_buf();
         let (temp_path, mut temp) = self.create_temp(&parent, rel)?;

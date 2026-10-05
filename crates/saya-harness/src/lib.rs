@@ -100,6 +100,19 @@ pub enum HarnessError {
         current: u64,
     },
 
+    /// A guarded patch's content precondition failed: the file's whole-content
+    /// SHA-256 digest at commit time no longer matches the one the caller
+    /// observed when choosing the edit — the same-size change a length check
+    /// cannot see. The file is untouched; the caller re-reads and retries.
+    #[error(
+        "workspace file content changed since it was observed: expected digest {expected}, found {current}: {path}"
+    )]
+    ContentChanged {
+        path: String,
+        expected: String,
+        current: String,
+    },
+
     #[error("{context}: {source}")]
     Io {
         context: String,
