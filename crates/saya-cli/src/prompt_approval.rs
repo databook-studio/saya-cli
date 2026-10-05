@@ -1,5 +1,6 @@
 use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
+use crate::prompt_approval_metrics::wait_and_record;
 use saya_agent::{
     ApprovalChoice, ApprovalDecision, ApprovalPolicy, CancellationToken, SessionGrants,
     SessionPolicy, ToolDefinition,
@@ -32,6 +33,10 @@ pub(crate) struct TerminalApproval {
     /// records grants with no journal: there is no session to journal for.
     journal: Option<Arc<SessionJournal>>,
     cancellation: CancellationToken,
+    /// The local metrics handle, when the question scope carries one: the
+    /// real wait records one ApprovalWait sample; automatic decisions
+    /// return before the wait and record nothing.
+    metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
 }
 
 impl TerminalApproval {
@@ -49,6 +54,7 @@ impl TerminalApproval {
             facts,
             journal: None,
             cancellation,
+            metrics: None,
         }
     }
 
@@ -76,6 +82,7 @@ impl TerminalApproval {
             facts,
             journal: None,
             cancellation: CancellationToken::new(),
+            metrics: None,
         }
     }
 
@@ -102,7 +109,16 @@ impl TerminalApproval {
             facts,
             journal,
             cancellation,
+            metrics: None,
         }
+    }
+
+    pub(crate) fn with_metrics(
+        mut self,
+        metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
+    ) -> Self {
+        self.metrics = metrics;
+        self
     }
 }
 
@@ -183,9 +199,8 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                     )
                 );
                 let _ = std::io::stderr().flush();
-                let Ok(Some(answer)) =
-                    crate::terminal_input::approval_line(&self.cancellation).await
-                else {
+                let answer = wait_and_record(self.metrics.as_ref(), &self.cancellation).await;
+                let Ok(Some(answer)) = answer else {
                     return false;
                 };
                 if self.cancellation.is_cancelled() {

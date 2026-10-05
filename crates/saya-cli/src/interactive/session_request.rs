@@ -85,7 +85,8 @@ pub(crate) async fn run(
             facts,
             journal,
             cancellation.clone(),
-        ),
+        )
+        .with_metrics(scope.metrics()),
     );
     let prior_tool_outcomes = (!history.is_empty())
         .then_some(prior_tool_outcomes)
