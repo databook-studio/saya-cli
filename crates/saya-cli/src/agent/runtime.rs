@@ -469,6 +469,30 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
             context_blocks.push(block);
         }
     }
+    // Projected instruction sources ride the user turn first — a stable
+    // prefix ahead of the volatile hints — as untrusted labelled context
+    // blocks, never the system prompt. The remaining budget is what the
+    // request still has for instruction blocks after the system prompt, the
+    // user's question, and the blocks above, capped by the aggregate
+    // instruction ceiling; the fraction reserve keeps history and the answer
+    // alive.
+    let used_so_far = saya_agent::turn_bytes(system_prompt.as_deref(), &context_blocks, prompt);
+    let budget = runtime.resolved.ai.context_byte_budget;
+    let remaining = budget
+        .saturating_sub(used_so_far)
+        .min(super::context_sources::MAX_INSTRUCTION_REQUEST_BYTES)
+        .min(
+            (budget * super::context_sources::HISTORY_RESERVE_FRACTION.0
+                / super::context_sources::HISTORY_RESERVE_FRACTION.1)
+                .saturating_sub(used_so_far),
+        );
+    let projection = super::context_sources::project_instructions(
+        &runtime.resolved.instructions,
+        session.as_ref().and_then(|session| session.root()),
+        &crate::config::sources::user_config_dir(),
+        remaining,
+    );
+    context_blocks.splice(0..0, projection.blocks);
     sink.emit(knowledge_supplied_event(&receipt)).await;
     let receipt = Arc::new(receipt);
     let learning = super::learning::LearningSetup::from(memory.mode);
