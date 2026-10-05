@@ -1,4 +1,4 @@
-use saya_agent::{ToolError, ToolExecutionContext};
+use saya_agent::{AgentMetricOutcome, ToolError, ToolExecutionContext};
 use saya_connectors::DatabaseConnector;
 use saya_store::{
     AuditEntry, AuditOperation, AuditStatus, AuditStore, SchemaStore, SqliteStateStore,
@@ -10,6 +10,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::connection::OperationEntry;
 
 mod operation;
+mod operation_metrics;
 
 /// Rows returned to the MODEL from a tool call are capped small: the model
 /// reasons over a sample and should use aggregate SQL for counts, so feeding it
@@ -225,8 +226,17 @@ pub(crate) async fn schema_with_context(
 ) -> Result<serde_json::Value, ToolError> {
     let started = Instant::now();
     let dialect = operation_entry.entry.dialect;
-    match operation::schema(operation_entry, &context.cancellation).await {
+    let (discovery, settled) = match operation::schema(operation_entry, &context.cancellation).await
+    {
+        operation_metrics::SchemaAttempt::NotStarted => return Err(cancelled_tool_error()),
+        operation_metrics::SchemaAttempt::Measured(discovery, settled) => (discovery, settled),
+    };
+    let sample = |outcome: AgentMetricOutcome| {
+        operation_metrics::record_schema_discovery(operation_entry.metrics, discovery, outcome);
+    };
+    match settled {
         Ok(schema) => {
+            sample(AgentMetricOutcome::Succeeded);
             if context.cancellation.is_cancelled() {
                 return Err(cancelled_tool_error());
             }
@@ -247,12 +257,24 @@ pub(crate) async fn schema_with_context(
         }
         Err(operation::OperationError::Connector(error)) => {
             if context.cancellation.is_cancelled() {
+                sample(AgentMetricOutcome::Failed);
                 Err(cancelled_tool_error())
             } else {
-                cached(store, profile_id, started, &error, dialect).await
+                let fallback = cached(store, profile_id, started, &error, dialect).await;
+                sample(if fallback.is_ok() {
+                    AgentMetricOutcome::CachedFallback
+                } else {
+                    AgentMetricOutcome::Failed
+                });
+                fallback
             }
         }
-        Err(operation::OperationError::Cancelled | operation::OperationError::TimedOut) => {
+        Err(operation::OperationError::Cancelled) => {
+            sample(AgentMetricOutcome::Cancelled);
+            Err(cancelled_tool_error())
+        }
+        Err(operation::OperationError::TimedOut) => {
+            sample(AgentMetricOutcome::Failed);
             Err(cancelled_tool_error())
         }
     }
@@ -337,7 +359,15 @@ pub(crate) async fn operation_execute(
     request: QueryRequest,
     context: &ToolExecutionContext,
 ) -> Result<QueryResult, ToolError> {
-    match operation::execute(operation_entry, request, &context.cancellation, None).await {
+    match operation::execute(
+        operation_entry,
+        request,
+        &context.cancellation,
+        None,
+        operation_entry.metrics,
+    )
+    .await
+    {
         Ok(result) if !context.cancellation.is_cancelled() => Ok(result),
         Ok(_) | Err(operation::OperationError::Cancelled | operation::OperationError::TimedOut) => {
             Err(cancelled_tool_error())
@@ -380,6 +410,7 @@ pub(crate) async fn query_typed(
         QueryRequest::new(sql, model_rows),
         &context.cancellation,
         timeout,
+        operation_entry.metrics,
     )
     .await
     {
@@ -467,3 +498,7 @@ async fn audit(
 #[cfg(test)]
 #[path = "state_tools_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "state_tools/operation_metrics_tests.rs"]
+mod operation_metrics_tests;

@@ -12,7 +12,10 @@ impl DatabaseTools {
         sql: &str,
         context: &ToolExecutionContext,
     ) -> Result<serde_json::Value, ToolError> {
-        let entries = self.registry.operation_entries();
+        let mut entries = self.registry.operation_entries();
+        entries
+            .iter_mut()
+            .for_each(|(_, entry)| entry.metrics = self.metrics.as_deref());
         if entries.is_empty() {
             return Err(ToolError::NoConnectionSelected);
         }
