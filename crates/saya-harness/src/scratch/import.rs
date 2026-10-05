@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use duckdb::params_from_iter;
+use saya_agent::CancellationToken;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -52,6 +53,8 @@ pub enum ImportError {
     FileTooLarge { max: usize },
     #[error("scratch import timed out")]
     TimedOut,
+    #[error("scratch import cancelled")]
+    Cancelled,
     #[error("scratch import failed")]
     Database,
     #[error("scratch import workspace file refused: {0}")]
@@ -67,7 +70,11 @@ pub(crate) fn import_bytes(
     header: bool,
     delimiter: u8,
     replace: bool,
+    cancellation: &CancellationToken,
 ) -> Result<ImportResult, ImportError> {
+    if cancellation.is_cancelled() {
+        return Err(ImportError::Cancelled);
+    }
     let started = Instant::now();
     if !plain_identifier(table) {
         return Err(ImportError::InvalidTable);
@@ -103,7 +110,35 @@ pub(crate) fn import_bytes(
     if data.len() > MAX_CSV_ROWS {
         return Err(CsvError::TooManyRows { max: MAX_CSV_ROWS }.into());
     }
-    insert(db, table, &columns, data, bytes.len(), replace, started)
+    insert(
+        db,
+        table,
+        &columns,
+        data,
+        bytes.len(),
+        replace,
+        Bounds {
+            started,
+            cancellation,
+        },
+    )
+}
+
+/// The bounds a running insertion honours: its wall-clock start against
+/// [`IMPORT_TIMEOUT`] and the turn's cancellation token.
+struct Bounds<'a> {
+    started: Instant,
+    cancellation: &'a CancellationToken,
+}
+
+impl Bounds<'_> {
+    fn timed_out(&self) -> bool {
+        self.started.elapsed() > IMPORT_TIMEOUT
+    }
+
+    fn cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
 }
 
 fn insert(
@@ -113,14 +148,17 @@ fn insert(
     rows: &[CsvRow],
     bytes_read: usize,
     replace: bool,
-    started: Instant,
+    bounds: Bounds<'_>,
 ) -> Result<ImportResult, ImportError> {
-    if started.elapsed() > IMPORT_TIMEOUT {
+    if bounds.timed_out() {
         return Err(ImportError::TimedOut);
     }
     let connection = db.connection.lock().map_err(|_| ImportError::Database)?;
-    if started.elapsed() > IMPORT_TIMEOUT {
+    if bounds.timed_out() {
         return Err(ImportError::TimedOut);
+    }
+    if bounds.cancelled() {
+        return Err(ImportError::Cancelled);
     }
     let tx = duckdb::Transaction::new_unchecked(&connection).map_err(|_| ImportError::Database)?;
     let stage = staging_name();
@@ -138,8 +176,11 @@ fn insert(
         .prepare(&format!("INSERT INTO {stage} VALUES ({placeholders})"))
         .map_err(|_| ImportError::Database)?;
     for row in rows {
-        if started.elapsed() > IMPORT_TIMEOUT {
+        if bounds.timed_out() {
             return Err(ImportError::TimedOut);
+        }
+        if bounds.cancelled() {
+            return Err(ImportError::Cancelled);
         }
         statement
             .execute(params_from_iter(row.fields.iter()))
@@ -156,8 +197,11 @@ fn insert(
         tx.execute_batch(&format!("ALTER TABLE {stage} RENAME TO {target}"))
             .map_err(|_| ImportError::Database)?;
     }
-    if started.elapsed() > IMPORT_TIMEOUT {
+    if bounds.timed_out() {
         return Err(ImportError::TimedOut);
+    }
+    if bounds.cancelled() {
+        return Err(ImportError::Cancelled);
     }
     tx.commit().map_err(|_| ImportError::Database)?;
     Ok(ImportResult {
