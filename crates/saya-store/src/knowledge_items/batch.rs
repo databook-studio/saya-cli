@@ -110,9 +110,18 @@ struct PreparedItem {
     single: bool,
 }
 
-/// Validate one item up front, before the transaction opens: the same payload
-/// discipline as the single-item path, then the id it would land under.
-fn prepare(request: &NewKnowledgeItem) -> Result<PreparedItem, KnowledgeStoreError> {
+/// The store's per-item admission predicate for a new batch item: the
+/// slot/payload cardinality, the payload and binding sizes, the redactor, and
+/// the structural admission check on both texts. `prepare` runs it before the
+/// id derivation, so the batch and any pre-flight caller share one predicate
+/// that cannot drift.
+pub fn validate_new_item(request: &NewKnowledgeItem) -> Result<(), KnowledgeStoreError> {
+    validated_payload(request).map(|_| ())
+}
+
+/// The checks behind [`validate_new_item`], returning the serialised payload
+/// the id derivation needs.
+fn validated_payload(request: &NewKnowledgeItem) -> Result<String, KnowledgeStoreError> {
     if !slot_matches_payload(&request.slot, &request.value) {
         return Err(KnowledgeStoreError::CardinalityMismatch);
     }
@@ -131,6 +140,13 @@ fn prepare(request: &NewKnowledgeItem) -> Result<PreparedItem, KnowledgeStoreErr
         return Err(StoreError::LimitExceeded.into());
     }
     admission::check(&request.schema_binding_json)?;
+    Ok(serialized)
+}
+
+/// Validate one item up front, before the transaction opens: the shared
+/// predicate, then the id it would land under.
+fn prepare(request: &NewKnowledgeItem) -> Result<PreparedItem, KnowledgeStoreError> {
+    let serialized = validated_payload(request)?;
     let single = request.slot.cardinality().is_single();
     let id = if single {
         knowledge_item_id(&request.object, &request.slot)
