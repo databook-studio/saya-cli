@@ -908,7 +908,9 @@ fn handle_line_verbatim(
             runtime,
             state,
             &session.universe(),
+            session.session_metrics().as_deref(),
         ));
+        crate::local_metrics_format::print_metrics_section(&session.session_metrics());
         state.usage.record_learning(outcome.usage);
         // A validated manual success re-arms the automatic trigger (the TUI
         // poll clears the latch on the same validated success, and the

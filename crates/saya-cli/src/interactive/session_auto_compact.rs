@@ -96,7 +96,9 @@ pub(crate) fn settle_auto_compact(
         state,
         &session.universe(),
         true,
+        session.session_metrics().as_deref(),
     ));
+    crate::local_metrics_format::print_metrics_section(&session.session_metrics());
     state.usage.record_learning(outcome.usage);
     if outcome.failed {
         state.auto_compact_failed = true;

@@ -15,7 +15,7 @@ use saya_store::{BypassSource, SessionJournal};
 use super::session_paths::create_state_dir;
 use super::session_universe::{SessionComposition, SessionUniverse};
 use crate::agent::question_scope::QuestionScope;
-use crate::local_metrics::LocalPhaseSnapshot;
+use crate::local_metrics::{LocalMetrics, LocalPhaseSnapshot};
 
 pub(crate) struct SessionRuntime {
     universe: Arc<SessionUniverse>,
@@ -60,6 +60,9 @@ pub(crate) struct SessionRuntime {
     /// The last settled question's fixed local-metrics snapshot for the
     /// print-after-restore seam: runtime-only, never serialized, last only.
     last_question_metrics: Option<LocalPhaseSnapshot>,
+    /// The session's local metrics collector, when local metrics are on:
+    /// runtime-only, never serialized, and never in `SessionState`.
+    session_metrics: Option<Arc<LocalMetrics>>,
 }
 
 enum QuestionLifecycle {
@@ -174,6 +177,7 @@ impl SessionRuntime {
             journal_failure: Mutex::new(None),
             question: QuestionLifecycle::Idle,
             last_question_metrics: None,
+            session_metrics: crate::local_metrics::enabled().then(|| Arc::new(LocalMetrics::new())),
         })
     }
 
@@ -232,6 +236,13 @@ impl SessionRuntime {
     /// Takes the kept snapshot once, for the print-after-restore site.
     pub(crate) fn take_question_metrics(&mut self) -> Option<LocalPhaseSnapshot> {
         self.last_question_metrics.take()
+    }
+
+    /// The session's local metrics collector, when local metrics are on:
+    /// the handle the headless compaction sites record and print through.
+    /// Runtime-only — never serialized, never in `SessionState`.
+    pub(crate) fn session_metrics(&self) -> Option<Arc<LocalMetrics>> {
+        self.session_metrics.clone()
     }
 
     /// Swaps the composed universe for a startup trust answer given
