@@ -1,7 +1,6 @@
 #[cfg(unix)]
 use crate::private_file::set_mode;
 use crate::private_file::{bounded_read, io_error, stage_and_publish};
-use crate::redaction::redact;
 use crate::replace::{AtomicReplace, Replacer};
 use crate::{
     RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError,
@@ -29,7 +28,7 @@ impl FsSessionStore {
         Self { root: root.into() }
     }
 
-    fn path(&self, id: &str) -> Result<PathBuf, StoreError> {
+    pub(crate) fn path(&self, id: &str) -> Result<PathBuf, StoreError> {
         if id.is_empty() || id.contains('/') || id.contains('\\') || id == "." || id == ".." {
             return Err(StoreError::unavailable());
         }
@@ -101,21 +100,12 @@ impl FsSessionStore {
         replacer: &dyn Replacer,
     ) -> Result<(), StoreError> {
         self.ensure_root()?;
-        for message in &mut session.messages {
-            message.content = redact(&message.content);
-        }
-        for turn in &mut session.turns {
-            turn.user = redact(&turn.user);
-            turn.assistant = redact(&turn.assistant);
-        }
+        // Continuation handling at the store boundary: the shared prepare
+        // step (redaction, then continuation prose redaction and
+        // revalidation — see `session_lifecycle`) runs before any disk
+        // write, so a save and the capacity report cannot drift.
+        crate::session_lifecycle::prepare_session_for_persist(&mut session)?;
         let path = self.path(&session.id)?;
-        // Continuation handling at the store boundary: prose in a typed
-        // continuation is redacted and the record revalidated before any
-        // disk write, and a save that would drop or overwrite an on-disk
-        // unsupported continuation is refused with the file untouched.
-        if let Some(continuation) = &mut session.continuation {
-            continuation.prepare_for_persist()?;
-        }
         if !matches!(
             session.continuation,
             Some(StoredContinuation::Unsupported(_))
