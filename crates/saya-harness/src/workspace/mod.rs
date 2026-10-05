@@ -50,6 +50,7 @@
 pub(crate) mod anchor;
 #[cfg(unix)]
 pub(crate) mod anchored;
+mod commit_gate;
 pub mod contain;
 #[cfg(unix)]
 pub(crate) mod dirfd;
