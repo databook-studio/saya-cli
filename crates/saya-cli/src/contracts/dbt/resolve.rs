@@ -56,7 +56,9 @@ pub(super) fn nonempty(value: Option<&str>) -> Option<&str> {
 /// Resolves one `kwargs.to` reference against the selected nodes. Returns a
 /// stable reason code when the call is not a `ref`/`source` invocation, when
 /// the name matches nothing selected, or when it matches several — the caller
-/// skips and counts. A `ref`'s version argument and a `source`'s first
+/// skips and counts. A two-argument `ref` (`ref('package', 'model')`)
+/// resolves by its last argument, the model name; the package argument is not
+/// carried by this view. A `ref`'s version argument and a `source`'s first
 /// (source-name) argument are not carried by this view, so they do not
 /// narrow the match; a name that only matches under that narrowed reading
 /// would be ambiguous here, which is the safe failure.
@@ -67,7 +69,10 @@ pub(super) fn resolve_target(
 ) -> Result<PortableObject, &'static str> {
     let (function, arguments) = parse_call(to).ok_or("malformed_target")?;
     let candidates: &[&NodeView] = match function {
-        "ref" => index_for(models, arguments.first().ok_or("malformed_target")?),
+        "ref" => index_for(
+            models,
+            ref_model_name(&arguments).ok_or("malformed_target")?,
+        ),
         "source" => index_for(sources, arguments.get(1).ok_or("malformed_target")?),
         _ => return Err("malformed_target"),
     };
@@ -76,6 +81,13 @@ pub(super) fn resolve_target(
         [node] => object_of(node).ok_or("unresolved_target"),
         _ => Err("ambiguous_target"),
     }
+}
+
+/// The model name a `ref` call names: always the LAST quoted argument —
+/// `ref('model')` has one, `ref('package', 'model')` two; a version is a
+/// keyword argument that is not a quoted string.
+fn ref_model_name(arguments: &[String]) -> Option<&String> {
+    arguments.last()
 }
 
 fn index_for<'a>(index: &'a NameIndex<'a>, name: &str) -> &'a [&'a NodeView] {
@@ -116,4 +128,27 @@ fn quoted_arguments(arguments: &str) -> Vec<String> {
         quoted.push(value);
     }
     quoted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ref_model_name_is_the_last_argument() {
+        let one = vec!["orders".to_string()];
+        assert_eq!(ref_model_name(&one), Some(&"orders".to_string()));
+        let two = vec!["shop".to_string(), "orders".to_string()];
+        assert_eq!(ref_model_name(&two), Some(&"orders".to_string()));
+        assert_eq!(ref_model_name(&[]), None);
+    }
+
+    #[test]
+    fn parse_call_reads_a_two_argument_ref() {
+        let parsed = parse_call("{{ ref('shop', 'orders') }}");
+        assert_eq!(
+            parsed,
+            Some(("ref", vec!["shop".to_string(), "orders".to_string()]))
+        );
+    }
 }
