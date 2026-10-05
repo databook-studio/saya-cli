@@ -3,7 +3,10 @@ use crate::private_file::set_mode;
 use crate::private_file::{bounded_read, io_error, stage_and_publish};
 use crate::redaction::redact;
 use crate::replace::{AtomicReplace, Replacer};
-use crate::{RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError};
+use crate::{
+    RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError,
+    StoredContinuation,
+};
 use async_trait::async_trait;
 use std::{
     fs,
@@ -63,6 +66,35 @@ impl FsSessionStore {
         Ok(None)
     }
 
+    /// Whether the session already on disk carries a continuation this
+    /// binary does not understand. Read plainly, never quarantining: a
+    /// missing, unreadable, or unparsable file cannot answer the question
+    /// and never triggers the guard — the load path quarantines such files,
+    /// and refusing saves over them would strand the session. A `null`
+    /// continuation key is absence, not an unknown record.
+    fn existing_continuation_is_unsupported(&self, path: &Path) -> bool {
+        let bytes = match bounded_read(path, MAX_SESSION_BYTES) {
+            Ok(Some(value)) => value,
+            _ => return false,
+        };
+        let Ok(content) = String::from_utf8(bytes) else {
+            return false;
+        };
+        let Ok(record) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return false;
+        };
+        let Some(continuation) = record.get("continuation") else {
+            return false;
+        };
+        if continuation.is_null() {
+            return false;
+        }
+        matches!(
+            StoredContinuation::from_value(continuation.clone()),
+            StoredContinuation::Unsupported(_)
+        )
+    }
+
     async fn save_inner(
         &self,
         mut session: RedactedSession,
@@ -77,6 +109,20 @@ impl FsSessionStore {
             turn.assistant = redact(&turn.assistant);
         }
         let path = self.path(&session.id)?;
+        // Continuation handling at the store boundary: prose in a typed
+        // continuation is redacted and the record revalidated before any
+        // disk write, and a save that would drop or overwrite an on-disk
+        // unsupported continuation is refused with the file untouched.
+        if let Some(continuation) = &mut session.continuation {
+            continuation.prepare_for_persist()?;
+        }
+        if !matches!(
+            session.continuation,
+            Some(StoredContinuation::Unsupported(_))
+        ) && self.existing_continuation_is_unsupported(&path)
+        {
+            return Err(StoreError::UnsupportedContinuation);
+        }
         // Bounded serialization: the pretty JSON streams into a writer that
         // refuses at the ceiling, so an oversized session fails mid-stream —
         // never after a full `Vec` materialization — and the publish below

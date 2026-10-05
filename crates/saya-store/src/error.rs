@@ -23,6 +23,12 @@ pub enum StoreError {
     /// fails fast instead of retrying for the busy ceiling.
     #[error("the state store cannot be opened at its path")]
     OpenFailed,
+    /// The session on disk carries a continuation this binary does not
+    /// understand — an unknown version or an unparsable record — and the
+    /// save that arrived would drop or overwrite it. The record is left
+    /// untouched; a newer binary must read it.
+    #[error("the stored session continuation is not understood by this version of saya")]
+    UnsupportedContinuation,
 }
 
 impl StoreError {
@@ -57,6 +63,7 @@ mod tests {
             StoreError::Invalid,
             StoreError::VersionUnsupported,
             StoreError::OpenFailed,
+            StoreError::UnsupportedContinuation,
         ];
         for error in errors {
             let rendered = error.to_string();
