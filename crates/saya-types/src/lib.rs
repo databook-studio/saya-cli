@@ -4,6 +4,7 @@ mod context_doc;
 mod continuation;
 mod contract;
 mod dialect;
+mod edit_checkpoint;
 mod error;
 pub mod evidence;
 pub mod investigation;
@@ -37,6 +38,13 @@ pub use contract::{
     validate_table,
 };
 pub use dialect::SqlDialect;
+pub use edit_checkpoint::{
+    BeforeImage, CHECKPOINT_VERSION, CheckpointError, CheckpointId, CheckpointPolicy,
+    CheckpointRefusal, CheckpointState, CheckpointUsage, EditCheckpoint, EditSource, FileVersion,
+    MAX_CHECKPOINT_FILE_BYTES, MAX_CHECKPOINT_PATH_BYTES, MAX_CHECKPOINT_RECORD_BYTES,
+    MAX_CHECKPOINT_SESSION_BYTES, MAX_CHECKPOINTS_PER_SESSION, RestoreEligibility, admit,
+    restore_eligibility,
+};
 pub use error::ConnectionError;
 pub use evidence::{
     EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, MAX_EVIDENCE_KNOWLEDGE_IDS,
