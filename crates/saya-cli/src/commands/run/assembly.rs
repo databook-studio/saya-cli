@@ -138,13 +138,13 @@ pub(super) async fn assemble(
         profile::selected(runtime, profile_override).map_err(|error| error.to_string())?;
     let (registry, _failures) = match profile.as_ref() {
         Some(primary) => connection::build_registry(
-            &runtime.secret_resolver(),
-            &runtime.cache_scope,
+            (&runtime.secret_resolver(), &runtime.cache_scope),
             runtime.resolved.query_timeout_seconds,
             false,
             profile_name.as_deref().unwrap_or(""),
             primary,
             &[],
+            None,
         )
         .await
         .map_err(|error| error.to_string())?,

@@ -10,6 +10,7 @@
 use super::{provider, runtime::effective_ai};
 use crate::config::runtime::RuntimeConfig;
 use crate::connection::ConnectionRegistry;
+use crate::local_metrics::LocalMetrics;
 use saya_agent::ChatProvider;
 use saya_config::ResolvedAi;
 
@@ -39,6 +40,7 @@ pub(crate) async fn prepare_turn(
     runtime: &RuntimeConfig,
     overrides: &super::runtime::PromptOverrides,
     can_prompt: bool,
+    metrics: Option<&LocalMetrics>,
 ) -> Result<TurnInputs, AgentRuntimeError> {
     let ai = effective_ai(&runtime.resolved.ai, overrides);
     let provider = provider::build(&ai, &runtime.secret_resolver())
@@ -66,13 +68,13 @@ pub(crate) async fn prepare_turn(
         Some(primary_profile) => {
             let primary_name = profile_name.as_deref().unwrap_or("");
             crate::connection::build_registry(
-                &runtime.secret_resolver(),
-                &runtime.cache_scope,
+                (&runtime.secret_resolver(), &runtime.cache_scope),
                 runtime.resolved.query_timeout_seconds,
                 can_prompt,
                 primary_name,
                 primary_profile,
                 &secondaries,
+                metrics,
             )
             .await?
         }
