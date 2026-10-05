@@ -52,13 +52,15 @@ pub(super) fn resolve_ref(
     identity: &ProfileIdentity,
     object: &PortableObject,
 ) -> Option<DatabaseObjectRef> {
-    let (catalog, schema) = match resolve_object(tree, object) {
+    let (catalog, schema, table) = match resolve_object(tree, object) {
         Resolution::Resolved {
-            catalog, schema, ..
-        } => (catalog, schema),
+            catalog,
+            schema,
+            table,
+        } => (catalog, schema, table),
         _ => return None,
     };
-    DatabaseObjectRef::new(identity.clone(), catalog, schema, &object.name, object.kind).ok()
+    DatabaseObjectRef::new(identity.clone(), catalog, schema, &table.name, object.kind).ok()
 }
 
 /// The label a report shows for an unmapped item: its own spelling.

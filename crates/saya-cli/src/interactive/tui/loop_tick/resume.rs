@@ -41,6 +41,16 @@ pub(crate) fn tick_resume(
     session: &mut SessionRuntime,
 ) {
     if let Some(id) = app.overlays.pending_resume.take() {
+        // A resume swaps the session runtime: never under a running agent
+        // stream, query or compaction (their late completion would settle
+        // into the resumed session). Refused, nothing changes.
+        if app.is_busy() {
+            app.transcript.push(
+                BlockKind::System,
+                "A request is still running - stop it (Esc) or wait for it to finish, then resume again.",
+            );
+            return;
+        }
         let defaults = session_resume::SessionDefaults {
             provider: state.provider.clone(),
             model: state.model.clone(),

@@ -3,7 +3,7 @@
 //! touches process env; the binary-level surface is covered in
 //! `tests/investigation_cli.rs`.
 
-use super::{RunOutcome, run_investigation_in, run_investigation_outcome_in};
+use super::{RunOutcome, run_investigation_in};
 use crate::cli::InvestigationCommand;
 use crate::commands::{capture_output_start, capture_output_take};
 use crate::config::runtime::{RuntimeConfig, load_with_sources};
@@ -652,10 +652,20 @@ async fn run_outcome(
     state_db: &SqliteStateStore,
 ) -> (RunOutcome, String, String) {
     capture_output_start();
-    let outcome =
-        run_investigation_outcome_in(repo, command, runtime, RenderFormat::Text, false, state_db)
-            .await
-            .unwrap();
+    let outcome = super::run_investigation_outcome_controlled_in(
+        repo,
+        command,
+        runtime,
+        RenderFormat::Text,
+        false,
+        state_db,
+        super::RunControl {
+            cancellation: None,
+            machine_driven: false,
+        },
+    )
+    .await
+    .unwrap();
     let (out, err) = capture_output_take();
     (outcome, out, err)
 }
