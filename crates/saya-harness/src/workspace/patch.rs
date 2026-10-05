@@ -102,8 +102,9 @@ impl Workspace {
 
     /// The content-level guard that catches same-size stale edits a length
     /// check cannot see: the bytes just read must hash to the digest the
-    /// caller observed. Fires before any temp file exists.
-    fn digest_checked(
+    /// caller observed. Fires before any temp file exists. `pub(super)` so
+    /// the guarded whole-file write reuses the one digest comparison.
+    pub(super) fn digest_checked(
         rel: &str,
         expected_digest: Option<&str>,
         current: &[u8],

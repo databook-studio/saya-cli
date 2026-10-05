@@ -19,6 +19,7 @@ use std::{
 
 use proptest::prelude::*;
 use saya_harness::HarnessError;
+use saya_harness::workspace::MAX_IO_BYTES;
 use saya_harness::workspace::Workspace;
 use saya_harness::workspace::patch::{PATCH_MAX_FILE_BYTES, PATCH_REPLACEMENT_MAX_BYTES};
 
@@ -62,6 +63,7 @@ fn is_rejection(error: &HarnessError) -> bool {
             | HarnessError::SymlinkRefused { .. }
             | HarnessError::DeniedName { .. }
             | HarnessError::BoundsExceeded { .. }
+            | HarnessError::AlreadyExists { .. }
             | HarnessError::IdentityChanged { .. }
             | HarnessError::NotRegularFile { .. }
             | HarnessError::RangeOutOfBounds { .. }
@@ -697,4 +699,232 @@ fn patching_a_directory_refuses() {
         "{error:?}"
     );
     assert_eq!(bytes_of(&sandbox.ws, "sub/nested.txt"), INSIDE);
+}
+
+/// `create_new` is create-if-absent: a missing file is created whole, and
+/// missing parent directories come with it. Refusals are the next tests'
+/// job; this one pins the happy path and the created tree.
+#[test]
+fn create_new_creates_a_missing_file_with_missing_parents() {
+    let sandbox = Sandbox::new("create-new-ok");
+    sandbox
+        .ws
+        .create_new("new/deep/file.txt", b"fresh bytes")
+        .expect("create of a missing file with missing parents must succeed");
+    assert_eq!(bytes_of(&sandbox.ws, "new/deep/file.txt"), b"fresh bytes");
+}
+
+/// A create that finds the target already there must refuse with the typed
+/// `AlreadyExists` and leave the existing bytes exactly as they were — the
+/// anti-clobber contract of create-if-absent.
+#[test]
+fn create_new_refuses_an_existing_file_and_preserves_it() {
+    let sandbox = Sandbox::new("create-new-exists");
+    sandbox.ws.write("victim.txt", b"original").unwrap();
+    let before = bytes_of(&sandbox.ws, "victim.txt");
+
+    let error = sandbox
+        .ws
+        .create_new("victim.txt", b"clobber")
+        .expect_err("an existing file must refuse create");
+    assert!(
+        matches!(&error, HarnessError::AlreadyExists { path } if path == "victim.txt"),
+        "{error:?}"
+    );
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), before);
+}
+
+/// Every other kind of entry refuses a create too: a directory is the typed
+/// `AlreadyExists`, and (unix) a symlink is refused by the shared walk
+/// without being followed or replaced — the outside sentinel stays intact.
+#[test]
+fn create_new_refuses_an_existing_directory_and_symlink() {
+    let sandbox = Sandbox::new("create-new-entries");
+    sandbox.ws.write("sub/nested.txt", INSIDE).unwrap();
+
+    let error = sandbox
+        .ws
+        .create_new("sub", b"x")
+        .expect_err("directory target must refuse create");
+    assert!(
+        matches!(error, HarnessError::AlreadyExists { .. }),
+        "{error:?}"
+    );
+    assert_eq!(bytes_of(&sandbox.ws, "sub/nested.txt"), INSIDE);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let outside = sandbox.outside_path("outside.txt");
+        fs::write(&outside, OUTSIDE).unwrap();
+        symlink(&outside, sandbox.root().join("link")).unwrap();
+        let error = sandbox
+            .ws
+            .create_new("link", b"replacement")
+            .expect_err("symlink target must refuse create");
+        assert!(
+            matches!(error, HarnessError::SymlinkRefused { .. }),
+            "{error:?}"
+        );
+        assert_eq!(
+            fs::read(&outside).unwrap(),
+            OUTSIDE,
+            "outside sentinel must stay intact"
+        );
+        assert!(
+            sandbox
+                .root()
+                .join("link")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the link itself must not have been replaced"
+        );
+    }
+}
+
+/// Eight threads race one `create_new` of the same path behind a barrier,
+/// each with different content. The commit gate serializes the
+/// walk → existence check → publish window, so exactly one is admitted, the
+/// other seven report `AlreadyExists`, and the file is one whole content —
+/// the concurrent form of never clobbering.
+#[test]
+fn concurrent_create_new_admits_exactly_one() {
+    let sandbox = Sandbox::new("create-new-race");
+    let contents: [&[u8]; 8] = [
+        b"AAAA", b"BBBB", b"CCCC", b"DDDD", b"EEEE", b"FFFF", b"GGGG", b"HHHH",
+    ];
+    let barrier = Arc::new(Barrier::new(contents.len()));
+    let handles: Vec<_> = contents
+        .iter()
+        .copied()
+        .map(|content| {
+            let ws = sandbox.ws.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                ws.create_new("race.txt", content)
+            })
+        })
+        .collect();
+
+    let (mut wins, mut refused) = (0usize, 0usize);
+    for handle in handles {
+        match handle.join().unwrap() {
+            Ok(()) => wins += 1,
+            Err(HarnessError::AlreadyExists { .. }) => refused += 1,
+            Err(other) => panic!("unexpected concurrent failure: {other:?}"),
+        }
+    }
+    assert_eq!(wins, 1, "exactly one of the eight creates must be admitted");
+    assert_eq!(refused, 7, "the seven losers must all report AlreadyExists");
+
+    let final_bytes = bytes_of(&sandbox.ws, "race.txt");
+    assert!(
+        contents.iter().any(|content| final_bytes == *content),
+        "the file must hold one whole created content: {final_bytes:?}"
+    );
+}
+
+/// The guarded whole-file replace commits when the fresh re-read of the
+/// existing file still hashes to the digest the caller observed.
+#[test]
+fn write_guarded_replaces_when_the_digest_matches() {
+    let sandbox = Sandbox::new("guarded-write-ok");
+    sandbox.ws.write("victim.txt", b"hello world").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+
+    sandbox
+        .ws
+        .write_guarded("victim.txt", &observed.digest, b"replaced whole")
+        .expect("replace with the observed digest must commit");
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"replaced whole");
+}
+
+/// The stale replace a size check cannot see: the file changed same-size
+/// between observation and write, so only the digest refuses. The refusal
+/// leaves the newer bytes in place and creates no temp file at all.
+#[test]
+fn write_guarded_refuses_same_size_changed_content() {
+    let sandbox = Sandbox::new("guarded-write-stale");
+    sandbox.ws.write("victim.txt", b"hello world").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+    sandbox.ws.write("victim.txt", b"HELLO WORLD").unwrap();
+
+    let error = sandbox
+        .ws
+        .write_guarded("victim.txt", &observed.digest, b"stale replacement")
+        .expect_err("same-size stale content must refuse");
+    assert!(
+        matches!(
+            &error,
+            HarnessError::ContentChanged { path, expected, current }
+                if path == "victim.txt" && *expected == observed.digest && !current.is_empty()
+        ),
+        "{error:?}"
+    );
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), b"HELLO WORLD");
+    let strays: Vec<String> = fs::read_dir(sandbox.root())
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name != "victim.txt")
+        .collect();
+    assert!(strays.is_empty(), "stray files after refusal: {strays:?}");
+}
+
+/// A guarded replace names an existing file only: a missing final component
+/// is the typed `NotFound` (creation is `create_new`'s job), and nothing is
+/// created by the refusal.
+#[test]
+fn write_guarded_refuses_a_missing_file_with_not_found() {
+    let sandbox = Sandbox::new("guarded-write-missing");
+    let empty_digest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    let error = sandbox
+        .ws
+        .write_guarded("absent.txt", empty_digest, b"x")
+        .expect_err("missing target must refuse");
+    assert!(
+        matches!(&error, HarnessError::NotFound { path } if path == "absent.txt"),
+        "{error:?}"
+    );
+    assert!(!sandbox.root().join("absent.txt").exists());
+
+    let error = sandbox
+        .ws
+        .write_guarded("new/dir/file.txt", empty_digest, b"x")
+        .expect_err("missing parents must refuse too");
+    assert!(
+        matches!(&error, HarnessError::NotFound { path } if path == "new/dir/file.txt"),
+        "{error:?}"
+    );
+    assert!(!sandbox.root().join("new").exists());
+}
+
+/// Content over the whole-file write bound is refused before anything is
+/// read or written: the typed bound names the size and the cap, and the
+/// file is untouched.
+#[test]
+fn write_guarded_over_the_io_bound_is_refused_whole() {
+    let sandbox = Sandbox::new("guarded-write-bound");
+    sandbox.ws.write("victim.txt", b"keep").unwrap();
+    let observed = sandbox.ws.read("victim.txt", 4096).unwrap();
+    let before = bytes_of(&sandbox.ws, "victim.txt");
+
+    let oversized = vec![b'x'; MAX_IO_BYTES + 1];
+    let error = sandbox
+        .ws
+        .write_guarded("victim.txt", &observed.digest, &oversized)
+        .expect_err("over-bound content must refuse");
+    assert!(
+        matches!(
+            error,
+            HarnessError::BoundsExceeded { found, max, .. }
+                if found == (MAX_IO_BYTES + 1) as u64 && max == MAX_IO_BYTES as u64
+        ),
+        "{error:?}"
+    );
+    assert_eq!(bytes_of(&sandbox.ws, "victim.txt"), before);
 }
