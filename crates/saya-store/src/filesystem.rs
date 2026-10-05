@@ -52,7 +52,7 @@ impl FsSessionStore {
         Ok(())
     }
 
-    fn load_file(&self, path: &Path) -> Result<Option<RedactedSession>, StoreError> {
+    pub(crate) fn load_file(&self, path: &Path) -> Result<Option<RedactedSession>, StoreError> {
         let bytes = match bounded_read(path, MAX_SESSION_BYTES)? {
             Some(value) => value,
             None => return Ok(None),
@@ -102,7 +102,7 @@ impl FsSessionStore {
         )
     }
 
-    async fn save_inner(
+    pub(crate) fn save_inner(
         &self,
         mut session: RedactedSession,
         replacer: &dyn Replacer,
@@ -154,14 +154,14 @@ impl FsSessionStore {
         session: RedactedSession,
         replacer: &dyn Replacer,
     ) -> Result<(), StoreError> {
-        self.save_inner(session, replacer).await
+        self.save_inner(session, replacer)
     }
 }
 
 #[async_trait]
 impl SessionStore for FsSessionStore {
     async fn save(&self, session: RedactedSession) -> Result<(), StoreError> {
-        self.save_inner(session, &AtomicReplace).await
+        self.save_inner(session, &AtomicReplace)
     }
 
     async fn load(&self, id: &str) -> Result<Option<RedactedSession>, StoreError> {

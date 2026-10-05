@@ -12,9 +12,14 @@
 //! path is gone.
 
 pub(crate) mod delete;
+pub(crate) mod successor;
 pub(crate) mod tombstone;
 
+#[cfg(test)]
+mod successor_tests;
+
 pub use delete::DeleteStatus;
+pub use successor::SuccessorOutcome;
 
 use crate::bounded::BoundedWriter;
 use crate::filesystem::FsSessionStore;

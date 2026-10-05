@@ -51,7 +51,7 @@ pub use session_journal::{
     BypassSource, GrantSource, JournalEvent, MAX_JOURNAL_BYTES, SessionJournal,
 };
 pub use session_lifecycle::{
-    DeleteStatus, SESSION_WARN_BYTES, SessionCapacity, SessionCapacityStatus,
+    DeleteStatus, SESSION_WARN_BYTES, SessionCapacity, SessionCapacityStatus, SuccessorOutcome,
 };
 pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
@@ -62,6 +62,24 @@ pub use state_contracts::{
 
 /// Persistable session data. Callers must provide content after secret redaction.
 pub const SESSION_VERSION: u32 = 2;
+
+/// A successor session's lineage link to the session it was rotated from.
+/// LINEAGE ONLY: the link records where a session came from and nothing
+/// else — a successor inherits no grants, approvals, permissions, or
+/// capabilities of any kind. Additive at `SESSION_VERSION` 2 with
+/// `#[serde(default)]`: records written before rotation existed carry no
+/// link and re-serialize without the key. An older binary reading a record
+/// that carries a link silently drops the unknown field, and downgrade
+/// writes are unsupported without restoring a pre-upgrade backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParentLink {
+    /// The parent session's id.
+    pub id: String,
+    /// The rotation that produced this successor; repeating the same
+    /// `(parent, rotation_id)` request is idempotent.
+    pub rotation_id: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedactedSession {
@@ -123,6 +141,14 @@ pub struct RedactedSession {
     /// cannot be overwritten by a save that would drop it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation: Option<StoredContinuation>,
+    /// The session's optional rotation lineage link to its parent session,
+    /// additive at `SESSION_VERSION` 2 beside `continuation` — legacy
+    /// records carry none and re-serialize without the key. The link is
+    /// lineage only: a successor inherits no grants, approvals, or
+    /// permissions. Rotation sets and validates it in the store; a plain
+    /// save preserves whatever a loaded record carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ParentLink>,
 }
 
 impl Default for RedactedSession {
@@ -145,6 +171,7 @@ impl Default for RedactedSession {
             profile_names: Vec::new(),
             messages: Vec::new(),
             continuation: None,
+            parent: None,
         }
     }
 }
