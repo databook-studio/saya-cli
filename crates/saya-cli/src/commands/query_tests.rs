@@ -351,3 +351,35 @@ fn a_question_that_stopped_for_no_reason_keeps_the_existing_exit() {
     .expect("a settled ask maps to an exit code");
     assert_eq!(paused, 6, "a settled clarification still exits 6");
 }
+
+/// A Ctrl-C that arrives AFTER a budget stop already latched the token must
+/// keep the budget class (6, partial wording), not report a user interrupt.
+#[test]
+fn a_ctrl_c_after_a_budget_latch_keeps_the_budget_class() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+    cancellation.cancel();
+    capture_output_start();
+    let code = super::interrupted_exit(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+        .expect("an interrupted ask maps to an exit code");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(code, 6, "the first stop reason wins: {code}");
+    assert!(format!("{stdout}{stderr}").contains("partial"));
+}
+
+/// A plain Ctrl-C (the token carries the user's stop) is still exit 130 and
+/// prints nothing extra, exactly as before.
+#[test]
+fn a_plain_ctrl_c_still_exits_130_quietly() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    capture_output_start();
+    let code = super::interrupted_exit(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+        .expect("an interrupted ask maps to an exit code");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(code, 130);
+    assert!(
+        format!("{stdout}{stderr}").is_empty(),
+        "no new output on a plain interrupt"
+    );
+}
