@@ -38,7 +38,7 @@ impl App {
     }
 
     fn admit_second_command(&self, message: &'static str) -> super::SecondSqlDecision {
-        if self.sql_task.is_some() || self.replay_task.is_some() {
+        if self.is_busy() {
             return super::SecondSqlDecision::Reject(message);
         }
         // One attached task at a time is the rule above; the process-wide
