@@ -7,6 +7,9 @@ use super::super::ui;
 use super::startup::build_app;
 use super::{TrustOutcome, TuiSession};
 use crate::interactive::session_prompt;
+use crate::local_metrics::LocalMetrics;
+use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase};
+use std::sync::Arc;
 
 /// Runs the full-screen TUI session. Returns the process exit code.
 ///
@@ -18,6 +21,7 @@ use crate::interactive::session_prompt;
 /// interface. `launch` recomposes the universe behind a modal trust answer
 /// so the bound session carries the launch's deny list and host statement.
 pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::error::Error>> {
+    let entered = std::time::Instant::now();
     let TuiSession {
         runtime,
         store,
@@ -63,6 +67,7 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
     // A modal trust answer, when one binds a directory: the live runtime
     // recomposes behind the app's snapshot once the answer lands.
     let mut trusted_dir: Option<std::path::PathBuf> = None;
+    let mut first_paint_recorded = false;
 
     while !app.should_quit {
         app.poll_session_picker();
@@ -72,6 +77,10 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         guard
             .terminal
             .draw(|frame| ui::draw(frame, &app, &status))?;
+        if !first_paint_recorded {
+            first_paint_recorded = true;
+            record_first_paint(entered, session.session_metrics());
+        }
 
         super::super::loop_tick::tick_events(
             &mut app,
@@ -102,4 +111,14 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         Some(dir) => TrustOutcome::Answered(dir),
         None => TrustOutcome::Unasked,
     })
+}
+
+fn record_first_paint(entered: std::time::Instant, metrics: Option<Arc<LocalMetrics>>) {
+    if let Some(metrics) = metrics {
+        metrics.record(&AgentMetric::Phase {
+            phase: AgentMetricPhase::FirstPaint,
+            elapsed_ns: u64::try_from(entered.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            outcome: AgentMetricOutcome::Succeeded,
+        });
+    }
 }
