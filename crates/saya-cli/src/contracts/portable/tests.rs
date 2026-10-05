@@ -279,3 +279,127 @@ async fn export_and_import_round_trip_through_the_file() {
     drop(store);
     let _ = std::fs::remove_dir_all(root);
 }
+/// A claim the store's own per-item predicate refuses (an admission shape,
+/// not a credential marker) is reported unavailable; the clean items beside
+/// it still import, in preview and apply alike.
+#[tokio::test]
+async fn one_store_refused_item_imports_the_rest_and_reports_itself() {
+    let root = std::env::temp_dir().join(format!(
+        "saya-portable-refusal-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let schema = tree(&[
+        ("analytics.public", "orders", &[("id", "bigint")]),
+        ("analytics.public", "customers", &[("id", "bigint")]),
+    ]);
+    let items = vec![
+        item(
+            "orders",
+            &ClaimPayload::table_description("One row per confirmed order.").unwrap(),
+        ),
+        item("orders", &ClaimPayload::table_alias("customers").unwrap()),
+        item(
+            "customers",
+            &ClaimPayload::table_description("Select the latest row from each customer.").unwrap(),
+        ),
+    ];
+    let reason =
+        "the store would refuse this claim: its text has a credential, path, header or SQL shape";
+    let preview = import_document(&store, &identity(), &items, &schema, true)
+        .await
+        .unwrap();
+    assert_eq!(preview.inserted.len(), 2, "{:?}", preview.unavailable);
+    assert_eq!(preview.unavailable.len(), 1);
+    assert_eq!(preview.unavailable[0].label, "analytics.public.customers");
+    assert_eq!(preview.unavailable[0].reason, reason);
+    let applied = import_document(&store, &identity(), &items, &schema, false)
+        .await
+        .unwrap();
+    assert_eq!(applied.inserted.len(), 2);
+    assert_eq!(applied.unavailable.len(), 1);
+    assert_eq!(applied.unavailable[0].reason, reason);
+    let rows = store.knowledge_for_profile(&identity()).await.unwrap();
+    assert_eq!(rows.len(), 2);
+    drop(store);
+    let _ = std::fs::remove_dir_all(root);
+}
+/// `count` clean table-description claims, each on its own table and slot.
+fn n_table_document(count: usize) -> (SchemaTree, Vec<ContextItem>) {
+    let tree = SchemaTree {
+        databases: vec![Database {
+            name: "analytics".into(),
+            schemas: vec![Schema {
+                name: "public".into(),
+                tables: (0..count)
+                    .map(|index| Table {
+                        name: format!("table_{index}"),
+                        columns: vec![Column {
+                            name: "id".into(),
+                            data_type: "bigint".into(),
+                            nullable: true,
+                        }],
+                        primary_key: vec![],
+                        foreign_keys: vec![],
+                    })
+                    .collect(),
+            }],
+        }],
+    };
+    let items = (0..count)
+        .map(|index| {
+            item(
+                &format!("table_{index}"),
+                &ClaimPayload::table_description(format!("One row per order {index}.")).unwrap(),
+            )
+        })
+        .collect();
+    (tree, items)
+}
+#[tokio::test]
+async fn mapping_over_the_batch_cap_refuses_preview_and_apply_alike() {
+    let root = std::env::temp_dir().join(format!(
+        "saya-portable-cap501-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let (schema, items) = n_table_document(saya_store::MAX_PENDING_BATCH_ITEMS + 1);
+    for preview in [true, false] {
+        let refused = import_document(&store, &identity(), &items, &schema, preview).await;
+        assert!(matches!(
+            refused,
+            Err(PortableError::TooManyMappedItems(501, 500))
+        ));
+    }
+    let rows = store.knowledge_for_profile(&identity()).await.unwrap();
+    assert_eq!(rows.len(), 0, "nothing written");
+    drop(store);
+    let _ = std::fs::remove_dir_all(root);
+}
+#[tokio::test]
+async fn mapping_exactly_the_batch_cap_applies() {
+    let root = std::env::temp_dir().join(format!(
+        "saya-portable-cap500-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let (schema, items) = n_table_document(saya_store::MAX_PENDING_BATCH_ITEMS);
+    let preview = import_document(&store, &identity(), &items, &schema, true)
+        .await
+        .unwrap();
+    assert_eq!(preview.inserted.len(), 500);
+    let applied = import_document(&store, &identity(), &items, &schema, false)
+        .await
+        .unwrap();
+    assert_eq!(applied.inserted.len(), 500);
+    let rows = store.knowledge_for_profile(&identity()).await.unwrap();
+    assert_eq!(rows.len(), 500);
+    drop(store);
+    let _ = std::fs::remove_dir_all(root);
+}

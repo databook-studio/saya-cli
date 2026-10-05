@@ -26,7 +26,9 @@ mod batch_tests;
 mod store_tests;
 
 use async_trait::async_trait;
-pub use batch::{BatchItemOutcome, BatchOutcome, MAX_PENDING_BATCH_ITEMS, NewKnowledgeItem};
+pub use batch::{
+    BatchItemOutcome, BatchOutcome, MAX_PENDING_BATCH_ITEMS, NewKnowledgeItem, validate_new_item,
+};
 pub use error::KnowledgeStoreError;
 pub use keys::knowledge_item_id_for;
 pub use pagination::{

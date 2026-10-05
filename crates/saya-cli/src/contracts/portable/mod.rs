@@ -47,6 +47,10 @@ pub(crate) enum PortableError {
     Write(std::io::Error),
     #[error("the profile has {0} active claims, over the 500-item document limit")]
     TooManyClaims(usize),
+    #[error(
+        "this import maps {0} items; the store accepts at most {1} per import — split the document or narrow the selection"
+    )]
+    TooManyMappedItems(usize, usize),
     #[error("the store refused the import: {0}")]
     Store(#[from] KnowledgeStoreError),
 }

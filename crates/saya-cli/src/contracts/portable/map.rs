@@ -14,11 +14,17 @@
 //! dropped.
 
 use super::resolve::{Resolution, object_label, resolve_object, resolve_ref};
-use saya_store::NewKnowledgeItem;
+use saya_store::{NewKnowledgeItem, validate_new_item};
 use saya_types::{
     ClaimOrigin, ClaimPayload, ContextError, ContextItem, DatabaseObjectRef, ProfileIdentity,
     SchemaBinding, SchemaFingerprint, SchemaTree, redact,
 };
+
+/// The one reason an item is reported unavailable because the store's own
+/// per-item predicate refuses it. Fixed and claim-free: no claim text is
+/// ever echoed.
+const STORE_REFUSAL_REASON: &str =
+    "the store would refuse this claim: its text has a credential, path, header or SQL shape";
 
 /// One mapped item ready for the pending batch: the resolved object name for
 /// the report (`label`), the filed slot's string form (`slot`), and the batch
@@ -98,27 +104,33 @@ fn map_one(
         .ok_or_else(|| "this claim's slot and payload disagree".to_string())?;
     let binding_json = serde_json::to_string(&binding)
         .map_err(|_| "the claim could not be serialised".to_string())?;
-    // The store's batch admission refuses any item whose serialised payload or
-    // schema binding is credential-shaped, and that refusal aborts the whole
-    // batch — so the mapping applies the same predicate here (the store's
-    // `admission::check` shapes stay behind it as the backstop) and reports the
-    // item instead of offering it: per-item validation, the rest still imports.
+    // The redactor's marker list keeps its own finer reason (the existing
+    // mapping tests pin it); it is the redact subset of the store predicate
+    // below, so the two checks cannot diverge.
     let serialized = serde_json::to_string(&claim)
         .map_err(|_| "the claim could not be serialised".to_string())?;
     if redact(&serialized) != serialized || redact(&binding_json) != binding_json {
         return Err("credential-shaped text".to_string());
     }
+    let label = object.qualified_name();
+    let slot_text = slot.as_str();
+    let candidate = NewKnowledgeItem {
+        object,
+        slot,
+        value: claim,
+        source: ClaimOrigin::TeamFile,
+        schema_binding_json: binding_json,
+        fingerprint: SchemaFingerprint::of_table(item.object.kind, table),
+    };
+    // The store's own per-item predicate, applied before the item is offered:
+    // one admission refusal is reported instead of aborting the whole batch.
+    if validate_new_item(&candidate).is_err() {
+        return Err(STORE_REFUSAL_REASON.to_string());
+    }
     Ok(PlannedItem {
-        label: object.qualified_name(),
-        slot: slot.as_str(),
-        item: NewKnowledgeItem {
-            object,
-            slot,
-            value: claim,
-            source: ClaimOrigin::TeamFile,
-            schema_binding_json: binding_json,
-            fingerprint: SchemaFingerprint::of_table(item.object.kind, table),
-        },
+        label,
+        slot: slot_text,
+        item: candidate,
     })
 }
 
