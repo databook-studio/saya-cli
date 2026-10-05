@@ -11,6 +11,7 @@ use super::session_universe::SessionUniverse;
 use crate::agent::provider;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::types::{App, CompactOutcome};
+use crate::local_metrics::LocalMetrics;
 use std::sync::Arc;
 
 /// The outcome of one `/compact` invocation: the message to show, and the
@@ -40,8 +41,9 @@ pub(crate) async fn run(
     runtime: &RuntimeConfig,
     state: &mut SessionState,
     _session: &SessionUniverse,
+    metrics: Option<&LocalMetrics>,
 ) -> CompactResult {
-    run_with_trigger(runtime, state, _session, false).await
+    run_with_trigger(runtime, state, _session, false, metrics).await
 }
 
 /// The shared operation with the trigger named: [`run`] is the manual
@@ -52,14 +54,18 @@ pub(crate) async fn run_with_trigger(
     state: &mut SessionState,
     _session: &SessionUniverse,
     automatic: bool,
+    metrics: Option<&LocalMetrics>,
 ) -> CompactResult {
-    let no_work = |message: String| CompactResult {
-        message,
-        failed: false,
-        usage: None,
-        summary: None,
-        compacted_turns: 0,
-        automatic,
+    let no_work = |message: String| {
+        record_compaction(metrics, saya_agent::AgentMetricOutcome::Skipped, 0);
+        CompactResult {
+            message,
+            failed: false,
+            usage: None,
+            summary: None,
+            compacted_turns: 0,
+            automatic,
+        }
     };
     let failed = |message: String, usage: Option<saya_agent::TokenUsage>| CompactResult {
         message,
@@ -88,7 +94,13 @@ pub(crate) async fn run_with_trigger(
             );
         }
     };
-    match session_compact_call::summarise(&*provider, &ai.model, &plan).await {
+    let started = std::time::Instant::now();
+    if let Some(metrics) = metrics {
+        metrics.record(&saya_agent::AgentMetric::Count(
+            saya_agent::AgentMetricCount::CompactionStarted,
+        ));
+    }
+    let result = match session_compact_call::summarise(&*provider, &ai.model, &plan).await {
         Ok(outcome) => match session_compact::apply(state, &plan, &outcome.summary) {
             Ok(()) => CompactResult {
                 message: session_compact::success_message(plan.compacted_turns, &outcome.summary),
@@ -101,6 +113,33 @@ pub(crate) async fn run_with_trigger(
             Err(reason) => failed(session_compact::failure_message(&reason), outcome.usage),
         },
         Err(reason) => failed(session_compact::failure_message(&reason), None),
+    };
+    record_compaction(
+        metrics,
+        if result.failed {
+            saya_agent::AgentMetricOutcome::Failed
+        } else {
+            saya_agent::AgentMetricOutcome::Succeeded
+        },
+        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+    );
+    result
+}
+
+/// Records one Compaction phase sample through the session collector, when
+/// one rides the call: the measured work window (summariser call through
+/// validated apply) for a real run, a constant zero for a no-work result.
+fn record_compaction(
+    metrics: Option<&LocalMetrics>,
+    outcome: saya_agent::AgentMetricOutcome,
+    elapsed_ns: u64,
+) {
+    if let Some(metrics) = metrics {
+        metrics.record(&saya_agent::AgentMetric::Phase {
+            phase: saya_agent::AgentMetricPhase::Compaction,
+            elapsed_ns,
+            outcome,
+        });
     }
 }
 
@@ -144,7 +183,7 @@ fn start_with_trigger(app: &mut App, state: &SessionState, automatic: bool) {
     app.request.activity = Some("compacting".into());
     std::thread::spawn(move || {
         let result = super::session_resume::block_on(run_with_trigger(
-            &runtime, &mut owned, &universe, automatic,
+            &runtime, &mut owned, &universe, automatic, None,
         ));
         let _ = tx.send(CompactOutcome {
             message: result.message,
@@ -258,3 +297,7 @@ pub(crate) fn poll(app: &mut App, state: &mut SessionState) {
         app.compact_task = None;
     }
 }
+
+#[cfg(test)]
+#[path = "compact_task_metrics_tests.rs"]
+mod compact_task_metrics_tests;
