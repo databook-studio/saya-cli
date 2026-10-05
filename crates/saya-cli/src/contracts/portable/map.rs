@@ -98,27 +98,29 @@ fn map_one(
         .ok_or_else(|| "this claim's slot and payload disagree".to_string())?;
     let binding_json = serde_json::to_string(&binding)
         .map_err(|_| "the claim could not be serialised".to_string())?;
-    // The store's batch admission refuses any item whose serialised payload or
-    // schema binding is credential-shaped, and that refusal aborts the whole
-    // batch — so the mapping applies the same predicate here (the store's
-    // `admission::check` shapes stay behind it as the backstop) and reports the
-    // item instead of offering it: per-item validation, the rest still imports.
+    // The redactor's marker list keeps its own finer reason (the existing
+    // mapping tests pin it); it is the redact subset of the store's admission
+    // predicate, which the import applies before any store access, so the two
+    // checks cannot diverge.
     let serialized = serde_json::to_string(&claim)
         .map_err(|_| "the claim could not be serialised".to_string())?;
     if redact(&serialized) != serialized || redact(&binding_json) != binding_json {
         return Err("credential-shaped text".to_string());
     }
+    let label = object.qualified_name();
+    let slot_text = slot.as_str();
+    let candidate = NewKnowledgeItem {
+        object,
+        slot,
+        value: claim,
+        source: ClaimOrigin::TeamFile,
+        schema_binding_json: binding_json,
+        fingerprint: SchemaFingerprint::of_table(item.object.kind, table),
+    };
     Ok(PlannedItem {
-        label: object.qualified_name(),
-        slot: slot.as_str(),
-        item: NewKnowledgeItem {
-            object,
-            slot,
-            value: claim,
-            source: ClaimOrigin::TeamFile,
-            schema_binding_json: binding_json,
-            fingerprint: SchemaFingerprint::of_table(item.object.kind, table),
-        },
+        label,
+        slot: slot_text,
+        item: candidate,
     })
 }
 

@@ -17,7 +17,10 @@
 
 use std::{fs::File, io::Read as _, path::Path};
 
-use saya_store::{BatchItemOutcome, KnowledgeItemStore, NewKnowledgeItem, SqliteStateStore};
+use saya_store::{
+    BatchItemOutcome, KnowledgeItemStore, MAX_PENDING_BATCH_ITEMS, NewKnowledgeItem,
+    SqliteStateStore,
+};
 use saya_types::{
     ContextDocumentV1, ContextItem, KnowledgeState, MAX_DOCUMENT_BYTES, ProfileIdentity, SchemaTree,
 };
@@ -72,6 +75,22 @@ pub(crate) async fn import_document(
     preview: bool,
 ) -> Result<ImportOutcome, PortableError> {
     let mapped = map_items(items, tree, identity);
+    // The batch cap, enforced before any store access: preview and apply agree.
+    if mapped.planned.len() > MAX_PENDING_BATCH_ITEMS {
+        return Err(PortableError::TooManyMappedItems(
+            mapped.planned.len(),
+            MAX_PENDING_BATCH_ITEMS,
+        ));
+    }
+    // The store's admission predicate, applied before any store access: an
+    // item the store would refuse aborts the whole import in preview and
+    // apply alike — the all-or-nothing rule the batch transaction enforces.
+    // The error names the object, never the claim text.
+    for planned in &mapped.planned {
+        if saya_store::validate_new_item(&planned.item).is_err() {
+            return Err(PortableError::ItemRefused(planned.label.clone()));
+        }
+    }
     let mut outcome = ImportOutcome {
         inserted: Vec::new(),
         skipped: Vec::new(),
