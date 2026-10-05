@@ -10,6 +10,15 @@ use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
 use saya_store::FsSessionStore;
 
+/// A successful resume is a context change: the previous session's ephemeral
+/// SQL capture and last query are invalidated with it (the spec rule that a
+/// context change retires the old query/capture/receipt). Refusals and failed
+/// loads change nothing — the old capture stays usable.
+pub(crate) fn clear_query_state(app: &mut App) {
+    app.captured = None;
+    app.last_query = None;
+}
+
 pub(crate) fn tick_resume(
     app: &mut App,
     store: &FsSessionStore,
@@ -44,6 +53,7 @@ pub(crate) fn tick_resume(
                             loaded,
                             runtime.resolved.ai.base_url.as_deref(),
                         );
+                        clear_query_state(app);
                         app.session = session.universe();
                         app.session.seed_tasks(state.task_list.clone());
                         app.reload_at_refs(state);
@@ -83,3 +93,7 @@ pub(crate) fn tick_resume(
 #[cfg(test)]
 #[path = "../../session_privacy_receipt_tests.rs"]
 mod session_privacy_receipt_tests;
+
+#[cfg(test)]
+#[path = "../resume_capture_tests.rs"]
+mod resume_capture_tests;
