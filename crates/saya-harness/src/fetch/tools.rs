@@ -18,7 +18,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use saya_agent::ContextBlock;
+use saya_agent::{CancellationToken, ContextBlock};
 use tokio::time::{Instant, timeout_at};
 
 use super::limits::FetchLimits;
@@ -48,6 +48,10 @@ pub enum FetchToolError {
         /// The time budget that expired.
         budget: Duration,
     },
+
+    /// The turn was cancelled while the fetch waited.
+    #[error("fetch cancelled")]
+    Cancelled,
 
     /// More redirects were followed than `max_redirect_hops` allows.
     #[error("fetch exceeded {limit} redirects")]
@@ -105,18 +109,34 @@ impl HttpFetchTool {
         }
     }
 
-    /// One bounded fetch. Every hop passes the policy, every resolved
-    /// address passes `refuses_address`, and the body is read under the
-    /// bounds; anything else is a typed refusal or failure.
+    /// One bounded fetch under a fresh, never-cancelled token — the public
+    /// entry point for callers with no turn token to honor.
     pub async fn fetch(&self, url: &str) -> Result<FetchOutcome, FetchToolError> {
+        self.fetch_cancellable(url, &CancellationToken::new()).await
+    }
+
+    /// The same bounded fetch under the turn's cancellation token: every
+    /// transport wait races the token, a cancelled turn never begins another
+    /// hop, and a fetch that completes only after cancellation returns
+    /// cancelled, never a result. Every byte and time bound is unchanged.
+    pub async fn fetch_cancellable(
+        &self,
+        url: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<FetchOutcome, FetchToolError> {
         let budget = self.limits.time_budget;
         let deadline = Instant::now() + budget;
         let mut url = self.policy.allow_url(url)?;
         let mut redirects = 0usize;
         loop {
+            // Top of every hop, before DNS: a cancelled turn consumes no
+            // further hop, and a pre-cancelled one starts none.
+            if cancellation.is_cancelled() {
+                return Err(FetchToolError::Cancelled);
+            }
             let host = url.host().unwrap_or_default().to_owned();
             let addresses = self
-                .under_deadline(deadline, self.transport.resolve(&host))
+                .under_deadline(deadline, cancellation, self.transport.resolve(&host))
                 .await?;
             // The policy's documented residual, closed here: it judges the
             // name, not what it resolves to. Every returned address must be
@@ -128,6 +148,7 @@ impl HttpFetchTool {
             let response = self
                 .under_deadline(
                     deadline,
+                    cancellation,
                     self.transport.get(FetchRequest {
                         url: url.clone(),
                         range_start: None,
@@ -154,7 +175,14 @@ impl HttpFetchTool {
                             status: response.status,
                         });
                     }
-                    let body = self.read_body(response.body, deadline).await?;
+                    let body = self
+                        .read_body(response.body, deadline, cancellation)
+                        .await?;
+                    // A fetch that completed only after cancellation returns
+                    // cancelled, never a result.
+                    if cancellation.is_cancelled() {
+                        return Err(FetchToolError::Cancelled);
+                    }
                     return Ok(FetchOutcome {
                         url: url.as_str().to_owned(),
                         block: ContextBlock {
@@ -175,9 +203,13 @@ impl HttpFetchTool {
         &self,
         mut body: Box<dyn FetchBody>,
         deadline: Instant,
+        cancellation: &CancellationToken,
     ) -> Result<String, FetchToolError> {
         let mut bytes: Vec<u8> = Vec::new();
-        while let Some(chunk) = self.under_deadline(deadline, body.next_chunk()).await? {
+        while let Some(chunk) = self
+            .under_deadline(deadline, cancellation, body.next_chunk())
+            .await?
+        {
             if bytes.len() + chunk.len() > self.limits.max_total_bytes {
                 return Err(FetchToolError::BodyTooLarge {
                     limit: self.limits.max_total_bytes,
@@ -188,21 +220,28 @@ impl HttpFetchTool {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// One transport operation cut off at the shared deadline: a transport
-    /// that never yields is dropped at the bound, not waited on forever.
+    /// One transport operation cut off at the shared deadline or the turn's
+    /// token: a transport that never yields is dropped at the bound, and a
+    /// cancelled turn stops waiting at once. The deadline future is polled
+    /// first; the hop-top and pre-success checks convert late arrivals.
     async fn under_deadline<T>(
         &self,
         deadline: Instant,
+        cancellation: &CancellationToken,
         future: impl Future<Output = Result<T, FetchTransportError>> + Send,
     ) -> Result<T, FetchToolError>
     where
         T: Send,
     {
-        match timeout_at(deadline, future).await {
-            Ok(result) => result.map_err(FetchToolError::Transport),
-            Err(_) => Err(FetchToolError::DeadlineExceeded {
-                budget: self.limits.time_budget,
-            }),
+        tokio::select! {
+            biased;
+            result = timeout_at(deadline, future) => match result {
+                Ok(result) => result.map_err(FetchToolError::Transport),
+                Err(_) => Err(FetchToolError::DeadlineExceeded {
+                    budget: self.limits.time_budget,
+                }),
+            },
+            _ = cancellation.cancelled() => Err(FetchToolError::Cancelled),
         }
     }
 }
