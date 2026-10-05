@@ -627,7 +627,7 @@ fn handle_line_verbatim(
                 session.universe(),
                 state.agent_mode_parsed(),
                 state.prior_tool_outcomes.clone(),
-                state.compaction_narrative(),
+                state.compaction_summary_text(),
                 scope,
             )) {
                 Ok(PromptResult::Completed(output)) => {
