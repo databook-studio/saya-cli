@@ -8,7 +8,11 @@ use crate::engine::{
 
 impl EngineEventSink {
     /// Records a lifecycle transition journal-first, then mirrors it to the
-    /// store. Meaningful boundaries force any raised clock observation first.
+    /// store. Meaningful boundaries force any raised clock observation first:
+    /// a pause or a terminal transition holds a failed observation as a
+    /// diagnostic and records anyway — a user Cancel, a final Complete or
+    /// Fail must land even with a broken clock — while Begin and Resume
+    /// refuse, so no work starts or continues on an unobservable clock.
     pub async fn record(&self, event: TransitionEvent) -> Result<RunState, EngineSinkError> {
         let force_clock_observation = matches!(
             &event,
@@ -19,13 +23,13 @@ impl EngineEventSink {
                 | TransitionEvent::Pause(_)
                 | TransitionEvent::Fail(_)
         );
-        let is_pause = matches!(&event, TransitionEvent::Pause(_));
+        let holds_clock_error = !matches!(&event, TransitionEvent::Begin | TransitionEvent::Resume);
         let (machine, journal_event, status, code) = event.record();
         let next = transition(self.state(), machine)
             .map_err(|source| EngineSinkError::Transition { source })?;
         let approved = matches!(&journal_event, Some(RunEvent::PlanApproved { .. }));
         if force_clock_observation && let Err(error) = self.observe_elapsed_clock(true) {
-            if is_pause {
+            if holds_clock_error {
                 self.hold_diagnostic(error);
             } else {
                 return Err(error);

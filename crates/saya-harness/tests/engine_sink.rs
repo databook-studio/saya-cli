@@ -1272,3 +1272,6 @@ mod clock;
 
 #[path = "engine_sink/failed_attempt_usage.rs"]
 mod failed_attempt_usage;
+
+#[path = "engine_sink/lifecycle_clock.rs"]
+mod lifecycle_clock;
