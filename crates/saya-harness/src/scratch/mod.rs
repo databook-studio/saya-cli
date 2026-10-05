@@ -67,6 +67,12 @@ pub enum ScratchError {
     #[error("scratch statement timed out")]
     TimedOut,
 
+    /// The turn was cancelled before or during the statement and the engine
+    /// was interrupted; the connection was proven released before this is
+    /// returned.
+    #[error("scratch statement cancelled")]
+    Cancelled,
+
     /// The statement failed at the engine. The detail carries only
     /// allow-listed DuckDB message classes — never a staged value.
     #[error("scratch statement failed: {message}")]
