@@ -63,6 +63,9 @@ pub(crate) async fn run(
     scope: QuestionScope,
 ) -> Result<PromptResult, AgentRuntimeError> {
     let cancellation = scope.cancellation();
+    // A stop-owner clone: the scope moves into the turn, but the Ctrl-C
+    // branch must still capture the application-side stop instant.
+    let stop_scope = scope.clone();
     // The collector arc is taken before the scope moves into the run: the
     // settled boundary below prints the snapshot the run just finished
     // filling — the same collector the clarification reply turn reuses.
@@ -122,11 +125,12 @@ pub(crate) async fn run(
             result
         }
         _ = tokio::signal::ctrl_c() => {
-            cancellation.cancel();
+            stop_scope.request_stop();
             let learning_usage = match work.await {
                 Ok(output) => output.learning_usage,
                 Err(_) => None,
             };
+            stop_scope.record_stop_settlement();
             let result = Ok(PromptResult::Cancelled {
                 answering_usage: terminal.take_answering_usage(),
                 learning_usage,

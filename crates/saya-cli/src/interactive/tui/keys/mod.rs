@@ -43,3 +43,6 @@ mod esc_sql_task_tests;
 #[cfg(test)]
 #[path = "new_activity_tests.rs"]
 mod new_activity_tests;
+#[cfg(test)]
+#[path = "stop_metrics_tests.rs"]
+mod stop_metrics_tests;

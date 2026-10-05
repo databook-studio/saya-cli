@@ -1,6 +1,17 @@
+use super::super::agent::messages::Stream;
 use super::super::types::{App, SearchKind};
 use super::approvals::{ApprovalKey, approval_answer, approval_key};
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+
+/// Requests the answering stream's stop through the turn's question scope
+/// when it carries one — the scope captures the application-side stop
+/// instant, first stop wins — and falls back to the bare token otherwise.
+fn request_stream_stop(stream: &Stream) {
+    match &stream.question_scope {
+        Some(scope) => scope.request_stop(),
+        None => stream.cancel.cancel(),
+    }
+}
 
 /// Applies one key press to the application state.
 pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
@@ -90,7 +101,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     if let Some(pending) = app.request.pending_approval.as_ref() {
         if code == KeyCode::Esc && mods.is_empty() && app.request.stream.is_some() {
             if let Some(stream) = &app.request.stream {
-                stream.cancel.cancel();
+                request_stream_stop(stream);
             }
             app.request.pending_approval = None;
             app.transcript.push(
@@ -153,7 +164,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
     // that the stop was requested — the worker's own `Done` confirms it.
     if code == KeyCode::Esc && app.request.stream.is_some() {
         if let Some(stream) = &app.request.stream {
-            stream.cancel.cancel();
+            request_stream_stop(stream);
         }
         app.transcript.push(
             super::super::transcript::BlockKind::System,
@@ -214,7 +225,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) {
             }
             if app.request.stream.is_some() {
                 if let Some(stream) = &app.request.stream {
-                    stream.cancel.cancel();
+                    request_stream_stop(stream);
                 }
                 app.transcript.push(
                     super::super::transcript::BlockKind::System,

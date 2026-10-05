@@ -44,6 +44,9 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let scope = QuestionScope::new(runtime, cancellation.clone());
+    // A stop-owner clone: the scope moves into the run, but the Ctrl-C
+    // branch must still capture the application-side stop instant.
+    let stop_scope = scope.clone();
     // The collector arc is taken before the scope moves into the run: the
     // settled boundary below reads the snapshot the run just finished filling.
     let metrics = scope.metrics();
@@ -78,8 +81,9 @@ pub(super) async fn ask(
     let outcome = tokio::select! {
         result = &mut work => result,
         _ = tokio::signal::ctrl_c() => {
-            cancellation.cancel();
+            stop_scope.request_stop();
             let _ = work.await;
+            stop_scope.record_stop_settlement();
             print_metrics_section(&metrics);
             return Ok(130);
         }
