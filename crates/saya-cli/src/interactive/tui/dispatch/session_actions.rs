@@ -37,6 +37,8 @@ pub(super) fn apply_session_action(
             SessionAction::History
                 | SessionAction::Doctor
                 | SessionAction::Context
+                | SessionAction::SessionsList
+                | SessionAction::SessionsDelete(_)
                 | SessionAction::Resume(_)
                 | SessionAction::Sql(_)
                 | SessionAction::Contracts(_)
@@ -64,6 +66,41 @@ pub(super) fn apply_session_action(
             );
         }
         SessionAction::Resume(id) => resume(transcript, state, runtime, store, session, &id),
+        SessionAction::SessionsList => {
+            // `/sessions list` — the same listing the headless REPL prints,
+            // through the one shared builder: rows, pending deletions, and
+            // the storage root. The root is the one the store was built
+            // from (`default_session_dir`); a store failure is an Error
+            // block, never a silent empty listing.
+            match crate::interactive::session_commands::sessions_list_text(
+                store,
+                &crate::interactive::session_paths::default_session_dir(),
+            ) {
+                Ok(text) => transcript.push(BlockKind::System, text),
+                Err(text) => transcript.push(BlockKind::Error, text),
+            }
+        }
+        SessionAction::SessionsDelete(id) => {
+            // `/sessions delete <id>` — the shared delete the headless
+            // `saya sessions delete` runs, never prompting. This session's
+            // own id is passed as the current one, so the TUI can never
+            // delete itself underneath its owner; every refusal lands as
+            // an Error block naming what was not deleted.
+            let (ok, message) = crate::interactive::session_commands::sessions_delete_text(
+                store,
+                &crate::interactive::session_paths::default_session_dir(),
+                &id,
+                Some(&state.id),
+            );
+            transcript.push(
+                if ok {
+                    BlockKind::System
+                } else {
+                    BlockKind::Error
+                },
+                message,
+            );
+        }
         SessionAction::Sql(sql) => {
             return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
                 state.profile.clone(),

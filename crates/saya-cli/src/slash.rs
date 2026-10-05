@@ -59,6 +59,15 @@ pub enum SlashCommand {
     Compact,
     History,
     Sessions,
+    /// `/sessions list` — the saved-session listing through the shared
+    /// operations the headless `saya sessions list` uses: rows newest
+    /// first, pending deletions named separately, the storage root last.
+    SessionsList,
+    /// `/sessions delete <id>` — one saved session deleted through the
+    /// same shared operation the headless `saya sessions delete` runs.
+    /// The loops pass the session's own id as the current one, so the
+    /// session can never delete itself; the form never prompts.
+    SessionsDelete(String),
     Resume(String),
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
@@ -339,7 +348,40 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "clear" => SlashCommand::Clear,
         "compact" => SlashCommand::Compact,
         "history" => SlashCommand::History,
-        "sessions" => SlashCommand::Sessions,
+        "sessions" => {
+            // Bare `/sessions` keeps today's meaning (REPL text history,
+            // TUI picker). `list` and `delete <id>` are the shared
+            // saved-session operations; anything else is a usage error
+            // naming every valid form, so a typo cannot read as a silent
+            // show.
+            match arg.as_str() {
+                "" => SlashCommand::Sessions,
+                "list" => SlashCommand::SessionsList,
+                other => {
+                    let (head, rest) = other.split_once(' ').unwrap_or((other, ""));
+                    if head != "delete" {
+                        return Err(SlashParseError(format!(
+                            "unknown /sessions subcommand: {other} (usage: /sessions, \
+                             /sessions list, /sessions delete <id>)"
+                        )));
+                    }
+                    let id = rest.trim();
+                    if id.is_empty() {
+                        return Err(SlashParseError(
+                            "sessions delete requires a session id: /sessions delete <id>".into(),
+                        ));
+                    }
+                    if id.split_whitespace().count() > 1 {
+                        return Err(SlashParseError(
+                            "sessions delete takes exactly one session id: \
+                             /sessions delete <id>"
+                                .into(),
+                        ));
+                    }
+                    SlashCommand::SessionsDelete(id.to_string())
+                }
+            }
+        }
         "resume" => SlashCommand::Resume(required()?),
         "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
         "doctor" => SlashCommand::Doctor,
@@ -517,6 +559,58 @@ mod tests {
         assert_eq!(
             parse_slash_command("/resume"),
             Err(SlashParseError("command requires an argument".into()))
+        );
+    }
+
+    /// `/sessions` keeps today's meaning (REPL history list, TUI picker);
+    /// `list` and `delete <id>` are the shared saved-session operations.
+    #[test]
+    fn test_parse_sessions_list_and_delete() {
+        assert_eq!(
+            parse_slash_command("/sessions list"),
+            Ok(Some(SlashCommand::SessionsList))
+        );
+        assert_eq!(
+            parse_slash_command("/sessions delete abc"),
+            Ok(Some(SlashCommand::SessionsDelete("abc".into())))
+        );
+    }
+
+    /// `/sessions delete` without an id names the usage, so a missing
+    /// argument can never read as a list or a picker.
+    #[test]
+    fn sessions_delete_requires_an_id() {
+        let error = parse_slash_command("/sessions delete").unwrap_err();
+        assert!(
+            error
+                .0
+                .contains("sessions delete requires a session id: /sessions delete <id>"),
+            "the missing-id error names the usage: {error}"
+        );
+    }
+
+    /// `/sessions delete a b` carries two tokens where exactly one id is
+    /// required — refused, never silently read as one id.
+    #[test]
+    fn sessions_delete_takes_exactly_one_id() {
+        let error = parse_slash_command("/sessions delete a b").unwrap_err();
+        assert!(
+            error.0.contains("exactly one session id"),
+            "the multi-token error says one id only: {error}"
+        );
+    }
+
+    /// Anything after `/sessions` that is not `list` or `delete <id>` is a
+    /// usage error naming every valid form, so a typo cannot read as a
+    /// silent show.
+    #[test]
+    fn sessions_unknown_subcommand_is_refused() {
+        let error = parse_slash_command("/sessions nope").unwrap_err();
+        assert!(
+            error
+                .0
+                .contains("unknown /sessions subcommand: nope (usage: /sessions, /sessions list, /sessions delete <id>)"),
+            "the unknown-subcommand error names every form: {error}"
         );
     }
 

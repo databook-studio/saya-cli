@@ -72,7 +72,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
     ("history", "List saved sessions as text"),
     (
         "sessions",
-        "Browse saved sessions; opens a picker in the TUI",
+        "Browse saved sessions: list or delete; bare opens a picker in the TUI",
     ),
     ("resume", "Resume a saved session by id"),
     ("columns", "Choose which columns wide result tables show"),
@@ -197,7 +197,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("clear", "/clear"),
             ("compact", "/compact"),
             ("history", "/history"),
-            ("sessions", "/sessions"),
+            ("sessions", "/sessions [list|delete <id>]"),
             ("resume", "/resume <id>"),
             ("context", "/context"),
             ("doctor", "/doctor"),
@@ -339,9 +339,13 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              leaves the conversation exactly as it was. Example: /compact",
         ),
         "history" => Some("history — list saved sessions as text. Example: /history"),
-        "sessions" => {
-            Some("sessions — browse saved sessions; opens a picker in the TUI. Example: /sessions")
-        }
+        "sessions" => Some(
+            "sessions — browse saved sessions: `/sessions list` prints the saved-session \
+                 listing the headless `saya sessions list` shows, `/sessions delete <id>` \
+                 deletes one saved session the same way (never prompts; the current session \
+                 and any live session are refused), and bare `/sessions` opens a picker in \
+                 the TUI. Example: /sessions list",
+        ),
         "context" => Some(
             "context — show which project and personal instruction files are loaded into \
              requests: names, whole-file and included sizes, short digests, truncation and \

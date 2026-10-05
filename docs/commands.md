@@ -459,6 +459,14 @@ Exit codes follow the global scheme: `0` on success; `2` for every refusal
 or failure — unknown or invalid id, live session, the current session, an
 incomplete cleanup, or a store error.
 
+In an interactive session the same operations are slash commands with the
+same behaviour: `/sessions list` prints the same listing (rows, pending
+deletions, storage root) and `/sessions delete <id>` performs the same
+delete — it never prompts, refuses the current session and any live session
+with the same words, and reports pending cleanup the same way. Bare
+`/sessions` keeps its per-surface meaning: the text history list in the
+headless REPL, and the session picker in the TUI.
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the

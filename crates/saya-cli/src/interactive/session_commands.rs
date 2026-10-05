@@ -4,6 +4,48 @@ use crate::cli::ContractsCommand;
 use crate::slash::SlashCommand;
 use saya_agent::AgentOutput;
 use saya_agent::ApprovalPolicy;
+use saya_store::FsSessionStore;
+use std::path::Path;
+
+/// `/sessions list` — the shared saved-session listing for both surfaces.
+/// `Ok` is the same text the headless `saya sessions list` prints (rows
+/// newest first, pending deletions named separately, the storage root
+/// last); `Err` is the failure message in the headless words.
+pub(crate) fn sessions_list_text(
+    store: &FsSessionStore,
+    sessions_root: &Path,
+) -> Result<String, String> {
+    let listing = super::session_resume::block_on(crate::commands::sessions::list_sessions(store))
+        .map_err(|error| format!("could not list saved sessions: {error}"))?;
+    Ok(crate::commands::sessions::render_listing(
+        &listing,
+        crate::commands::sessions::unix_ms_now(),
+        sessions_root,
+    ))
+}
+
+/// `/sessions delete <id>` — the shared delete outcome for both surfaces.
+/// `true` when the delete completed (the REPL turn completes, the TUI
+/// pushes a System block); `false` for every refusal or failure (the turn
+/// errors, the TUI pushes an Error block). The message is the headless
+/// `render_delete` wording, byte for byte. `current_session_id` is the
+/// calling session's own id on both surfaces, so a session can never
+/// delete itself underneath its owner.
+pub(crate) fn sessions_delete_text(
+    store: &FsSessionStore,
+    sessions_root: &Path,
+    id: &str,
+    current_session_id: Option<&str>,
+) -> (bool, String) {
+    let outcome = crate::commands::sessions::delete_saved_session(
+        store,
+        sessions_root,
+        id,
+        current_session_id,
+    );
+    let (code, message) = crate::commands::sessions::render_delete(&outcome, id);
+    (code == 0, message)
+}
 
 // `Agent(AgentOutput)` carries agent events backed by `serde_json::Value`, so
 // this enum is `PartialEq` but not `Eq`.
@@ -69,6 +111,15 @@ pub enum SessionAction {
     /// the runtime's settings and the session's root); the arm here keeps
     /// the match exhaustive.
     Context,
+    /// `/sessions list` — the shared saved-session listing. Intercepted in
+    /// both loops (they own the store and the sessions root); the arm here
+    /// keeps the match exhaustive.
+    SessionsList,
+    /// `/sessions delete <id>` — the shared delete through the same
+    /// operation the headless `saya sessions delete` runs, carrying the id
+    /// as stated. Intercepted in both loops, which pass the session's own
+    /// id as the current one; the arm here keeps the match exhaustive.
+    SessionsDelete(String),
     Exit,
 }
 
@@ -263,6 +314,8 @@ impl SessionState {
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
             SlashCommand::Grants => SessionAction::Grants,
             SlashCommand::Context => SessionAction::Context,
+            SlashCommand::SessionsList => SessionAction::SessionsList,
+            SlashCommand::SessionsDelete(id) => SessionAction::SessionsDelete(id),
             SlashCommand::Exit => SessionAction::Exit,
         }
     }
@@ -334,6 +387,22 @@ fn known_models(provider: &str) -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interactive::session_resume::block_on;
+    use saya_store::{RedactedMessage, RedactedSession, SessionStore};
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "saya-session-commands-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn test_provider_none_lists_available() {
@@ -624,5 +693,96 @@ mod tests {
         assert_eq!(action, SessionAction::Runs(Some("r-1".into())));
         let action = state.apply(SlashCommand::RunCancel("r-1".into()), &[]);
         assert_eq!(action, SessionAction::RunCancel("r-1".into()));
+    }
+
+    /// The `/sessions` subforms map to their own actions: `list` and
+    /// `delete <id>` carry the id through unchanged — the loops own the
+    /// behaviour through the shared operations; the adapter owns nothing
+    /// but the mapping. Bare `/sessions` stays `History`.
+    #[test]
+    fn sessions_subforms_map_to_their_actions() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        assert_eq!(
+            state.apply(SlashCommand::Sessions, &[]),
+            SessionAction::History,
+            "bare /sessions keeps today's meaning"
+        );
+        assert_eq!(
+            state.apply(SlashCommand::SessionsList, &[]),
+            SessionAction::SessionsList
+        );
+        assert_eq!(
+            state.apply(SlashCommand::SessionsDelete("abc".into()), &[]),
+            SessionAction::SessionsDelete("abc".into())
+        );
+    }
+
+    /// `/sessions list` through the shared builder: the same listing the
+    /// headless `saya sessions list` renders — rows, and the storage root
+    /// as the last line; an empty store says "No saved sessions.".
+    #[test]
+    fn sessions_list_text_renders_the_shared_listing() {
+        let root = scratch("list");
+        let store = FsSessionStore::new(&root);
+        block_on(store.save(RedactedSession {
+            id: "other".into(),
+            messages: vec![RedactedMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            ..Default::default()
+        }))
+        .unwrap();
+        let text = sessions_list_text(&store, &root).expect("the listing renders");
+        assert!(
+            text.lines().any(|line| line.starts_with("other\t")),
+            "the saved session is a row: {text}"
+        );
+        assert!(
+            text.ends_with(&format!("Storage root: {}", root.display())),
+            "the root is the last line: {text}"
+        );
+        let empty = scratch("list-empty");
+        let empty_store = FsSessionStore::new(&empty);
+        let text = sessions_list_text(&empty_store, &empty).expect("the empty listing renders");
+        assert!(
+            text.starts_with("No saved sessions."),
+            "an empty store says so: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    /// `/sessions delete` through the shared builder: a real delete says
+    /// the retained-data sentence and removes the record; the current
+    /// session is refused with the D09a words and nothing is touched; an
+    /// unknown id says "no saved session".
+    #[test]
+    fn sessions_delete_text_reports_success_refusals_and_unknown_ids() {
+        let root = scratch("delete");
+        std::fs::write(root.join("a.json"), "{}").unwrap();
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        let store = FsSessionStore::new(&root);
+        let (ok, text) = sessions_delete_text(&store, &root, "a", Some("a"));
+        assert!(!ok, "the current session is refused: {ok}");
+        assert!(
+            text.contains("live session") && text.contains("was not deleted"),
+            "the refusal is the current-session one: {text}"
+        );
+        assert!(root.join("a.json").exists(), "the record survived");
+        let (ok, text) = sessions_delete_text(&store, &root, "a", None);
+        assert!(ok, "a foreign delete completes: {text}");
+        assert!(
+            text.contains("Deleted saved session a") && text.contains("were not deleted"),
+            "the success carries the retained-data sentence: {text}"
+        );
+        assert!(!root.join("a.json").exists(), "the record is gone");
+        let (ok, text) = sessions_delete_text(&store, &root, "nosuch-id", None);
+        assert!(!ok, "an unknown id is refused: {text}");
+        assert!(
+            text.contains("no saved session nosuch-id"),
+            "the unknown-id refusal names the id: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
