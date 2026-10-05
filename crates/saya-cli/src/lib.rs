@@ -44,6 +44,7 @@ mod terminal_input;
 mod privacy_tests;
 mod profile_identity;
 mod prompt_approval;
+mod prompt_approval_metrics;
 #[cfg(test)]
 mod prompt_approval_tests;
 mod state_path;

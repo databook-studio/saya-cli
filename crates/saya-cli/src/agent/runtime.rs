@@ -510,7 +510,8 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         fallback_primary,
         crate::approval_facts::ApprovalFacts::for_ask(runtime),
         cancellation.clone(),
-    );
+    )
+    .with_metrics(question_scope.as_ref().and_then(|scope| scope.metrics()));
     let approver: &dyn ApprovalDecider = match decider.as_deref() {
         Some(decider) => decider,
         None => &fallback_approval,
