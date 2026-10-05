@@ -23,9 +23,17 @@ impl App {
         mut session: Option<&mut SessionRuntime>,
     ) -> bool {
         let mut messages = Vec::new();
+        let mut sender_gone = false;
         if let Some(stream) = self.request.stream.as_mut() {
-            while let Ok(msg) = stream.rx.try_recv() {
-                messages.push(msg);
+            loop {
+                match stream.rx.try_recv() {
+                    Ok(msg) => messages.push(msg),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        sender_gone = true;
+                        break;
+                    }
+                }
             }
         }
         let prompt = self
@@ -34,6 +42,7 @@ impl App {
             .as_ref()
             .map(|s| s.prompt.clone())
             .unwrap_or_default();
+        let drained_work = !messages.is_empty();
         let mut finished = false;
         for msg in messages {
             match msg {
@@ -254,6 +263,21 @@ impl App {
                     finished = true;
                 }
             }
+        }
+        // A worker that died without ever posting `Done` left the stream
+        // busy forever: no settle, `request.stream` stuck Some. Settle once,
+        // exactly as a `Done(Err(..))` arm would, on the first drained-empty
+        // tick after the sender dropped — a batch that carried work without
+        // a `Done` is a mid-turn tick the stream keeps — and the tick loop
+        // re-drains within the frame, so the wedge cannot persist.
+        if !finished && sender_gone && !drained_work {
+            self.settle_done(
+                Err("the agent worker stopped unexpectedly".to_string()),
+                state,
+                prompt.clone(),
+                session.take(),
+            );
+            finished = true;
         }
         if finished {
             self.request.pending_approval = None;

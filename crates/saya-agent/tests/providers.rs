@@ -1773,3 +1773,168 @@ async fn gemini_does_not_replay_the_post_to_a_cross_host_redirect() {
         "a cross-host 307 must not replay the Gemini POST (prompt body and x-goog-api-key) to the redirect target"
     );
 }
+
+#[tokio::test]
+async fn ollama_truncated_stream_reports_usage_before_the_typed_error() {
+    use saya_agent::{ProviderError, ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"partial\"},\"done\":false}\n",
+            r#"{"done":true,"done_reason":"length","prompt_eval_count":9,"eval_count":11}"#,
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_results(&mut stream).await;
+    handle.join().unwrap();
+    assert_eq!(
+        events.len(),
+        3,
+        "text, usage, truncation expected, got: {events:?}"
+    );
+    assert_eq!(events[0], Ok(ProviderEvent::TextDelta("partial".into())));
+    assert_eq!(
+        events[1],
+        Ok(ProviderEvent::Usage(TokenUsage::new(9, 11))),
+        "usage must surface before the typed truncation error, got: {events:?}"
+    );
+    let error = events[2].as_ref().unwrap_err();
+    let ProviderError::OutputTruncated { partial_text, .. } = error else {
+        panic!("expected typed truncation, got: {error:?}");
+    };
+    assert_eq!(partial_text, "partial");
+}
+
+#[tokio::test]
+async fn ollama_truncated_stream_without_usage_emits_no_usage_event() {
+    use saya_agent::{ProviderError, ProviderEvent};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            "{\"message\":{\"content\":\"partial\"},\"done\":false}\n",
+            r#"{"done":true,"done_reason":"length"}"#,
+        ],
+    }]);
+    let provider = OllamaProvider::new(ProviderSettings::new("test", Some(base))).unwrap();
+    let mut stream = provider
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_results(&mut stream).await;
+    handle.join().unwrap();
+    assert_eq!(
+        events.len(),
+        2,
+        "text then truncation expected, got: {events:?}"
+    );
+    assert_eq!(events[0], Ok(ProviderEvent::TextDelta("partial".into())));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, Ok(ProviderEvent::Usage(_)))),
+        "a truncated response without counts must not report usage, got: {events:?}"
+    );
+    let error = events[1].as_ref().unwrap_err();
+    let ProviderError::OutputTruncated { partial_text, .. } = error else {
+        panic!("expected typed truncation, got: {error:?}");
+    };
+    assert_eq!(partial_text, "partial");
+}
+
+/// Collects every stream item including the terminal error, so tests can
+/// assert the exact ordering of events around a stream failure.
+async fn drain_results(
+    stream: &mut saya_agent::ProviderStream,
+) -> Vec<Result<saya_agent::ProviderEvent, saya_agent::ProviderError>> {
+    let mut seen = Vec::new();
+    while let Some(event) = stream.next().await {
+        let terminal = event.is_err();
+        seen.push(event);
+        if terminal {
+            break;
+        }
+    }
+    seen
+}
+
+#[tokio::test]
+async fn openai_truncated_stream_reports_same_frame_usage_before_the_typed_error() {
+    use saya_agent::{ProviderError, ProviderEvent, TokenUsage};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            r#"data: {"choices":[{"delta":{"content":"partial"}}]}
+
+"#,
+            r#"data: {"usage":{"prompt_tokens":9,"completion_tokens":11,"total_tokens":20},"choices":[{"delta":{},"finish_reason":"length"}]}
+
+"#,
+            r#"data: [DONE]
+
+"#,
+        ],
+    }]);
+    let mut stream = openai(base)
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_results(&mut stream).await;
+    handle.join().unwrap();
+    let last = events.last().expect("a terminal item");
+    let error = last.as_ref().unwrap_err();
+    let ProviderError::OutputTruncated { partial_text, .. } = error else {
+        panic!("expected typed truncation, got: {error:?}");
+    };
+    assert_eq!(partial_text, "partial");
+    let usage_at = events
+        .iter()
+        .position(|item| matches!(item, Ok(ProviderEvent::Usage(_))));
+    assert_eq!(
+        usage_at.map(|index| &events[index]),
+        Some(&Ok(ProviderEvent::Usage(TokenUsage::new(9, 11)))),
+        "usage must surface before the typed error, got: {events:?}"
+    );
+    assert!(usage_at.unwrap() < events.len() - 1);
+}
+
+#[tokio::test]
+async fn openai_truncated_stream_without_usage_emits_no_usage_event() {
+    use saya_agent::{ProviderError, ProviderEvent};
+    let (base, _, handle) = server(vec![Reply {
+        status: 200,
+        chunks: vec![
+            r#"data: {"choices":[{"delta":{"content":"partial"}}]}
+
+"#,
+            r#"data: {"choices":[{"delta":{},"finish_reason":"length"}]}
+
+"#,
+            r#"data: [DONE]
+
+"#,
+        ],
+    }]);
+    let mut stream = openai(base)
+        .stream(request(), CancellationToken::new())
+        .await
+        .unwrap();
+    let events = drain_results(&mut stream).await;
+    handle.join().unwrap();
+    let last = events.last().expect("a terminal item");
+    let error = last.as_ref().unwrap_err();
+    let ProviderError::OutputTruncated { partial_text, .. } = error else {
+        panic!("expected typed truncation, got: {error:?}");
+    };
+    assert_eq!(partial_text, "partial");
+    let usage_at = events
+        .iter()
+        .position(|item| matches!(item, Ok(ProviderEvent::Usage(_))));
+    assert!(
+        usage_at.is_none(),
+        "no usage figures, no Usage event: {events:?}"
+    );
+}

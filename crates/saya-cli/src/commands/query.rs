@@ -82,14 +82,29 @@ pub(super) async fn ask(
         result = &mut work => result,
         _ = tokio::signal::ctrl_c() => {
             stop_scope.request_stop();
-            let _ = work.await;
+            let outcome = work.await;
             stop_scope.record_stop_settlement();
             print_metrics_section(&metrics);
-            return Ok(130);
+            return interrupted_exit(outcome, &cancellation, format);
         }
     };
     print_metrics_section(&metrics);
     settle_ask(outcome, &cancellation, format)
+}
+
+/// The exit of an `ask` the user interrupted with Ctrl-C: a plain interrupt
+/// (the token carries the user's stop, or no reason) is the quiet 130; a
+/// budget or owner-failure stop that latched FIRST keeps its own class and
+/// wording through `settle_ask` — the first stop reason decides.
+fn interrupted_exit(
+    outcome: Result<AgentOutput, AgentRuntimeError>,
+    cancellation: &CancellationToken,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    match cancellation.reason() {
+        None | Some(CancellationReason::User) => Ok(130),
+        Some(_) => settle_ask(outcome, cancellation, format),
+    }
 }
 
 /// The one classification for a settled `ask`, shared by the work-ready and

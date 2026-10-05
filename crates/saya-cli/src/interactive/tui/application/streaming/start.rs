@@ -55,7 +55,7 @@ impl App {
             journal: Some(session.journal()),
             agent_mode: state.agent_mode_parsed(),
             prior_tool_outcomes: state.prior_tool_outcomes.clone(),
-            compaction_summary: state.compaction_narrative(),
+            compaction_summary: state.compaction_summary_text(),
             question_scope: Some(scope),
         }));
         self.request.started = Some(std::time::Instant::now());

@@ -185,6 +185,16 @@ impl<'a> EpisodeDriver<'a> {
                 return self.settle_stop(sink, step, reason).await;
             }
             let result = retry::drive_attempt(self, sink, plan, step, workspace).await;
+            // A failed attempt may hold a request the provider never
+            // answered: settle it as the empty batch it produced, so the
+            // retry's grant check is not refused by stale pending evidence.
+            if matches!(
+                &result,
+                Err(retry::AttemptError::Episode(_))
+                    | Err(retry::AttemptError::Gate(EpisodeError::Cancelled { .. }))
+            ) {
+                sink.settle_failed_request().await;
+            }
             if let Some(reason) = self.collaborators.cancellation.reason() {
                 return self.settle_stop(sink, step, reason).await;
             }

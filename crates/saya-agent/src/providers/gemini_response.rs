@@ -109,7 +109,7 @@ fn collect_text(body: &Value, out: &mut String) {
 /// detail. `cachedContentTokenCount` is a subset of prompt input. A wholly
 /// absent `usageMetadata` is `None`, distinct from a present block reporting
 /// zeros.
-fn usage(body: &Value) -> Option<TokenUsage> {
+pub(super) fn usage(body: &Value) -> Option<TokenUsage> {
     let metadata = body.get("usageMetadata")?;
     let mut usage = TokenUsage::default();
     if let Some(input) = metadata["promptTokenCount"].as_u64() {

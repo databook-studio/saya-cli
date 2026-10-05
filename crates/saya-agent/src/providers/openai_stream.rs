@@ -41,6 +41,10 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
+        if let Some(error) = value.1.deferred.take() {
+            value.1.done = true;
+            return Some((Err(error), value));
+        }
         if value.1.done {
             return None;
         }
@@ -89,6 +93,8 @@ struct State {
     usage_reported: bool,
     content: bool,
     done: bool,
+    /// Truncation error held back until the driver has drained `pending`.
+    deferred: Option<ProviderError>,
     assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
@@ -162,10 +168,11 @@ impl State {
                 // else stays a generic protocol failure. Truncation is typed
                 // and carries the partial output, never retried upstream.
                 if reason == "length" {
-                    return Err(ProviderError::output_truncated(
+                    self.deferred = Some(ProviderError::output_truncated(
                         std::mem::take(&mut self.text),
                         self.tools.partial_json(),
                     ));
+                    break;
                 }
                 return Err(ProviderError::InvalidResponse);
             }

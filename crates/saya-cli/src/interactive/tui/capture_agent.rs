@@ -139,6 +139,14 @@ impl AgentCaptures {
         self.unmatched.clear();
     }
 
+    /// Retires the gap reason: a resume is a context change, so the gap
+    /// naming the old session's promoted query no longer describes this one.
+    /// The queue is untouched — a resume only runs between turns, when the
+    /// pairing queue is already empty.
+    pub(crate) fn clear_gap(&mut self) {
+        self.gap = None;
+    }
+
     /// Whether no outcome is queued (the pairing tests assert this).
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {

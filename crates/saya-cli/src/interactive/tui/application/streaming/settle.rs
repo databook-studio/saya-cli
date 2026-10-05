@@ -127,7 +127,14 @@ impl App {
                             auto_failed: state.auto_compact_failed,
                         },
                     );
-                    if fire {
+                    if fire && !super::question::output_pends_clarification(&output) {
+                        // The REPL's identical rule (session_auto_compact):
+                        // a pending clarification is never authority for
+                        // automatic work — this turn ended asking the user a
+                        // question, and compacting now would rewrite the
+                        // conversation before they answer. The gate is local
+                        // to the boundary; `should_auto_compact` stays the
+                        // pure predicate.
                         crate::interactive::compact_task::start_automatic(self, state);
                     }
                 }

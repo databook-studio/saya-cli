@@ -6,6 +6,7 @@ use super::super::session_save::queue_session_save;
 use super::super::sql_task;
 use super::super::transcript::BlockKind;
 use super::super::types::App;
+use super::resume::adopt_resumed_session;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::compact_task;
 use crate::interactive::session_runtime::SessionRuntime;
@@ -117,10 +118,12 @@ pub(crate) fn tick_pending(
         // A `/resume` swapped the session: the engine side too, so the
         // app's universe is the resumed session's, not the old one's.
         // The live list is seeded with the swap, so the next turn sees
-        // what the resumed record carried.
+        // what the resumed record carried. The old session's ephemeral
+        // query state retires with the swap (a successful resume is a
+        // context change); a refused or failed resume keeps state.id
+        // and changes nothing.
         if state.id != id_before {
-            app.session = session.universe();
-            app.session.seed_tasks(state.task_list.clone());
+            adopt_resumed_session(app, state, session);
         }
         queue_session_save(&mut *app, store, state);
     }

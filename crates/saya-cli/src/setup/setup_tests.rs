@@ -893,3 +893,20 @@ fn inconsistent_missing_backup_is_a_failure() {
     );
     let _ = fs::remove_dir_all(dir);
 }
+
+/// A symlink planted at the predictable staging name must never be followed:
+/// the victim file keeps its bytes and the target still lands.
+#[cfg(unix)]
+#[test]
+fn publish_does_not_follow_a_symlink_planted_at_the_staging_name() {
+    let dir = temp_dir("publish-staging-symlink");
+    let victim = dir.join("victim.txt");
+    fs::write(&victim, "keep me").unwrap();
+    let staging = dir.join(format!(".config.toml.{}.tmp", std::process::id()));
+    symlink(&victim, &staging).unwrap();
+    let target = dir.join("config.toml");
+    super::atomic::publish(&target, b"fresh bytes").unwrap();
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "keep me");
+    assert_eq!(fs::read_to_string(&target).unwrap(), "fresh bytes");
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -291,6 +291,7 @@ pub(crate) fn poll(app: &mut App, state: &mut SessionState) {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 app.request.started = None;
                 app.request.activity = None;
+                state.auto_compact_failed = true;
                 app.transcript.push(
                     BlockKind::Error,
                     session_compact::failure_message("the compaction worker stopped"),
