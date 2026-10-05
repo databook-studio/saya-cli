@@ -234,7 +234,10 @@ says the rows were not captured and offers `/export --refresh`.
 - The default form and `--refresh` re-run the query on its original
   connection and export that fresh read; the file reflects the fresh
   result, not the displayed table (column filters, scroll, and folds do not
-  apply).
+  apply). The stored source label is resolved again first, and if it now
+  resolves to a different source than the one the capture ran on, the
+  re-run is refused before anything runs — `/sql` again captures a fresh
+  result from the current source.
 - Both refuse an existing destination unless `--overwrite` (legacy `/export`
   used to overwrite silently), refuse directory and symlink destinations,
   write atomically via a private temp file, and cap encoded output at
