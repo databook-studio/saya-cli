@@ -89,18 +89,18 @@ pub(super) const SENTINEL_PREFIX: &str = "__saya_bind_";
 pub(super) fn text_order_prepared(
     printed: &str,
     slots: &[ParamValue],
-) -> (String, Vec<ParamValue>) {
+) -> Option<(String, Vec<ParamValue>)> {
     let (mut sql, mut values) = (String::with_capacity(printed.len()), Vec::new());
     let mut rest = printed;
     while let Some((head, tail)) = rest.split_once(SENTINEL_PREFIX) {
         sql.push_str(head);
         sql.push('?');
         let digits = tail.chars().take_while(char::is_ascii_digit).count();
-        values.push(slots[tail[..digits].parse::<usize>().expect("sentinel slot")].clone());
+        values.push(slots.get(tail[..digits].parse::<usize>().ok()?)?.clone());
         rest = &tail[digits..];
     }
     sql.push_str(rest);
-    (sql, values)
+    Some((sql, values))
 }
 
 struct Rewriter<'a> {

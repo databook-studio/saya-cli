@@ -83,11 +83,21 @@ pub fn prepare_with_params(
         )));
     }
     let mut statement = parse_guarded(sql, max_rows, parser_dialect(dialect), policy)?;
+    // The raw-text check above cannot see a literal that only PRINTS the
+    // prefix after the tokenizer unescapes it (backslash-escape dialects):
+    // check the printed form, which is exactly what the scan will read.
+    if question && statement.to_string().contains(SENTINEL_PREFIX) {
+        return Err(ConnectionError::query_failed(format!(
+            "the query contains the reserved marker prefix {SENTINEL_PREFIX}; remove or rename it"
+        )));
+    }
     let names = collect_names(&statement)?;
     refuse_unbalanced(&names, &bound)?;
     let slots = rewrite_markers(&mut statement, style, &bound);
     let (sql, values) = if question {
-        text_order_prepared(&statement.to_string(), &slots)
+        text_order_prepared(&statement.to_string(), &slots).ok_or_else(|| {
+            ConnectionError::query_failed("the query could not be bound in marker order")
+        })?
     } else {
         (statement.to_string(), slots)
     };

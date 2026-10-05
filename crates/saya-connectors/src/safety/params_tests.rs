@@ -402,3 +402,31 @@ fn sentinel_prefix_in_input_is_refused_without_values() {
     assert!(err.contains("reserved marker prefix"), "{err}");
     assert!(!err.contains("secret-value"), "{err}");
 }
+
+/// A string literal whose BACKSLASH-UNESCAPED value is the reserved marker
+/// prefix (MySQL, Snowflake and BigQuery unescape backslash sequences while
+/// parsing) must be refused like a plain occurrence: never a panic, never a
+/// corrupted value pairing, and no bound value in the message.
+#[test]
+fn an_unescaped_literal_that_prints_the_sentinel_prefix_is_refused() {
+    let sql = r#"SELECT '\_\_saya\_bind\_' AS x, :v FROM t"#;
+    assert!(
+        !sql.contains("__saya_bind_"),
+        "the raw text carries no prefix"
+    );
+    for dialect in [
+        SqlDialect::Mysql,
+        SqlDialect::Snowflake,
+        SqlDialect::BigQuery,
+    ] {
+        let result = prepare_with_params(
+            sql,
+            10,
+            dialect,
+            &[bound("v", ParamValue::String("secret-value".to_owned()))],
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("reserved marker prefix"), "{dialect:?}: {err}");
+        assert!(!err.contains("secret-value"), "{err}");
+    }
+}
