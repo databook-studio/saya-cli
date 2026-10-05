@@ -39,7 +39,9 @@ pub(crate) async fn summarise_once(
     // validation (a pinned token may sit past the cut) rather than silently
     // keeping a half-summary.
     if summary.len() > COMPACT_SUMMARY_MAX_CHARS {
-        summary.truncate(COMPACT_SUMMARY_MAX_CHARS);
+        let cut =
+            super::session_continuation::truncate_utf8(&summary, COMPACT_SUMMARY_MAX_CHARS).len();
+        summary.truncate(cut);
     }
     validate(&summary, &plan.pinned)?;
     Ok(CompactionOutcome {

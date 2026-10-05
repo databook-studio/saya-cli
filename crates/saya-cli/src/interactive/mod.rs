@@ -10,6 +10,9 @@ mod compact_task_tui_metrics_tests;
 pub(crate) mod session_auto_compact;
 mod session_commands;
 pub(crate) mod session_compact;
+#[cfg(test)]
+#[path = "session_compact_bounds_tests.rs"]
+mod session_compact_bounds_tests;
 pub(crate) mod session_compact_call;
 #[cfg(test)]
 #[path = "session_compact_tests.rs"]
