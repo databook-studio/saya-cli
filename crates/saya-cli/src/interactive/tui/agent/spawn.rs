@@ -81,14 +81,17 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
     std::thread::spawn(move || {
         let channel = ChannelSink { tx: tx.clone() };
         let sink = MetricsSink::new(&channel, metrics);
-        let decider: Arc<dyn ApprovalDecider> = Arc::new(ChannelApproval::with_cancellation(
-            tx.clone(),
-            policy,
-            primary,
-            facts,
-            journal,
-            cancel_worker.clone(),
-        ));
+        let decider: Arc<dyn ApprovalDecider> = Arc::new(
+            ChannelApproval::with_cancellation(
+                tx.clone(),
+                policy,
+                primary,
+                facts,
+                journal,
+                cancel_worker.clone(),
+            )
+            .with_metrics(question_scope.as_ref().and_then(|s| s.metrics())),
+        );
         let runtime_handle = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

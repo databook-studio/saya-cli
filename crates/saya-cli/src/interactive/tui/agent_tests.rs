@@ -18,6 +18,9 @@
 //! tool family); the TUI's answered ask is driven in full below.
 
 #[cfg(test)]
+#[path = "agent_approval_metrics.rs"]
+mod approval_metrics;
+#[cfg(test)]
 #[path = "agent_deny_journal.rs"]
 mod deny_journal;
 #[cfg(test)]

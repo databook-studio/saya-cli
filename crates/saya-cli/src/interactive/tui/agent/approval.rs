@@ -7,13 +7,16 @@ use crate::approval_facts::ApprovalFacts;
 use crate::config::runtime::RuntimeConfig;
 use crate::grant_token::{TurnPrimary, grant_token};
 use crate::interactive::session_universe::SessionUniverse;
+use crate::local_metrics::LocalMetrics;
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEvent, AgentEventSink, AgentMode, ApprovalChoice, ApprovalDecider, ApprovalDecision,
-    ApprovalPolicy, CancellationToken, ChatMessage, SessionPolicy, ToolDefinition,
+    AgentEvent, AgentEventSink, AgentMetric, AgentMetricOutcome, AgentMetricPhase, AgentMode,
+    ApprovalChoice, ApprovalDecider, ApprovalDecision, ApprovalPolicy, CancellationToken,
+    ChatMessage, SessionPolicy, ToolDefinition,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 
@@ -51,6 +54,8 @@ pub(crate) struct ChannelApproval {
     /// `[s]` answer's new grant is journalled there, before the call it
     /// allowed runs. `None` — test shapes — records grants with no journal.
     journal: Option<Arc<saya_store::SessionJournal>>,
+    /// The turn's metrics collector; `None` — the constructor default — records nothing.
+    metrics: Option<Arc<LocalMetrics>>,
     cancellation: CancellationToken,
 }
 
@@ -69,8 +74,28 @@ impl ChannelApproval {
             primary,
             facts,
             journal,
+            metrics: None,
             cancellation,
         }
+    }
+
+    /// Attaches the turn's metrics collector; the constructor stays `None`.
+    pub(crate) fn with_metrics(mut self, metrics: Option<Arc<LocalMetrics>>) -> Self {
+        self.metrics = metrics;
+        self
+    }
+
+    /// One ApprovalWait sample: the wait opens at the send — channel and UI
+    /// scheduling included — and closes with the reply, cancel, or closure.
+    fn record_wait(&self, started: Instant, outcome: AgentMetricOutcome) {
+        let Some(metrics) = self.metrics.as_deref() else {
+            return;
+        };
+        metrics.record(&AgentMetric::Phase {
+            phase: AgentMetricPhase::ApprovalWait,
+            elapsed_ns: u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            outcome,
+        });
     }
 }
 
@@ -110,6 +135,7 @@ impl ApprovalDecider for ChannelApproval {
                     primary.as_deref(),
                     Some(self.policy.grants()),
                 );
+                let started = Instant::now();
                 if self
                     .tx
                     .send(StreamMsg::ApprovalRequest {
@@ -120,12 +146,17 @@ impl ApprovalDecider for ChannelApproval {
                     })
                     .is_err()
                 {
+                    self.record_wait(started, AgentMetricOutcome::Failed);
                     return false;
                 }
                 tokio::select! {
-                    _ = self.cancellation.cancelled() => false,
+                    _ = self.cancellation.cancelled() => {
+                        self.record_wait(started, AgentMetricOutcome::Cancelled);
+                        false
+                    }
                     result = answer => match result {
                     Ok(choice) => {
+                        self.record_wait(started, AgentMetricOutcome::Succeeded);
                         // The user's answer reaches the session's grant store
                         // here, where the policy lives; allow-once and deny
                         // record nothing. A *new* grant is journalled right
@@ -144,7 +175,10 @@ impl ApprovalDecider for ChannelApproval {
                         !matches!(choice, ApprovalChoice::Deny)
                     }
                     // A UI that died mid-ask denies.
-                    Err(_) => false,
+                    Err(_) => {
+                        self.record_wait(started, AgentMetricOutcome::Failed);
+                        false
+                    }
                     }
                 }
             }
