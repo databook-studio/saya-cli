@@ -24,6 +24,7 @@ pub mod proc;
 pub mod run_dir;
 pub mod runner;
 pub mod scratch;
+pub mod session_lifecycle;
 pub mod workspace;
 
 use std::path::Path;
@@ -148,6 +149,20 @@ pub enum HarnessError {
     JournalEncode {
         #[source]
         source: serde_json::Error,
+    },
+
+    /// The session was deleted or is being deleted: a tombstone is present,
+    /// so its lock can never be acquired and deletion proceeds only under
+    /// the session's own lock.
+    #[error("session {id} was deleted or is being deleted")]
+    SessionDeleted { id: String },
+
+    /// The session store refused a lifecycle operation — an invalid id, a
+    /// tombstone that fails closed, or an I/O failure below the store.
+    #[error("session store: {source}")]
+    Store {
+        #[source]
+        source: saya_store::StoreError,
     },
 }
 
