@@ -28,6 +28,7 @@ use saya_config::{
 fn runtime_with_window(window: Option<u64>) -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),

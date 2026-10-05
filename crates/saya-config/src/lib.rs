@@ -6,6 +6,7 @@ mod endpoints;
 mod env_file;
 mod error;
 mod input;
+mod instructions;
 mod investigation_budget;
 mod jobs;
 mod layers;
@@ -23,6 +24,11 @@ pub use endpoints::{MAX_ENDPOINT_STRING_CHARS, ORCHESTRATOR_ROLE, ResolvedEndpoi
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
 pub use input::{CliOverrides, ResolutionInput};
+pub use instructions::{
+    DEFAULT_PERSONAL_INSTRUCTION_BYTES, DEFAULT_PROJECT_INSTRUCTION_BYTES,
+    DEFAULT_TOTAL_INSTRUCTION_BYTES, MIN_INSTRUCTION_BYTES, PERSONAL_INSTRUCTIONS_FILE,
+    PROJECT_INSTRUCTIONS_FILE, ResolvedInstructions, personal_instructions_path,
+};
 pub use investigation_budget::{BudgetLimit, ResolvedInvestigationBudgets};
 pub use jobs::{
     ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs,

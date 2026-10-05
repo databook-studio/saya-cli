@@ -47,6 +47,7 @@ fn temp_sessions_root(tag: &str) -> PathBuf {
 fn test_runtime() -> RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),

@@ -32,6 +32,7 @@ pub(crate) fn bounded_sql_query_effect() -> ToolEffect {
 pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
     Arc::new(crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),

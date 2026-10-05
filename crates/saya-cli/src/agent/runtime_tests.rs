@@ -228,6 +228,7 @@ async fn remember_default_time_column(
 fn test_runtime(memory: ResolvedMemory) -> RuntimeConfig {
     RuntimeConfig {
         resolved: ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),

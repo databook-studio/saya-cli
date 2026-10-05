@@ -92,6 +92,11 @@ pub struct ResolvedConfig {
     pub output_color: ColorChoice,
     pub ui_theme: ThemeChoice,
     pub memory: ResolvedMemory,
+    /// The resolved `[instructions]` sources and their validated byte
+    /// limits: which instruction files load and how many bytes of them may
+    /// reach the context. Enablement and limits are protected settings, so
+    /// these always reflect the trusted layers.
+    pub instructions: crate::ResolvedInstructions,
     /// Security-critical setting names (`ai.base_url`, `run.read_only`, …)
     /// that the project layer tried to override and were ignored. Empty when
     /// the project layer is trusted or set none of them.
@@ -208,6 +213,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         .flatten();
     let profile = overlay_database_environment(profile, &input.env_file, &input.process_env)?;
     let memory = crate::memory::resolve(&file.memory)?;
+    let instructions = crate::instructions::resolve(&file.instructions)?;
     let investigation_budgets = crate::investigation_budget::resolve(&file.ai)?;
     let context_byte_budget = file
         .ai
@@ -269,6 +275,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
         ui_theme: file.ui.theme.unwrap_or(ThemeChoice::Auto),
         memory,
+        instructions,
         ignored_project_overrides,
         endpoints,
     })

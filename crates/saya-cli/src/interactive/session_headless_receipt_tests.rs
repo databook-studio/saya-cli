@@ -25,6 +25,7 @@ use saya_config::{
 fn receipt_runtime() -> RuntimeConfig {
     RuntimeConfig {
         resolved: ResolvedConfig {
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
             investigation_budgets: Default::default(),
