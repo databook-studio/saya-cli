@@ -4,10 +4,12 @@ use crate::contracts::RecallReceipt;
 use saya_agent::ContextBlock;
 use saya_types::{SessionTaskList, SqlDialect, TaskStatus};
 
+mod assemble;
 mod outcomes;
 mod recall;
 mod record;
 mod summary;
+pub(crate) use assemble::{assemble_continuation, digest_resolver};
 pub(crate) use outcomes::{PriorToolOutcomes, ToolOutcomeKind};
 pub(crate) use record::{SessionObservations, now_unix_ms};
 pub(crate) use summary::render_summary_block;
