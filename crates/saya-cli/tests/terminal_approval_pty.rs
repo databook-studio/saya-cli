@@ -492,7 +492,11 @@ fn accept_request(listener: &TcpListener, stop: &mpsc::Receiver<()>) -> std::io:
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         match listener.accept() {
-            Ok((stream, _)) => return Ok(stream),
+            Ok((stream, _)) => {
+                // Accepted sockets inherit O_NONBLOCK from a non-blocking listener on macOS; drain_request assumes blocking reads under its 2s read timeout.
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if stop.try_recv().is_ok() {
                     return Err(std::io::Error::other("provider stopped"));
@@ -514,6 +518,7 @@ fn drain_request(stream: &mut std::net::TcpStream) -> String {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .expect("provider request read timeout");
+    let deadline = Instant::now() + Duration::from_secs(2);
     let mut bytes = Vec::new();
     let mut chunk = [0_u8; 4096];
     loop {
@@ -532,13 +537,16 @@ fn drain_request(stream: &mut std::net::TcpStream) -> String {
                     .into_owned();
             }
         }
-        let Ok(count) = stream.read(&mut chunk) else {
-            return String::new();
-        };
-        if count == 0 {
-            return String::new();
+        match stream.read(&mut chunk) {
+            Ok(0) => return String::new(),
+            Ok(count) => bytes.extend_from_slice(&chunk[..count]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return String::new();
+                }
+            }
+            Err(_) => return String::new(),
         }
-        bytes.extend_from_slice(&chunk[..count]);
     }
 }
 
