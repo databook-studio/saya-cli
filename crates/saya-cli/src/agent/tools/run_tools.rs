@@ -3,7 +3,13 @@
 //! `DatabaseTools` — whose typed `UnsupportedTool` refusal for unknown names
 //! makes the fall-through total and predictable. One composite serves both
 //! surfaces that carry the run tool members (a run's per-step toolsets and an
-//! interactive session), so the dispatch never forks.
+//! interactive session), so the dispatch never forks. The loop-assigned
+//! `ToolExecutionContext` — the per-call result cap and the turn's
+//! cancellation token — rides with the call wherever a member honours it:
+//! the scratch and fetch members and the database fall-through receive it
+//! through `execute_with_context`, so a cancelled turn reaches every lane it
+//! touches. The runner keeps its own composed token; `execute` and
+//! `execute_with_result_cap` mint fresh, never-cancelled tokens.
 
 use std::sync::Arc;
 
@@ -17,11 +23,18 @@ use saya_harness::fetch::FetchTools;
 use saya_harness::runner::RunProgram;
 use saya_harness::scratch::ScratchSql;
 
+#[cfg(test)]
+#[path = "run_tools_cancel_tests.rs"]
+mod run_tools_cancel_tests;
+
 /// The composite executor. Each optional member is present only where its
 /// surface composed it: a surface without a member refuses that member's
 /// names as unknown tools, before any permit is consulted — the
 /// hidden-not-advertised discipline applied at dispatch, so an advertised
-/// tool and its executor cannot drift apart.
+/// tool and its executor cannot drift apart. The loop-assigned context is
+/// forwarded to every member that honours the turn's cancellation — scratch,
+/// fetch, and the database fall-through; the runner drives its own composed
+/// token instead.
 pub(crate) struct RunTools {
     database: Arc<DatabaseTools>,
     chart_save_permit: bool,
@@ -229,11 +242,11 @@ impl ToolExecutor for RunTools {
         }
         match name {
             "scratch_sql" | "scratch_import" => match &self.scratch {
-                Some(scratch) => scratch.execute(name, arguments).await,
+                Some(scratch) => scratch.execute_with_context(name, arguments, context).await,
                 None => Err(ToolError::UnsupportedTool),
             },
             "http_fetch" | "http_download" => match &self.fetch {
-                Some(fetch) => fetch.execute(name, arguments).await,
+                Some(fetch) => fetch.execute_with_context(name, arguments, context).await,
                 None => Err(ToolError::UnsupportedTool),
             },
             "run_program" => match &self.runner {
