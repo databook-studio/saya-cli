@@ -804,8 +804,9 @@ pausing with the same `BudgetExhausted`, the partial left resumable. The
 wallet's spend is journaled as a running level while the run claims it —
 the durable record a resume carries, as usage is for the token ceiling.
 `turns` and
-`tool-calls` bound each episode through the agent's own limits, so exhausting
-them ends the step rather than pausing the run. Because every episode calls
+`tool-calls` bound each episode through the agent's own limits, and a step
+that exhausts its ceiling pauses the run (`BudgetExhausted`, resumable) with
+that step incomplete. Because every episode calls
 the single `orchestrator` endpoint today, `tokens.orchestrator` is the only
 token ceiling a run accepts: a `tokens.<role>` key naming any other role —
 from `--budget` or a leftover `[jobs] tokens_per_endpoint` entry — is refused
@@ -824,7 +825,10 @@ output), so the display and the budget that stopped the run agree.
 
 **All three streaming budgets bind the run, not each invocation.** The token
 ceiling carries from journaled usage, and the download wallet carries from
-journaled claims. The wall-clock ceiling also carries: Saya journals the UTC
+journaled claims. The per-step `turns` and `tool-calls` ceilings bind the run
+too: their counts are journaled with the usage events, and a resumed or
+retried episode starts from what the journal recorded. The wall-clock ceiling
+also carries: Saya journals the UTC
 origin after approval and raises a durable high-water observation while the
 run emits events. Outside forced boundaries, high-water marks persist at a
 one-second cadence. Writes are forced when a run arms or resumes, before
@@ -856,7 +860,12 @@ Management subcommands:
   renders what happened, `--format ndjson`/`json` emit the journal's own
   bytes.
 - `saya run resume <id>` — continue a paused or crashed run at its first
-  incomplete step. A run with a live holder refuses.
+  incomplete step. A run with a live holder refuses. A run whose first
+  incomplete step declares `turns` or `tool-calls` budgets needs the count
+  evidence its journal recorded; a journal without it is refused unless
+  `--retry-incomplete` retries that step, reconciling the half-written
+  counts. Retry is not exactly-once: effects the step already produced may
+  repeat, so reconcile them before opting in.
 - `saya run cancel <id>` — record a run cancelled. A run with a live holder
   refuses; cancel the owning process with Ctrl-C instead.
 
