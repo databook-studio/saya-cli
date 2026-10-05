@@ -61,10 +61,10 @@ impl Visitor for NameCollector {
     }
 }
 
-/// Rewrites every `:name` placeholder node to the native marker and
-/// returns the values in marker order. `$n` numbers by first occurrence,
-/// so a repeated name reuses its number and its value once; `?` repeats
-/// the marker and the value.
+/// Rewrites every `:name` placeholder node to the native marker, returning
+/// the values in visit order — one slot per node. `$n` numbers by first
+/// occurrence, so a repeated name reuses its number and value once; `?`
+/// slots print as sentinels for [`text_order_prepared`] to reorder.
 pub(super) fn rewrite_markers(
     statement: &mut Statement,
     style: Marker,
@@ -80,6 +80,27 @@ pub(super) fn rewrite_markers(
     // mutable pass is invoked as an explicit trait method.
     let _ = VisitMut::visit(statement, &mut rewriter);
     rewriter.values
+}
+
+/// Stamped `?` slots print as `{SENTINEL_PREFIX}{slot}` until the scan.
+pub(super) const SENTINEL_PREFIX: &str = "__saya_bind_";
+
+/// Replaces each printed sentinel with `?`, pairing it with its slot's value in text order.
+pub(super) fn text_order_prepared(
+    printed: &str,
+    slots: &[ParamValue],
+) -> (String, Vec<ParamValue>) {
+    let (mut sql, mut values) = (String::with_capacity(printed.len()), Vec::new());
+    let mut rest = printed;
+    while let Some((head, tail)) = rest.split_once(SENTINEL_PREFIX) {
+        sql.push_str(head);
+        sql.push('?');
+        let digits = tail.chars().take_while(char::is_ascii_digit).count();
+        values.push(slots[tail[..digits].parse::<usize>().expect("sentinel slot")].clone());
+        rest = &tail[digits..];
+    }
+    sql.push_str(rest);
+    (sql, values)
 }
 
 struct Rewriter<'a> {
@@ -119,8 +140,9 @@ impl VisitorMut for Rewriter<'_> {
                 *raw = format!("${number}");
             }
             Marker::Question => {
+                let slot = self.values.len();
                 self.values.push(value);
-                *raw = "?".to_owned();
+                *raw = format!("{SENTINEL_PREFIX}{slot}");
             }
         }
         ControlFlow::Continue(())

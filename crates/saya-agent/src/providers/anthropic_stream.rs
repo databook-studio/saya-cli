@@ -36,6 +36,10 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
+        if let Some(error) = value.1.deferred.take() {
+            value.1.done = true;
+            return Some((Err(error), value));
+        }
         if value.1.done {
             return None;
         }
@@ -69,8 +73,13 @@ where
             }
         };
         if let Err(error) = value.1.push(&chunk) {
-            value.1.done = true;
-            return Some((Err(error), value));
+            // Events a frame queued before a later frame in the same read
+            // failed (usage ahead of a truncation error) are delivered first.
+            if value.1.pending.is_empty() {
+                value.1.done = true;
+                return Some((Err(error), value));
+            }
+            value.1.deferred = Some(error);
         }
     }
 }
@@ -85,6 +94,9 @@ pub(super) struct State {
     pub(super) raw_input_tokens: Option<u64>,
     pub(super) usage_reported: bool,
     pub(super) done: bool,
+    /// An error held back until the driver has drained `pending` (a capped
+    /// response's usage is queued by the frame before the stop frame errors).
+    pub(super) deferred: Option<ProviderError>,
     pub(super) assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.

@@ -181,6 +181,19 @@ impl EngineEventSink {
             .remaining(step, turns, tool_calls)
     }
 
+    pub(crate) async fn settle_failed_request(&self) {
+        let tracked = *self.count_tracking.lock().expect("tracking lock");
+        let pending = self
+            .answering_counts
+            .lock()
+            .expect("counts lock")
+            .is_pending();
+        if tracked && pending {
+            self.observe_answering(AnsweringObservation::ToolBatchObserved { requested: 0 })
+                .await;
+        }
+    }
+
     /// Attaches the production run's shared cancellation owner. Legacy sink
     /// callers without this attachment keep the historical per-tick pause.
     pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {

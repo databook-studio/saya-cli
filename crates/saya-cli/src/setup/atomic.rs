@@ -98,8 +98,16 @@ pub(crate) fn publish(path: &Path, bytes: &[u8]) -> Result<(), SetupError> {
 fn write_staged(tmp: &Path, bytes: &[u8]) -> io::Result<()> {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
+    // A stale staging file (or a planted symlink) at this name is removed as
+    // a name — `remove_file` never follows a symlink — so `create_new` below
+    // can only ever create a fresh private file.
+    match fs::remove_file(tmp) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
     let mut file = options.open(tmp)?;
