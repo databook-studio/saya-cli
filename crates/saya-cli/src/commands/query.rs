@@ -5,6 +5,8 @@ use crate::{
     },
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
+    local_metrics::LocalMetrics,
+    local_metrics_format::format_snapshot,
     metrics_sink::MetricsSink,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
@@ -15,7 +17,7 @@ use saya_agent::{
 };
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::ConnectionError;
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use super::{
     output::{emit, failure, failure_message},
@@ -43,6 +45,9 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let scope = QuestionScope::new(runtime, cancellation.clone());
+    // The collector arc is taken before the scope moves into the run: the
+    // settled boundary below reads the snapshot the run just finished filling.
+    let metrics = scope.metrics();
     let sink = TerminalSink::new(format);
     let sink = MetricsSink::new(&sink, scope.metrics());
     // The one-shot `ask` path composes no session universe at all — writes
@@ -73,9 +78,24 @@ pub(super) async fn ask(
     tokio::pin!(work);
     let outcome = tokio::select! {
         result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); let _ = work.await; return Ok(130); }
+        _ = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            let _ = work.await;
+            print_metrics_section(&metrics);
+            return Ok(130);
+        }
     };
+    print_metrics_section(&metrics);
     settle_ask(outcome, &cancellation, format)
+}
+
+/// The fixed diagnostics section for a settled turn: stderr only, only when
+/// the question carried a collector, printed after the turn has settled so a
+/// cancelled or failed stop is reported too.
+fn print_metrics_section(metrics: &Option<Arc<LocalMetrics>>) {
+    if let Some(metrics) = metrics {
+        eprintln!("{}", format_snapshot(&metrics.snapshot()));
+    }
 }
 
 /// The one classification for a settled `ask`, shared by the work-ready and
