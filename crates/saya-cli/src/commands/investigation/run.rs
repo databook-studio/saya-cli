@@ -33,7 +33,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// What the dispatcher parsed for one replay. The report fields (S12b)
 /// carry an optional `--report` destination with its `--rows` opt-in and
 /// `--overwrite` decision; `params` carries the raw `--param name=value`
-/// bindings (B1f).
+/// bindings (B1f). `machine_driven` marks the MCP replay adapter's runs:
+/// such a run can never write or complete review authority.
 pub(super) struct RunRequest<'a> {
     pub id: &'a str,
     pub connection: Option<&'a str>,
@@ -42,6 +43,7 @@ pub(super) struct RunRequest<'a> {
     pub rows: Option<usize>,
     pub overwrite: bool,
     pub params: Vec<String>,
+    pub machine_driven: bool,
     pub cancellation: Option<&'a CancellationToken>,
 }
 
@@ -82,6 +84,24 @@ pub(super) async fn run(
         Ok(binding) => binding,
         Err(error) => return no_replay(store_failure(error, id.as_str(), format)),
     };
+    // A machine-driven replay (the MCP tool) can never establish review
+    // authority (FIX-S6a): the binding this same run just read must carry a
+    // schema fingerprint — a human step wrote it — or the replay refuses
+    // before anything executes (no re-read to disagree; id only, no values).
+    if request.machine_driven
+        && !binding
+            .as_ref()
+            .is_some_and(|binding| binding.reviewed_schema_fingerprint.is_some())
+    {
+        return no_replay(failure_message(
+            EXIT_INVESTIGATION_ERROR,
+            format!(
+                "this investigation has not been reviewed on this machine yet; review it once with `saya investigation run {} --connection <profile>` (a human step) before a tool can replay it",
+                id.as_str(),
+            ),
+            format,
+        ));
+    }
     // Target = `--connection` else the binding's profile; never the
     // active or default profile (invariant 1).
     let Some(target) = request
@@ -319,7 +339,7 @@ pub(super) async fn run(
                 ExecutionEvidenceArgs {
                     execution_id: ExecutionEvidence::new_execution_id(started_unix_ms, 0),
                     connection_label: review.target.clone(),
-                    connection_identity: None,
+                    connection_identity: Some(review.identity.clone()),
                     dialect: definition.dialect,
                     max_rows: runtime.resolved.max_rows,
                     started_unix_ms,
@@ -339,14 +359,18 @@ pub(super) async fn run(
             );
             let line = evidence.human_line();
             emit(TerminalEvent::Result { message: line }, format);
-            refresh_binding(
-                repo,
-                format,
-                &definition,
-                binding.as_ref(),
-                request.revalidate,
-                &review,
-            );
+            // A machine-driven replay never rewrites review authority: the
+            // binding it read authorized this run, so success leaves it as is.
+            if !request.machine_driven {
+                refresh_binding(
+                    repo,
+                    format,
+                    &definition,
+                    binding.as_ref(),
+                    request.revalidate,
+                    &review,
+                );
+            }
             // The report (S12b) is written last, from this execution's
             // result and evidence, after the output is out (invariants 2
             // and 3); without `--report` this is the plain success exit.

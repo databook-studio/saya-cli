@@ -115,9 +115,26 @@ async fn run_investigation_outcome_in(
     state_db: &SqliteStateStore,
 ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     run_investigation_outcome_controlled_in(
-        repo, command, runtime, format, can_prompt, state_db, None,
+        repo,
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+        RunControl {
+            cancellation: None,
+            machine_driven: false,
+        },
     )
     .await
+}
+
+/// How one controlled run is driven: the optional cancellation source the
+/// adapter holds, and whether the run is machine-driven (FIX-S6a: it can
+/// never write or complete review authority).
+struct RunControl<'a> {
+    cancellation: Option<&'a CancellationToken>,
+    machine_driven: bool,
 }
 
 async fn run_investigation_outcome_controlled_in(
@@ -127,7 +144,7 @@ async fn run_investigation_outcome_controlled_in(
     format: RenderFormat,
     can_prompt: bool,
     state_db: &SqliteStateStore,
-    cancellation: Option<&CancellationToken>,
+    control: RunControl<'_>,
 ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
     match command {
         InvestigationCommand::Save {
@@ -209,7 +226,8 @@ async fn run_investigation_outcome_controlled_in(
                     rows,
                     overwrite,
                     params,
-                    cancellation,
+                    machine_driven: control.machine_driven,
+                    cancellation: control.cancellation,
                 },
             )
             .await
@@ -218,9 +236,10 @@ async fn run_investigation_outcome_controlled_in(
 }
 
 impl InvestigationCommand {
-    /// Cancellation-aware entry for local adapters that retain this exact
-    /// typed operation until its source has settled.
-    pub(crate) async fn run_outcome_with_cancellation(
+    /// The machine-driven seam (FIX-S6a), used only by the MCP replay
+    /// adapter: the run can never write or complete review authority — an
+    /// unreviewed investigation refuses; a reviewed one never refreshes.
+    pub(crate) async fn run_outcome_machine_driven_with_cancellation(
         self,
         repo: &InvestigationRepository,
         runtime: &RuntimeConfig,
@@ -236,7 +255,10 @@ impl InvestigationCommand {
             format,
             can_prompt,
             state_db,
-            Some(cancellation),
+            RunControl {
+                cancellation: Some(cancellation),
+                machine_driven: true,
+            },
         )
         .await
     }

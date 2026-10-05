@@ -13,7 +13,11 @@
 //! authorized target, so a binding the ordinary CLI remaps underneath a
 //! queued call can never widen the set this server serves (A922-1). The
 //! review is never revalidated from here (invariant 2): a stale review is an
-//! isError carrying the CLI's own message. The run path renders through the
+//! isError carrying the CLI's own message. The replay is machine-driven
+//! (FIX-S6a): it can never write or complete a review binding — an
+//! investigation not already reviewed on this machine refuses before
+//! anything executes, and a reviewed one runs without refreshing its
+//! binding. The run path renders through the
 //! process-output seam, so the call is wrapped in the capture the TUI replay
 //! adapter uses — stdout stays protocol-only and the typed outcome, not the
 //! rendered text, is what the client sees.
@@ -96,7 +100,7 @@ pub(crate) async fn investigation_run(
     let guard = CaptureGuard;
     let operation = async {
         command
-            .run_outcome_with_cancellation(
+            .run_outcome_machine_driven_with_cancellation(
                 &repo,
                 &context.runtime,
                 RenderFormat::Text,
