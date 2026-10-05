@@ -439,7 +439,8 @@ id, its size in KiB, a status (`ok`, or `near-limit` at the store's warning
 band), and its age. Sessions whose deletion is pending — a previous `delete`
 could not remove every path — are listed separately as
 `pending deletion: <id>` instead of reappearing as rows, and the last line
-names the storage root.
+names the storage root. A pending deletion shown by `saya sessions list`
+is finished by running `saya sessions delete <id>` again.
 
 `saya sessions delete <id>` deletes exactly one saved session — its record,
 its state directory, and its staged temps and quarantined copies — through

@@ -72,15 +72,25 @@ pub(crate) fn delete_saved_session(
     }
     // The harness creates `<sessions>/<id>/` transiently when absent, so a
     // typo must be caught first: a session exists only when the store has
-    // its record or its state directory. Nothing below runs for an absent
-    // id — no directory is conjured, no tombstone is written.
-    let exists = match store.stored_capacity(id) {
+    // its record or its state directory — or when its deletion is pending,
+    // so the same command can finish it. A tombstone-only leftover (record
+    // and dir already gone, tombstone kept because its own removal failed
+    // or a crash landed between steps) must stay retryable, never wedged
+    // behind "no saved session". Nothing below runs for an absent id with
+    // no tombstone — no directory is conjured, no tombstone is written.
+    let mut exists = match store.stored_capacity(id) {
         Ok(Some(_)) => true,
         Ok(None) => symlink_metadata(sessions_root.join(id))
             .map(|meta| meta.is_dir())
             .unwrap_or(false),
         Err(error) => return DeleteOutcome::Failed(error.to_string()),
     };
+    if !exists {
+        match store.pending_deletions() {
+            Ok(pending) => exists = pending.iter().any(|pending_id| pending_id == id),
+            Err(error) => return DeleteOutcome::Failed(error.to_string()),
+        }
+    }
     if !exists {
         return DeleteOutcome::NoSuchSession;
     }

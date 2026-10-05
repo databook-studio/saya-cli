@@ -264,6 +264,41 @@ fn a_live_session_is_refused_with_its_holder_pid_and_left_intact() {
     let _ = std::fs::remove_dir_all(&env.root);
 }
 
+/// A tombstone-only leftover (planted with the store's own record shape:
+/// `{"version":1,"id":..,"started_unix_ms":..}`, the shape tombstone.rs
+/// writes) shows as a pending deletion and is finished by the same delete
+/// command: exit 0 and the tombstone file is gone.
+#[test]
+fn deleting_a_tombstone_only_leftover_clears_the_pending_deletion() {
+    let env = test_env("ghost");
+    let lifecycle = env.root.join("lifecycle");
+    std::fs::create_dir_all(&lifecycle).unwrap();
+    let started_unix_ms = std::time::SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    std::fs::write(
+        lifecycle.join("session-ghost.tombstone"),
+        format!(
+            "{{\n  \"version\": 1,\n  \"id\": \"ghost\",\n  \"started_unix_ms\": {started_unix_ms}\n}}"
+        ),
+    )
+    .unwrap();
+    let output = run(&env, &["sessions", "delete", "ghost"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+    assert!(
+        !lifecycle.join("session-ghost.tombstone").exists(),
+        "the tombstone file is gone"
+    );
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
 /// The command never reads stdin: run with an open, empty pipe (a read
 /// would block forever) and `--non-interactive`, it completes on its own.
 #[test]

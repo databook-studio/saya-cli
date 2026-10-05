@@ -231,6 +231,36 @@ fn delete_removes_only_that_session_and_its_state() {
 }
 
 #[test]
+fn a_tombstone_only_leftover_is_cleared_by_delete() {
+    let root = scratch("ghost");
+    let sessions = root.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let store = FsSessionStore::new(&sessions);
+    // Only a tombstone: record and state dir already gone (a crash landed
+    // between removal steps, or the tombstone's own removal failed).
+    store.begin_delete("ghost").unwrap();
+    let listing = block_on(list_sessions(&store)).unwrap();
+    assert_eq!(listing.pending, vec!["ghost".to_owned()]);
+    assert!(listing.rows.is_empty());
+    // The same command finishes the pending deletion: everything the
+    // tombstone covers is already gone, so this converges immediately.
+    let outcome = delete_saved_session(&store, &sessions, "ghost", None);
+    assert_eq!(outcome, DeleteOutcome::Deleted, "{outcome:?}");
+    assert!(
+        !root
+            .join("lifecycle")
+            .join("session-ghost.tombstone")
+            .exists(),
+        "the tombstone is gone"
+    );
+    assert!(
+        store.pending_deletions().unwrap().is_empty(),
+        "no pending deletion remains"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn deleting_an_absent_session_creates_nothing() {
     let root = scratch("absent");
     let sessions = root.join("sessions");
