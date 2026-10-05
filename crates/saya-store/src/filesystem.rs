@@ -2,6 +2,7 @@
 use crate::private_file::set_mode;
 use crate::private_file::{bounded_read, io_error, stage_and_publish};
 use crate::replace::{AtomicReplace, Replacer};
+use crate::session_lifecycle::tombstone;
 use crate::{
     RedactedSession, SessionHistoryPage, SessionHistoryQuery, SessionStore, StoreError,
     StoredContinuation,
@@ -28,8 +29,15 @@ impl FsSessionStore {
         Self { root: root.into() }
     }
 
+    /// The sessions root: the parent of every `<id>.json` record and of
+    /// each per-session state directory. Crate-visible so the lifecycle
+    /// modules derive tombstone and cleanup paths from the same root.
+    pub(crate) fn sessions_root(&self) -> &Path {
+        &self.root
+    }
+
     pub(crate) fn path(&self, id: &str) -> Result<PathBuf, StoreError> {
-        if id.is_empty() || id.contains('/') || id.contains('\\') || id == "." || id == ".." {
+        if !is_valid_id(id) {
             return Err(StoreError::unavailable());
         }
         Ok(self.root.join(format!("{id}.json")))
@@ -106,6 +114,11 @@ impl FsSessionStore {
         // write, so a save and the capacity report cannot drift.
         crate::session_lifecycle::prepare_session_for_persist(&mut session)?;
         let path = self.path(&session.id)?;
+        // A session with a pending-deletion tombstone cannot be resurrected
+        // by a save; the previous bytes stay untouched.
+        if tombstone::exists(&self.root, &session.id)? {
+            return Err(StoreError::Conflict);
+        }
         if !matches!(
             session.continuation,
             Some(StoredContinuation::Unsupported(_))
@@ -152,7 +165,13 @@ impl SessionStore for FsSessionStore {
     }
 
     async fn load(&self, id: &str) -> Result<Option<RedactedSession>, StoreError> {
-        self.load_file(&self.path(id)?)
+        let path = self.path(id)?;
+        // A tombstoned session is invisible at once — and its record is
+        // never quarantined by this read.
+        if tombstone::exists(&self.root, id)? {
+            return Ok(None);
+        }
+        self.load_file(&path)
     }
 
     async fn most_recent(&self) -> Result<Option<RedactedSession>, StoreError> {
@@ -167,6 +186,11 @@ impl SessionStore for FsSessionStore {
             .collect::<Vec<_>>();
         paths.sort_by_key(|entry| entry.metadata().and_then(|meta| meta.modified()).ok());
         for entry in paths.into_iter().rev() {
+            if let Some(id) = entry.path().file_stem().and_then(|stem| stem.to_str())
+                && tombstone::exists(&self.root, id)?
+            {
+                continue;
+            }
             if let Some(session) = self.load_file(&entry.path())? {
                 return Ok(Some(session));
             }
@@ -179,7 +203,14 @@ impl SessionStore for FsSessionStore {
     }
 }
 
-fn stamp() -> u128 {
+/// Whether `id` is a valid session id: non-empty, no path separators, and
+/// never the relative-navigation names. One rule for every derivation from
+/// an id — the session file path, the per-session state dir, tombstones.
+pub(crate) fn is_valid_id(id: &str) -> bool {
+    !(id.is_empty() || id.contains('/') || id.contains('\\') || id == "." || id == "..")
+}
+
+pub(crate) fn stamp() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_millis())

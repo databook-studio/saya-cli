@@ -6,10 +6,19 @@
 //! warning threshold to the 4 MiB ceiling is `Warning`, past the ceiling
 //! is `OverCap` — and a save of an over-cap record is refused, exactly
 //! as before, with the previous record untouched.
+//!
+//! The deletion section covers two-phase session deletion: `begin_delete`
+//! writes a durable tombstone outside the sessions tree that hides the
+//! session at once and refuses saves; `finish_delete` removes the session
+//! record, its per-session state directory, staged temps, and quarantined
+//! copies — never following a symlink, never touching data outside the
+//! id's own paths — reporting `Pending` with the tombstone kept until
+//! every removal succeeds, so a retry converges.
 
 use saya_store::{
-    FsSessionStore, MAX_SESSION_BYTES, RedactedMessage, RedactedSession, SESSION_WARN_BYTES,
-    SessionCapacityStatus, SessionStore, StoreError, StoredContinuation, redact,
+    DeleteStatus, FsSessionStore, MAX_SESSION_BYTES, RedactedMessage, RedactedSession,
+    SESSION_WARN_BYTES, SessionCapacityStatus, SessionHistoryQuery, SessionStore, StoreError,
+    StoredContinuation, redact,
 };
 use saya_types::{
     CONTINUATION_VERSION, CheckFact, CheckOutcome, FactProvenance, GeneratedNarrative,
@@ -291,4 +300,332 @@ fn an_unpreparable_continuation_is_reported_like_a_save_refusal() {
     );
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+// ---------------------------------------------------------------------
+// Two-phase deletion: tombstone + retryable no-follow cleanup.
+
+/// Builds the store at `<tmp>/sessions` so `<tmp>` is the state dir whose
+/// independent contents must survive every deletion.
+fn deletion_store(label: &str) -> (std::path::PathBuf, FsSessionStore) {
+    let state =
+        std::env::temp_dir().join(format!("saya-store-delete-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&state);
+    let store = FsSessionStore::new(state.join("sessions"));
+    (state, store)
+}
+
+/// Plants the state-dir siblings of `sessions/` that a deletion must
+/// never touch.
+fn plant_state_sentinels(state: &std::path::Path) {
+    std::fs::create_dir_all(state.join("runs")).unwrap();
+    std::fs::write(state.join("state.sqlite3"), "db").unwrap();
+    std::fs::write(state.join("input_history"), "history").unwrap();
+    std::fs::write(state.join("runs/step"), "run").unwrap();
+}
+
+fn plant_session(store: &FsSessionStore, id: &str, content: &str) {
+    block_on(store.save(message_session(id, content))).unwrap();
+}
+
+fn history_ids(store: &FsSessionStore, limit: usize) -> Vec<String> {
+    block_on(store.history(SessionHistoryQuery::first_page(limit).unwrap()))
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect()
+}
+
+#[test]
+fn begin_delete_writes_a_tombstone_outside_the_sessions_tree_and_hides_the_session() {
+    let (state, store) = deletion_store("tombstone-hide");
+    plant_state_sentinels(&state);
+    plant_session(&store, "other", "keep");
+    plant_session(&store, "a", "hello");
+    let session_path = state.join("sessions/a.json");
+    let before = std::fs::read(&session_path).unwrap();
+
+    store.begin_delete("a").unwrap();
+
+    let tombstone = state.join("lifecycle/session-a.tombstone");
+    assert!(
+        tombstone.is_file(),
+        "the tombstone lives under <state>/lifecycle/"
+    );
+    let sessions = std::fs::read_dir(state.join("sessions")).unwrap();
+    assert!(
+        sessions.filter_map(Result::ok).all(|entry| entry
+            .path()
+            .extension()
+            .is_none_or(|ext| ext != "tombstone")),
+        "no tombstone is named inside <sessions>"
+    );
+
+    assert!(store.is_deleted("a").unwrap());
+    assert!(
+        block_on(store.load("a")).unwrap().is_none(),
+        "load hides a tombstoned session at once"
+    );
+    assert_eq!(history_ids(&store, 10), vec!["other".to_owned()]);
+    let recent = block_on(store.most_recent())
+        .unwrap()
+        .expect("the surviving session is still listed");
+    assert_eq!(
+        recent.id, "other",
+        "most_recent skips the tombstoned session"
+    );
+
+    let error = block_on(store.save(message_session("a", "resurrect")))
+        .expect_err("a save of a tombstoned session is refused");
+    assert_eq!(error, StoreError::Conflict);
+    assert_eq!(
+        std::fs::read(&session_path).unwrap(),
+        before,
+        "the previous bytes stay untouched until finish"
+    );
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[test]
+fn finish_delete_removes_the_session_its_state_dir_staged_temps_and_quarantine_and_the_tombstone() {
+    let (state, store) = deletion_store("finish-complete");
+    plant_state_sentinels(&state);
+    plant_session(&store, "a", "hello");
+    plant_session(&store, "other", "keep");
+    plant_session(&store, "a-2", "keep too");
+    let sessions = state.join("sessions");
+    std::fs::create_dir_all(sessions.join("a/run_program")).unwrap();
+    std::fs::create_dir_all(sessions.join("other")).unwrap();
+    std::fs::write(sessions.join("a/journal.ndjson"), "j").unwrap();
+    std::fs::write(sessions.join("a/run_program/x.json"), "{}").unwrap();
+    std::fs::write(sessions.join("a/scratch.duckdb"), "db").unwrap();
+    std::fs::write(sessions.join("other/journal.ndjson"), "j").unwrap();
+    std::fs::write(sessions.join(".a.json.12.3.tmp"), "staged").unwrap();
+    std::fs::write(sessions.join("a.corrupt-111"), "quarantine").unwrap();
+    std::fs::write(sessions.join(".a-2.json.1.1.tmp"), "keep").unwrap();
+    std::fs::write(sessions.join("a.corrupt-x"), "keep").unwrap();
+
+    store.begin_delete("a").unwrap();
+    assert_eq!(store.pending_deletions().unwrap(), vec!["a".to_owned()]);
+    let status = store.finish_delete("a").unwrap();
+
+    assert_eq!(status, DeleteStatus::Complete);
+    assert!(!sessions.join("a.json").exists());
+    assert!(!sessions.join("a").exists());
+    assert!(!sessions.join(".a.json.12.3.tmp").exists());
+    assert!(!sessions.join("a.corrupt-111").exists());
+    assert!(!state.join("lifecycle/session-a.tombstone").exists());
+    assert_eq!(store.pending_deletions().unwrap(), Vec::<String>::new());
+    // Independent data — the state dir, other sessions, look-alike names.
+    assert_eq!(
+        std::fs::read(state.join("state.sqlite3")).unwrap(),
+        "db".as_bytes().to_vec()
+    );
+    assert_eq!(
+        std::fs::read(state.join("input_history")).unwrap(),
+        "history".as_bytes().to_vec()
+    );
+    assert_eq!(
+        std::fs::read(state.join("runs/step")).unwrap(),
+        "run".as_bytes().to_vec()
+    );
+    assert!(sessions.join("other.json").is_file());
+    assert!(sessions.join("other/journal.ndjson").is_file());
+    assert!(sessions.join("a-2.json").is_file());
+    assert_eq!(
+        std::fs::read(sessions.join(".a-2.json.1.1.tmp")).unwrap(),
+        "keep".as_bytes().to_vec()
+    );
+    assert_eq!(
+        std::fs::read(sessions.join("a.corrupt-x")).unwrap(),
+        "keep".as_bytes().to_vec()
+    );
+    assert_eq!(block_on(store.load("other")).unwrap().unwrap().id, "other");
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[cfg(unix)]
+#[test]
+fn deleting_never_follows_a_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let (state, store) = deletion_store("no-follow");
+    plant_state_sentinels(&state);
+    let sessions = state.join("sessions");
+    let victim = state.join("victim.txt");
+    std::fs::write(&victim, "precious").unwrap();
+
+    // A link planted INSIDE the id dir is unlinked as a name; its target
+    // keeps its bytes.
+    std::fs::create_dir_all(sessions.join("a")).unwrap();
+    std::fs::write(sessions.join("a/real.ndjson"), "real").unwrap();
+    symlink(&victim, sessions.join("a/link")).unwrap();
+    store.begin_delete("a").unwrap();
+    assert_eq!(store.finish_delete("a").unwrap(), DeleteStatus::Complete);
+    assert!(
+        !sessions.join("a").exists(),
+        "the id dir including the link is gone"
+    );
+    assert_eq!(
+        std::fs::read(&victim).unwrap(),
+        "precious".as_bytes().to_vec(),
+        "the link target keeps its bytes"
+    );
+
+    // The id dir itself replaced by a symlink: only the link is removed,
+    // the outside directory and its contents are intact.
+    let outside = state.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("keep.txt"), "keep").unwrap();
+    symlink(&outside, sessions.join("b")).unwrap();
+    store.begin_delete("b").unwrap();
+    assert_eq!(store.finish_delete("b").unwrap(), DeleteStatus::Complete);
+    assert!(!sessions.join("b").exists(), "only the link is removed");
+    assert!(outside.is_dir());
+    assert_eq!(
+        std::fs::read(outside.join("keep.txt")).unwrap(),
+        "keep".as_bytes().to_vec()
+    );
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[test]
+fn traversal_ids_are_refused() {
+    let (state, store) = deletion_store("traversal");
+    plant_state_sentinels(&state);
+    plant_session(&store, "safe", "here");
+    let sentinel = std::fs::read(state.join("state.sqlite3")).unwrap();
+
+    for id in ["../x", "a/b", "a\\b", "", ".", ".."] {
+        assert_eq!(
+            store.begin_delete(id).unwrap_err(),
+            StoreError::Unavailable,
+            "begin_delete refuses {id:?}"
+        );
+        assert_eq!(
+            store.finish_delete(id).unwrap_err(),
+            StoreError::Unavailable,
+            "finish_delete refuses {id:?}"
+        );
+    }
+
+    assert!(
+        !state.join("lifecycle").exists(),
+        "no tombstone tree is created for refused ids"
+    );
+    assert_eq!(store.pending_deletions().unwrap(), Vec::<String>::new());
+    assert_eq!(
+        std::fs::read(state.join("state.sqlite3")).unwrap(),
+        sentinel
+    );
+    assert!(state.join("sessions/safe.json").is_file());
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_partial_cleanup_reports_pending_and_a_retry_converges() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (state, store) = deletion_store("pending-retry");
+    plant_session(&store, "a", "hello");
+    let sessions = state.join("sessions");
+    let stubborn = sessions.join("a/stubborn");
+    std::fs::create_dir_all(&stubborn).unwrap();
+    std::fs::write(stubborn.join("x.json"), "stuck").unwrap();
+    // Restores write access even on a failed assert, so the temp tree
+    // stays removable.
+    struct RestoreMode(std::path::PathBuf);
+    impl Drop for RestoreMode {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    let _guard = RestoreMode(stubborn.clone());
+    std::fs::set_permissions(&stubborn, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+    store.begin_delete("a").unwrap();
+    let status = store.finish_delete("a").unwrap();
+
+    assert!(
+        matches!(status, DeleteStatus::Pending { remaining } if remaining >= 1),
+        "a blocked child reports pending: {status:?}"
+    );
+    assert!(
+        state.join("lifecycle/session-a.tombstone").is_file(),
+        "the tombstone is kept for retry"
+    );
+    assert!(store.is_deleted("a").unwrap());
+    assert!(block_on(store.load("a")).unwrap().is_none(), "still hidden");
+
+    std::fs::set_permissions(&stubborn, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(store.finish_delete("a").unwrap(), DeleteStatus::Complete);
+    assert!(!sessions.join("a/stubborn/x.json").exists());
+    assert!(!sessions.join("a").exists());
+    assert!(!state.join("lifecycle/session-a.tombstone").exists());
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[test]
+fn repeated_begin_and_finish_are_idempotent() {
+    let (state, store) = deletion_store("idempotent");
+    plant_session(&store, "a", "hello");
+    plant_session(&store, "b", "more");
+
+    store.begin_delete("a").unwrap();
+    store.begin_delete("a").unwrap();
+    store.begin_delete("b").unwrap();
+    assert_eq!(
+        store.pending_deletions().unwrap(),
+        vec!["a".to_owned(), "b".to_owned()],
+        "pending deletions are sorted"
+    );
+
+    assert_eq!(store.finish_delete("a").unwrap(), DeleteStatus::Complete);
+    assert_eq!(
+        store.finish_delete("a").unwrap(),
+        DeleteStatus::Complete,
+        "the second finish has no tombstone and removes nothing new"
+    );
+    assert!(!state.join("sessions/a.json").exists());
+    assert!(!state.join("lifecycle/session-a.tombstone").exists());
+    assert_eq!(store.pending_deletions().unwrap(), vec!["b".to_owned()]);
+    assert_eq!(store.finish_delete("b").unwrap(), DeleteStatus::Complete);
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[test]
+fn finish_without_a_tombstone_deletes_nothing() {
+    let (state, store) = deletion_store("no-tombstone");
+    plant_session(&store, "a", "hello");
+    let session_path = state.join("sessions/a.json");
+    let before = std::fs::read(&session_path).unwrap();
+
+    assert_eq!(store.finish_delete("a").unwrap(), DeleteStatus::Complete);
+
+    assert!(session_path.is_file(), "a bare id removes nothing");
+    assert_eq!(std::fs::read(&session_path).unwrap(), before);
+    assert!(!store.is_deleted("a").unwrap());
+    let _ = std::fs::remove_dir_all(state);
+}
+
+#[test]
+fn a_corrupt_tombstone_fails_closed() {
+    let (state, store) = deletion_store("corrupt-tombstone");
+    plant_session(&store, "a", "hello");
+    let session_path = state.join("sessions/a.json");
+    let before = std::fs::read(&session_path).unwrap();
+    let lifecycle = state.join("lifecycle");
+    std::fs::create_dir_all(&lifecycle).unwrap();
+    std::fs::write(lifecycle.join("session-a.tombstone"), "not json at all").unwrap();
+
+    assert_eq!(store.is_deleted("a").unwrap_err(), StoreError::Invalid);
+    assert_eq!(store.finish_delete("a").unwrap_err(), StoreError::Invalid);
+    assert_eq!(
+        std::fs::read(&session_path).unwrap(),
+        before,
+        "the session data is untouched by a refused finish"
+    );
+    let _ = std::fs::remove_dir_all(state);
 }

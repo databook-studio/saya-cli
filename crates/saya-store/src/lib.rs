@@ -50,7 +50,9 @@ pub use runs::{
 pub use session_journal::{
     BypassSource, GrantSource, JournalEvent, MAX_JOURNAL_BYTES, SessionJournal,
 };
-pub use session_lifecycle::{SESSION_WARN_BYTES, SessionCapacity, SessionCapacityStatus};
+pub use session_lifecycle::{
+    DeleteStatus, SESSION_WARN_BYTES, SessionCapacity, SessionCapacityStatus,
+};
 pub use sqlite::{OPEN_BUSY_CEILING, SqliteStateStore};
 pub use sqlite_support::state_sidecar_path;
 pub use state_contracts::{

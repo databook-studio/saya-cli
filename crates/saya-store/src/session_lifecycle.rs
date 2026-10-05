@@ -5,6 +5,16 @@
 //! materializing the record into a buffer. [`FsSessionStore::capacity_of`]
 //! measures a record in memory; [`FsSessionStore::stored_capacity`]
 //! reports an on-disk record's size from its file length.
+//!
+//! Two-phase deletion lives in the child modules: [`tombstone`] holds the
+//! durable record written before anything is removed, and [`delete`] holds
+//! the no-follow removal that reports [`DeleteStatus::Pending`] until every
+//! path is gone.
+
+pub(crate) mod delete;
+pub(crate) mod tombstone;
+
+pub use delete::DeleteStatus;
 
 use crate::bounded::BoundedWriter;
 use crate::filesystem::FsSessionStore;
