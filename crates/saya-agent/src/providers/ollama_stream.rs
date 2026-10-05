@@ -37,6 +37,10 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
+        if let Some(error) = value.1.deferred.take() {
+            value.1.done = true;
+            return Some((Err(error), value));
+        }
         if value.1.done {
             return None;
         }
@@ -84,6 +88,8 @@ struct State {
     usage: TokenUsage,
     usage_reported: bool,
     pending: VecDeque<ProviderEvent>,
+    /// Truncation error held back until the driver has drained `pending`.
+    deferred: Option<ProviderError>,
     tools: ToolAssembly,
     content: bool,
     done: bool,
@@ -205,16 +211,17 @@ impl State {
         }
         if chunk.done {
             self.done = true;
-            if chunk.done_reason.as_deref() == Some("length") {
-                return Err(ProviderError::output_truncated(
-                    std::mem::take(&mut self.text),
-                    self.tools.partial_json(),
-                ));
-            }
             self.usage = usage;
             self.usage_reported = usage_reported;
             if self.usage_reported {
                 self.pending.push_back(ProviderEvent::Usage(self.usage));
+            }
+            if chunk.done_reason.as_deref() == Some("length") {
+                self.deferred = Some(ProviderError::output_truncated(
+                    std::mem::take(&mut self.text),
+                    self.tools.partial_json(),
+                ));
+                return Ok(());
             }
             self.complete(trailing)?;
         }
