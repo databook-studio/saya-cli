@@ -193,7 +193,12 @@ impl ScratchSql {
     async fn import(
         &self,
         arguments: &serde_json::Map<String, serde_json::Value>,
+        cancellation: &CancellationToken,
     ) -> Result<ImportResult, ScratchError> {
+        // A pre-cancelled turn refuses before the workspace file is read.
+        if cancellation.is_cancelled() {
+            return Err(ImportError::Cancelled.into());
+        }
         if arguments.keys().any(|key| {
             !matches!(
                 key.as_str(),
@@ -231,8 +236,17 @@ impl ScratchSql {
         let db = self.db.clone();
         let bytes = file.bytes;
         let table = table.to_owned();
+        let cancellation = cancellation.clone();
         tokio::task::spawn_blocking(move || {
-            import_bytes(&db, &table, &bytes, header, delimiter, replace)
+            import_bytes(
+                &db,
+                &table,
+                &bytes,
+                header,
+                delimiter,
+                replace,
+                &cancellation,
+            )
         })
         .await
         .map_err(|_| ScratchError::Import(ImportError::Database))?
@@ -272,16 +286,19 @@ impl ToolExecutor for ScratchSql {
         match name {
             SCRATCH_SQL_TOOL => self.sql_call(arguments, &CancellationToken::new()).await,
             SCRATCH_IMPORT_TOOL => {
-                let result = self.import(arguments).await.map_err(scratch_tool_error)?;
+                let result = self
+                    .import(arguments, &CancellationToken::new())
+                    .await
+                    .map_err(scratch_tool_error)?;
                 serde_json::to_value(result).map_err(|_| ToolError::QueryResultUnavailable)
             }
             _ => Err(ToolError::UnsupportedTool),
         }
     }
 
-    /// The loop's entry point: `scratch_sql` rides the turn's cancellation
-    /// token; every other name (including `scratch_import`, until A04 wires
-    /// it) keeps the plain `execute` path.
+    /// The loop's entry point: `scratch_sql` and `scratch_import` ride the
+    /// turn's cancellation token; every other name keeps the plain `execute`
+    /// path.
     async fn execute_with_context(
         &self,
         name: &str,
@@ -292,6 +309,14 @@ impl ToolExecutor for ScratchSql {
             SCRATCH_SQL_TOOL => {
                 let arguments = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
                 self.sql_call(arguments, &context.cancellation).await
+            }
+            SCRATCH_IMPORT_TOOL => {
+                let arguments = arguments.as_object().ok_or(ToolError::ArgumentsNotObject)?;
+                let result = self
+                    .import(arguments, &context.cancellation)
+                    .await
+                    .map_err(scratch_tool_error)?;
+                serde_json::to_value(result).map_err(|_| ToolError::QueryResultUnavailable)
             }
             _ => self.execute(name, arguments).await,
         }
