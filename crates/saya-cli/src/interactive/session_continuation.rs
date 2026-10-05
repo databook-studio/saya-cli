@@ -6,8 +6,10 @@ use saya_types::{SessionTaskList, SqlDialect, TaskStatus};
 
 mod outcomes;
 mod recall;
+mod record;
 mod summary;
 pub(crate) use outcomes::{PriorToolOutcomes, ToolOutcomeKind};
+pub(crate) use record::{SessionObservations, now_unix_ms};
 pub(crate) use summary::render_summary_block;
 
 const MAX_QUESTION_BYTES: usize = 4096;

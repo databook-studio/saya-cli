@@ -52,6 +52,13 @@ pub struct SessionState {
     /// session must treat historical free-form statuses as unknown.
     #[serde(skip, default)]
     pub(crate) prior_tool_outcomes: Option<super::session_continuation::PriorToolOutcomes>,
+    /// Bounded observations of what this session's tools actually did, this
+    /// session: the raw material the continuation facts are built from.
+    /// Runtime-only (`#[serde(skip)]`, the `prior_tool_outcomes` precedent):
+    /// a resumed session starts with none — historical statuses never feed
+    /// it — and `/clear` empties it with the conversation.
+    #[serde(skip)]
+    pub(crate) observations: super::session_continuation::SessionObservations,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
     /// The `/compact` summary of the older turns, replayed ahead of the
@@ -132,6 +139,7 @@ impl SessionState {
             workspace_root: None,
             task_list: saya_types::SessionTaskList::default(),
             prior_tool_outcomes: None,
+            observations: super::session_continuation::SessionObservations::default(),
             messages: Vec::new(),
             turns: Vec::new(),
             compaction_summary: None,
@@ -211,6 +219,8 @@ impl SessionState {
         );
         self.prior_tool_outcomes =
             Some(super::session_continuation::PriorToolOutcomes::from_live_output(output));
+        self.observations
+            .absorb(output, super::session_continuation::now_unix_ms());
     }
 
     pub fn provider_history(&self) -> Vec<ChatMessage> {
