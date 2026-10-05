@@ -114,6 +114,10 @@ impl StepAnsweringCounts {
         ))
     }
 
+    pub(crate) const fn is_pending(&self) -> bool {
+        self.pending
+    }
+
     pub(crate) fn observe(
         &mut self,
         observation: AnsweringObservation,
