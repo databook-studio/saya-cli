@@ -274,28 +274,32 @@ impl DatabaseTools {
         if permit_workspace_writes {
             tools.push(ToolDefinition {
                 name: "workspace_edit".into(),
-                description: "Replace one anchored string in this run's workspace — the \
+description: "Replace one anchored string in this run's workspace — the \
                     contained directory holding this run's files. Pass `path` relative \
                     to the workspace root, `old_text` as the exact text to find, and \
                     `new_text` as its replacement; the anchor must match exactly once \
                     — zero matches or multiple matches refuse and change nothing, \
-                    never \"first wins\". Or append one chunk: pass `offset` (the \
-                    file size you measured) and `chunk`; the offset must equal the \
-                    current size — a mismatch refuses with the current size and \
-                    digest so you resume from there — and offset 0 on an absent \
-                    path creates the file. An empty anchor is rejected, anchor and \
-                    replacement and chunk over the bound refuse whole, and a \
-                    non-UTF-8 target is refused. Pass `expected_size` and/or \
-                    `expected_digest` from a fresh read to guard a moved anchor: \
-                    a mismatch refuses with no write. Concurrent writers are \
-                    last-writer-wins unless `expected_*` is supplied. This tool \
+                    never \"first wins\". Replacing an existing file requires \
+                    `expected_digest`: the `digest` field of a fresh `workspace_read` \
+                    or of the previous edit's result — a file that changed since you \
+                    observed it refuses with no write, and a same-size change between \
+                    the tool's own read and the write is refused by the same guard. \
+                    Or append one chunk: pass `offset` (the file size you measured) \
+                    and `chunk`; the offset must equal the current size — a mismatch \
+                    refuses with the current size and digest so you resume from there \
+                    — and offset 0 on an absent path creates the file. An empty \
+                    anchor is rejected, anchor and replacement and chunk over the \
+                    bound refuse whole, and a non-UTF-8 target is refused. A \
+                    mismatched `expected_size` refuses with no write; for the append \
+                    variant, concurrent writers are last-writer-wins unless \
+                    `expected_size` or `expected_digest` is supplied. This tool \
                     never resumes a stopped response on its own: after an \
                     output-token cap, resume by appending from the reported size \
                     and digest. For small whole-file writes use `workspace_write` \
                     instead. Returns the `path`, `size`, \
                     and `digest` (the replace variant also reports \
                     `bytes_replaced` and `bytes_written`)."
-                    .into(),
+                .into(),
                 read_only: false,
                 parameters: serde_json::json!({
                     "type": "object",
@@ -328,12 +332,12 @@ impl DatabaseTools {
                         },
                         "expected_digest": {
                             "type": "string",
-                            "description": "Optional. The file's sha256 hex digest the anchor was measured against; a mismatch refuses with no write."
+                            "description": "Required when replacing: the file's sha256 hex digest from a fresh `workspace_read` or the previous edit's result; a mismatch refuses with no write. Optional when appending."
                         }
                     },
                     "required": ["path"],
                     "oneOf": [
-                        { "required": ["old_text", "new_text"] },
+                        { "required": ["old_text", "new_text", "expected_digest"] },
                         { "required": ["offset", "chunk"] }
                     ],
                     "additionalProperties": false

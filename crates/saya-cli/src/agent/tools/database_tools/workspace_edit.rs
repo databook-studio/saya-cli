@@ -1,15 +1,21 @@
 //! The model-facing anchored edit (`replace` and `append` variants): the
 //! replace variant resolves `old_text` to exactly one byte range of a
 //! contained workspace file; the append variant splices `chunk` at an empty
-//! range at EOF guarded by `offset`. Both commit through
-//! `Workspace::patch_range` — append *is* a range replace, not a second write
-//! path. Path resolution, the no-follow open, and the atomic commit are the
-//! harness's — never re-derived here. This tool's own jobs are argument
-//! typing, the byte bounds, the `expected_*` precondition, and typed refusals
-//! that carry counts, line numbers, sizes and digests — never file content.
+//! range at EOF guarded by `offset`. The replace variant commits through
+//! `Workspace::patch_range_guarded` — the digest the model observed is
+//! re-verified at the commit's own fresh read — and the append variant
+//! commits through `Workspace::patch_range`: append *is* a range replace,
+//! not a second write path. Path resolution, the no-follow open, and the
+//! atomic commit are the harness's — never re-derived here. This tool's own
+//! jobs are argument typing, the byte bounds, the `expected_*` precondition,
+//! and typed refusals that carry counts, line numbers, sizes and digests —
+//! never file content.
 //!
 //! Failure contract (DESIGN.md §4): every row refuses loudly and writes nothing.
-//! Zero matches refuses (`NoMatch`, with the current
+//! Replacing an existing file without the digest the model observed refuses
+//! (`WorkspaceEdit` — read first with `workspace_read`, then pass
+//! `expected_digest`; no write, and the refusal never names the file's
+//! current digest). Zero matches refuses (`NoMatch`, with the current
 //! size and digest so the model re-anchors); multiple matches refuses
 //! (`Ambiguous`, with bounded line numbers only, excerpts within 2 KiB —
 //! never "first wins"); a moved anchor refuses (`expected_size` or
@@ -20,10 +26,12 @@
 //! nothing (a truncated tool-call argument never parses or validates; a
 //! crashed commit leaves the old file — temp+rename is atomic with
 //! post-write re-verification); a non-UTF-8 target is refused (`NotText` —
-//! reads are lossy, so byte-exact anchors cannot be trusted); concurrent writers
-//! are last-writer-wins unless `expected_*` is supplied, in which
-//! case the loser gets the moved-anchor refusal (no locking, no merge); an
-//! empty anchor is rejected (it matches everywhere).
+//! reads are lossy, so byte-exact anchors cannot be trusted);
+//! concurrent writers are last-writer-wins for the append variant unless
+//! `expected_*` is supplied, while the replace variant commits behind the
+//! guarded fresh-read check, so a same-size change between the tool's own
+//! read and the commit is refused as the moved-anchor refusal too (no
+//! locking, no merge); an empty anchor is rejected (it matches everywhere).
 //!
 //! What this does not do: it does not recover from an output-token cap on
 //! its own — the continuation loop is unbuilt, so a stopped response resumes
@@ -58,7 +66,10 @@ pub(super) enum WorkspaceEditRequest {
         old_text: String,
         new_text: String,
         expected_size: Option<u64>,
-        expected_digest: Option<String>,
+        /// The digest the model observed from a fresh `workspace_read` or
+        /// the previous edit's result — the parser refuses a replace
+        /// without it, so no variant carries an absent digest.
+        expected_digest: String,
     },
     Append {
         path: String,
@@ -100,7 +111,7 @@ impl DatabaseTools {
                 expected_size,
                 expected_digest,
             } => {
-                self.workspace_replace(&path, &old_text, &new_text, expected_size, expected_digest)
+                self.workspace_replace(&path, &old_text, &new_text, expected_size, &expected_digest)
                     .await
             }
             WorkspaceEditRequest::Append {

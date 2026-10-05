@@ -139,7 +139,7 @@ impl DatabaseTools {
             &[file.bytes.as_slice(), chunk.as_bytes()].concat(),
             ToolError::WorkspaceEdit,
         )?;
-        commit_splice(workspace, rel, size..size, size, chunk.as_bytes())?;
+        commit_splice(workspace, rel, size..size, size, None, chunk.as_bytes())?;
         let after = workspace
             .read(rel, WORKSPACE_EDIT_MAX_FILE_BYTES)
             .map_err(|error| ToolError::WorkspaceEdit(error.to_string()))?;
