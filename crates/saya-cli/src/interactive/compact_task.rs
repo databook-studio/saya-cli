@@ -177,13 +177,18 @@ fn start_with_trigger(app: &mut App, state: &SessionState, automatic: bool) {
     let runtime = Arc::clone(&app.runtime);
     let mut owned = state.clone();
     let universe = Arc::clone(&app.session);
+    let metrics = app.session_metrics.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     app.compact_task = Some(rx);
     app.request.started = Some(std::time::Instant::now());
     app.request.activity = Some("compacting".into());
     std::thread::spawn(move || {
         let result = super::session_resume::block_on(run_with_trigger(
-            &runtime, &mut owned, &universe, automatic, None,
+            &runtime,
+            &mut owned,
+            &universe,
+            automatic,
+            metrics.as_deref(),
         ));
         let _ = tx.send(CompactOutcome {
             message: result.message,

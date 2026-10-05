@@ -4,6 +4,9 @@ pub(crate) mod session_activation;
 pub(crate) mod allow_refusal;
 pub(crate) mod auto_compact;
 pub(crate) mod compact_task;
+#[cfg(test)]
+#[path = "compact_task_tui_metrics_tests.rs"]
+mod compact_task_tui_metrics_tests;
 pub(crate) mod session_auto_compact;
 mod session_commands;
 pub(crate) mod session_compact;

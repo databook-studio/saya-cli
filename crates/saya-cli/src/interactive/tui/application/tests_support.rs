@@ -19,6 +19,7 @@ pub(crate) fn idle_app() -> App {
     App {
         sql_task: None,
         compact_task: None,
+        session_metrics: None,
         replay_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
