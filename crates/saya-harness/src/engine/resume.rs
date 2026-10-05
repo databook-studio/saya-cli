@@ -174,8 +174,23 @@ pub async fn resume(
             // Retry reconciles the crash's half-written evidence: a pending
             // request stays charged, its unobserved batch settling to zero —
             // the operator's accepted risk; missing initialization charged
-            // nothing, so the fresh attempt restarts from fresh counts.
+            // nothing, so the fresh attempt restarts from fresh counts. The
+            // settlement is journaled, not only counted in memory: the live
+            // settle's closing row is what keeps a second crash after the
+            // resumed attempt's own admission replaying as admit, batch,
+            // admit instead of two admissions in a row, which
+            // `from_journal` rejects under every policy.
             if source == AnsweringCountError::PendingBatch {
+                journal
+                    .append(&RunEvent::Usage {
+                        endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
+                        tokens: None,
+                        turns: None,
+                        tool_calls: Some(0),
+                        cached_input_tokens: None,
+                        cache_creation_input_tokens: None,
+                    })
+                    .map_err(|source| ResumeError::Journal { source })?;
                 let batch = AnsweringObservation::ToolBatchObserved { requested: 0 };
                 counts
                     .observe(batch)
