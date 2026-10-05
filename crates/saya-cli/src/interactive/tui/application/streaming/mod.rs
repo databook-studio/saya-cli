@@ -35,6 +35,9 @@ pub(crate) use tokio::sync::mpsc::unbounded_channel;
 #[path = "../auto_compact_tests.rs"]
 mod auto_compact_tests;
 #[cfg(test)]
+#[path = "clarification_worker_tests.rs"]
+mod clarification_worker_tests;
+#[cfg(test)]
 #[path = "drain_capture_tests.rs"]
 mod drain_capture_tests;
 #[cfg(test)]

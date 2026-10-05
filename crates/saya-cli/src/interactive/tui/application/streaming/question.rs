@@ -62,12 +62,21 @@ pub(crate) fn settle_stream_question(
     }
     match result {
         Ok(output) => {
-            let clarification = output
-                .events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. }));
-            session.settle_question(scope, clarification);
+            session.settle_question(scope, output_pends_clarification(output));
         }
         Err(_) => session.abandon_question(),
     }
+}
+
+/// Whether a settled output asks the user a question: the completed
+/// output's typed `ClarificationNeeded` event — never a transient event or
+/// a prose substring. The one predicate for both settlement gates: the
+/// question scope pends here, and the TUI's automatic compaction holds at
+/// `settle_done` — the REPL's rule that a pending clarification is never
+/// authority for automatic work.
+pub(super) fn output_pends_clarification(output: &AgentOutput) -> bool {
+    output
+        .events
+        .iter()
+        .any(|event| matches!(event, AgentEvent::ClarificationNeeded { .. }))
 }
