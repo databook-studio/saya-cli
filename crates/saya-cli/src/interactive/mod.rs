@@ -72,7 +72,10 @@ pub(crate) mod session_trust;
 #[cfg(test)]
 mod session_trust_tests;
 pub(crate) mod session_universe;
-mod session_workspace;
+// Crate-reachable (M04a): the `saya preferences` subcommand derives its
+// worktree identity through the same `resolve_root` the session binds — one
+// resolution, never a second walk-up.
+pub(crate) mod session_workspace;
 pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
 pub(crate) mod tui;
