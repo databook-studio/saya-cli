@@ -58,7 +58,6 @@ impl LocalMetrics {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> LocalPhaseSnapshot {
         *self.state.lock().expect("local metrics lock")
     }

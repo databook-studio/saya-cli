@@ -33,6 +33,8 @@ mod history;
 mod input;
 mod keys;
 pub(crate) mod loop_tick;
+#[cfg(test)]
+mod metrics_summary_tests;
 pub(crate) mod replay;
 mod replay_task;
 mod run_panel;

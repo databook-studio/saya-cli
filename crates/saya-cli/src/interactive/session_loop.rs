@@ -228,6 +228,15 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             trust_pending: tui_trust_pending,
             launch: &launch,
         });
+        // The terminal is restored — the TUI's guard dropped when `run`
+        // returned — so the last settled question's metrics section can go
+        // to stderr now, never while the TUI owned the screen.
+        if let Some(snapshot) = session.take_question_metrics() {
+            eprintln!(
+                "{}",
+                crate::local_metrics_format::format_snapshot(&snapshot)
+            );
+        }
         if let Ok(super::tui::TrustOutcome::Answered(dir)) = &outcome {
             let _ = dir;
         }

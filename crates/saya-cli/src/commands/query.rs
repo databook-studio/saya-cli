@@ -5,6 +5,7 @@ use crate::{
     },
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
+    local_metrics_format::print_metrics_section,
     metrics_sink::MetricsSink,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
@@ -43,6 +44,9 @@ pub(super) async fn ask(
     }
     let cancellation = CancellationToken::new();
     let scope = QuestionScope::new(runtime, cancellation.clone());
+    // The collector arc is taken before the scope moves into the run: the
+    // settled boundary below reads the snapshot the run just finished filling.
+    let metrics = scope.metrics();
     let sink = TerminalSink::new(format);
     let sink = MetricsSink::new(&sink, scope.metrics());
     // The one-shot `ask` path composes no session universe at all — writes
@@ -73,8 +77,14 @@ pub(super) async fn ask(
     tokio::pin!(work);
     let outcome = tokio::select! {
         result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => { cancellation.cancel(); let _ = work.await; return Ok(130); }
+        _ = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            let _ = work.await;
+            print_metrics_section(&metrics);
+            return Ok(130);
+        }
     };
+    print_metrics_section(&metrics);
     settle_ask(outcome, &cancellation, format)
 }
 

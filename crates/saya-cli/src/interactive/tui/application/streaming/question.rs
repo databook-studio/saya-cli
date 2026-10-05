@@ -49,6 +49,13 @@ pub(crate) fn settle_stream_question(
     let Some(scope) = stream.and_then(|stream| stream.question_scope.as_ref()) else {
         return;
     };
+    // The question's collector, when it carried one, is snapshotted at
+    // settlement on every outcome — Done ok, err, or cancel — so the
+    // print-after-restore seam can say what the turn measured. A question
+    // without a collector records nothing.
+    if let Some(collector) = scope.metrics() {
+        session.remember_question_metrics(collector.snapshot());
+    }
     match result {
         Ok(output) => {
             let clarification = output

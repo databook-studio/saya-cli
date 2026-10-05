@@ -112,6 +112,7 @@ fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // reaches for when memory "didn't record".
     if cli.options.verbose {
         crate::agent::extraction_trace::enable();
+        crate::local_metrics::set_enabled(true);
     }
     refuse_continue_on_run(&command, cli.options.continue_session)?;
     refuse_workspace_on_subcommand(Some(&command), cli.options.workspace.as_deref())?;

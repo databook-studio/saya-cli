@@ -9,3 +9,4 @@ mod query;
 mod session;
 mod session_auto_compact;
 mod session_question_budget;
+mod session_verbose_metrics;
