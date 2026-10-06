@@ -66,6 +66,10 @@ pub(crate) mod session_prompt;
 mod session_request;
 mod session_resume;
 pub(crate) use session_resume::adopt_picker_resumed;
+// The pure rotation successor (D08a): production-dead until wired.
+// D08b wires this and removes the gate.
+#[cfg(test)]
+mod session_rotate;
 mod session_run;
 mod session_runner;
 // The session's recovery handle (E06b): the checkpoint store, the session
