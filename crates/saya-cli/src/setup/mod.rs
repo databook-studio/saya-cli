@@ -18,10 +18,10 @@ mod restore;
 // pure; everything terminal-shaped lives in these.
 pub(crate) mod flow;
 mod flow_commit;
-mod flow_options;
+pub(crate) mod flow_options;
 mod flow_probe;
 mod flow_recover;
-mod probe;
+pub(crate) mod probe;
 mod probe_database;
 mod probe_provider;
 mod prompt;
