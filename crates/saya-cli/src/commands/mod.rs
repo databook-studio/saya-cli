@@ -8,6 +8,11 @@ mod output;
 pub(crate) mod preferences;
 mod query;
 pub(crate) mod query_input;
+// Recovery operations (E07b) are shared surface-neutral list/diff/restore
+// over recorded edit checkpoints; nothing calls them until E08 wires the
+// user-facing surface, and E08 removes this test-only gate.
+#[cfg(test)]
+mod recovery;
 pub(crate) mod run;
 pub(crate) mod sessions;
 mod state;
