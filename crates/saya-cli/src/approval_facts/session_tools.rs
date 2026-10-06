@@ -31,7 +31,9 @@ pub(super) fn workspace_write_facts(
     if facts.workspace_root.is_some() {
         lines.push(
             "  containment: absolute paths, `..` escapes, and symlinks are refused · the \
-             write is atomic — an existing file is replaced whole, never partially"
+             write is atomic and create-if-absent; replacing an existing file needs the \
+             digest of what the model last read (a changed or unread file is refused, \
+             never overwritten)"
                 .to_string(),
         );
     }

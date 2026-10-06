@@ -167,6 +167,14 @@ impl SessionRuntime {
                 }
                 other => format!("could not claim the session lock: {other}"),
             })?;
+        // Crash recovery, once per acquisition: while this lock is held the
+        // process is the only owner of `<id>`, so a crash between prepare
+        // and commit is repaired before anything composes — `Prepared`
+        // records become `Uncertain` and orphan before-images are removed.
+        // The report is ignored and errors are swallowed: a session with no
+        // checkpoints directory is a cheap no-op read, and recovery must
+        // never fail an acquire.
+        let _ = store.recover_checkpoints(id);
         // One recovery handle per acquisition, once the lock is held: the
         // session's checkpoint store rides the same id, and the flag is
         // the opt-in default — OFF; nothing here flips it.
@@ -564,3 +572,7 @@ mod tests {
 #[cfg(test)]
 #[path = "session_runtime_question_tests.rs"]
 mod question_tests;
+
+#[cfg(test)]
+#[path = "session_recovery_acquire_tests.rs"]
+mod recovery_acquire_tests;

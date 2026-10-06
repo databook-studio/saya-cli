@@ -193,6 +193,26 @@ fn workspace_write_prompt_pins_the_containment_facts() {
     insta::assert_snapshot!(prompt);
 }
 
+/// The consent surface states the write contract the executor enforces:
+/// create-if-absent, and a replace only behind the digest the model last
+/// observed — never the old "replaced whole" claim over an existing file.
+#[test]
+fn a_workspace_write_ask_states_the_digest_contract_not_a_whole_replace() {
+    let facts = session_facts();
+    let tool = session_tool("workspace_write");
+    let arguments = serde_json::json!({"path": "notes/summary.md", "content": "hello world"});
+    let grant = grant_token(&tool.name, &arguments, None, &facts);
+    let prompt = approval_prompt(&tool, &arguments, grant.as_deref(), &facts, None, None);
+    assert!(
+        !prompt.contains("replaced whole"),
+        "an existing file is not replaced whole — the ask must not say so: {prompt}"
+    );
+    assert!(
+        prompt.contains("create-if-absent"),
+        "the ask names the create-if-absent contract: {prompt}"
+    );
+}
+
 /// `workspace_edit` states the path and the edit form's byte sizes — never
 /// the anchored bodies or the digests (the prompt states sizes only).
 #[test]
