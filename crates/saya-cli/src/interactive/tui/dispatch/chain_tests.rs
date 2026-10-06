@@ -181,6 +181,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
         "preferences" => "/preferences",
         "recovery" => "/recovery",
         "resume" => "/resume 20260101-000000-abc",
+        "setup" => "/setup",
         "columns" => "/columns",
         "contracts" => "/contracts",
         "contract" => "/contract",
@@ -525,6 +526,35 @@ fn context_dispatch_lists_the_loaded_source_and_never_its_body() {
     );
 }
 
+/// `/setup` through the real dispatch: the ONE new outcome, `Dispatch::RunSetup`
+/// — the dispatch never runs the wizard itself (the loop's `tick_pending` owns
+/// the handoff under the busy gate), it only routes the request.
+#[test]
+fn setup_dispatch_returns_run_setup() {
+    let mut fx = ChainFixture::build("setup-dispatch");
+    assert!(
+        matches!(dispatch_line("/setup", &mut fx), Dispatch::RunSetup),
+        "the real dispatch of /setup must route the handoff"
+    );
+}
+
+/// `/setup now` is a parse error, not an argument: an Error block with the
+/// pinned wording, and a Handled outcome.
+#[test]
+fn setup_with_trailing_text_is_a_parse_error_block() {
+    let mut fx = ChainFixture::build("setup-parse-error");
+    assert!(
+        matches!(dispatch_line("/setup now", &mut fx), Dispatch::Handled),
+        "the parse error is inline"
+    );
+    let error =
+        last_block(&fx.app.transcript, BlockKind::Error).expect("a parse error is an error block");
+    assert_eq!(
+        error, "setup takes no argument: /setup",
+        "the pinned parse-error wording: {error}"
+    );
+}
+
 /// `/sessions list` through the real dispatch: the shared listing the
 /// headless `saya sessions list` prints lands as a System block — this
 /// fixture's store is empty, so it says so and names the storage root.
@@ -818,14 +848,7 @@ fn a_rotate_submitted_while_busy_waits_for_the_running_request() {
 
     // The request ends: the queued line drains through the real dispatch.
     fx.app.compact_task = None;
-    crate::interactive::tui::loop_tick::pending::tick_pending(
-        &mut fx.app,
-        &mut fx.state,
-        &fx.runtime,
-        &fx.store,
-        RenderFormat::Text,
-        &mut fx.session,
-    );
+    drain_through_tick_pending(&mut fx);
     let error = last_block(&fx.app.transcript, BlockKind::Error).expect("the queued rotation ran");
     assert!(
         error.contains("run /compact first"),
@@ -1008,14 +1031,7 @@ fn a_queued_restore_waits_for_a_running_request() {
     fx.app.pending = Some("/recovery restore ck-000000".to_string());
     let blocks_before = fx.app.transcript.blocks().len();
 
-    super::super::loop_tick::tick_pending(
-        &mut fx.app,
-        &mut fx.state,
-        &fx.runtime,
-        &fx.store,
-        RenderFormat::Text,
-        &mut fx.session,
-    );
+    drain_through_tick_pending(&mut fx);
     assert_eq!(
         fx.app.transcript.blocks().len(),
         blocks_before,
@@ -1029,18 +1045,46 @@ fn a_queued_restore_waits_for_a_running_request() {
     // The request finished: the queued restore now dispatches, and the
     // unknown id is refused exactly as an immediate dispatch would.
     fx.app.compact_task = None;
-    super::super::loop_tick::tick_pending(
+    drain_through_tick_pending(&mut fx);
+    assert!(fx.app.pending.is_none(), "the queued restore was consumed");
+    let error = last_block(&fx.app.transcript, BlockKind::Error).expect("the refusal is said");
+    assert!(
+        error.contains("no recorded edit"),
+        "the restore ran only once idle: {error}"
+    );
+}
+
+/// The handoff inputs the real `tick_pending` takes: a no-op terminal double
+/// (no `/setup` line is drained in these tests, so neither half runs) and
+/// default CLI options.
+struct NoModes;
+
+impl crate::interactive::tui::terminal_handoff::TerminalModes for NoModes {
+    fn release(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn reacquire(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Drains the queued line through the real `tick_pending`, as the live loop
+/// does.
+fn drain_through_tick_pending(fx: &mut ChainFixture) {
+    let mut modes = NoModes;
+    let options = crate::cli::GlobalOptions::default();
+    let mut setup = crate::interactive::tui::loop_tick::pending::SetupInputs {
+        modes: &mut modes,
+        options: &options,
+    };
+    let _ = crate::interactive::tui::loop_tick::pending::tick_pending(
         &mut fx.app,
         &mut fx.state,
         &fx.runtime,
         &fx.store,
         RenderFormat::Text,
         &mut fx.session,
-    );
-    assert!(fx.app.pending.is_none(), "the queued restore was consumed");
-    let error = last_block(&fx.app.transcript, BlockKind::Error).expect("the refusal is said");
-    assert!(
-        error.contains("no recorded edit"),
-        "the restore ran only once idle: {error}"
+        &mut setup,
     );
 }

@@ -84,6 +84,11 @@ pub enum SlashCommand {
     /// loops own the behaviour (they hold the store and the runtime); the
     /// form takes no argument.
     Rotate,
+    /// `/setup` — hand the terminal to the guided setup from the full-screen
+    /// TUI. Parsed bare; trailing text is a usage error, never an argument.
+    /// The TUI owns the handoff; headless surfaces refuse with the pointer
+    /// to run `saya setup` from the shell.
+    Setup,
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
     Columns(Option<String>),
@@ -588,6 +593,14 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             }
             SlashCommand::Rotate
         }
+        "setup" => {
+            // `/setup` takes no argument: a trailing word is a typo, and the
+            // pinned error says so instead of reading it as one.
+            if !arg.is_empty() {
+                return Err(SlashParseError("setup takes no argument: /setup".into()));
+            }
+            SlashCommand::Setup
+        }
         "preferences" => {
             // `/preferences` is free text on the add and edit forms, so the
             // tail keeps its interior whitespace verbatim — the `/sql`
@@ -774,6 +787,17 @@ mod tests {
             parse_slash_command("/doctor now").unwrap(),
             Some(SlashCommand::Doctor)
         ));
+    }
+
+    /// `/setup` parses bare; a trailing word is a typo, never an argument —
+    /// the pinned parse error says so instead of reading it as one.
+    #[test]
+    fn test_parse_setup_takes_no_argument() {
+        assert_eq!(parse_slash_command("/setup"), Ok(Some(SlashCommand::Setup)));
+        assert_eq!(
+            parse_slash_command("/setup now"),
+            Err(SlashParseError("setup takes no argument: /setup".into()))
+        );
     }
 
     #[test]

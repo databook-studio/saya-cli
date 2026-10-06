@@ -53,9 +53,8 @@ mod startup_readiness;
 mod stream_events;
 mod table;
 mod terminal;
-// U06 wires this boundary and removes the gate; U04 keeps it test-only so
-// nothing in it fails the dead-code gate before it has a caller.
-#[cfg(test)]
+// The `/setup` handoff boundary: released from its U04 test-only gate now
+// that the slash command wires it into the loop.
 mod terminal_handoff;
 #[cfg(test)]
 mod terminal_handoff_tests;

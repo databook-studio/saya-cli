@@ -48,6 +48,7 @@ pub(super) fn apply_session_action(
                 | SessionAction::Investigation(_)
                 | SessionAction::Runs(_)
                 | SessionAction::RunCancel(_)
+                | SessionAction::Setup
         )
     ) {
         return None;
@@ -188,6 +189,10 @@ pub(super) fn apply_session_action(
             format,
             crate::cli::RunCommand::Cancel { run_id },
         ),
+        // `/setup` routes the handoff: the loop's tick_pending owns the
+        // terminal suspension and the wizard run under the busy gate — the
+        // dispatch only picks the outcome, it never runs the wizard.
+        SessionAction::Setup => return Some(Dispatch::RunSetup),
         // The guard above decided ownership; if it ever drifts, put the
         // action back and report "not mine" rather than dropping or panicking.
         other => {

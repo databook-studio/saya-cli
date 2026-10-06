@@ -780,12 +780,17 @@ const INTERACTIVE: Duration = Duration::from_secs(15);
 /// A live TUI session on a pty, kept across many interactions: the parser
 /// accumulates every chunk the reader thread ships, the writer feeds lines
 /// to the input buffer, and the child is killed on drop like every other
-/// rung.
+/// rung. `raw` keeps the exact byte stream (a second capture beside the
+/// parser) so the setup-handoff tests can assert alternate-screen ordering.
 struct InteractiveTui {
     writer: Box<dyn Write + Send>,
     parser: vt100::Parser,
     rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
     child: ChildGuard,
+    raw: Vec<u8>,
+    /// How many CPR queries (`ESC[6n`) have been answered so far; the count
+    /// over the accumulated raw stream decides whether another reply is due.
+    cursor_replies: usize,
 }
 
 impl InteractiveTui {
@@ -844,7 +849,9 @@ impl InteractiveTui {
                 Err(format!("the TUI exited; screen:\n{}", self.screen()))
             }
             Ok(Ok(bytes)) => {
+                self.raw.extend_from_slice(&bytes);
                 self.parser.process(&bytes);
+                self.answer_cursor_query();
                 Ok(())
             }
             Ok(Err(e)) => Err(format!("pty read failed: {e}")),
@@ -852,6 +859,23 @@ impl InteractiveTui {
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 Err("pty reader ended".to_string())
             }
+        }
+    }
+
+    /// Acts as the emulator's answer side: every unanswered CPR query in the
+    /// captured raw stream gets one reply written back, built from the
+    /// parser's current cursor position (1-based in the reply, 0-based in
+    /// vt100). Production no longer depends on a reply, but answering any
+    /// CPR a runtime path may still emit is harmless insurance.
+    fn answer_cursor_query(&mut self) {
+        let queries = count_of(&self.raw, CURSOR_QUERY);
+        while self.cursor_replies < queries {
+            let (row, col) = self.parser.screen().cursor_position();
+            let reply = format!("\x1b[{};{}R", row + 1, col + 1);
+            if self.writer.write_all(reply.as_bytes()).is_err() || self.writer.flush().is_err() {
+                break;
+            }
+            self.cursor_replies += 1;
         }
     }
 
@@ -909,6 +933,8 @@ fn interactive_tui(home: &Path) -> Result<InteractiveTui, String> {
         parser: vt100::Parser::new(ROWS, COLS, 0),
         rx,
         child: ChildGuard::new(child),
+        raw: Vec::new(),
+        cursor_replies: 0,
     })
 }
 
@@ -1147,6 +1173,8 @@ fn param_redact_tui(home: &Path) -> Result<InteractiveTui, String> {
         parser: vt100::Parser::new(ROWS, COLS, 0),
         rx,
         child: ChildGuard::new(child),
+        raw: Vec::new(),
+        cursor_replies: 0,
     })
 }
 
@@ -1481,5 +1509,317 @@ fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
     assert!(
         tui.still_running(),
         "the TUI is still alive after the rejected attached-form line"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// /setup: the terminal handoff to the guided setup (U06)
+// ---------------------------------------------------------------------------
+
+/// Alternate-screen enter/leave, byte-exact. Mirrored locally from
+/// `tui_verbose_metrics_pty.rs`, whose helpers are private to that binary.
+const ALT_ENTER: [u8; 8] = [0x1b, b'[', b'?', b'1', b'0', b'4', b'9', b'h'];
+/// Alternate-screen leave, byte-exact.
+const ALT_LEAVE: [u8; 8] = [0x1b, b'[', b'?', b'1', b'0', b'4', b'9', b'l'];
+
+/// The cursor-position report request crossterm writes when ratatui's
+/// `Terminal::clear` snapshots the cursor (a real emulator answers with
+/// `ESC[<row>;<col>R`).
+const CURSOR_QUERY: &[u8] = b"\x1b[6n";
+
+/// First (leftmost) position of `needle` in `haystack`.
+fn position_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// Last (rightmost) position of `needle` in `haystack`.
+fn rposition_of(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .rposition(|window| window == needle)
+}
+
+/// How many times `needle` occurs in `haystack`.
+fn count_of(haystack: &[u8], needle: &[u8]) -> usize {
+    if haystack.len() < needle.len() {
+        return 0;
+    }
+    haystack
+        .windows(needle.len())
+        .filter(|w| *w == needle)
+        .count()
+}
+
+/// The wizard's first prompt — the provider menu, word for word from
+/// `setup/prompt_provider.rs`. Everything the handoff tests wait on hangs
+/// off this so a wording drift fails at the first wait, not somewhere deep.
+const FIRST_PROMPT: &str = "Choose an AI provider:";
+
+/// Launches the TUI the way a setup user runs it: the configuration lives in
+/// the user config dir (`SAYA_CONFIG_HOME/saya`), discovered WITHOUT
+/// `--config`/`--connections` flags. This matters for the full-wizard test:
+/// the wizard's commit reload check reads the files it wrote through that
+/// same discovery, so the new profile resolves — with the flags the reload
+/// would be redirected to the harness's config and fail the commit.
+fn setup_tui(home: &Path) -> Result<InteractiveTui, String> {
+    let user_dir = home.join("config-home").join("saya");
+    std::fs::create_dir_all(&user_dir).expect("the user config dir builds");
+    std::fs::write(user_dir.join("config.toml"), "[ai]\nmodel = 'smoke'\n")
+        .expect("the user config writes");
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("could not allocate pty: {e}"))?;
+    let mut cmd = CommandBuilder::new(saya_bin());
+    cmd.env("HOME", home);
+    cmd.env("SAYA_CONFIG_HOME", home.join("config-home"));
+    cmd.env("SAYA_SESSION_DIR", home.join("sessions"));
+    cmd.env("SAYA_STATE_DB", home.join("state.sqlite3"));
+    cmd.cwd(home.join("launch-dir"));
+    std::fs::create_dir_all(home.join("launch-dir")).expect("scratch launch dir builds");
+    cmd.env_remove("XDG_CONFIG_HOME");
+    cmd.env_remove("XDG_DATA_HOME");
+    cmd.env_remove("APPDATA");
+    cmd.env_remove("SAYA_API_KEY");
+    cmd.env_remove("SAYA_AI_API_KEY");
+    cmd.args(["--approval-mode", "read-only"]);
+    let child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("could not spawn saya on pty: {e}"))?;
+    drop(pair.slave);
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("could not take pty writer: {e}"))?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("could not clone pty reader: {e}"))?;
+    let rx = reader_channel(reader);
+    Ok(InteractiveTui {
+        writer,
+        parser: vt100::Parser::new(ROWS, COLS, 0),
+        rx,
+        child: ChildGuard::new(child),
+        raw: Vec::new(),
+        cursor_replies: 0,
+    })
+}
+
+/// The raw-stream proof of the handoff, on the captured byte stream: the
+/// initial alternate-screen enter precedes the handoff's leave, the wizard's
+/// first prompt printed BETWEEN the leave and the second enter (the normal
+/// screen), the TUI re-entered after it, and enters == leaves + 1 while the
+/// child is alive.
+fn assert_raw_handoff_ordering(tui: &InteractiveTui) {
+    let raw = &tui.raw;
+    let enter1 = position_of(raw, &ALT_ENTER).expect("the TUI entered the alternate screen");
+    let leave = rposition_of(raw, &ALT_LEAVE).expect("the handoff left the alternate screen");
+    let enter2 =
+        rposition_of(raw, &ALT_ENTER).expect("the handoff re-entered the alternate screen");
+    let wizard =
+        position_of(raw, FIRST_PROMPT.as_bytes()).expect("the wizard printed its first prompt");
+    assert!(enter1 < leave, "the release came after the initial enter");
+    assert!(
+        leave < wizard,
+        "the wizard printed in the normal screen, not the alternate one"
+    );
+    assert!(
+        wizard < enter2,
+        "the TUI re-entered the alternate screen only after the wizard"
+    );
+    assert_eq!(
+        count_of(raw, &ALT_ENTER),
+        count_of(raw, &ALT_LEAVE) + 1,
+        "enter == leave + 1 while the child is alive"
+    );
+}
+
+/// `/setup` answered with EOF at the first prompt: the wizard cancels
+/// ("No files were changed.", exit 0), the TUI takes the terminal back and
+/// says so, input works again, and the raw stream shows the exact
+/// enter → leave → wizard → enter ordering.
+#[test]
+fn setup_handoff_cancel_returns_to_a_responsive_tui() {
+    let home = scratch_home("setup-cancel");
+    let _cleanup = HomeGuard(home.clone());
+    let mut tui = match setup_tui(&home) {
+        Ok(tui) => tui,
+        Err(reason) => {
+            eprintln!("skipping setup_handoff_cancel: {reason}");
+            return;
+        }
+    };
+    dismiss_trust_modal(&mut tui);
+    // Record the CPR count while the TUI is idle: the handoff below must add
+    // none (production no longer depends on a cursor-position reply).
+    let cpr_before_handoff = count_of(&tui.raw, CURSOR_QUERY);
+
+    tui.send_line("/setup").expect("send /setup");
+    // The first Enter is consumed by the completion popup (a bare command's
+    // accept), so a second one submits.
+    tui.send("\r").expect("submit /setup");
+    tui.wait_for(FIRST_PROMPT, INTERACTIVE)
+        .expect("the wizard took the terminal");
+    tui.send("\x04").expect("send EOF");
+    tui.wait_for("Guided setup closed", INTERACTIVE)
+        .expect("the TUI took the terminal back after the cancel");
+    // The handoff re-entered the alternate screen without querying the
+    // cursor position: the CPR count is unchanged.
+    assert_eq!(
+        count_of(&tui.raw, CURSOR_QUERY),
+        cpr_before_handoff,
+        "the handoff added no cursor-position query"
+    );
+    // The wizard's cancel line printed in the normal screen: it must be in
+    // the raw stream even though the TUI's repaint switched the parser back
+    // to the alternate screen.
+    assert!(
+        position_of(&tui.raw, b"No files were changed.").is_some(),
+        "the wizard's cancel line was printed"
+    );
+    tui.send_line("/help").expect("send /help");
+    tui.send("\r").expect("submit /help");
+    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+        .expect("input works again after the handoff");
+    assert!(
+        tui.still_running(),
+        "the TUI is still alive after the cancel"
+    );
+    assert_raw_handoff_ordering(&tui);
+}
+
+/// The full sqlite wizard through the handoff: every prompt answered in turn
+/// (the pty cannot be pre-scripted here — typed-ahead bytes before the
+/// release are consumed by crossterm, so each prompt is waited for), the
+/// profile lands in the user config dir, and the TUI comes back responsive.
+#[test]
+fn setup_handoff_full_wizard_writes_config_and_returns() {
+    let home = scratch_home("setup-full");
+    let _cleanup = HomeGuard(home.clone());
+    // An empty file is a valid empty SQLite database, so the probe succeeds.
+    let db = home.join("team.db");
+    std::fs::write(&db, b"").expect("the empty sqlite file creates");
+    let mut tui = match setup_tui(&home) {
+        Ok(tui) => tui,
+        Err(reason) => {
+            eprintln!("skipping setup_handoff_full_wizard: {reason}");
+            return;
+        }
+    };
+    dismiss_trust_modal(&mut tui);
+
+    tui.send_line("/setup").expect("send /setup");
+    // The first Enter is consumed by the completion popup (a bare command's
+    // accept), so a second one submits.
+    tui.send("\r").expect("submit /setup");
+    tui.wait_for(FIRST_PROMPT, INTERACTIVE)
+        .expect("the wizard took the terminal");
+    tui.send_line("6").expect("skip the provider");
+    tui.wait_for("Choose a database:", INTERACTIVE)
+        .expect("the database menu");
+    tui.send_line("1").expect("sqlite");
+    tui.wait_for("Database file path:", INTERACTIVE)
+        .expect("the path prompt");
+    tui.send_line(db.to_str().expect("utf-8 db path"))
+        .expect("send the db path");
+    tui.wait_for("Profile name [sqlite]:", INTERACTIVE)
+        .expect("the profile name prompt");
+    tui.send_line("team").expect("send the profile name");
+    tui.wait_for("Write these files?", INTERACTIVE)
+        .expect("the confirm prompt after the review and probe");
+    tui.send_line("y").expect("confirm the write");
+    tui.wait_for("Guided setup closed", INTERACTIVE)
+        .expect("the TUI took the terminal back after the commit");
+
+    let written = std::fs::read_to_string(home.join("config-home/saya/connections.toml"))
+        .expect("the wizard wrote connections.toml");
+    assert!(
+        written.contains("team"),
+        "the profile name landed: {written}"
+    );
+    assert!(
+        written.contains("team.db"),
+        "the sqlite path landed: {written}"
+    );
+    tui.send_line("/help").expect("send /help");
+    tui.send("\r").expect("submit /help");
+    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+        .expect("input works again after the handoff");
+    assert!(
+        tui.still_running(),
+        "the TUI is still alive after the full wizard"
+    );
+}
+
+/// A wizard FAILURE returns the TUI to the user with the error block: a
+/// pre-seeded `team` profile makes the flow's plan refuse the duplicate name
+/// before anything is written — a real, cheap failure (exit 2, no chmod, no
+/// cleanup) — and the TUI reports the exit code and stays responsive.
+#[test]
+fn setup_handoff_failure_returns_to_the_tui() {
+    let home = scratch_home("setup-fail");
+    let _cleanup = HomeGuard(home.clone());
+    let db = home.join("taken.db");
+    std::fs::write(&db, b"").expect("the empty sqlite file creates");
+    // The user config dir already holds a `team` profile (setup_tui wrote
+    // config.toml beside it), so the wizard's plan refuses the name. The
+    // dir exists before this write so the seed lands pre-launch.
+    std::fs::create_dir_all(home.join("config-home/saya")).expect("the user config dir builds");
+    std::fs::write(
+        home.join("config-home/saya/connections.toml"),
+        format!(
+            "[profiles.team]\ntype = 'sqlite'\npath = '{}'\nread_only = false\n",
+            db.display()
+        ),
+    )
+    .expect("the seed connections write");
+    let mut tui = match setup_tui(&home) {
+        Ok(tui) => tui,
+        Err(reason) => {
+            eprintln!("skipping setup_handoff_failure: {reason}");
+            return;
+        }
+    };
+    dismiss_trust_modal(&mut tui);
+
+    tui.send_line("/setup").expect("send /setup");
+    // The first Enter is consumed by the completion popup (a bare command's
+    // accept), so a second one submits.
+    tui.send("\r").expect("submit /setup");
+    tui.wait_for(FIRST_PROMPT, INTERACTIVE)
+        .expect("the wizard took the terminal");
+    tui.send_line("6").expect("skip the provider");
+    tui.wait_for("Choose a database:", INTERACTIVE)
+        .expect("the database menu");
+    tui.send_line("1").expect("sqlite");
+    tui.wait_for("Database file path:", INTERACTIVE)
+        .expect("the path prompt");
+    tui.send_line(db.to_str().expect("utf-8 db path"))
+        .expect("send the db path");
+    tui.wait_for("Profile name [sqlite]:", INTERACTIVE)
+        .expect("the profile name prompt");
+    tui.send_line("team").expect("send the profile name");
+    tui.wait_for("Guided setup ended with exit code 2", INTERACTIVE)
+        .expect("the failure block after the refused plan");
+    assert!(
+        position_of(&tui.raw, b"already exists in connections.toml").is_some(),
+        "the wizard's own refusal printed in the normal screen"
+    );
+    tui.send_line("/help").expect("send /help");
+    tui.send("\r").expect("submit /help");
+    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+        .expect("input works again after the failed handoff");
+    assert!(
+        tui.still_running(),
+        "the TUI is still alive after the failed wizard"
     );
 }

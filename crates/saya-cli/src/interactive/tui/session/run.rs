@@ -32,6 +32,7 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         trusted_echo,
         trust_pending,
         launch,
+        options,
     } = args;
     let choice = runtime.resolved.output_color;
     use std::io::IsTerminal as _;
@@ -98,7 +99,18 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
         super::super::loop_tick::tick_clipboard(&mut app, guard.terminal.backend_mut());
         super::super::loop_tick::tick_workers(&mut app, store, state);
         super::super::loop_tick::tick_busy(&mut app, store, state, session);
-        super::super::loop_tick::tick_pending(&mut app, state, runtime, store, format, session);
+        // The queued-prompt drain, which owns the `/setup` handoff: the
+        // guard is threaded through so the wizard can release and reacquire
+        // the terminal modes. An io error here means the terminal could not
+        // be re-entered — the `?` stops the loop and returns it from `run`
+        // (the terminal is already restored; do not keep drawing).
+        let mut setup = super::super::loop_tick::pending::SetupInputs {
+            modes: &mut guard,
+            options,
+        };
+        super::super::loop_tick::tick_pending(
+            &mut app, state, runtime, store, format, session, &mut setup,
+        )?;
         super::super::loop_tick::tick_resume(&mut app, store, state, runtime, session);
     }
 

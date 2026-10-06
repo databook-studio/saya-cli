@@ -1,12 +1,15 @@
-//! The U04 handoff boundary between the full-screen TUI and plain line I/O.
-//! A future caller (U06) suspends the TUI, runs the existing guided setup in
-//! the normal screen, and always comes back to the idle TUI — on success, on
-//! a wizard error, on cancellation, and on a panic inside the wizard.
+//! The terminal handoff boundary between the full-screen TUI and plain line
+//! I/O. The caller (`/setup`, wired in U06) suspends the TUI, runs the
+//! existing guided setup in the normal screen, and always comes back to the
+//! idle TUI — on success, on a wizard error, on cancellation, and on a panic
+//! inside the wizard.
 
 use std::io::{self, BufRead, Write};
 use std::panic::{self, AssertUnwindSafe};
 use std::time::Duration;
 
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::{
     event::{EnableBracketedPaste, EnableMouseCapture, poll, read},
     execute,
@@ -14,6 +17,7 @@ use ratatui::crossterm::{
 };
 
 use super::terminal::TerminalGuard;
+use super::transcript::{BlockKind, Transcript};
 use crate::setup::flow::run_with;
 use crate::setup::flow_options::FlowOptions;
 
@@ -38,9 +42,10 @@ impl TerminalModes for TerminalGuard {
             EnableBracketedPaste,
             EnableMouseCapture
         )?;
-        // The screen content was replaced, so ratatui must repaint every
-        // cell: clear forces a full redraw on the next draw.
-        self.terminal.clear()?;
+        // The alternate screen was re-entered blank: a fresh Terminal has
+        // empty buffers, so the next draw repaints every cell — and, unlike
+        // `clear()`, needs no cursor-position reply from the terminal.
+        self.terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
         // Keystrokes typed while the wizard owned the terminal must never
         // reach the TUI: drain everything already queued before the first
         // repaint.
@@ -56,7 +61,7 @@ impl TerminalModes for TerminalGuard {
 /// resumed once the terminal is back). A failed release runs no work; the
 /// half-released terminal is repaired best-effort first. A failed reacquire
 /// is the returned error: the caller must treat the terminal as lost.
-pub(crate) fn with_terminal_released<M: TerminalModes, R>(
+pub(crate) fn with_terminal_released<M: TerminalModes + ?Sized, R>(
     modes: &mut M,
     work: impl FnOnce() -> R,
 ) -> io::Result<R> {
@@ -87,8 +92,9 @@ pub(crate) enum SetupHandoff {
 
 /// Runs the existing guided setup over the real stdin/stdout in the normal
 /// screen: release, wizard, reacquire — always in that order. Prints nothing
-/// afterwards; the TUI repaints.
-pub(crate) fn run_guided_setup<M: TerminalModes>(
+/// afterwards; the TUI repaints. `+ ?Sized` so the dispatch loop can hand a
+/// `&mut dyn TerminalModes` straight through.
+pub(crate) fn run_guided_setup<M: TerminalModes + ?Sized>(
     modes: &mut M,
     options: &mut FlowOptions,
 ) -> io::Result<SetupHandoff> {
@@ -99,7 +105,7 @@ pub(crate) fn run_guided_setup<M: TerminalModes>(
 
 /// The same handoff over injected streams, so the whole path is testable
 /// with scripted input and a captured output.
-pub(crate) fn run_guided_setup_with<M: TerminalModes>(
+pub(crate) fn run_guided_setup_with<M: TerminalModes + ?Sized>(
     modes: &mut M,
     options: &mut FlowOptions,
     input: &mut dyn BufRead,
@@ -109,4 +115,32 @@ pub(crate) fn run_guided_setup_with<M: TerminalModes>(
         Ok(code) => SetupHandoff::Finished(code),
         Err(error) => SetupHandoff::Failed(error.to_string()),
     })
+}
+
+/// Renders the handoff's outcome into the transcript after the terminal is
+/// back. The wizard said everything it did; the TUI adds only where control
+/// stands now. A lost terminal (`Err`) is returned, never rendered: the
+/// caller must stop the loop rather than keep drawing into a terminal it no
+/// longer owns.
+pub(crate) fn handle_setup_outcome(
+    outcome: io::Result<SetupHandoff>,
+    transcript: &mut Transcript,
+) -> Result<(), io::Error> {
+    match outcome? {
+        SetupHandoff::Finished(0) => transcript.push(
+            BlockKind::System,
+            "Guided setup closed. Any new configuration applies to your next saya session.",
+        ),
+        SetupHandoff::Finished(code) => transcript.push(
+            BlockKind::Error,
+            format!(
+                "Guided setup ended with exit code {code}. \
+                 Nothing was applied that the wizard did not report."
+            ),
+        ),
+        SetupHandoff::Failed(message) => {
+            transcript.push(BlockKind::Error, format!("Guided setup failed: {message}"))
+        }
+    }
+    Ok(())
 }

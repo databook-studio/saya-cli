@@ -92,6 +92,7 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "rotate",
         "Continue in a new, smaller session that keeps your summary and notes (run /compact first)",
     ),
+    ("setup", "Run the guided setup (full-screen terminal only)"),
     ("columns", "Choose which columns wide result tables show"),
     ("contracts", "List contracts, or show one object's contract"),
     ("contract", "Alias for /contracts"),
@@ -217,6 +218,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("sessions", "/sessions [list|delete <id>]"),
             ("resume", "/resume <id>"),
             ("rotate", "/rotate"),
+            ("setup", "/setup"),
             ("context", "/context"),
             ("doctor", "/doctor"),
             ("usage", "/usage"),
@@ -443,6 +445,15 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              after ck-. Never prompts; never a model-callable tool. \
              Example: /recovery   or   /recovery on   or   /recovery off   or   \
              /recovery list   or   /recovery diff ck-123456…   or   /recovery restore ck-123456…",
+        ),
+        "setup" => Some(
+            "setup — run the guided setup from the full-screen TUI: it hands the terminal \
+             to the same wizard `saya setup` runs and takes it back when the wizard \
+             finishes, is cancelled (Ctrl-D), or fails. Takes no argument. The wizard \
+             writes your user configuration; the new configuration applies to your \
+             NEXT saya session — the running one keeps the settings it loaded. Headless \
+             surfaces (piped REPL, --turn-file) refuse with the pointer to run \
+             `saya setup` from your shell. Example: /setup",
         ),
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
