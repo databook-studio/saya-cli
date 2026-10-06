@@ -63,6 +63,10 @@ pub use commands::{
     run_investigation, run_investigation_outcome, run_management,
 };
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
+// The `TerminalEvent::DoctorTask` payload types: a public enum may not
+// expose crate-only types, so they ride the same public re-export the
+// contract views do.
+pub use config::doctor_task::{CheckStatus, TaskCheck};
 
 #[cfg(test)]
 mod approval_facts_tests;

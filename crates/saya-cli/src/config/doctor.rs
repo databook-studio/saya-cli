@@ -180,7 +180,7 @@ fn secret_lines(runtime: &RuntimeConfig) -> SecretReport {
     }
 }
 
-fn profile_secrets(profile: &DatabaseProfile) -> Vec<&saya_types::SecretRef> {
+pub(crate) fn profile_secrets(profile: &DatabaseProfile) -> Vec<&saya_types::SecretRef> {
     match profile {
         DatabaseProfile::Postgres { password, .. } => password.iter().collect(),
         DatabaseProfile::Mysql {
@@ -207,7 +207,10 @@ fn profile_secrets(profile: &DatabaseProfile) -> Vec<&saya_types::SecretRef> {
 
 /// Host/port the AI provider is configured to contact. `None` means there is
 /// no meaningful endpoint to report (a gateway with no default address).
-fn provider_endpoint(provider: AiProvider, base_url: Option<&str>) -> Option<(String, u16)> {
+pub(crate) fn provider_endpoint(
+    provider: AiProvider,
+    base_url: Option<&str>,
+) -> Option<(String, u16)> {
     const DEFAULTS: [(AiProvider, &str, u16); 4] = [
         (AiProvider::Ollama, "localhost", 11_434),
         (AiProvider::Openai, "api.openai.com", 443),
