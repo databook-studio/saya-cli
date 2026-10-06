@@ -52,6 +52,12 @@ mod sql_task;
 mod stream_events;
 mod table;
 mod terminal;
+// U06 wires this boundary and removes the gate; U04 keeps it test-only so
+// nothing in it fails the dead-code gate before it has a caller.
+#[cfg(test)]
+mod terminal_handoff;
+#[cfg(test)]
+mod terminal_handoff_tests;
 pub(crate) mod transcript;
 #[cfg(test)]
 mod truncation_tests;
