@@ -965,6 +965,31 @@ fn handle_line_verbatim(
             TurnOutcome::Errored
         });
     }
+    if let SessionAction::Recovery(command) = action {
+        // `/recovery …` — the one shared `run_recovery` operation the TUI
+        // runs too, over the session's own recovery handle (its store, its
+        // id, its flag — the recorder's parts) and the bound workspace. A
+        // refusal is an errored turn, exactly like the generic Error path,
+        // so `--turn-file` exits non-zero.
+        let (ok, message) = crate::commands::recovery::run_recovery(
+            command,
+            session.recovery(),
+            session.universe().workspace().as_deref(),
+            super::session_continuation::now_unix_ms(),
+        );
+        let emitted = if ok {
+            SessionAction::Message(message)
+        } else {
+            SessionAction::Error(message)
+        };
+        super::session_emit::emit_action(emitted, format, state, store)?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(if ok {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
+    }
     if let SessionAction::Run(tail) = action {
         // `/run --seed-grants <tail…>` seeds the child's `--allow` from this
         // session's grants on request: only tokens the run's parser accepts

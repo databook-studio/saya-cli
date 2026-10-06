@@ -49,6 +49,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "workspace",
     "thinking",
     "tasks",
+    "recovery",
     "help",
     "exit",
     "quit",

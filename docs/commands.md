@@ -611,6 +611,57 @@ compact further. If the successor cannot be opened — for example its
 session lock is held by another process — the rotation stops with the
 successor saved and resumable and your current session untouched.
 
+## Undoing agent file edits: `/recovery`
+
+`/recovery` covers the agent's **direct file edits** inside the bound
+workspace: it is **opt-in per session, off by default**, and the flag
+dies with the session (a resumed session starts off again). While it is
+on, `workspace_write` and `workspace_edit` keep the file's previous
+contents — the exact bytes — before each edit, so a later restore can put
+them back.
+
+- **What is stored and where.** Owner-only files under the saya sessions
+  directory, outside your project: each edit's before-image, its
+  post-edit digest and the path. Nothing else — never the conversation,
+  never database results.
+- **Limits.** At most 128 edits and 64 MiB per session, 8 MiB per file.
+  At the quota, an edit that would need recovery is refused before
+  anything is mutated; you can delete the recorded edits
+  (`/sessions delete`) or turn recovery off for later edits.
+- **What it does NOT cover.** Restoring never undoes commands, downloads,
+  scratch tables or database effects, and files that look like
+  credentials or secrets are edited without a copy.
+
+- `/recovery` — the flag, how many edits are recorded, and the quota use.
+- `/recovery on` — turn recording on (it explains the terms). Recording
+  starts with the NEXT file edit; edits made before were not recorded.
+- `/recovery off` — stop recording; what was recorded stays available.
+- `/recovery list` — the recorded edits, one line each, with their
+  `ck-…` ids and whether each is restorable now.
+- `/recovery diff <id>` — preview what restoring that edit would change.
+- `/recovery restore <id>` — undo that edit. `<id>` is the full `ck-…`
+  id from `/recovery list` or a unique prefix of at least 6 characters
+  after `ck-`.
+
+A restore runs only when the file **still is, digest for digest, the
+recorded edit's result** — a restore never overwrites newer work: restore
+the newer edits first, or edit the file yourself. After a successful
+restore the copy is consumed. The forms never prompt and are never a
+model-callable tool.
+
+```text
+saya> /recovery on
+Recovery is on. From the next file edit, workspace_write and workspace_edit
+keep the file's previous contents so you can undo an edit. ...
+saya> /recovery list
+Recorded edits this session (1 of 128 · 1 KiB of 64 MiB):
+ck-1a2b… notes.txt workspace_write committed absent -> 24 B (sha 9f2c…) ·
+just now · restorable now: the file still matches the recorded edit
+saya> /recovery restore ck-1a2b
+Restored notes.txt to its state before the edit (checkpoint ck-1a2b… removed).
+Restoring a file does not undo commands, downloads or database effects.
+```
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the

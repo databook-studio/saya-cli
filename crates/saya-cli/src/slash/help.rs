@@ -49,6 +49,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "notes",
         "Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember",
     ),
+    (
+        "recovery",
+        "Record file edits so you can undo them; list, preview and restore",
+    ),
     ("sql", "Run a raw SQL query against the active profile"),
     (
         "export",
@@ -220,6 +224,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("thinking", "/thinking [on|off]"),
             ("tasks", "/tasks [clear]"),
             ("notes", "/notes [set <text>|clear]"),
+            ("recovery", "/recovery [on|off|list|diff <id>|restore <id>]"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
         ],
@@ -423,6 +428,21 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              (/resume <old id>). Run it when the session record nears the 4 MiB cap (the \
              store warns at 3 MiB) and compaction alone no longer keeps it small. \
              Example: /rotate",
+        ),
+        "recovery" => Some(
+            "recovery [on|off|list|diff <id>|restore <id>] — record this session's direct \
+             file edits so you can undo them (opt-in, off by default). /recovery shows the \
+             flag and the quota use; /recovery on turns recording on (from the NEXT file \
+             edit) and says what the copies are, where they live, and what recovery never \
+             covers; /recovery off stops recording and keeps what was recorded; /recovery \
+             list shows the recorded edits with their ids and restore status; /recovery \
+             diff <id> previews what restoring would change; /recovery restore <id> puts \
+             the file back to its exact pre-edit state — only while the file still is \
+             exactly that edit's result, so restore newer edits first. <id> is the full \
+             ck-… id from /recovery list or a unique prefix of at least 6 characters \
+             after ck-. Never prompts; never a model-callable tool. \
+             Example: /recovery   or   /recovery on   or   /recovery off   or   \
+             /recovery list   or   /recovery diff ck-123456…   or   /recovery restore ck-123456…",
         ),
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",

@@ -44,13 +44,16 @@ pub(crate) fn emit_action(
         // is intercepted likewise: the shared operations run in the loop,
         // scoped to the session's bound worktree root. `/rotate` is
         // intercepted too: the rotation runs in the loop through the shared
-        // runner, which owns the store and the runtime.
+        // runner, which owns the store and the runtime. `/recovery` is
+        // intercepted likewise: the shared `run_recovery` runs in the loop,
+        // over the session's own recovery handle.
         | SessionAction::Allow(_)
         | SessionAction::Grants
         | SessionAction::Context
         | SessionAction::SessionsList
         | SessionAction::SessionsDelete(_)
         | SessionAction::Preferences(_)
+        | SessionAction::Recovery(_)
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)

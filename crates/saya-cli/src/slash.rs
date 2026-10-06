@@ -1,4 +1,5 @@
 use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
+use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session_notes::NotesCommand;
 use saya_agent::{AgentMode, ApprovalPolicy};
 use std::{fmt, str::FromStr};
@@ -156,6 +157,13 @@ pub enum SlashCommand {
     /// Translated once to the same `NotesCommand` the shared `run_notes`
     /// operation runs on both surfaces.
     Notes(NotesCommand),
+    /// `/recovery [on|off|list|diff <id>|restore <id>]` — the session's
+    /// opt-in file-edit recovery: bare (or `status`) shows the flag and
+    /// quota use, `on`/`off` flip the session flag, `list` lists the
+    /// recorded edits, and `diff <id>`/`restore <id>` preview and undo one
+    /// recorded edit. Translated once to the `RecoveryCommand` the shared
+    /// `run_recovery` operation runs on every surface.
+    Recovery(RecoveryCommand),
     Exit,
 }
 
@@ -449,6 +457,50 @@ fn parse_notes(tail: &str) -> Result<NotesCommand, SlashParseError> {
     }
 }
 
+/// Parses the `/recovery` tail: bare or `status` shows the status; `on`
+/// and `off` flip the session flag; `list` lists the recorded edits;
+/// `diff <id>` and `restore <id>` take exactly one id. No free text:
+/// every malformed form is a usage error naming its remedy.
+fn parse_recovery(tail: &str) -> Result<RecoveryCommand, SlashParseError> {
+    const USAGE: &str = " (usage: /recovery, /recovery on, /recovery off, /recovery list, \
+         /recovery diff <id>, /recovery restore <id>)";
+    if tail.is_empty() {
+        return Ok(RecoveryCommand::Status);
+    }
+    let (head, rest) = tail.split_once(char::is_whitespace).unwrap_or((tail, ""));
+    let rest = rest.trim();
+    match head {
+        "status" if rest.is_empty() => Ok(RecoveryCommand::Status),
+        "on" if rest.is_empty() => Ok(RecoveryCommand::On),
+        "off" if rest.is_empty() => Ok(RecoveryCommand::Off),
+        "list" if rest.is_empty() => Ok(RecoveryCommand::List),
+        "status" | "on" | "off" | "list" => Err(SlashParseError(format!(
+            "recovery {head} takes no argument{USAGE}"
+        ))),
+        "diff" | "restore" => {
+            if rest.is_empty() {
+                return Err(SlashParseError(format!(
+                    "recovery {head} requires an id: /recovery {head} <id>"
+                )));
+            }
+            if rest.split_whitespace().count() > 1 {
+                return Err(SlashParseError(format!(
+                    "recovery {head} takes exactly one id"
+                )));
+            }
+            Ok(if head == "diff" {
+                RecoveryCommand::Diff(rest.to_string())
+            } else {
+                RecoveryCommand::Restore(rest.to_string())
+            })
+        }
+        other => Err(SlashParseError(format!(
+            "unknown /recovery subcommand: {other} (usage: /recovery, /recovery on, \
+             /recovery off, /recovery list, /recovery diff <id>, /recovery restore <id>)"
+        ))),
+    }
+}
+
 pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashParseError> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
@@ -553,6 +605,13 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // operation runs on both surfaces.
             let tail = trimmed.strip_prefix("/notes").unwrap_or("").trim();
             SlashCommand::Notes(parse_notes(tail)?)
+        }
+        "recovery" => {
+            // `/recovery` carries no free text: the sub-word split happens
+            // once, here, mapping onto the same `RecoveryCommand` the
+            // shared `run_recovery` operation runs on every surface.
+            let tail = trimmed.strip_prefix("/recovery").unwrap_or("").trim();
+            SlashCommand::Recovery(parse_recovery(tail)?)
         }
         "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
         "doctor" => SlashCommand::Doctor,
@@ -1466,6 +1525,96 @@ mod tests {
                 && unknown.0.contains("/notes set <text>")
                 && unknown.0.contains("/notes clear"),
             "the unknown-subcommand error names every valid form: {unknown}"
+        );
+    }
+
+    /// `/recovery` parses every sub-word form: bare (or `status`) shows the
+    /// status, on/off flip the flag, list lists, and diff/restore carry the
+    /// typed id (full `ck-…` or a unique prefix) verbatim.
+    #[test]
+    fn recovery_grammar_parses_every_form() {
+        use crate::commands::recovery::RecoveryCommand;
+        assert_eq!(
+            parse_slash_command("/recovery"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::Status)))
+        );
+        assert_eq!(
+            parse_slash_command("/recovery status"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::Status)))
+        );
+        assert_eq!(
+            parse_slash_command("/recovery on"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::On)))
+        );
+        assert_eq!(
+            parse_slash_command("/recovery off"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::Off)))
+        );
+        assert_eq!(
+            parse_slash_command("/recovery list"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::List)))
+        );
+        assert_eq!(
+            parse_slash_command("/recovery diff ck-abcdef"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::Diff(
+                "ck-abcdef".into()
+            ))))
+        );
+        assert_eq!(
+            parse_slash_command("/recovery restore ck-abcdef1234"),
+            Ok(Some(SlashCommand::Recovery(RecoveryCommand::Restore(
+                "ck-abcdef1234".into()
+            ))))
+        );
+    }
+
+    /// There is no free text on `/recovery`: trailing words on the
+    /// argument-less forms, a missing or extra id on diff/restore, and any
+    /// unknown sub-word are usage errors naming the remedy.
+    #[test]
+    fn recovery_malformed_forms_are_usage_errors() {
+        for sub in ["status", "on", "off", "list"] {
+            let error = parse_slash_command(&format!("/recovery {sub} extra")).unwrap_err();
+            assert!(
+                error
+                    .0
+                    .contains(&format!("recovery {sub} takes no argument")),
+                "{error}"
+            );
+        }
+        let diff_empty = parse_slash_command("/recovery diff").unwrap_err();
+        assert!(
+            diff_empty
+                .0
+                .contains("recovery diff requires an id: /recovery diff <id>"),
+            "{diff_empty}"
+        );
+        let restore_empty = parse_slash_command("/recovery restore").unwrap_err();
+        assert!(
+            restore_empty
+                .0
+                .contains("recovery restore requires an id: /recovery restore <id>"),
+            "{restore_empty}"
+        );
+        let restore_extra = parse_slash_command("/recovery restore a b").unwrap_err();
+        assert!(
+            restore_extra
+                .0
+                .contains("recovery restore takes exactly one id"),
+            "{restore_extra}"
+        );
+        let diff_extra = parse_slash_command("/recovery diff a b").unwrap_err();
+        assert!(
+            diff_extra.0.contains("recovery diff takes exactly one id"),
+            "{diff_extra}"
+        );
+        let unknown = parse_slash_command("/recovery nope").unwrap_err();
+        assert!(
+            unknown
+                .0
+                .contains("unknown /recovery subcommand: nope (usage: /recovery, /recovery on, \
+                           /recovery off, /recovery list, /recovery diff <id>, /recovery restore <id>)"),
+            "{unknown}"
         );
     }
 }

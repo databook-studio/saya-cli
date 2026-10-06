@@ -68,6 +68,7 @@ fn test_command_prefix() {
             "/contract",
             "/confirm",
             "/context",
+            "/recovery",
             "/doctor"
         ]
     );
@@ -89,6 +90,7 @@ fn test_command_prefix_case_insensitive() {
             "/contract",
             "/confirm",
             "/context",
+            "/recovery",
             "/doctor"
         ]
     );

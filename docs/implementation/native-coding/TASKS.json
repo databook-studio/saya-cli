@@ -1,0 +1,3053 @@
+{
+  "schema_version": 1,
+  "baseline": "faa0a8c875ad2640eb5c2cdd5fee0c0f9161f65f",
+  "date": "2026-10-06",
+  "status": "planning_only",
+  "worker_model": "litellm/glm-5.3-flash",
+  "max_worker_slots": 3,
+  "max_parallel_cargo": 2,
+  "decisions": "DECISIONS.md",
+  "tasks": [
+    {
+      "id": "A01",
+      "title": "Cancel bounded HTTP fetch",
+      "domain": "harness",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "fetch"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/fetch/adapter.rs",
+        "crates/saya-harness/src/fetch/adapter_tests.rs",
+        "crates/saya-harness/src/fetch/tools.rs"
+      ],
+      "outcome": "Carry the existing turn token through fetch admission, DNS/redirect/request/body waits; return typed cancellation and retain existing byte/time limits.",
+      "red_test": "A held local fake transport is cancelled while awaiting headers/body; fetch settles cancelled and consumes no next hop. Extend existing transport-boundary tests, not a token predicate test.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/fetch/tools.rs:111",
+        "crates/saya-harness/src/fetch/adapter.rs:135"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/fetch/adapter.rs": "existing",
+        "crates/saya-harness/src/fetch/adapter_tests.rs": "existing",
+        "crates/saya-harness/src/fetch/tools.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "A02",
+      "title": "Cancel resumable downloads before publication",
+      "domain": "harness",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "A01"
+      ],
+      "exclusive_leases": [
+        "fetch"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/fetch/adapter.rs",
+        "crates/saya-harness/src/fetch/adapter_tests.rs",
+        "crates/saya-harness/src/fetch/download.rs",
+        "crates/saya-harness/src/fetch/download_error.rs"
+      ],
+      "outcome": "Apply token-aware waits and a checked publication boundary to downloads. Preserve existing verified partial/resume behavior and consumed-byte accounting.",
+      "red_test": "Cancel after a body chunk: destination remains unchanged, partial is bounded/valid, explicit retry works without lost or double-counted bytes. Separately prove completion winning the commit boundary reports committed outcome.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/fetch/download.rs:42",
+        "crates/saya-harness/src/workspace/download.rs:61"
+      ],
+      "risk": "Cancellation must not delete a pre-existing valid partial; never claim filesystem publication can be rolled back by dropping a future.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/fetch/adapter.rs": "existing",
+        "crates/saya-harness/src/fetch/adapter_tests.rs": "existing",
+        "crates/saya-harness/src/fetch/download.rs": "existing",
+        "crates/saya-harness/src/fetch/download_error.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "A03",
+      "title": "Interrupt and settle scratch queries",
+      "domain": "harness",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "scratch"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/scratch/execute.rs",
+        "crates/saya-harness/src/scratch/mod.rs",
+        "crates/saya-harness/src/scratch/tools.rs",
+        "crates/saya-harness/tests/scratch.rs"
+      ],
+      "outcome": "Implement context-aware scratch query execution with interrupt-then-join, reusing ScratchDb InterruptHandle and timeout settlement.",
+      "red_test": "Cancel an active runaway scratch query through the public executor; a subsequent real scratch query succeeds, proving connection ownership was released after settlement.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/scratch/execute.rs:40",
+        "crates/saya-harness/src/scratch/open.rs:34",
+        "crates/saya-harness/tests/scratch.rs:549"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/scratch/execute.rs": "existing",
+        "crates/saya-harness/src/scratch/mod.rs": "existing",
+        "crates/saya-harness/src/scratch/tools.rs": "existing",
+        "crates/saya-harness/tests/scratch.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "A04",
+      "title": "Cancel scratch imports transactionally",
+      "domain": "harness",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "A03"
+      ],
+      "exclusive_leases": [
+        "scratch"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/scratch/import.rs",
+        "crates/saya-harness/src/scratch/tools.rs",
+        "crates/saya-harness/tests/scratch_import.rs"
+      ],
+      "outcome": "Check cancellation before parsing, around bounded insertion loops and before transaction commit; settle the blocking task before returning. Retain import timeout and row/byte limits.",
+      "red_test": "Cancel a replacement import before commit: original table survives and next operation works. Cancel after actual commit: report the committed boundary truthfully. No detached blocking task.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/scratch/import.rs:63",
+        "crates/saya-harness/src/scratch/import.rs:125",
+        "crates/saya-harness/src/scratch/import.rs:140",
+        "crates/saya-harness/src/scratch/import.rs:162"
+      ],
+      "risk": "Parsing may take bounded time before observing cancellation; inspect duckdb API only if native interruption is added. Do not assume lack of a current token makes cooperative checks impossible.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/scratch/import.rs": "existing",
+        "crates/saya-harness/src/scratch/tools.rs": "existing",
+        "crates/saya-harness/tests/scratch_import.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "A05",
+      "title": "Wire cancellation through composite execution",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "A02",
+        "A04"
+      ],
+      "exclusive_leases": [
+        "tool-dispatch"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/runtime_tests.rs",
+        "crates/saya-cli/src/agent/tools/run_tools.rs"
+      ],
+      "outcome": "Forward ToolExecutionContext into fetch and scratch members. Preserve database/runner/host token behavior and late-effect suppression.",
+      "red_test": "Run a synthetic agent turn through the real composite, cancel during one fetch/import and assert no requested follow-up effect executes. This tests the wiring boundary, not the backend cases again.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/tools/run_tools.rs:185",
+        "crates/saya-cli/src/agent/runtime.rs:582"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/runtime_tests.rs": "existing",
+        "crates/saya-cli/src/agent/tools/run_tools.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "B00",
+      "title": "Freeze baseline and activate packet ownership",
+      "domain": "lead",
+      "tier": "foundation",
+      "kind": "gate",
+      "status": "planned",
+      "depends_on": [],
+      "exclusive_leases": [],
+      "owned_paths": [],
+      "outcome": "Refresh HEAD/status, active processes, actual crate graph, baseline gate evidence and chosen decisions. Expand candidate file sets, assign one writer and archive stale packets. Record exact baselines; no product edits.",
+      "red_test": "N/A: activation and existing baseline validation, not a behavior change.",
+      "verified_entry_points": [
+        "docs/claude-code-second-review.md",
+        "Cargo.toml"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "read-only",
+      "required_skills": [
+        "orchestrate-saya",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {},
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "C01",
+      "title": "Resolve bounded instruction-source settings",
+      "domain": "config",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "config-schema"
+      ],
+      "owned_paths": [
+        "crates/saya-config/src/instructions.rs",
+        "crates/saya-config/src/lib.rs",
+        "crates/saya-config/src/model.rs",
+        "crates/saya-config/src/resolve.rs",
+        "crates/saya-config/tests/instructions.rs"
+      ],
+      "outcome": "Resolve instruction enablement, personal source location and limits. Defaults follow DECISIONS; project config cannot alter enforcement authority or choose arbitrary personal files.",
+      "red_test": "Resolution precedence and malformed limits are observable through resolved config; untrusted project overrides cannot redirect personal-source reads.",
+      "verified_entry_points": [
+        "crates/saya-config/src/model.rs",
+        "crates/saya-config/src/layers.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-config",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-config/src/instructions.rs": "NEW proposed",
+        "crates/saya-config/src/lib.rs": "existing",
+        "crates/saya-config/src/model.rs": "existing",
+        "crates/saya-config/src/resolve.rs": "existing",
+        "crates/saya-config/tests/instructions.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-config"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-config --all-targets --locked -- -D warnings",
+        "cargo test -p saya-config --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "C02",
+      "title": "Read bounded root and personal instruction sources",
+      "domain": "harness",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "harness-exports",
+        "instructions"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/instructions.rs",
+        "crates/saya-harness/src/lib.rs",
+        "crates/saya-harness/tests/instructions.rs"
+      ],
+      "outcome": "Load at most root AGENTS.md and the explicit personal file through bounded contained IO; return body, source identity/hash, and truncation metadata. No discovery walk/imports.",
+      "red_test": "Public loader covers oversize UTF-8, missing optional file, symlink escape and stable hash/order. It never reads a sentinel outside allowed roots.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/workspace/contain.rs",
+        "crates/saya-harness/src/workspace/patch.rs"
+      ],
+      "risk": "NEW module; return a capability-owned record. No dependency on saya-config; caller supplies resolved settings.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/instructions.rs": "NEW proposed",
+        "crates/saya-harness/src/lib.rs": "existing",
+        "crates/saya-harness/tests/instructions.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "C03",
+      "title": "Project instruction context into provider requests",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "C01",
+        "C02"
+      ],
+      "exclusive_leases": [
+        "context-runtime",
+        "cli-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/context_sources.rs",
+        "crates/saya-cli/src/agent/mod.rs",
+        "crates/saya-cli/src/agent/runtime.rs",
+        "crates/saya-cli/src/agent/runtime_preflight_tests.rs",
+        "crates/saya-cli/src/interactive/session_universe.rs"
+      ],
+      "outcome": "Compose sources through existing ContextBlock/preflight, with deterministic order, bounded source refresh and invalidation on identity/privacy change. No system authority or extra provider request.",
+      "red_test": "Capture the actual provider request: instructions appear once with source labels and participate in admission; malicious instruction cannot execute a denied tool.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/runtime.rs:440",
+        "crates/saya-cli/src/agent/system_prompt.rs:181"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/context_sources.rs": "NEW proposed",
+        "crates/saya-cli/src/agent/mod.rs": "existing",
+        "crates/saya-cli/src/agent/runtime.rs": "existing",
+        "crates/saya-cli/src/agent/runtime_preflight_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/session_universe.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "C04",
+      "title": "Show loaded context sources",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "C03"
+      ],
+      "exclusive_leases": [
+        "cli-surface"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "outcome": "Expose a /context view of loaded sources, limits/truncation, scope and omitted reasons using the actual projection metadata.",
+      "red_test": "Real slash dispatch agrees with the request source receipt; a rejected source is shown as omitted without printing its content.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_continuation/summary.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "risk": "NEW surface; inspect existing parser first and extend it without replacing established meanings.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D01",
+      "title": "Define versioned continuation records",
+      "domain": "contracts",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "types-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-types/src/continuation.rs",
+        "crates/saya-types/src/lib.rs",
+        "crates/saya-types/tests/continuation.rs"
+      ],
+      "outcome": "Define bounded source boundary/scope, generated narrative, user notes and deterministic file/check facts with independent provenance; no executable grants.",
+      "red_test": "Public serialization/validation rejects unsupported versions, invalid counts/bounds and inconsistent provenance shapes; absence remains representable for legacy sessions. Do not claim that deserializing a hash authenticates an observed result.",
+      "verified_entry_points": [
+        "crates/saya-store/src/lib.rs:60",
+        "crates/saya-cli/src/interactive/session_state.rs:57"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-contracts",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-types/src/continuation.rs": "NEW proposed",
+        "crates/saya-types/src/lib.rs": "existing",
+        "crates/saya-types/tests/continuation.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-types"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-types --all-targets --locked -- -D warnings",
+        "cargo test -p saya-types --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D02",
+      "title": "Persist continuation extensions without data loss",
+      "domain": "storage",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D01"
+      ],
+      "exclusive_leases": [
+        "session-store",
+        "store-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-store/src/continuation.rs",
+        "crates/saya-store/src/filesystem.rs",
+        "crates/saya-store/src/lib.rs",
+        "crates/saya-store/tests/sessions.rs"
+      ],
+      "outcome": "Add optional versioned continuation to the session envelope, redacting and bounding at the store boundary. Preserve old sessions and refuse destructive rewrites of unknown extensions.",
+      "red_test": "Load legacy session, save/load safe continuation, reject an over-cap extension without changing previous bytes, and exercise unknown-version handling plus secret sentinel redaction.",
+      "verified_entry_points": [
+        "crates/saya-store/src/lib.rs:60",
+        "crates/saya-store/src/filesystem.rs:66"
+      ],
+      "risk": "Downgrade write compatibility is not guaranteed; document backup/roll-forward behavior. Do not silently mutate migration state.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-storage",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-store/src/continuation.rs": "NEW proposed",
+        "crates/saya-store/src/filesystem.rs": "existing",
+        "crates/saya-store/src/lib.rs": "existing",
+        "crates/saya-store/tests/sessions.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-store"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-store --all-targets --locked -- -D warnings",
+        "cargo test -p saya-store --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D03",
+      "title": "Build deterministic continuation facts",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D01"
+      ],
+      "exclusive_leases": [
+        "cli-exports",
+        "continuation-projector"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_continuation.rs",
+        "crates/saya-cli/src/interactive/session_continuation/record.rs",
+        "crates/saya-cli/src/interactive/session_continuation/record_tests.rs"
+      ],
+      "outcome": "Build a bounded record from actual session task/file/check observations and stable redacted-turn boundary. Generated prose cannot populate verified-result facts.",
+      "red_test": "A forged summary does not become a passed test or file observation; actual operations produce revision-bound facts with caps and source boundary intact.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_state.rs:205",
+        "crates/saya-cli/src/interactive/session_continuation/summary.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_continuation.rs": "existing",
+        "crates/saya-cli/src/interactive/session_continuation/record.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_continuation/record_tests.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D04",
+      "title": "Save validated compaction continuation",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D02",
+        "D03"
+      ],
+      "exclusive_leases": [
+        "session-runtime",
+        "context-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/compact_task.rs",
+        "crates/saya-cli/src/interactive/session_compact.rs",
+        "crates/saya-cli/src/interactive/session_compact_bounds_tests.rs",
+        "crates/saya-cli/src/interactive/session_compact_tests.rs",
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/interactive/session_state.rs"
+      ],
+      "outcome": "Save a safe continuation when compaction completes, keeping transcript unchanged and separating model narrative from source facts. Save failure retains previous valid state.",
+      "red_test": "Compaction produces persisted bounded continuation once; a sensitive narrative is omitted or refused, and failed save does not mark unsaved continuation durable.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_compact.rs:98",
+        "crates/saya-cli/src/interactive/session_state.rs:283"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/compact_task.rs": "existing",
+        "crates/saya-cli/src/interactive/session_compact.rs": "existing",
+        "crates/saya-cli/src/interactive/session_compact_bounds_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/session_compact_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/session_loop.rs": "existing",
+        "crates/saya-cli/src/interactive/session_state.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D05",
+      "title": "Restore scoped continuation on resume",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D04",
+        "C03"
+      ],
+      "exclusive_leases": [
+        "session-runtime",
+        "context-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/context_sources.rs",
+        "crates/saya-cli/src/interactive/session_continuation/summary.rs",
+        "crates/saya-cli/src/interactive/session_continuation_tests.rs",
+        "crates/saya-cli/src/interactive/session_resume.rs",
+        "crates/saya-cli/src/interactive/session_resume_tests.rs",
+        "crates/saya-cli/src/interactive/session_state.rs"
+      ],
+      "outcome": "Restore only validated continuation and matching source boundary, rechecking workspace/profile/privacy; label historical checks and refresh file digests. Never restore grants from notes.",
+      "red_test": "Compact/restart request contains permitted summary and correct tail; changed privacy/workspace/source prefix invalidates it; old sessions still resume; stale tests remain historical.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_resume.rs:45",
+        "crates/saya-cli/src/interactive/session_state.rs:224"
+      ],
+      "risk": "Filtering changes message counts; use stable source identity, not compacted_turns after filtering.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/context_sources.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_continuation/summary.rs": "existing",
+        "crates/saya-cli/src/interactive/session_continuation_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/session_resume.rs": "existing",
+        "crates/saya-cli/src/interactive/session_resume_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/session_state.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D06",
+      "title": "Report session capacity before the save ceiling",
+      "domain": "storage",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D02"
+      ],
+      "exclusive_leases": [
+        "session-store"
+      ],
+      "owned_paths": [
+        "crates/saya-store/src/filesystem.rs",
+        "crates/saya-store/src/lib.rs",
+        "crates/saya-store/src/session_lifecycle.rs",
+        "crates/saya-store/tests/session_lifecycle.rs"
+      ],
+      "outcome": "Expose bounded serialized capacity using the same store accounting as saves; identify the 3 MiB warning and 4 MiB refusal without allocating an unbounded full record. No successor publication in this packet.",
+      "red_test": "Existing session-store boundary distinguishes below-warning, warning and over-cap records with actual serialization; failed save preserves previous bytes. Do not mirror constants in a source-grep test.",
+      "verified_entry_points": [
+        "crates/saya-store/src/filesystem.rs:17",
+        "crates/saya-store/src/filesystem.rs:84"
+      ],
+      "risk": "NEW lifecycle owner; split capacity status and successor transaction if fresh research finds independent ownership barriers.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-storage",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-store/src/filesystem.rs": "existing",
+        "crates/saya-store/src/lib.rs": "existing",
+        "crates/saya-store/src/session_lifecycle.rs": "NEW proposed",
+        "crates/saya-store/tests/session_lifecycle.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-store"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-store --all-targets --locked -- -D warnings",
+        "cargo test -p saya-store --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D07",
+      "title": "Tombstone and clean session storage retryably",
+      "domain": "storage",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D06"
+      ],
+      "exclusive_leases": [
+        "session-store"
+      ],
+      "owned_paths": [
+        "crates/saya-store/src/filesystem.rs",
+        "crates/saya-store/src/session_lifecycle.rs",
+        "crates/saya-store/tests/session_lifecycle.rs"
+      ],
+      "outcome": "Implement validated-ID tombstone and cleanup mechanics for session JSON plus associated state/checkpoints, under the lifecycle owner lease precondition. Tombstones live outside the removable session tree. Independent preferences/knowledge remain. Runtime lock coordination is D12, not a new store-to-harness dependency.",
+      "red_test": "Traversal/symlink cannot touch outside state; partial cleanup reports pending and retry converges; repeated tombstone cleanup is idempotent; independent knowledge survives. Active-session refusal is owned by D12.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_paths.rs:15",
+        "crates/saya-store/src/filesystem.rs:29"
+      ],
+      "risk": "saya-store cannot depend on saya-harness::RunLock. Keep persistence mechanics here; expose no user-facing deletion until D12 coordinates the real lock. Never delete the lock then claim exclusivity persists.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-storage",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-store/src/filesystem.rs": "existing",
+        "crates/saya-store/src/session_lifecycle.rs": "NEW proposed",
+        "crates/saya-store/tests/session_lifecycle.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-store"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-store --all-targets --locked -- -D warnings",
+        "cargo test -p saya-store --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D08",
+      "title": "Offer explicit session rotation",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D05",
+        "D11"
+      ],
+      "exclusive_leases": [
+        "cli-surface",
+        "session-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "outcome": "Show near-capacity status and an explicit rotate action that creates/opens the successor with validated continuation, preserving parent access.",
+      "red_test": "Real session reaches warning, rotates, and can reopen parent; cancellation of rotate leaves active session selected and no lost transcript.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/interactive/session_resume.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/session_loop.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D09",
+      "title": "Expose session deletion and retention inspection",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D12"
+      ],
+      "exclusive_leases": [
+        "cli-surface"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/commands/mod.rs",
+        "crates/saya-cli/src/commands/sessions.rs",
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs",
+        "crates/saya-cli/tests/session_lifecycle_cli.rs"
+      ],
+      "outcome": "Provide explicit session delete and storage listing through shared operations with active-session refusal and clear independent-memory retention text; no automatic expiry.",
+      "red_test": "Process and TUI dispatch remove only requested inactive session, report pending cleanup accurately, and never prompt in a scripted run.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/interactive/session_paths.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/cli.rs": "existing",
+        "crates/saya-cli/src/commands/mod.rs": "existing",
+        "crates/saya-cli/src/commands/sessions.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing",
+        "crates/saya-cli/tests/session_lifecycle_cli.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D10",
+      "title": "Inspect and edit durable session notes",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D05"
+      ],
+      "exclusive_leases": [
+        "cli-surface",
+        "session-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/mod.rs",
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/session_notes.rs",
+        "crates/saya-cli/src/interactive/session_state.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "outcome": "Expose bounded user note inspect/set/clear operations on the existing continuation record, separate from generated summary and database knowledge.",
+      "red_test": "Note edit survives restart; clear removes note from disk/request; too-large/sensitive input preserves previous record; notes cannot assert authority.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_state.rs:283",
+        "crates/saya-store/src/lib.rs:60"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/mod.rs": "existing",
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/session_notes.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_state.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D11",
+      "title": "Publish an explicit successor session atomically",
+      "domain": "storage",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D02",
+        "D06"
+      ],
+      "exclusive_leases": [
+        "session-store"
+      ],
+      "owned_paths": [
+        "crates/saya-store/src/filesystem.rs",
+        "crates/saya-store/src/lib.rs",
+        "crates/saya-store/src/session_lifecycle.rs",
+        "crates/saya-store/tests/sessions.rs"
+      ],
+      "outcome": "Publish bounded successor with parent linkage before changing selection, using a retry identity and preserving the parent transcript. No automatic rotation or grant transfer.",
+      "red_test": "Failure before/after successor publication keeps parent usable; repeated same rotation request yields one child; oversize seed is refused without modifying either saved record.",
+      "verified_entry_points": [
+        "crates/saya-store/src/filesystem.rs:17",
+        "crates/saya-store/src/filesystem.rs:84"
+      ],
+      "risk": "NEW lifecycle owner; split capacity status and successor transaction if fresh research finds independent ownership barriers.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-storage",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-store/src/filesystem.rs": "existing",
+        "crates/saya-store/src/lib.rs": "existing",
+        "crates/saya-store/src/session_lifecycle.rs": "NEW proposed",
+        "crates/saya-store/tests/sessions.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-store"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-store --all-targets --locked -- -D warnings",
+        "cargo test -p saya-store --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "D12",
+      "title": "Coordinate deletion with the live session lock",
+      "domain": "harness",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "D07"
+      ],
+      "exclusive_leases": [
+        "session-runtime",
+        "harness-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_paths.rs",
+        "crates/saya-cli/src/interactive/session_runtime.rs",
+        "crates/saya-harness/src/lib.rs",
+        "crates/saya-harness/src/session_lifecycle.rs",
+        "crates/saya-harness/tests/session_lifecycle.rs"
+      ],
+      "outcome": "Use existing RunLock in the harness lifecycle owner before store tombstone/cleanup. New session acquisition checks stable tombstone before and after lock acquisition; refuse a live holder and prevent new same-ID acquisition during/after deletion. Preserve dependency direction; no store-to-harness edge.",
+      "red_test": "Hold a real session lock in one process and attempt deletion in another: refusal and unchanged data. Interleave acquisition/deletion: only one succeeds, tombstone prevents resurrection, and no lock inode is removed while its exclusivity is still relied on.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_runtime.rs:12",
+        "crates/saya-cli/src/interactive/session_paths.rs:15",
+        "crates/saya-harness/src/lock.rs"
+      ],
+      "risk": "Lock is currently inside the removable state directory. Document exact tombstone/lock ordering before code; a source-level PID check is not enough. Concurrent use by older binaries that ignore the tombstone is unsupported and must be stated.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_paths.rs": "existing",
+        "crates/saya-cli/src/interactive/session_runtime.rs": "existing",
+        "crates/saya-harness/src/lib.rs": "existing",
+        "crates/saya-harness/src/session_lifecycle.rs": "NEW proposed",
+        "crates/saya-harness/tests/session_lifecycle.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli",
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E01",
+      "title": "Verify patch and append digests inside workspace commit",
+      "domain": "harness",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "workspace-commit",
+        "harness-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/workspace/mod.rs",
+        "crates/saya-harness/src/workspace/patch.rs",
+        "crates/saya-harness/tests/workspace_patch.rs"
+      ],
+      "outcome": "Add fresh-read digest guards to patch/append commits and serialize Saya writers using the existing anchored path; retain atomic publication. Whole-file guarded create/replace is E09.",
+      "red_test": "Same-size content changed since observation refuses in the public patch API; matching digest succeeds; existing crash-before-publish preservation still holds on supported platform branches.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/workspace/patch.rs:40",
+        "crates/saya-harness/src/workspace/patch.rs:122"
+      ],
+      "risk": "Optimistic guards do not guarantee OS-level CAS against non-cooperating external writers. Extend platform branches without claiming untested platforms.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/workspace/mod.rs": "existing",
+        "crates/saya-harness/src/workspace/patch.rs": "existing",
+        "crates/saya-harness/tests/workspace_patch.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E02",
+      "title": "Require observed digest for agent edits and appends",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E01"
+      ],
+      "exclusive_leases": [
+        "tool-schema",
+        "workspace-adapters"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/tools/database_tools/definitions.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_append.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_args.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_replace.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_shared.rs",
+        "crates/saya-cli/src/agent/tools/workspace_edit_append_tests.rs",
+        "crates/saya-cli/src/agent/tools/workspace_edit_tests.rs"
+      ],
+      "outcome": "Require observed content digest for existing-file replace/append and call harness guards; offset zero is only unguarded create-if-absent. Clear reread/retry error updates schema/help.",
+      "red_test": "Existing-file call without digest changes nothing; same-size stale digest refuses; valid digest changes intended bytes; append continuation remains possible after fresh read.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/tools/database_tools/definitions.rs:276",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_replace.rs:12"
+      ],
+      "risk": "One edit family outcome with several small adapters. Split replace and append if packet exceeds 45 minutes; keep registry lease exclusive. Reuse typed error if semantically correct; any error contract change needs explicit agent-contract lease.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/tools/database_tools/definitions.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_append.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_args.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_replace.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_shared.rs": "existing",
+        "crates/saya-cli/src/agent/tools/workspace_edit_append_tests.rs": "existing",
+        "crates/saya-cli/src/agent/tools/workspace_edit_tests.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E03",
+      "title": "Close whole-file overwrite bypass",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E02",
+        "E09"
+      ],
+      "exclusive_leases": [
+        "tool-schema",
+        "workspace-adapters"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/tools/database_tools/definitions.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs",
+        "crates/saya-cli/src/agent/tools/workspace_write_tests.rs"
+      ],
+      "outcome": "Make whole-file tool creation explicitly create-if-absent and existing-file replacement digest-guarded through E01. Do not invent a second append API.",
+      "red_test": "workspace_write cannot overwrite an existing file without current digest; concurrent create collision preserves original; bounded valid create/replace succeeds.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs:31"
+      ],
+      "risk": "Behavior/API change: old model arguments receive a useful refusal, not an unsafe compatibility fallback.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/tools/database_tools/definitions.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs": "existing",
+        "crates/saya-cli/src/agent/tools/workspace_write_tests.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E04",
+      "title": "Define checkpoint state and recovery policy",
+      "domain": "contracts",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "types-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-types/src/edit_checkpoint.rs",
+        "crates/saya-types/src/lib.rs",
+        "crates/saya-types/tests/edit_checkpoint.rs"
+      ],
+      "outcome": "Define prepared/committed/uncertain direct-edit metadata, digest identity, source kind, quota and restore eligibility. Scope is opt-in private source recovery per DECISIONS.",
+      "red_test": "Serialization/validation preserves uncertain state, refuses impossible version/digest/size metadata, and cannot represent a subprocess rollback as a direct-file checkpoint.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_shared.rs"
+      ],
+      "risk": "NEW persisted contract. Do not embed raw before-image bytes in general session JSON.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-contracts",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-types/src/edit_checkpoint.rs": "NEW proposed",
+        "crates/saya-types/src/lib.rs": "existing",
+        "crates/saya-types/tests/edit_checkpoint.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-types"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-types --all-targets --locked -- -D warnings",
+        "cargo test -p saya-types --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E05",
+      "title": "Store bounded private checkpoint before-images",
+      "domain": "storage",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E04"
+      ],
+      "exclusive_leases": [
+        "checkpoint-store",
+        "store-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-store/src/edit_checkpoints.rs",
+        "crates/saya-store/src/lib.rs",
+        "crates/saya-store/tests/edit_checkpoints.rs"
+      ],
+      "outcome": "Persist byte-faithful admitted source snapshots and manifest transitions outside workspace, with private permissions, quotas, atomic publish and cleanup participation.",
+      "red_test": "Raw admitted source round-trips exactly; known-secret/credential-path policy and quota refuse before capture; disk failure preserves last good manifest. Deletion of actual checkpoints is proven after D07/E08, not by a fake cleanup claim here.",
+      "verified_entry_points": [
+        "crates/saya-store/src/private_file.rs",
+        "crates/saya-store/src/replace.rs",
+        "crates/saya-cli/src/interactive/session_paths.rs"
+      ],
+      "risk": "Raw source snapshots may contain sensitive source despite screening: opt-in and retention disclosure required; never describe as redacted file restore.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-storage",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-store/src/edit_checkpoints.rs": "NEW proposed",
+        "crates/saya-store/src/lib.rs": "existing",
+        "crates/saya-store/tests/edit_checkpoints.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-store"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-store --all-targets --locked -- -D warnings",
+        "cargo test -p saya-store --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E06",
+      "title": "Capture checkpoints around direct file commits",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E03",
+        "E05"
+      ],
+      "exclusive_leases": [
+        "workspace-adapters",
+        "session-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_append.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_replace.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_shared.rs",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs",
+        "crates/saya-cli/src/interactive/session_universe.rs"
+      ],
+      "outcome": "Route admitted direct edits through prepare snapshot → guarded commit → finalize manifest; recovery enabled only by explicit session choice and policy.",
+      "red_test": "Capture failure prevents recovery-required edit; crash after file commit yields reconcilable uncertain record; guard failure never marks committed. Subprocess effects produce no undo claim.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_shared.rs:24",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs:64"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_append.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_replace.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_edit_shared.rs": "existing",
+        "crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs": "existing",
+        "crates/saya-cli/src/interactive/session_universe.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E07",
+      "title": "Restore only the last matching direct edit",
+      "domain": "harness",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E06"
+      ],
+      "exclusive_leases": [
+        "checkpoint-restore",
+        "harness-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/workspace/mod.rs",
+        "crates/saya-harness/src/workspace/restore.rs",
+        "crates/saya-harness/tests/workspace_restore.rs"
+      ],
+      "outcome": "Restore an admitted checkpoint through guarded workspace operations only if current post-edit digest/identity match; preserve original absent/existing state and dirty baseline.",
+      "red_test": "Round-trip a direct edit including new file; human edit after Saya write causes refusal; unknown/uncertain manifest is reconciled or refused; no whole-tree reset.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/workspace/patch.rs",
+        "crates/saya-harness/src/workspace/contain.rs"
+      ],
+      "risk": "Delete-created-file restore needs a guarded no-follow unlink primitive; include it only for this outcome, not a generic deletion capability.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/workspace/mod.rs": "existing",
+        "crates/saya-harness/src/workspace/restore.rs": "NEW proposed",
+        "crates/saya-harness/tests/workspace_restore.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E08",
+      "title": "Review changes and explicitly restore a checkpoint",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E07",
+        "D09"
+      ],
+      "exclusive_leases": [
+        "cli-surface"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/mod.rs",
+        "crates/saya-cli/src/interactive/session_changes.rs",
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "outcome": "Show bounded changed-file summaries/diffs and a user-directed restore operation with direct-edit coverage, conflicts and quota state visible.",
+      "red_test": "Real dispatch previews and restores one unchanged checkpoint; refuses changed current file; huge diff truncates visibly; command-created changes are labeled outside checkpoint coverage.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/tui/dispatch/mod.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/mod.rs": "existing",
+        "crates/saya-cli/src/interactive/session_changes.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "E09",
+      "title": "Guard whole-file create and replacement",
+      "domain": "harness",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "E01"
+      ],
+      "exclusive_leases": [
+        "workspace-commit",
+        "harness-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-harness/src/workspace/contain.rs",
+        "crates/saya-harness/src/workspace/guarded_write.rs",
+        "crates/saya-harness/src/workspace/mod.rs",
+        "crates/saya-harness/tests/workspace_patch.rs"
+      ],
+      "outcome": "Provide create-if-absent and observed-digest replacement using the same fresh-read admission and publication boundary as patch. No optional bypass for agent overwrite callers.",
+      "red_test": "Create collision preserves existing content; missing/stale replacement digest refuses same-size changed content; valid replacement retains atomic-failure guarantees.",
+      "verified_entry_points": [
+        "crates/saya-harness/src/workspace/patch.rs:40",
+        "crates/saya-harness/src/workspace/patch.rs:122"
+      ],
+      "risk": "Optimistic guards do not guarantee OS-level CAS against non-cooperating external writers. Extend platform branches without claiming untested platforms.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-harness",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-harness/src/workspace/contain.rs": "existing",
+        "crates/saya-harness/src/workspace/guarded_write.rs": "NEW proposed",
+        "crates/saya-harness/src/workspace/mod.rs": "existing",
+        "crates/saya-harness/tests/workspace_patch.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-harness"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-harness --all-targets --locked -- -D warnings",
+        "cargo test -p saya-harness --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "H01",
+      "title": "Verify the existing scripted coding entry and permissions",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "research",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [],
+      "owned_paths": [],
+      "outcome": "Known entry: saya --workspace <dir> --turn-file <file> already runs one turn and exits (session_loop.rs:259–292; tests/turn_file.rs). Freeze supported explicit grant/output/cancellation behavior through an isolated runtime probe before H02; do not repeat broad source discovery or add a session command.",
+      "red_test": "N/A: bounded research/decision packet. Identify a runnable no-DB edit/test scenario and the exact missing behavior before H02.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/app.rs:195",
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/cli.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "read-only",
+      "required_skills": [
+        "orchestrate-saya",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {},
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "H02",
+      "title": "Close only demonstrated turn-file coding gaps",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "conditional-repair",
+      "status": "planned",
+      "depends_on": [
+        "H01"
+      ],
+      "exclusive_leases": [
+        "cli-surface",
+        "session-runtime",
+        "context-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/interactive/session_runtime.rs",
+        "crates/saya-cli/tests/turn_file.rs"
+      ],
+      "outcome": "Verify-first: exercise no-DB read/edit/test through existing --workspace/--turn-file with explicit existing grants. If it works, deliver evidence and documentation only; otherwise repair the smallest shared operation gap. No new command, alternate loop or ask permission widening.",
+      "red_test": "Extend tests/turn_file.rs for the missing no-DB coding composition scenario. A failure must reproduce a real gap before a source fix; a baseline pass means no production change is required.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/app.rs:195",
+        "crates/saya-cli/src/agent/runtime.rs:582"
+      ],
+      "risk": "If current --turn-file already satisfies entry semantics, H02 is narrowed to documented gap or marked verified/no-change with evidence, not rebuilt.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_loop.rs": "existing",
+        "crates/saya-cli/src/interactive/session_runtime.rs": "existing",
+        "crates/saya-cli/tests/turn_file.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "H03",
+      "title": "Align scripted terminal outcomes and cancellation",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "H02",
+        "A05"
+      ],
+      "exclusive_leases": [
+        "session-runtime",
+        "render"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/render/mod.rs",
+        "crates/saya-cli/src/stream_render.rs",
+        "crates/saya-cli/tests/turn_file.rs"
+      ],
+      "outcome": "Ensure scripted coding reports one terminal result with documented exit, bounded machine output and cancellation/partial-work status using existing events.",
+      "red_test": "Cancel headless coding while active: one terminal outcome, no follow-up effect, useful retained partial result, and no mixed human text on machine-output stdout.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/stream_render.rs"
+      ],
+      "risk": "Do not promise new exit numbers until H01 records current public conventions.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/render/mod.rs": "existing",
+        "crates/saya-cli/src/stream_render.rs": "existing",
+        "crates/saya-cli/tests/turn_file.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "M01",
+      "title": "Define explicit worktree preference records",
+      "domain": "contracts",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "types-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-types/src/lib.rs",
+        "crates/saya-types/src/project_preference.rs",
+        "crates/saya-types/tests/project_preference.rs"
+      ],
+      "outcome": "Define bounded explicit-user preference records scoped to canonical worktree, with provenance and no execution authority; separate from typed database knowledge.",
+      "red_test": "Public contract rejects invalid scope/bounds and generated-as-user provenance; stable IDs support update/delete without rebinding another workspace.",
+      "verified_entry_points": [
+        "crates/saya-types/src/lib.rs",
+        "crates/saya-store/src/knowledge_items/mod.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-contracts",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-types/src/lib.rs": "existing",
+        "crates/saya-types/src/project_preference.rs": "NEW proposed",
+        "crates/saya-types/tests/project_preference.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-types"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-types --all-targets --locked -- -D warnings",
+        "cargo test -p saya-types --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "M02",
+      "title": "Persist scoped preferences in existing store",
+      "domain": "storage",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "M01"
+      ],
+      "exclusive_leases": [
+        "store-schema",
+        "store-exports"
+      ],
+      "owned_paths": [
+        "crates/saya-store/src/lib.rs",
+        "crates/saya-store/src/migration.rs",
+        "crates/saya-store/src/project_preferences.rs",
+        "crates/saya-store/src/sqlite.rs",
+        "crates/saya-store/tests/migration.rs",
+        "crates/saya-store/tests/project_preferences.rs"
+      ],
+      "outcome": "Add a separate bounded preference table using existing migration/transaction/redaction conventions; list/update/forget by exact worktree scope.",
+      "red_test": "Two worktrees remain isolated, quota/update transaction preserves prior value on failure, forgetting removes text from recall and follows declared physical cleanup behavior.",
+      "verified_entry_points": [
+        "crates/saya-store/src/sqlite.rs",
+        "crates/saya-store/src/knowledge_items/writes.rs"
+      ],
+      "risk": "Existing PreferenceValue deliberately forbids free prose, and its table is one value per kind. Preserve that contract; a separate project-guidance record/table in the existing state DB reuses connection/security mechanisms without weakening it. Allocate next migration version from live HEAD, never assume 9.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-storage",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-store/src/lib.rs": "existing",
+        "crates/saya-store/src/migration.rs": "existing",
+        "crates/saya-store/src/project_preferences.rs": "NEW proposed",
+        "crates/saya-store/src/sqlite.rs": "existing",
+        "crates/saya-store/tests/migration.rs": "existing",
+        "crates/saya-store/tests/project_preferences.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-store"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-store --all-targets --locked -- -D warnings",
+        "cargo test -p saya-store --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "M03",
+      "title": "Recall project preferences through context projection",
+      "domain": "knowledge",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "M02",
+        "C03"
+      ],
+      "exclusive_leases": [
+        "context-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/agent/context_sources.rs",
+        "crates/saya-cli/src/agent/mod.rs",
+        "crates/saya-cli/src/agent/project_preferences.rs",
+        "crates/saya-cli/src/agent/runtime.rs"
+      ],
+      "outcome": "Recall only explicitly stored current-worktree preferences within aggregate budget, with source labels and invalidation after forget/scope change.",
+      "red_test": "Actual provider request contains allowed scope only and drops forgotten text next turn; forged preference requesting host access cannot change approval.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/agent/recall_context/mod.rs:66",
+        "crates/saya-cli/src/agent/runtime.rs:440"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-knowledge",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/agent/context_sources.rs": "NEW proposed",
+        "crates/saya-cli/src/agent/mod.rs": "existing",
+        "crates/saya-cli/src/agent/project_preferences.rs": "NEW proposed",
+        "crates/saya-cli/src/agent/runtime.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "M04",
+      "title": "Expose explicit project preference operations",
+      "domain": "cli",
+      "tier": "core",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "M02"
+      ],
+      "exclusive_leases": [
+        "cli-surface"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/commands/mod.rs",
+        "crates/saya-cli/src/commands/preferences.rs",
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "outcome": "Expose inspect/add/edit/forget as one bounded preference CRUD family through shared operations, clearly separate from existing database remember/contracts commands.",
+      "red_test": "User operations round-trip and update next-turn recall; no DB profile required; no model extraction silently creates permanent preferences.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "risk": "If the command family exceeds one short handoff, split read/forget from write/update before launch; same semantic owner.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/cli.rs": "existing",
+        "crates/saya-cli/src/commands/mod.rs": "existing",
+        "crates/saya-cli/src/commands/preferences.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "M05",
+      "title": "Ship reusable instruction workflow examples",
+      "domain": "release",
+      "tier": "follow-on",
+      "kind": "documentation",
+      "status": "planned",
+      "depends_on": [
+        "C04",
+        "M04"
+      ],
+      "exclusive_leases": [
+        "docs"
+      ],
+      "owned_paths": [
+        "docs/coding-workflows.md",
+        "examples/coding/AGENTS.md"
+      ],
+      "outcome": "Provide small fix-test, query-review and dbt-review instruction examples using implemented native capabilities. No hook execution/plugin loader.",
+      "red_test": "N/A for prose; execute each documented command against an isolated synthetic fixture and verify supported syntax.",
+      "verified_entry_points": [
+        "docs/commands.md"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "release-saya",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "docs/coding-workflows.md": "NEW proposed",
+        "examples/coding/AGENTS.md": "NEW proposed"
+      },
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "O01",
+      "title": "Track winning configuration origins",
+      "domain": "config",
+      "tier": "follow-on",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "C01"
+      ],
+      "exclusive_leases": [
+        "config-schema"
+      ],
+      "owned_paths": [
+        "crates/saya-config/src/config_origin.rs",
+        "crates/saya-config/src/layers.rs",
+        "crates/saya-config/src/lib.rs",
+        "crates/saya-config/src/resolve.rs",
+        "crates/saya-config/tests/config_origin.rs"
+      ],
+      "outcome": "Return source attribution for user-facing effective settings without retaining secret values or changing precedence.",
+      "red_test": "Conflicting layers resolve identically to baseline but identify winning source; secret origin contains reference/label only, including ignored untrusted project override.",
+      "verified_entry_points": [
+        "crates/saya-config/src/layers.rs:92"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-config",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-config/src/config_origin.rs": "NEW proposed",
+        "crates/saya-config/src/layers.rs": "existing",
+        "crates/saya-config/src/lib.rs": "existing",
+        "crates/saya-config/src/resolve.rs": "existing",
+        "crates/saya-config/tests/config_origin.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-config"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-config --all-targets --locked -- -D warnings",
+        "cargo test -p saya-config --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "O02",
+      "title": "Explain effective configuration sources",
+      "domain": "cli",
+      "tier": "follow-on",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "O01",
+        "U02"
+      ],
+      "exclusive_leases": [
+        "cli-surface"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/commands/config.rs",
+        "crates/saya-cli/src/config/doctor.rs",
+        "crates/saya-cli/tests/config_doctor.rs"
+      ],
+      "outcome": "Expose source explanation in a backward-compatible config view and doctor guidance so users know which setting/file to edit.",
+      "red_test": "Isolated conflicting config prints winner and ignored-source reason without secrets; existing config show machine shape remains compatible unless a new explain flag is selected.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/commands/config.rs",
+        "crates/saya-cli/src/config/doctor.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/cli.rs": "existing",
+        "crates/saya-cli/src/commands/config.rs": "existing",
+        "crates/saya-cli/src/config/doctor.rs": "existing",
+        "crates/saya-cli/tests/config_doctor.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "O03",
+      "title": "Prepare atomic between-turn config reload",
+      "domain": "cli",
+      "tier": "follow-on",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "O02",
+        "H03"
+      ],
+      "exclusive_leases": [
+        "session-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/mod.rs",
+        "crates/saya-cli/src/interactive/session_reload.rs",
+        "crates/saya-cli/src/interactive/session_runtime.rs",
+        "crates/saya-cli/src/interactive/session_universe.rs"
+      ],
+      "outcome": "Build and validate a candidate resolved runtime, then swap only at an idle boundary. Changed authority-sensitive settings use explicit existing recomposition/consent semantics.",
+      "red_test": "Invalid reload keeps old runtime and ability to execute; in-flight reload waits/refuses; changed privacy invalidates context before next request; no stale grant silently survives changed scope.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_universe.rs",
+        "crates/saya-cli/src/interactive/session_commands.rs"
+      ],
+      "risk": "Conditional follow-on: if existing authority recomposition cannot support this narrowly, record blocked decision and retain restart guidance; do not weaken policy to ship reload.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/mod.rs": "existing",
+        "crates/saya-cli/src/interactive/session_reload.rs": "NEW proposed",
+        "crates/saya-cli/src/interactive/session_runtime.rs": "existing",
+        "crates/saya-cli/src/interactive/session_universe.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "O04",
+      "title": "Expose explicit config reload",
+      "domain": "cli",
+      "tier": "follow-on",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "O03"
+      ],
+      "exclusive_leases": [
+        "cli-surface"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_commands.rs",
+        "crates/saya-cli/src/interactive/session_emit.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/slash.rs",
+        "crates/saya-cli/src/slash/help.rs",
+        "crates/saya-cli/src/slash/registry.rs"
+      ],
+      "outcome": "Expose one explicit reload action with accepted/rejected changes and next steps; reuse existing /provider and /model for simple switches.",
+      "red_test": "Real TUI/headless dispatch reloads valid config only between turns, reports unchanged state on error and never enters an interactive prompt in a pipe.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/session_commands.rs:100"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_commands.rs": "existing",
+        "crates/saya-cli/src/interactive/session_emit.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/chain_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/slash.rs": "existing",
+        "crates/saya-cli/src/slash/help.rs": "existing",
+        "crates/saya-cli/src/slash/registry.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "Q01",
+      "title": "Prove the complete native coding journey",
+      "domain": "quality",
+      "tier": "acceptance",
+      "kind": "tests",
+      "status": "planned",
+      "depends_on": [
+        "U05",
+        "U06",
+        "C04",
+        "D08",
+        "D10",
+        "E08",
+        "M04",
+        "H03",
+        "U02",
+        "U07",
+        "M03"
+      ],
+      "exclusive_leases": [],
+      "owned_paths": [
+        "crates/saya-cli/tests/native_coding_journey.rs"
+      ],
+      "outcome": "Own one synthetic project journey crossing setup/instructions/edit/check/test/compact/restart surfaces, with deterministic provider fixtures; measure observable outcomes.",
+      "red_test": "The full new user journey fails before relevant features exist; missing real tool composition, lost continuation or stale file handling fails despite mocked model responses.",
+      "verified_entry_points": [
+        "crates/saya-cli/tests/tui_pty_smoke.rs"
+      ],
+      "risk": "Distinct cross-surface lifecycle risk only; do not repeat each backend unit case. Fake model proves plumbing, not model coding quality.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "test-saya",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/tests/native_coding_journey.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "Q02",
+      "title": "Prove mixed code and database privacy boundaries",
+      "domain": "quality",
+      "tier": "acceptance",
+      "kind": "tests",
+      "status": "planned",
+      "depends_on": [
+        "A05",
+        "C04",
+        "D05",
+        "E03",
+        "M04",
+        "H03"
+      ],
+      "exclusive_leases": [],
+      "owned_paths": [
+        "crates/saya-cli/tests/mixed_coding_database.rs"
+      ],
+      "outcome": "Own one synthetic mixed task that inspects schema, edits local SQL/code and performs bounded DB validation, including malicious retrieved instructions and scope switching.",
+      "red_test": "Attempted DB write and forged memory authority execute no side effect; protected row/secret sentinels never reach forbidden persistence/output while local coding still works.",
+      "verified_entry_points": [
+        "crates/saya-connectors/tests/read_only_contract.rs",
+        "crates/saya-cli/src/agent/recall_context/mod.rs"
+      ],
+      "risk": "Reuse connector safety tests; this case owns composition/privacy boundaries, not another SQL parser matrix.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "test-saya",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/tests/mixed_coding_database.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "Q03",
+      "title": "Independently audit integrated correctness and authority",
+      "domain": "quality",
+      "tier": "acceptance",
+      "kind": "review",
+      "status": "planned",
+      "depends_on": [
+        "Q01",
+        "Q02"
+      ],
+      "exclusive_leases": [],
+      "owned_paths": [],
+      "outcome": "Read-only GLM review of the exact baseline-to-integration diff and real call paths; lead independently resolves findings through new bounded repair packets.",
+      "red_test": "N/A: independent source review. Every finding cites trigger, owner path and consequence; claims must survive runtime-composition checks.",
+      "verified_entry_points": [
+        "docs/claude-code-second-review.md"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "read-only",
+      "full_scope_dependencies": [
+        "O04",
+        "M05"
+      ],
+      "required_skills": [
+        "orchestrate-saya",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {},
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "Q04",
+      "title": "Publish accurate local capability and migration documentation",
+      "domain": "release",
+      "tier": "acceptance",
+      "kind": "documentation",
+      "status": "planned",
+      "depends_on": [
+        "Q03"
+      ],
+      "exclusive_leases": [
+        "docs"
+      ],
+      "owned_paths": [
+        "CHANGELOG.md",
+        "README.md",
+        "docs/adr-native-coding.md",
+        "docs/coding-workflows.md",
+        "docs/commands.md",
+        "docs/configuration.md",
+        "docs/memory.md"
+      ],
+      "outcome": "Document implemented surfaces, source/continuation scope, limits, snapshot privacy, restore coverage, downgrade behavior and platform gaps; update tracked architecture ADR.",
+      "red_test": "N/A for prose. Execute documented commands; inspect data promises against the real binary. Include only accepted capabilities.",
+      "verified_entry_points": [
+        "docs/adr-0001-release-architecture.md",
+        "docs/commands.md"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "release-saya",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "CHANGELOG.md": "existing",
+        "README.md": "existing",
+        "docs/adr-native-coding.md": "NEW proposed",
+        "docs/coding-workflows.md": "NEW proposed",
+        "docs/commands.md": "existing",
+        "docs/configuration.md": "existing",
+        "docs/memory.md": "existing"
+      },
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "Q05",
+      "title": "Run final local integration gates",
+      "domain": "lead",
+      "tier": "acceptance",
+      "kind": "gate",
+      "status": "planned",
+      "depends_on": [
+        "Q04"
+      ],
+      "exclusive_leases": [
+        "integration-build"
+      ],
+      "owned_paths": [],
+      "outcome": "Freeze exact HEAD and run fmt, strict all-target workspace clippy, locked workspace tests, doctests and dependency audit when applicable. Archive counts/skips and exact commit.",
+      "red_test": "N/A: acceptance gate. Zero matched tests never count; any failure becomes a scoped repair followed by affected gates.",
+      "verified_entry_points": [
+        "/Users/subodhsharma/Projects/saya-cli/AGENTS.md"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "read-only",
+      "required_skills": [
+        "orchestrate-saya",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {},
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "Q06",
+      "title": "Audit real native release artifacts and retained state exclusion",
+      "domain": "release",
+      "tier": "acceptance",
+      "kind": "gate",
+      "status": "planned",
+      "depends_on": [
+        "Q05"
+      ],
+      "exclusive_leases": [
+        "integration-build",
+        "artifacts"
+      ],
+      "owned_paths": [],
+      "outcome": "Build/package locally and run existing content scanners on actual native binary/archive/crate payloads. Verify no new session/preferences/checkpoint artifacts enter packages.",
+      "red_test": "N/A: actual artifact audit plus existing sentinel cases. Build provenance/platform signing remain separate and unverified unless separately run.",
+      "verified_entry_points": [
+        "scripts/package.sh",
+        "scripts/check-artifact-content.py",
+        "scripts/publish-crates.sh"
+      ],
+      "risk": "Do not invoke a publisher to test packaging. No remote publish, tag or signing promise; report platforms not exercised.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "read-only",
+      "required_skills": [
+        "orchestrate-saya",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {},
+      "gate_packages": [],
+      "validation": [
+        "git diff --check",
+        "Use the packet evidence requirement and VALIDATION.md; no fictitious red/green result for prose, research or gates."
+      ]
+    },
+    {
+      "id": "U01",
+      "title": "Compute task-specific configuration readiness",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "doctor"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/config/doctor.rs"
+      ],
+      "outcome": "Produce query, AI and coding readiness from resolved config without network calls, preserving the legacy default doctor exit.",
+      "red_test": "Table cases: valid provider/no DB, valid SQLite/missing AI key, no workspace, unresolved selected DB secret. Assert each task result, not renderer wording.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/config/doctor.rs:11",
+        "crates/saya-cli/src/config/doctor.rs:108"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/config/doctor.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "U02",
+      "title": "Expose task-aware doctor command",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "U01"
+      ],
+      "exclusive_leases": [
+        "cli-surface",
+        "doctor"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/commands/config.rs",
+        "crates/saya-cli/tests/config_doctor.rs"
+      ],
+      "outcome": "Add doctor --task query|ai|coding and additive structured output. Unspecified task keeps existing exit behavior.",
+      "red_test": "Process-level invocation in isolated config homes returns the selected task exit and distinguishes configured from network-verified. Existing scripts without --task retain exit semantics.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/cli.rs",
+        "crates/saya-cli/src/commands/config.rs"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/cli.rs": "existing",
+        "crates/saya-cli/src/commands/config.rs": "existing",
+        "crates/saya-cli/tests/config_doctor.rs": "NEW proposed"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "U03",
+      "title": "Show coding readiness without a database",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "U01"
+      ],
+      "exclusive_leases": [
+        "tui-empty"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/tui/ui/surface/empty_state_tests.rs",
+        "crates/saya-cli/src/interactive/tui/ui/surface/splash.rs"
+      ],
+      "outcome": "Render independent AI/workspace/database status and visible project, database, data-file and demo entry choices. Surface existing /provider and /model commands.",
+      "red_test": "Render provider-only workspace setup: it is usable for coding and does not instruct the user to configure a required DB. Extend the existing empty-state snapshot with a distinct no-AI SQL case.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/interactive/tui/ui/surface/splash.rs:10"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/tui/ui/surface/empty_state_tests.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/ui/surface/splash.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "U04",
+      "title": "Reuse guided setup for selected startup intent",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "B00"
+      ],
+      "exclusive_leases": [
+        "setup"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/setup/flow.rs",
+        "crates/saya-cli/src/setup/mod.rs",
+        "crates/saya-cli/src/setup/prompt_database.rs",
+        "crates/saya-cli/src/setup/prompt_provider.rs",
+        "crates/saya-cli/tests/setup_cli.rs"
+      ],
+      "outcome": "Add an application entry accepting project/database/demo/data intent; project setup can skip the DB while keeping existing preview/confirmation and failure recovery.",
+      "red_test": "Injected setup IO selecting project configures only the provider, cancellation writes nothing, and a failed probe never silently commits. Extend existing flow tests.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/setup/flow.rs:71",
+        "crates/saya-cli/src/setup/prompt_database.rs:40"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/setup/flow.rs": "existing",
+        "crates/saya-cli/src/setup/mod.rs": "existing",
+        "crates/saya-cli/src/setup/prompt_database.rs": "existing",
+        "crates/saya-cli/src/setup/prompt_provider.rs": "existing",
+        "crates/saya-cli/tests/setup_cli.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "U05",
+      "title": "Hand terminal ownership to guided setup safely",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "U04"
+      ],
+      "exclusive_leases": [
+        "cli-surface",
+        "session-runtime"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/interactive/tui/mod.rs",
+        "crates/saya-cli/tests/tui_pty_smoke.rs"
+      ],
+      "outcome": "Implement one terminal handoff boundary for invoking the existing guided setup and returning to the idle session; always restore terminal ownership after success/error/cancellation. Do not wire new startup menu actions yet.",
+      "red_test": "Real PTY enters and exits existing guided setup through the handoff, including cancellation/failure: no nested runtime panic, lost input or double raw-mode owner.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/setup/flow.rs:90",
+        "crates/saya-cli/src/interactive/tui/mod.rs"
+      ],
+      "risk": "If terminal handoff exceeds one behavior, split terminal suspension from setup dispatch before launch; do not implement alternate setup logic.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_loop.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/mod.rs": "existing",
+        "crates/saya-cli/tests/tui_pty_smoke.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "U06",
+      "title": "Clarify endpoint-bound credential reference selection",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "U04"
+      ],
+      "exclusive_leases": [
+        "setup"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/setup/prompt_provider.rs",
+        "crates/saya-cli/src/setup/setup_tests.rs"
+      ],
+      "outcome": "Verify-first: retain the existing suggested env name and presence indicator. Improve only confusing endpoint/reference labels if demonstrated; no new confirmation step, secret enumeration or implicit fallback. If already sufficient, deliver verified/no-change evidence.",
+      "red_test": "Extend the existing setup flow only for a demonstrated regression: selected provider reference remains bound to its endpoint; compatible endpoint cannot inherit a different key. If current behavior passes, no production change and no invented red result.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/setup/prompt_provider.rs:50"
+      ],
+      "risk": "Retain existing bounds, privacy and authority; no unrelated cleanup.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/setup/prompt_provider.rs": "existing",
+        "crates/saya-cli/src/setup/setup_tests.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    },
+    {
+      "id": "U07",
+      "title": "Wire startup choices to shared setup operations",
+      "domain": "cli",
+      "tier": "release",
+      "kind": "implementation",
+      "status": "planned",
+      "depends_on": [
+        "U03",
+        "U05"
+      ],
+      "exclusive_leases": [
+        "cli-surface",
+        "session-runtime",
+        "tui-empty"
+      ],
+      "owned_paths": [
+        "crates/saya-cli/src/interactive/session_loop.rs",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs",
+        "crates/saya-cli/src/interactive/tui/ui/surface/splash.rs",
+        "crates/saya-cli/tests/tui_pty_smoke.rs"
+      ],
+      "outcome": "Wire the project/database startup choice through safe setup handoff, then recompose an idle session. Data-file/demo choices reuse existing entry operations or explicit commands without a duplicate wizard.",
+      "red_test": "Choose project setup from the real first screen and return ready to code with no DB. Cancel leaves prior config/session intact; noninteractive never enters the menu.",
+      "verified_entry_points": [
+        "crates/saya-cli/src/setup/flow.rs:90",
+        "crates/saya-cli/src/interactive/tui/mod.rs"
+      ],
+      "risk": "If terminal handoff exceeds one behavior, split terminal suspension from setup dispatch before launch; do not implement alternate setup logic.",
+      "rollback": "Revert this packet before dependents; after consumers land, roll forward or revert the dependency closure. Preserve user files and persisted data.",
+      "size": "20–45 active minutes target; split if more than one independent behavior or gate failure remains.",
+      "permission": "write-owned-paths",
+      "required_skills": [
+        "build-saya-cli",
+        "ponytail",
+        "test-audit"
+      ],
+      "non_goals": "No authority expansion, new crate/framework, unrelated refactor, broad test pruning, remote action, or automatic model memory. Respect packet scope and DECISIONS.md.",
+      "completion": "Lead reviewed diff and independent gate evidence recorded against exact commit; packet integrated locally and merged all-target check passed. Research/verify-only packets require reviewed evidence instead of a fictitious code commit.",
+      "failure_policy": "Return a precise dependency request for missing owner contracts. Split oversized work; do not edit neighboring paths or silently relax assertions. Gates must run on immutable source.",
+      "path_status": {
+        "crates/saya-cli/src/interactive/session_loop.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/dispatch/session_actions.rs": "existing",
+        "crates/saya-cli/src/interactive/tui/ui/surface/splash.rs": "existing",
+        "crates/saya-cli/tests/tui_pty_smoke.rs": "existing"
+      },
+      "gate_packages": [
+        "saya-cli"
+      ],
+      "validation": [
+        "git diff --check",
+        "cargo fmt --check",
+        "cargo clippy -p saya-cli --all-targets --locked -- -D warnings",
+        "cargo test -p saya-cli --locked",
+        "Lead: real dispatch/PTY scenario where user behavior changes; independent scoped rerun; after local merge cargo check --workspace --all-targets --locked."
+      ]
+    }
+  ],
+  "default_scope": "core",
+  "scope_rules": {
+    "release": "B00 plus A* and U* dependency closure; run milestone-specific review/docs/full gate, not the unsatisfied full-core Q chain.",
+    "core": "All foundation/release/core/acceptance tasks; exclude follow-on and full_scope_dependencies.",
+    "full": "All tasks; add full_scope_dependencies to normal dependencies. O03/O04 remain contingent on narrow safe reload feasibility."
+  },
+  "planning_validation": {
+    "ids_unique": true,
+    "dependencies_resolve": true,
+    "acyclic_core": true,
+    "acyclic_full": true,
+    "core_packet_count": 51,
+    "full_packet_count": 56,
+    "max_worker_slots": 3,
+    "scheduled_sets_have_no_path_or_lease_overlap": true,
+    "runtime_or_rust_gates_run": false
+  },
+  "source_policy": "Source anchors verified at planning baseline; root AGENTS/skills are local main-checkout guidance and must be staged explicitly into worker worktrees."
+}
