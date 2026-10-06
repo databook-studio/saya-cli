@@ -79,8 +79,9 @@ redaction is a boundary, not a promise.
   `<id>` is printed by `saya preferences list`.
 
 - Guidance tied to the current conversation: a **session note** — `/notes set <text>`
-  after `/compact` (notes attach to the session's saved summary); they die
-  with the session.
+  after `/compact` (notes attach to the session's saved summary); they are
+  saved with the session record and return on `/resume` and `/rotate`,
+  removed only by `/notes clear` or deleting the session.
 
 - A rule every session in the repository should start from: a **file** —
   one of the examples above.

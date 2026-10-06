@@ -1,11 +1,11 @@
 # Commands
 
 Running `saya` without a subcommand starts the scrollback-preserving terminal
-session. It accepts `/help`, `/connect`, `/connections`, `/include`,
-`/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
-`/grants`, `/context`, `/schema`,
-`/sql`, `/chart`, `/explain`, `/export`, `/report`, `/investigation`,
-`/investigations`, `/clear`, `/history`, `/resume <id>`, and `/exit`.
+session. It accepts the slash commands `/help` lists — grouped under
+connections; provider, model and privacy; query and data; session; memory;
+and runs — from `/connect`, `/sql`, and `/export` through the session
+commands `/sessions`, `/preferences`, `/notes`, `/recovery`, `/rotate`,
+`/reload`, `/setup`, and `/context`, to `/exit`.
 
 `/context` shows which project and personal instruction files are loaded
 into requests: names, sizes, truncation and redaction counts, never their
@@ -467,7 +467,10 @@ result, the last stdout line under `--format json|ndjson`:
 
 `status` is `completed`, `failed`, `cancelled`, or `budget_stopped`; the
 `exit_code` field equals the process exit code — `0` only for a completed
-turn (an explicit `/exit` included), `5` otherwise. Unlike `saya ask`/`saya
+turn (an explicit `/exit` included), `5` for a failed, cancelled, or
+budget-stopped turn, and `2` for a failure outside the turn (a turn file
+that cannot be read, a runtime load failure), which produces no
+`turn_result` at all. Unlike `saya ask`/`saya
 run`, a cancelled or budget-stopped turn-file run also exits `5` here, not
 `130`/`6`. Under json/ndjson the result goes to stdout; diagnostics and
 errors go to stderr.
@@ -577,7 +580,8 @@ names the storage root. A pending deletion shown by `saya sessions list`
 is finished by running `saya sessions delete <id>` again.
 
 `saya sessions delete <id>` deletes exactly one saved session — its record,
-its state directory, and its staged temps and quarantined copies — through
+its state directory (the recovery checkpoints included), and its staged
+temps and quarantined copies — through
 the same lifecycle owner the interactive session holds its lock with. It
 never prompts, so scripted runs behave identically. A session another
 process holds live is refused with the holder's pid and nothing is deleted;
@@ -667,8 +671,10 @@ run /compact first." The text is at most 8192 bytes of plain text —
 newlines and tabs allowed, no other control characters — and
 secret-shaped text (keys, tokens, passwords) is refused, never stored.
 Notes ride later compactions of the same session unchanged and are
-saved with the session. They are separate from project preferences
-(`/preferences`, per worktree) and from typed database knowledge
+saved with the session: they come back on `/resume <id>` and are carried by
+`/rotate`, and they disappear only through `/notes clear` or deleting the
+session (`/sessions delete <id>`). They are separate from project
+preferences (`/preferences`, per worktree) and from typed database knowledge
 (`/remember`), and are never a model-callable tool.
 
 ## Rotating a long session: `/rotate`
@@ -762,7 +768,9 @@ them back.
 - **What is stored and where.** Owner-only files under the saya sessions
   directory, outside your project: each edit's before-image, its
   post-edit digest and the path. Nothing else — never the conversation,
-  never database results.
+  never database results. The recorded edits are deleted with the session:
+  `/sessions delete <id>` removes the session's directory, checkpoints
+  included, and they are gone when the session is gone.
 - **Limits.** At most 128 edits and 64 MiB per session, 8 MiB per file.
   At the quota, an edit that would need recovery is refused before
   anything is mutated; you can delete the recorded edits

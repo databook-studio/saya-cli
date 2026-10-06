@@ -5,7 +5,7 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
-## 0.4.2 — 2026-09-28
+## 0.4.2 — unreleased
 
 ### Added
 
@@ -238,6 +238,113 @@ definition as a **new revision** — name, description, SQL, or the parameter
 list — leaving the review binding on the old revision, so the next run needs
 `--revalidate`.
 
+### Added — native coding and continuity
+
+**Instructions & preferences**
+
+- **Project and personal instructions load into every request.** `AGENTS.md`
+  at the workspace root and `instructions.md` in your user config directory
+  ride each request as labelled, untrusted guidance — never permissions,
+  never executed — capped at 32 KiB project, 16 KiB personal, 48 KiB total,
+  two files at most, truncation marked at a UTF-8 boundary; `/context` shows
+  what loaded (names, sizes, digests, skip reasons) and never the text.
+- **`saya preferences` — explicit per-worktree guidance you confirmed.**
+  `add|list|edit|forget|forget-all` (and `/preferences …` in-session) store
+  short notes in the state database separately from typed database
+  knowledge, scoped to the canonical worktree: 64 preferences, 1 KiB of text
+  each, 16 KiB sent per request, secret-shaped text refused, never
+  model-created, never a permission.
+- **Copy-ready instruction examples** verified against the binary live in
+  [docs/instruction-examples/](docs/instruction-examples/README.md).
+
+**Sessions & continuity**
+
+- **Saved sessions gain an optional, versioned continuation**: the
+  compaction summary, your notes, and deterministic file/check facts derived
+  from the tools that actually ran — redacted before disk, revalidated
+  before model inclusion, restored on `/resume`, and carried through
+  `/rotate`. Sessions written before the extension keep their behaviour,
+  and a continuation a binary does not understand is preserved verbatim,
+  never overwritten.
+- **`/notes` — your notes on this session's saved summary** (`set`/`clear`,
+  at most 8 KiB, secret-shaped text refused): guidance only, never
+  model-written, separate from `/preferences` and `/remember`, saved with
+  the session.
+- **`/rotate` — continue in a new, smaller successor session.** After
+  `/compact`, rotation carries the summary, your notes, the file/check
+  facts, and the verbatim tail into a successor linked to its parent (the
+  link is lineage only); the old session stays complete and resumable. The
+  store warns once at 3 MiB of the 4 MiB record cap, refuses a save that
+  would overflow it (the last good record stays), and `/rotate` explains
+  itself at the cap.
+- **`saya sessions list|delete` and `/sessions list|delete`.** The listing
+  shows id, size, status and age, and names sessions whose deletion is
+  pending; deletion refuses a live or the current session and cleans the
+  session record, its state directory, and its recovery checkpoints
+  together, retrying convergently when a prior pass was interrupted —
+  always stating that project preferences and typed database knowledge were
+  not deleted.
+
+**File edits, recovery & checkpoints**
+
+- **Every file replacement is digest-guarded.** `workspace_edit` requires an
+  observed `expected_digest` to replace, to append, and (with `create_new`)
+  to create; `workspace_write` is create-if-absent and digest-guarded for
+  replacement; file removal is digest-guarded; a stale overwrite refuses
+  instead of clobbering.
+- **`/recovery` — undo an agent file edit.** Opt-in per session
+  (`on|off|list|diff|restore`), off by default: while it is on, the file
+  tools keep the file's exact previous bytes privately outside the project,
+  restore runs only when the file still is, digest for digest, the recorded
+  edit's result, and the quota (8 MiB per file, 64 MiB and 128 edits per
+  session) refuses a recovery-required edit before anything is mutated.
+- **Checkpoint before-images are screened at admission:** credential-looking
+  paths, secret-shaped content, and database-export artifacts are refused —
+  recovery says so, it never silently stores prohibited bytes.
+- **The guarded file tools are advertised and gated on the session surface:**
+  approvals and grants cover `workspace_edit` like every other tool.
+
+**Scripted turns & cancellation**
+
+- **Every scripted (`--turn-file`) run ends with exactly one
+  machine-readable `turn_result`** — status, exit code, and an honest tool
+  tally (`tools_completed`, `tools_unfinished` naming the calls whose
+  effects are unknown).
+- **Ctrl-C cancels network and scratch work before publication.** The turn's
+  cancellation reaches `http_fetch`, `http_download`, `scratch_sql`, and
+  scratch imports, so a cancelled call stops before its result lands.
+
+**Setup, doctor & config**
+
+- **`/setup` in the TUI** hands the terminal to the same guided wizard
+  `saya setup` runs and takes it back after; the finished wizard's
+  configuration applies immediately (the same reload `/reload` runs), and
+  the first screen states AI, project, and database readiness.
+- **`saya config doctor --task query|ai|coding`** reports one task's
+  readiness from the resolved configuration alone — no network calls, no
+  secret values printed — with `query` unchanged in the flagless form.
+- **`saya config show --explain`** annotates each setting with the layer
+  that supplied it, and lists the security-critical project-layer overrides
+  that were ignored.
+- **`/reload`** re-reads the configuration between turns with the same
+  launch options and reports three classes — applied from the next turn,
+  re-seeded for this session (never silently replacing your `/provider`,
+  `/model`, or `/connect` overrides), and what a running session never
+  changes (data sharing, host commands, session denies, the jobs runner,
+  theme, thinking). A failed reload keeps the old configuration.
+
+### Fixed — native coding and continuity
+
+- **A crash around a checkpoint no longer masquerades as a committed edit.**
+  A `Prepared` record left behind is converted to `Uncertain` on the next
+  acquire — never trusted as committed, never silently discarded — and the
+  write tools' approval text states the real write contract.
+- **Instruction projection stays sound when redaction grows a source's text**
+  past the budget it was measured at.
+- **A missing instruction directory is treated as absent**, not an error.
+- **`saya sessions delete` clears a tombstone-only leftover** from an
+  earlier interrupted deletion instead of leaving it pending forever.
+
 ### Changed
 
 - **The minimum supported Rust version is now 1.89.**
@@ -264,6 +371,9 @@ list — leaving the review binding on the old revision, so the next run needs
 
 ### Known limitations
 
+- `config.toml`'s `[ui] theme` has no effect today — the `--theme` flag's
+  built-in `auto` default is always applied; choose a palette per invocation
+  with `--theme dark|light` (a known 0.4.1 defect, not fixed here).
 - Agent `bounded_sql_query` captures are model-limited: exactly the at most
   50 rows the agent saw, never the full result — the snapshot success line
   says the full result may be larger and points at `/export --refresh`, and
