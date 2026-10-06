@@ -398,11 +398,26 @@ fn tui_verbose_session_metrics_print_after_terminal_restoration() {
             "the child never reached EOF"
         );
     }
-    assert!(
-        tui.child
+    // EOF on the pty master arrives when the child closes its terminal, which
+    // can be a few milliseconds BEFORE the process is reapable: poll for the
+    // exit (bounded) instead of sampling it once at EOF.
+    let exit_deadline = Instant::now() + Duration::from_secs(5);
+    let exited = loop {
+        if tui
+            .child
             .child
             .try_wait()
-            .is_ok_and(|status| status.is_some()),
+            .is_ok_and(|status| status.is_some())
+        {
+            break true;
+        }
+        if Instant::now() >= exit_deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(
+        exited,
         "the TUI child must exit on its own; the harness must never kill it"
     ); // (a) The metrics header lands only after the alternate-screen leave:
     // the terminal was restored before anything metric printed.
