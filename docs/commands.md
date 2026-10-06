@@ -11,7 +11,7 @@ session. It accepts `/help`, `/connect`, `/connections`, `/include`,
 into requests: names, sizes, truncation and redaction counts, never their
 text, plus why any source was skipped (symlink, not a regular file, too
 large, not UTF-8, unreadable) or omitted for budget, and the effective
-settings. These files carry project guidance, never permissions.
+settings. These files carry project guidance, never permissions. Copy-ready instruction files verified against the binary: [instruction-examples/README.md](instruction-examples/README.md).
 
 Examples:
 
