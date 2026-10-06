@@ -175,6 +175,14 @@ fn every_suggestible_token_parses_to_the_capability_it_names() {
             json!({"path": "a.md", "content": "x"}),
         ),
         (
+            "workspace_edit".to_owned(),
+            json!({"path": "a.md", "old_text": "a", "new_text": "b", "expected_digest": "d"}),
+        ),
+        (
+            "workspace_edit".to_owned(),
+            json!({"path": "a.md", "offset": 0, "chunk": "x"}),
+        ),
+        (
             "scratch_sql".to_owned(),
             json!({"sql": "CREATE TABLE t (a int)"}),
         ),
@@ -217,6 +225,38 @@ fn every_suggestible_token_parses_to_the_capability_it_names() {
             approved.capabilities
         );
     }
+}
+
+/// The session edit tool is the whole-file write's effect class: one
+/// `workspace-write` grant covers both file tools, gated on the same bound
+/// workspace root.
+#[test]
+fn workspace_edit_suggests_the_same_write_token_as_workspace_write() {
+    let facts = composed_facts();
+    let replace =
+        json!({"path": "notes.md", "old_text": "a", "new_text": "b", "expected_digest": "d"});
+    let append = json!({"path": "notes.md", "offset": 0, "chunk": "x"});
+    let write = json!({"path": "notes.md", "content": "x"});
+    assert_eq!(
+        grant_token("workspace_edit", &replace, None, &facts),
+        Some("workspace-write".to_owned()),
+        "an anchored replace suggests the write token"
+    );
+    assert_eq!(
+        grant_token("workspace_edit", &append, None, &facts),
+        Some("workspace-write".to_owned()),
+        "an append suggests the write token"
+    );
+    assert_eq!(
+        grant_token("workspace_edit", &replace, None, &facts),
+        grant_token("workspace_write", &write, None, &facts),
+        "one grant covers both file tools"
+    );
+    assert_eq!(
+        grant_token("workspace_edit", &replace, None, &ApprovalFacts::default()),
+        None,
+        "no workspace root, no offer — the same gate as the write tool"
+    );
 }
 
 /// One SQL grant covers the read-shaped family: the family is derived from

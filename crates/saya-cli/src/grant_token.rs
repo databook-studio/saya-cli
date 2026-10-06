@@ -106,7 +106,7 @@ pub(crate) fn grant_token(
     facts: &ApprovalFacts,
 ) -> Option<String> {
     match tool {
-        "workspace_write" => facts
+        "workspace_write" | "workspace_edit" => facts
             .workspace_root
             .is_some()
             .then(|| "workspace-write".to_owned()),

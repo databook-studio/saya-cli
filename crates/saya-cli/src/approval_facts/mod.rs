@@ -174,6 +174,9 @@ pub(crate) fn call_facts(
         "workspace_write" => {
             session_tools::workspace_write_facts(arguments, facts, session_line, grant)
         }
+        "workspace_edit" => {
+            session_tools::workspace_edit_facts(arguments, facts, session_line, grant)
+        }
         "scratch_sql" => session_tools::scratch_facts(arguments, facts, session_line),
         "scratch_import" => session_tools::scratch_import_facts(arguments, facts, session_line),
         "http_fetch" | "http_download" => {

@@ -34,7 +34,7 @@ fn reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
     match token {
         "workspace-write" if facts.workspace_root.is_none() => Some(
             "no workspace root is bound, so the write-shaped file tools are not \
-             composed and no workspace_write call can occur"
+             composed and no workspace_write or workspace_edit call can occur"
                 .to_owned(),
         ),
         "scratch" if facts.scratch.is_none() => Some(
@@ -100,4 +100,22 @@ fn runner_family_reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
              door does not exist and an interpreter call for it refuses by name"
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::composition_refusal;
+    use crate::approval_facts::ApprovalFacts;
+
+    /// The workspace-root refusal names both guarded file tools: the token
+    /// gates the family, never one tool's name.
+    #[test]
+    fn the_workspace_refusal_names_both_write_shaped_tools() {
+        let refusal = composition_refusal("workspace-write", &ApprovalFacts::default())
+            .expect("no workspace root, the token refuses");
+        assert!(
+            refusal.contains("no workspace_write or workspace_edit call can occur"),
+            "the refusal names both file tools: {refusal}"
+        );
+    }
 }

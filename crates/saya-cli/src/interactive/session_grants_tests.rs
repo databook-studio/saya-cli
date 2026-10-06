@@ -740,3 +740,48 @@ fn allow_refuses_a_token_the_composition_cannot_carry() {
         "the composed case is not refused"
     );
 }
+
+/// One `workspace-write` grant pre-answers both guarded file tools: the
+/// token `grant_token` yields for a `workspace_edit` call is the same word
+/// the store holds, so a WriteWorkspace/requires-approval ask resolves
+/// `Allow` without asking. Without the grant the call asks.
+#[test]
+fn a_workspace_write_grant_pre_answers_workspace_edit() {
+    use crate::grant_token::grant_token;
+    let facts = ApprovalFacts {
+        workspace_root: Some(PathBuf::from("/home/user/proj")),
+        ..ApprovalFacts::default()
+    };
+    let arguments = serde_json::json!({
+        "path": "notes.md",
+        "old_text": "a",
+        "new_text": "b",
+        "expected_digest": "d",
+    });
+    let token = grant_token("workspace_edit", &arguments, None, &facts)
+        .expect("the edit suggests the write token");
+    assert_eq!(token, "workspace-write", "one token for both file tools");
+    let policy = SessionPolicy::new(ApprovalPolicy::Ask);
+    let effect = saya_agent::ToolEffect {
+        database_data: false,
+        external_side_effect: false,
+        requires_approval: true,
+        local_state: saya_agent::LocalStateEffect::WriteWorkspace,
+    };
+    assert_eq!(
+        policy.resolve(&effect, Some(&token)),
+        saya_agent::ApprovalDecision::Ask,
+        "no grant, the call asks"
+    );
+    policy.grants().grant(&token);
+    assert_eq!(
+        policy.resolve(&effect, Some(&token)),
+        saya_agent::ApprovalDecision::Allow,
+        "the one write grant pre-answers the edit"
+    );
+    assert_eq!(
+        policy.resolve(&effect, Some("fetch:https+example.com")),
+        saya_agent::ApprovalDecision::Ask,
+        "and nothing on another token"
+    );
+}

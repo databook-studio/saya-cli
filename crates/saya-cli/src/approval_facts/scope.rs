@@ -47,7 +47,7 @@ pub(super) fn scope_sentence(name: &str, grant: Option<&str>) -> Option<String> 
                 "  [s] covers {scheme} on {host}, any path, for this session — not just this URL"
             ))
         }
-        "workspace_write" if token == "workspace-write" => Some(
+        "workspace_write" | "workspace_edit" if token == "workspace-write" => Some(
             "  [s] covers every workspace write for this session — not this path alone".to_string(),
         ),
         _ => None,
@@ -66,6 +66,7 @@ mod tests {
             "http_fetch",
             "http_download",
             "workspace_write",
+            "workspace_edit",
         ] {
             assert_eq!(scope_sentence(name, None), None);
         }
@@ -80,9 +81,30 @@ mod tests {
             None
         );
         assert_eq!(
+            scope_sentence("workspace_edit", Some("fetch:https+example.com")),
+            None
+        );
+        assert_eq!(scope_sentence("workspace_edit", Some("scratch")), None);
+        assert_eq!(
             scope_sentence("bounded_sql_query", Some("sql:analytics")),
             None
         );
         assert_eq!(scope_sentence("scratch_sql", Some("scratch")), None);
+    }
+
+    /// The edit tool is the write tool's effect class: one `[s]` sentence —
+    /// the same words — covers both guarded file tools.
+    #[test]
+    fn the_workspace_edit_ask_states_the_same_write_scope() {
+        assert_eq!(
+            scope_sentence("workspace_edit", Some("workspace-write")),
+            scope_sentence("workspace_write", Some("workspace-write")),
+            "one scope sentence for both guarded file tools"
+        );
+        assert!(
+            scope_sentence("workspace_edit", Some("workspace-write"))
+                .is_some_and(|sentence| sentence.contains("every workspace write")),
+            "the sentence says what [s] widens to"
+        );
     }
 }
