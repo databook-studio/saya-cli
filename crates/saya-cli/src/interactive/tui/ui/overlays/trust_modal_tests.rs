@@ -1,6 +1,7 @@
 use super::*;
 use crate::interactive::tui::history::History;
 use crate::interactive::tui::input::InputBuffer;
+use crate::interactive::tui::startup_readiness::{ReadinessLine, StartupReadiness};
 use crate::interactive::tui::transcript::Transcript;
 use crate::interactive::tui::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::interactive::tui::ui_snapshot_tests::{empty_app, unused_runtime, unused_store};
@@ -20,6 +21,12 @@ fn trust_app() -> App {
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into()],
+        startup: StartupReadiness {
+            ai: ReadinessLine {
+                ready: true,
+                detail: "ollama, model test-model".into(),
+            },
+        },
         pending: None,
         request: RequestState::default(),
         overlays: OverlayState {
@@ -95,7 +102,9 @@ fn the_trust_modal_renders_the_shared_prompt_body() {
 }
 
 /// The modal offers the same three exits the line prompt offers, and
-/// the splash marker still paints behind it.
+/// the splash's state section still paints behind it — the AI, project,
+/// and database readiness lines tier with the state, so they outlive the
+/// branding this pane size sheds.
 #[test]
 fn the_trust_modal_offers_all_three_exits_beside_the_splash() {
     let app = trust_app();
@@ -111,8 +120,8 @@ fn the_trust_modal_offers_all_three_exits_beside_the_splash() {
         );
     }
     assert!(
-        buffer.contains("◆ saya"),
-        "the splash paints behind the modal:\n{buffer}"
+        buffer.contains("Database  analytics"),
+        "the splash's state section paints behind the modal:\n{buffer}"
     );
 }
 

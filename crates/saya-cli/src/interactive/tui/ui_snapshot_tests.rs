@@ -42,7 +42,9 @@ mod support;
 mod tables;
 
 pub(crate) use claims::{proposed_claim, supplied_claim, supplied_contract};
-pub(crate) use support::{empty_app, fixed_status, render_buffer, unused_runtime, unused_store};
+pub(crate) use support::{
+    empty_app, empty_app_with_startup, fixed_status, render_buffer, unused_runtime, unused_store,
+};
 
 use super::stream_events::apply_event;
 use saya_agent::{AgentEvent, KnowledgeOutcome};

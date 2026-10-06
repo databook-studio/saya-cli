@@ -673,10 +673,13 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
     // what survives a squeeze, not on the branding.
     //
     // This used to pin `◆ saya` and the tagline. Those are decoration, and the
-    // empty state now drops decoration before guidance when height is short
-    // (Phase 9 packet 2): here the startup trust modal takes most of the pane,
-    // so the branding is correctly shed while the keyboard hint and the
-    // concept line stay. Pinning the branding pinned the old, wrong priority.
+    // empty state drops decoration before guidance when height is short
+    // (Phase 9 packet 2): here the startup trust modal takes most of the pane.
+    // It then pinned the concept line; the state section's three readiness
+    // lines plus the entry choices tier with the state now, so the concept
+    // line yields on this squeezed pane too (U03) — the readiness lines are
+    // what the first screen must still say. The offline config is Ollama
+    // with model `smoke`, so the AI line reads ready.
     assert_in(
         &text,
         "/ commands",
@@ -685,8 +688,14 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
     );
     assert_in(
         &text,
-        "Each request becomes a chapter",
-        &format!("first-screen concept line missing from {label}"),
+        "AI        ready — ollama, model smoke",
+        &format!("splash AI readiness line missing from {label}"),
+        &text,
+    );
+    assert_in(
+        &text,
+        &format!("Database  {profile}"),
+        &format!("splash database line missing from {label}"),
         &text,
     );
 

@@ -49,6 +49,7 @@ mod scope_tests;
 pub(crate) mod session;
 mod session_save;
 mod sql_task;
+mod startup_readiness;
 mod stream_events;
 mod table;
 mod terminal;

@@ -1,18 +1,18 @@
 //! The splash / empty state shown before the first conversation turn.
 
+mod state;
+
 use std::borrow::Cow;
 
 use super::super::theme::{accent, secondary, warning};
-use super::splash::{
-    NO_DATABASE_FOOTER, NO_DATABASE_HEADLINE, NO_DATABASE_STEPS, NO_WORKSPACE_LINES, splash_art,
-};
+use super::splash::{NO_WORKSPACE_LINES, splash_art};
 use crate::interactive::tui::types::App;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::Paragraph,
+    widgets::{Paragraph, Wrap},
 };
 
 /// The one-line introduction to what this screen leads into: every request
@@ -28,15 +28,16 @@ const KEYBOARD_HINT: &str = "/ commands     @ tables     ? help     Ctrl+C quit"
 /// How reluctantly a splash section yields to a short pane, least-kept
 /// last. At small sizes decoration goes before guidance, and the stated
 /// state of the session outlives the introduction: the keyboard hint never
-/// drops, the state paragraph and the stated absences outlive the concept
-/// line, the examples outlive only the splash identity, which goes with the
-/// art and the blank spacers.
+/// drops, the three readiness lines and the entry choices outlive the
+/// concept line, the examples outlive only the splash identity, which goes
+/// with the art and the blank spacers.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Tier {
     /// The keyboard hint: how to do anything at all.
     Always,
-    /// The databases line, or the no-database / no-workspace guidance —
-    /// state and stated absences, not chrome.
+    /// The three readiness lines, the stated workspace absence, and the
+    /// entry choices — state and stated absences, not chrome. Painted
+    /// state-first, so the choices shed before the lines on a squeeze.
     State,
     /// The one-line chapter concept.
     Concept,
@@ -82,43 +83,10 @@ fn identity() -> Section<'static> {
     )
 }
 
-/// The state paragraph: the databases when configured, the no-database
-/// guidance when not — a stated absence, not chrome. The copy lives in
-/// `splash` so it can be asserted on; see the tests there for what it must
-/// hold. The text here once sent new users to `/connect`, which can only
-/// select already-configured profiles — a dead end.
-fn state<'a>(app: &'a App) -> Section<'a> {
-    let mut lines = vec![Line::from("")];
-    if app.profiles.is_empty() {
-        lines.push(missing(NO_DATABASE_HEADLINE));
-        for step in NO_DATABASE_STEPS {
-            lines.push(plain(step));
-        }
-        lines.push(Line::from(""));
-        lines.push(plain(NO_DATABASE_FOOTER));
-    } else {
-        let mut spans = vec![Span::styled(
-            "databases  ",
-            Style::default().fg(secondary()),
-        )];
-        for (i, profile) in app.profiles.iter().enumerate() {
-            if i > 0 {
-                spans.push(Span::styled("  ·  ", Style::default().fg(secondary())));
-            }
-            spans.push(Span::styled(
-                profile.as_str(),
-                Style::default().fg(accent()),
-            ));
-        }
-        lines.push(Line::from(spans));
-    }
-    (Tier::State, lines)
-}
-
-/// The unbound-workspace paragraph, beside — never instead of — the
-/// no-database guidance above: the two absences are orthogonal and both
-/// must read. `Some(true)` (a root bound) draws nothing, keeping a bound
-/// session's splash byte-identical.
+/// The unbound-workspace paragraph, beside — never instead of — the state
+/// section above: the absences are orthogonal and both must read.
+/// `Some(true)` (a root bound) draws nothing, keeping a bound session's
+/// splash free of it.
 fn workspace(workspace_bound: Option<bool>) -> Section<'static> {
     if workspace_bound != Some(false) {
         return (Tier::State, Vec::new());
@@ -194,9 +162,11 @@ fn visible<'a>(mut kept: Vec<Section<'a>>, height: usize) -> Vec<Line<'a>> {
 
 /// Draws a centered splash/empty state shown before the first conversation turn.
 ///
-/// `workspace_bound` decides the workspace paragraph: `None` (no root
-/// bound) draws the unbound line beside — never instead of — the
-/// no-database guidance, so the two orthogonal absences both read.
+/// The state section (in `state`) paints the three readiness lines — AI,
+/// project, database — and the entry-choices block; `workspace_bound`
+/// decides the project line's presence and the unbound-workspace
+/// paragraph, drawn beside — never instead of — the state section, so the
+/// orthogonal absences both read.
 pub(in crate::interactive::tui) fn draw_empty_state(
     frame: &mut Frame<'_>,
     app: &App,
@@ -206,8 +176,9 @@ pub(in crate::interactive::tui) fn draw_empty_state(
     let height = area.height as usize;
     let sections = vec![
         identity(),
-        state(app),
+        (Tier::State, state::state_lines(app, workspace_bound)),
         workspace(workspace_bound),
+        (Tier::State, state::choice_lines(workspace_bound)),
         concept(),
         examples(app),
         hint(),
@@ -234,7 +205,15 @@ pub(in crate::interactive::tui) fn draw_empty_state(
     lines.extend(content);
 
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).alignment(Alignment::Center),
+        Paragraph::new(Text::from(lines))
+            .alignment(Alignment::Center)
+            // The state lines are the one place a doctor detail can ride
+            // in — an unready provider's line runs past a narrow pane —
+            // so over-width lines wrap instead of clipping the remedy
+            // away. Trim stays off: the wrapped continuation must keep
+            // what the wrap point split, and the label rows never reach
+            // the width that would wrap them.
+            .wrap(Wrap { trim: false }),
         area,
     );
 }

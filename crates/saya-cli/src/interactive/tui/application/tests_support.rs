@@ -4,6 +4,7 @@ use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::history::History;
 use crate::interactive::tui::input::InputBuffer;
 use crate::interactive::tui::sql_task::{Followup, SqlTask};
+use crate::interactive::tui::startup_readiness::{ReadinessLine, StartupReadiness};
 use crate::interactive::tui::transcript::Transcript;
 use crate::interactive::tui::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::render::TerminalEvent;
@@ -24,6 +25,12 @@ pub(crate) fn idle_app() -> App {
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: Vec::new(),
+        startup: StartupReadiness {
+            ai: ReadinessLine {
+                ready: true,
+                detail: "ollama, model test-model".into(),
+            },
+        },
         pending: None,
         request: RequestState::default(),
         overlays: OverlayState::default(),

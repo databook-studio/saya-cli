@@ -1,5 +1,7 @@
-//! What the empty-state splash shows before the first turn: the mascot, and
-//! the first-run guidance for someone with no database configured yet.
+//! What the empty-state splash shows before the first turn: the mascot,
+//! and the readiness copy the state section paints — AI, project, and
+//! database, each independent — plus the entry choices the first screen
+//! offers. The copy lives here so tests can assert on it.
 
 use super::super::theme::{accent, secondary};
 use ratatui::{
@@ -7,39 +9,60 @@ use ratatui::{
     text::{Line, Span},
 };
 
-/// The headline shown when no connection profile is configured.
-pub(crate) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
+/// The state section's three labels, padded to one width so the three
+/// values align down the screen.
+pub(in crate::interactive::tui) const AI_LABEL: &str = "AI        ";
+pub(in crate::interactive::tui) const PROJECT_LABEL: &str = "Project   ";
+pub(in crate::interactive::tui) const DATABASE_LABEL: &str = "Database  ";
 
-/// The steps under that headline.
-///
-/// The first step is the one-command way forward: the synthetic demo
-/// database, opened read-only, needs no configuration at all. The
-/// `config init` route stays behind it for the real database a serious
-/// session needs.
-///
-/// Deliberately names no config path. `config init` writes the user config
-/// directory by default, `--project` writes `.saya/`, and init prints whichever
-/// it chose — so the one place that knows the answer is the command itself.
-/// The previous copy hardcoded `.saya/connections.toml` and kept saying it
-/// after the default moved, sending first-run users to a file that is not
-/// created any more.
-pub(in crate::interactive::tui) const NO_DATABASE_STEPS: [&str; 5] = [
-    "Try it now: `saya demo` — a read-only sample database.",
-    "Or run `saya setup` for a guided connection.",
-    "Run `saya config init` — it prints where it wrote the files.",
-    "Add your database there, then `saya connection test <name>`.",
-    "Restart saya to pick it up.",
-];
+/// The AI verdict when the provider is configured; the doctor's provider
+/// detail ("ollama, model m") follows it.
+pub(in crate::interactive::tui) const AI_READY: &str = "ready — ";
 
-/// The closing line, after a blank row.
-pub(in crate::interactive::tui) const NO_DATABASE_FOOTER: &str =
-    "`saya config doctor` explains anything still missing.";
+/// The AI verdict when the provider is not configured. The first failing
+/// doctor check's detail follows, then the remedy: the AI line carries
+/// the instruction, never the database line.
+pub(in crate::interactive::tui) const AI_NOT_SET_UP: &str = "not set up — ";
+pub(in crate::interactive::tui) const AI_REMEDY: &str = "; try /provider, /model or `saya setup`";
+
+/// The bound-project verdict: with a root bound, coding needs nothing
+/// else — the file tools are the difference.
+pub(in crate::interactive::tui) const PROJECT_READY: &str = "ready — file tools are available";
+
+/// The no-database verdict: coding does not wait on a database — the
+/// line reads as optional and offers the two one-command ways to add one.
+pub(in crate::interactive::tui) const DATABASE_NONE: &str =
+    "none yet — optional; `saya demo` or `saya setup` adds one";
+
+/// The entry-choices header: the four ways to start, one block.
+pub(in crate::interactive::tui) const START_HEADER: &str = "Start with:";
+
+/// The coding choice when a workspace is bound: just ask.
+pub(in crate::interactive::tui) const START_CODE_BOUND: &str =
+    "Code in this project — just ask, e.g. \"add a test for parse_args\"";
+
+/// The coding choice when no workspace is bound: how to bind one.
+pub(in crate::interactive::tui) const START_CODE_UNBOUND: &str =
+    "Code in a project — launch inside a git worktree or pass --workspace <dir>";
+
+/// The database choice: guided setup or the read-only demo database.
+pub(in crate::interactive::tui) const START_QUERY: &str =
+    "Query a database — `saya setup` (guided) or `saya demo` (sample data)";
+
+/// The data-file choice.
+pub(in crate::interactive::tui) const START_OPEN: &str =
+    "Open a data file — `saya open <file.csv>`";
+
+/// The AI choice: the two commands that show what is available.
+pub(in crate::interactive::tui) const START_AI: &str =
+    "Change AI — /provider and /model show what is available";
 
 /// The headline shown when no workspace root is bound, beside the
-/// no-database guidance when both absences hold: the session names the
-/// unbound shape rather than staying silent about it. Two wrapped rows:
-/// the centred renderer wraps, it does not clip, so the copy is one
-/// logical line rendered as its own paragraph below the database guidance.
+/// state section's own project line when the root is absent: the
+/// session names the unbound shape rather than staying silent about
+/// it. Two wrapped rows: the centred renderer wraps, it does not clip,
+/// so the copy is one logical line rendered as its own paragraph below
+/// the state section.
 pub(crate) const NO_WORKSPACE_LINES: [&str; 2] = [
     "No workspace is bound: file tools are unavailable;",
     "launch inside a git worktree or pass `--workspace <dir>`.",

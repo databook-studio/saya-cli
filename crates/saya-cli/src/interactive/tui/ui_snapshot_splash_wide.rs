@@ -4,27 +4,28 @@ use super::support::{empty_app, fixed_status, render_buffer};
 
 // --- Slice 2 (G1): splash/status parity for the unbound workspace. --------
 
-/// G1 property 3 — the TUI splash shows the unbound-workspace line beside
-/// the no-database lines: both present, neither dropped. `empty_app` has no
-/// profiles (so the no-database guidance paints) and the unbound status
-/// carries no root (so the workspace paragraph paints too).
+/// G1 property 3 — the TUI splash states the absent database beside the
+/// unbound workspace: both present, neither dropped, neither made the
+/// other's prerequisite. `empty_app` with no profiles paints the
+/// database-none line; the unbound status carries no root, so the
+/// workspace paragraph paints too.
 #[test]
 fn splash_names_unbound_beside_no_database() {
-    use crate::interactive::tui::ui::surface::{NO_DATABASE_HEADLINE, NO_WORKSPACE_LINES};
-    // `empty_app` carries demo profiles, so clear them: the no-database
-    // guidance paints only with no profiles configured.
+    use crate::interactive::tui::ui::surface::{DATABASE_NONE, NO_WORKSPACE_LINES};
+    // `empty_app` carries demo profiles, so clear them: the database-none
+    // line paints only with no profiles configured.
     let mut app = empty_app();
     app.profiles.clear();
     assert!(
         app.profiles.is_empty(),
-        "no profiles, so the no-database guidance paints"
+        "no profiles, so the database-none line paints"
     );
     let mut status = fixed_status();
     status.workspace_root = None;
     let buffer = render_buffer(&app, &status, 80, 30);
     assert!(
-        buffer.contains(NO_DATABASE_HEADLINE),
-        "the no-database headline is not dropped:\n{buffer}"
+        buffer.contains(DATABASE_NONE),
+        "the database-none line is not dropped:\n{buffer}"
     );
     for line in NO_WORKSPACE_LINES {
         assert!(
