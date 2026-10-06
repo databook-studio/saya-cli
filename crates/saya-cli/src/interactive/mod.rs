@@ -67,6 +67,9 @@ mod session_resume;
 pub(crate) use session_resume::adopt_picker_resumed;
 mod session_run;
 mod session_runner;
+// The session's recovery handle (E06b): the checkpoint store, the session
+// id, and the opt-in enable flag the per-turn file tools attach.
+pub(crate) mod session_recovery;
 pub(crate) mod session_runtime;
 mod session_schema;
 mod session_sql;

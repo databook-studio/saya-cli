@@ -211,6 +211,7 @@ fn a_session_without_path_still_starts() {
             launch: None,
             path: None,
             scratch: None,
+            recovery: None,
         },
     )
     .expect("a session without PATH still starts");
@@ -276,6 +277,7 @@ fn a_session_without_path_still_starts() {
             launch: Some(&launch),
             path: None,
             scratch: universe.scratch(),
+            recovery: None,
         },
     )
     .expect("deny composes without PATH too");
@@ -307,6 +309,7 @@ fn a_windows_session_starts_with_the_host_lane_off() {
             launch: None,
             path: Some("C:\\Windows\\System32".to_owned()),
             scratch: None,
+            recovery: None,
         },
     )
     .expect("Windows starts the session with host commands unavailable");
@@ -414,6 +417,7 @@ fn no_root_still_no_lane() {
             launch: None,
             path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
             scratch: universe.scratch(),
+            recovery: None,
         },
     )
     .expect("the unstated unbound session composes");
@@ -1444,6 +1448,7 @@ async fn recomposing_a_session_reuses_its_live_scratch_connection() {
             launch: None,
             path: Some("test-path".to_owned()),
             scratch: Some(scratch),
+            recovery: None,
         },
     )
     .expect("recomposition shares the live scratch database");
@@ -1485,6 +1490,7 @@ async fn recomposing_unbound_clears_scratch_import_access() {
             launch: None,
             path: Some("test-path".to_owned()),
             scratch: first.scratch(),
+            recovery: None,
         },
     )
     .expect("the unbound recomposition retains scratch");

@@ -35,6 +35,7 @@ use saya_harness::scratch::ScratchSql;
 
 use super::session_definitions;
 use super::session_host::{self, SessionHost};
+use super::session_recovery::RecoveryHandle;
 use super::session_runner::{SessionRunner, compose_runner};
 use super::session_workspace::{SessionWorkspace, bind_from_pins};
 use crate::agent::tools::{DatabaseTools, RunTools};
@@ -56,6 +57,10 @@ pub(crate) struct SessionComposition<'a> {
     /// database handle stays alive for TUI snapshots, and a clone rebinds
     /// only the workspace import root.
     pub(crate) scratch: Option<Arc<ScratchSql>>,
+    /// The live session's recovery handle, when this composition belongs
+    /// to an acquisition. The wrappers (no runtime behind them) and the
+    /// test fixtures pass `None`.
+    pub(crate) recovery: Option<RecoveryHandle>,
 }
 
 /// One interactive session's tool universe.
@@ -96,6 +101,11 @@ pub(crate) struct SessionUniverse {
     /// exists, or a sandbox probe that did not prove this host. Reported,
     /// never silent.
     pub(crate) notice: Option<String>,
+    /// The session's recovery handle, when a live acquisition composed
+    /// this universe: the per-turn `DatabaseTools` build attaches the
+    /// checkpoint recorder from it. Every recomposition carries the same
+    /// handle — one flag and one id for the session process.
+    recovery: Option<RecoveryHandle>,
     /// The probe refused this host: `run_program` is absent for the session
     /// and the fact is on the notice. The bypass activation line references
     /// it — under a mode that claims everything runs, the exception is said.
@@ -119,6 +129,7 @@ impl SessionUniverse {
             tasks: super::session_tasks::SessionTasks::default(),
             primary: crate::grant_token::TurnPrimary::default(),
             notice: None,
+            recovery: None,
             probe_refused: false,
             learning_breaker: LearningBreaker::new(),
         }
@@ -130,6 +141,10 @@ impl SessionUniverse {
     /// session's state directory, the session fetch wiring, and the runner
     /// where the host proves. The host lane stays unstated here — off by
     /// construction; the launch path composes through `compose_with_launch`.
+    /// Production composes through [`Self::compose_with_launch_and_path`]
+    /// only, because a live acquisition must carry its recovery handle;
+    /// these wrappers — which cannot — are the test fixtures' seam.
+    #[cfg(test)]
     pub(crate) fn compose(
         runtime: &crate::config::runtime::RuntimeConfig,
         explicit: Option<&Path>,
@@ -154,7 +169,10 @@ impl SessionUniverse {
     /// refusals, and the user-layer `[host_commands]` shaping. The lane
     /// itself composes wherever a workspace root binds — a seed only seeds,
     /// it no longer implies composition. `None` means no launch statement,
-    /// and the lane still composes where a root binds.
+    /// and the lane still composes where a root binds. Test-only, like
+    /// [`Self::compose`]: a live acquisition carries its recovery handle
+    /// through `compose_with_launch_and_path` directly.
+    #[cfg(test)]
     pub(crate) fn compose_with_launch(
         runtime: &crate::config::runtime::RuntimeConfig,
         explicit: Option<&Path>,
@@ -174,6 +192,7 @@ impl SessionUniverse {
             launch,
             path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
             scratch: None,
+            recovery: None,
         })
     }
 
@@ -196,6 +215,7 @@ impl SessionUniverse {
             launch,
             path,
             scratch,
+            recovery,
         } = composition;
         // The deny list, once per session: the launch's `--deny` refusals
         // plus the user-layer `[session_commands] deny`. Launch-only — a
@@ -289,6 +309,7 @@ impl SessionUniverse {
             tasks: super::session_tasks::SessionTasks::default(),
             primary: crate::grant_token::TurnPrimary::default(),
             notice,
+            recovery,
             probe_refused,
             learning_breaker: LearningBreaker::new(),
         })
@@ -369,6 +390,17 @@ impl SessionUniverse {
         self.workspace
             .as_ref()
             .map(|bound| Arc::clone(&bound.workspace))
+    }
+
+    /// The session's recovery handle — but only where a workspace is
+    /// bound: no workspace, no file tools, no recorder, whatever the flag
+    /// says. The per-turn `DatabaseTools` build attaches its parts.
+    pub(crate) fn recovery_handle(&self) -> Option<RecoveryHandle> {
+        if self.workspace.is_some() {
+            self.recovery.clone()
+        } else {
+            None
+        }
     }
 
     /// The live scratch handle for a recomposition. Cloning it keeps the

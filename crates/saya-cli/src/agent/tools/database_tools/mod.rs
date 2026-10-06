@@ -1,8 +1,9 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use saya_harness::workspace::Workspace;
-use saya_store::SqliteStateStore;
+use saya_store::{FsSessionStore, SqliteStateStore};
 
 use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
@@ -125,10 +126,13 @@ pub(crate) struct DatabaseTools {
     /// Default result cap for direct executor calls. Agent-loop calls receive
     /// their exact per-call share through `ToolExecutor::execute_with_result_cap`.
     pub(super) context_byte_budget: usize,
-    /// The session's checkpoint recorder for direct file-tool edits. `None`
-    /// — every current construction, until the session wiring attaches one
-    /// (next packet) — leaves behaviour identical: no capture, no cleanup,
-    /// no `recovery` field in any result.
+    /// The session's checkpoint recorder for direct file-tool edits. The
+    /// session wiring attaches one per turn wherever the session has a
+    /// bound workspace and a recovery handle; `None` — the one-shot `ask`
+    /// path, `saya run`, and every non-session construction — leaves
+    /// behaviour identical: no capture, no cleanup, no `recovery` field
+    /// in any result. With a recorder attached but the flag off (the
+    /// default) behaviour is identical too.
     pub(super) checkpoints: Option<checkpoint::CheckpointRecorder>,
 }
 
@@ -287,17 +291,32 @@ impl DatabaseTools {
         self
     }
 
-    /// Attaches the session's checkpoint recorder for direct file-tool
-    /// edits. Test-only until the session wiring packet builds the recorder
-    /// and owns the enable flag; every production construction leaves the
-    /// field `None`, so behaviour is identical without it.
-    #[cfg(test)]
+    /// Attaches an already-built checkpoint recorder for direct file-tool
+    /// edits. `None` — every construction that has not attached one —
+    /// leaves behaviour identical: no capture, no cleanup, no `recovery`
+    /// field in any result. The session wiring attaches through
+    /// [`Self::with_recovery`]; the sibling tests build recorders here
+    /// directly.
     pub(in crate::agent::tools) fn with_checkpoints(
         mut self,
         checkpoints: Option<checkpoint::CheckpointRecorder>,
     ) -> Self {
         self.checkpoints = checkpoints;
         self
+    }
+
+    /// Attaches the session's checkpoint recorder from its recovery
+    /// parts — the store, the session id, and the session-scoped enable
+    /// flag. `None` — the one-shot `ask` path, `saya run`, and every
+    /// non-session construction — leaves the field `None`: no capture,
+    /// no `recovery` field in any result.
+    pub(crate) fn with_recovery(
+        self,
+        parts: Option<(Arc<FsSessionStore>, String, Arc<AtomicBool>)>,
+    ) -> Self {
+        self.with_checkpoints(parts.map(|(store, session_id, enabled)| {
+            checkpoint::CheckpointRecorder::new(store, session_id, enabled)
+        }))
     }
 
     #[cfg(test)]

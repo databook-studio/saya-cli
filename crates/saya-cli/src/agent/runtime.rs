@@ -499,7 +499,7 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
     let observations_log = learning.observations.clone();
     let has_state_store = state_db.is_some();
     let override_log = Arc::new(tools::OverrideLog::new());
-    let database = Arc::new(
+    let database = Arc::new(super::session_recovery_attach::attach_recovery(
         tools::DatabaseTools::with_learning(
             registry,
             runtime.resolved.max_rows,
@@ -519,7 +519,9 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         // so the capture hook shapes the model's view with the budget the
         // loop shapes it with (R3). `None` headless.
         .with_capture(capture, runtime.resolved.ai.context_byte_budget),
-    );
+        // The session's recovery recorder — no session, nothing attached.
+        session.as_deref(),
+    ));
     let request = AgentRequest {
         prompt: prompt.into(),
         profile_names,
