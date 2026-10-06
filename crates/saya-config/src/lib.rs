@@ -40,7 +40,7 @@ pub use model::{
     ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile, JobsFile,
     SessionCommandsFile,
 };
-pub use provenance::{SettingOrigin, SettingProvenance, SettingSource};
+pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};

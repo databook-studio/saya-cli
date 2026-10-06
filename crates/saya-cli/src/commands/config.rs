@@ -14,11 +14,19 @@ pub(super) fn run(
     match command {
         ConfigCommand::Init { project } => run_init(format, project),
         ConfigCommand::Doctor { task } => run_doctor(runtime, format, task),
-        ConfigCommand::Show => {
-            let value = runtime.resolved.redacted_diagnostics();
-            let output = match format {
-                RenderFormat::Text => serde_json::to_string_pretty(&value)?,
-                _ => serde_json::to_string(&value)?,
+        ConfigCommand::Show { explain } => {
+            let output = if explain {
+                let explanation = config::explain::explain(runtime);
+                match format {
+                    RenderFormat::Text => config::explain::text(&explanation),
+                    _ => serde_json::to_string(&explanation)?,
+                }
+            } else {
+                let value = runtime.resolved.redacted_diagnostics();
+                match format {
+                    RenderFormat::Text => serde_json::to_string_pretty(&value)?,
+                    _ => serde_json::to_string(&value)?,
+                }
             };
             println!("{output}");
             Ok(0)

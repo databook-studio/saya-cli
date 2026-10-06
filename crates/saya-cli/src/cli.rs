@@ -432,7 +432,13 @@ pub enum ConfigCommand {
         task: Option<DoctorTaskArg>,
     },
     /// Print the effective (redacted) configuration as JSON.
-    Show,
+    Show {
+        /// Also show which layer (default, user file, project file,
+        /// environment, command line) supplied each setting. Values are
+        /// redacted exactly as without this flag.
+        #[arg(long)]
+        explain: bool,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
