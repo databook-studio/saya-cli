@@ -559,6 +559,7 @@ async fn run_turn(
         Some(session),
         AgentMode::Build,
         None,
+        None,
     )
     .await;
     (result, captured)

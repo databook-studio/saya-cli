@@ -307,6 +307,7 @@ async fn run_turn_with_request(
         None,
         AgentMode::Build,
         None,
+        None,
     )
     .await;
     (result, counters)
@@ -639,6 +640,7 @@ async fn runtime_uses_configured_request_wallet_after_real_sql_tool() {
         None,
         AgentMode::Build,
         None,
+        None,
     )
     .await;
     let output = result.expect("a budget stop preserves the loop's partial output");
@@ -761,6 +763,7 @@ async fn runtime_composes_requested_tool_limit_with_production_sqlite_tools() {
             None,
             AgentMode::Build,
             None,
+            None,
         )
         .await
         .expect("the runtime returns its partial or completed output");
@@ -867,6 +870,7 @@ async fn runtime_composes_reported_token_limit_with_production_sqlite_tools() {
             None,
             None,
             AgentMode::Build,
+            None,
             None,
         )
         .await

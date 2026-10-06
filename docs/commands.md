@@ -142,6 +142,11 @@ compaction fails, its line says "It will not retry on its own; run /compact
 to try again", and the trigger stays silent until `/clear` or a successful
 compaction re-arms it.
 
+A saved session summary also carries your notes, the files and checks
+recorded earlier; each request shows them as untrusted context, with file
+status re-checked against disk (up to 16 files) and checks labelled
+historical.
+
 The status header's `ws:` segment names the
 session's bound workspace root — the git worktree top above the launch
 directory, or a `--workspace <dir>` statement, pinned into the session record

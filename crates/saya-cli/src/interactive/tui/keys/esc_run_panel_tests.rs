@@ -94,6 +94,7 @@ fn esc_cancels_the_agent_stream_before_touching_the_panel() {
             journal: None,
             agent_mode: saya_agent::AgentMode::Build,
             prior_tool_outcomes: None,
+            continuation: None,
             compaction_summary: None,
             question_scope: None,
         });

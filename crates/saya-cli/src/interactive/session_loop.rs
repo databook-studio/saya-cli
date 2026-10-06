@@ -627,6 +627,7 @@ fn handle_line_verbatim(
                 session.universe(),
                 state.agent_mode_parsed(),
                 state.prior_tool_outcomes.clone(),
+                state.continuation.clone(),
                 state.compaction_summary_text(),
                 scope,
             )) {

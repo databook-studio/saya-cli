@@ -668,6 +668,7 @@ async fn run_wiring_turn(
         Some(session),
         AgentMode::Build,
         None,
+        None,
     )
     .await;
     let _ = std::fs::remove_dir_all(&root);

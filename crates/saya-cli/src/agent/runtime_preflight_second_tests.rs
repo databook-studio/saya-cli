@@ -31,6 +31,7 @@ pub(super) async fn generous_dispatch() {
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     })
     .await
@@ -80,6 +81,7 @@ pub(super) async fn scope_survives_refusal() {
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     })
     .await
