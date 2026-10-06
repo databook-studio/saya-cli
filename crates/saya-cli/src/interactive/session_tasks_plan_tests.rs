@@ -285,6 +285,7 @@ fn test_runtime() -> crate::config::runtime::RuntimeConfig {
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: Default::default(),
         },
         connections: Default::default(),

@@ -9,6 +9,7 @@ use crate::{
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
+    provenance::{Recorder, SettingProvenance, SettingSource, apply_user_facing_defaults},
 };
 
 const DEFAULT_MODEL: &str = "qwen2.5-coder:14b";
@@ -108,6 +109,11 @@ pub struct ResolvedConfig {
     /// endpoint's `api_key` stays a reference here; values are resolved only
     /// at request time.
     pub endpoints: BTreeMap<String, ResolvedEndpoint>,
+    /// For every user-facing effective setting, the configuration layer
+    /// that supplied it — value-free provenance where a secret appears only
+    /// as its redacted reference label. Pure observation of the merge: the
+    /// precedence, values, and errors are exactly what they were before.
+    pub provenance: SettingProvenance,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,11 +161,13 @@ pub struct ResolvedAi {
 
 pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let mut file = ConfigFile::default();
+    let mut recorder = Recorder::default();
     if let Some(user) = input.user.as_ref() {
         require_unique_endpoints(&user.ai.endpoints)?;
-        merge(&mut file, user);
+        merge(&mut file, user, &mut recorder, SettingSource::UserFile);
     }
     let protected = snapshot_protected(&file);
+    let provenance_before_project = recorder.snapshot();
     if let Some(project) = input.project.as_ref() {
         require_unique_endpoints(&project.ai.endpoints)?;
         // A project-layer `[host_commands]` is a hard refusal — not a
@@ -177,16 +185,53 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         if !project.session_commands.deny.is_empty() {
             return Err(ConfigError::SessionCommandsFromProject);
         }
-        merge(&mut file, project);
+        merge(
+            &mut file,
+            project,
+            &mut recorder,
+            SettingSource::ProjectFile,
+        );
     }
     let ignored_project_overrides = if input.cli.trust_project_config {
         Vec::new()
     } else {
-        revert_untrusted(&mut file, &protected)
+        let ignored = revert_untrusted(&mut file, &protected);
+        // The boundary reverted those keys to their trusted values, so the
+        // recorder rolls them back to what they were attributed as before
+        // the project layer merged — the ignored list is the key set.
+        recorder.rollback(&ignored, &provenance_before_project);
+        ignored
     };
-    apply_env(&mut file, &input.env_file)?;
-    apply_env(&mut file, &input.process_env)?;
-    apply_cli(&mut file, &input.cli);
+    let env_file_source = |var: &str| SettingSource::EnvFile {
+        var: var.to_owned(),
+    };
+    let process_env_source = |var: &str| SettingSource::Env {
+        var: var.to_owned(),
+    };
+    apply_env(&mut file, &input.env_file, &mut recorder, &env_file_source)?;
+    apply_env(
+        &mut file,
+        &input.process_env,
+        &mut recorder,
+        &process_env_source,
+    )?;
+    apply_cli(&mut file, &input.cli, &mut recorder);
+    // `profile_name` mirrors the selection chain below: the flag, then the
+    // process environment, then `default_profile` (as attributed by the
+    // merge), then the single-profile inference as a plain default.
+    let profile_source = if input.cli.profile.is_some() {
+        Some(SettingSource::Cli {
+            flag: "--profile".into(),
+        })
+    } else if input.process_env.contains_key("SAYA_PROFILE") {
+        Some(SettingSource::Env {
+            var: "SAYA_PROFILE".into(),
+        })
+    } else {
+        recorder
+            .origin_of("default_profile")
+            .map(|origin| origin.source.clone())
+    };
     let selected = input
         .cli
         .profile
@@ -199,6 +244,9 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         });
     if selected.is_none() && input.connections.profiles.len() > 1 {
         return Err(ConfigError::MissingProfile);
+    }
+    if let Some(source) = profile_source {
+        recorder.record_reference("profile_name", source, None);
     }
     let environment_profile = input.env_file.contains_key("SAYA_DB_TYPE")
         || input.process_env.contains_key("SAYA_DB_TYPE");
@@ -258,6 +306,8 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         retry_delays_ms,
     };
     let endpoints = resolve_endpoints(&file.ai, &ai)?;
+    let mut provenance = recorder.finish();
+    apply_user_facing_defaults(&mut provenance, &endpoints);
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
@@ -278,6 +328,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         instructions,
         ignored_project_overrides,
         endpoints,
+        provenance,
     })
 }
 

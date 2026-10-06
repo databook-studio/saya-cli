@@ -442,6 +442,7 @@ fn runtime_config(context_byte_budget: usize, privacy_gate_closed: bool) -> Runt
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: std::collections::BTreeMap::new(),
         },
         connections: Default::default(),

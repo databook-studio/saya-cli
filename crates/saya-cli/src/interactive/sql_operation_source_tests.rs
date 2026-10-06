@@ -102,6 +102,7 @@ fn sqlite_runtime(db: &Path, max_rows: usize) -> RuntimeConfig {
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: BTreeMap::new(),
         },
         connections,
