@@ -2,6 +2,7 @@
 
 use super::super::history::History;
 use super::super::input::InputBuffer;
+use super::super::startup_readiness::StartupReadiness;
 use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::{AgentCaptures, App, MAX_INPUT_ROWS, OverlayState, RequestState};
 use crate::config::runtime::RuntimeConfig;
@@ -27,6 +28,7 @@ impl App {
             input: InputBuffer::new(),
             transcript,
             profiles,
+            startup: StartupReadiness::from_runtime(&runtime),
             pending: None,
             request: RequestState::default(),
             overlays: OverlayState::default(),

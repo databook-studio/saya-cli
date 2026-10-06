@@ -2,6 +2,7 @@
 
 use super::super::history::History;
 use super::super::input::InputBuffer;
+use super::super::startup_readiness::StartupReadiness;
 use super::super::transcript::Transcript;
 use super::overlays::OverlayState;
 use super::request::RequestState;
@@ -26,6 +27,11 @@ pub(crate) struct App {
     pub(crate) input: InputBuffer,
     pub(crate) transcript: Transcript,
     pub(crate) profiles: Vec<String>,
+    /// The startup fact set computed once at composition: the AI
+    /// provider's readiness, phrased for the splash's state section.
+    /// Facts only — the doctor module guarantees no secret value in the
+    /// detail — and never recomputed per frame.
+    pub(crate) startup: StartupReadiness,
     pub(crate) pending: Option<String>,
     pub(crate) request: RequestState,
     pub(crate) overlays: OverlayState,

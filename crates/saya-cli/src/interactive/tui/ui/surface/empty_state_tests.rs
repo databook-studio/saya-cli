@@ -1,11 +1,20 @@
 //! The empty state under a short terminal: decoration yields before
-//! guidance, in an explicit drop order, and the first screen names the
-//! concepts the redesign added. Splash-only tests render
-//! `draw_empty_state` directly onto a `TestBackend` at an exact pane
-//! height; the composed-screen test goes through the real `ui::draw`.
+//! guidance, in an explicit drop order, and the first screen states AI,
+//! project, and database readiness independently — an absent database
+//! never reads as what stands between the user and their work.
+//! Splash-only tests render `draw_empty_state` directly onto a
+//! `TestBackend` at an exact pane height; the composed-screen tests go
+//! through the real `ui::draw`.
 
+use super::super::splash::{
+    DATABASE_NONE, PROJECT_READY, START_AI, START_CODE_BOUND, START_CODE_UNBOUND, START_HEADER,
+    START_OPEN, START_QUERY,
+};
 use super::*;
-use crate::interactive::tui::ui_snapshot_tests::{empty_app, fixed_status, render_buffer};
+use crate::interactive::tui::startup_readiness::{ReadinessLine, StartupReadiness};
+use crate::interactive::tui::ui_snapshot_tests::{
+    empty_app, empty_app_with_startup, fixed_status, render_buffer,
+};
 
 /// The keyboard hint is the last line of the splash, so a clip from the
 /// bottom takes it first — the opposite of the drop order.
@@ -16,6 +25,19 @@ const CONCEPT: &str = "Each request becomes a chapter — activity, answer, and 
 
 /// The owl's body glyph marks the art: no splash text contains it.
 const ART_GLYPH: char = '\u{2588}';
+
+/// An AI line that is not ready, carrying the credential detail the
+/// doctor's `ai` task produces for a cloud provider with no key
+/// reference.
+fn unready_ai() -> StartupReadiness {
+    StartupReadiness {
+        ai: ReadinessLine {
+            ready: false,
+            detail: "no api_key reference configured — requests to openai will be unauthenticated"
+                .into(),
+        },
+    }
+}
 
 /// Renders the empty state alone at an exact pane size. `profiles` replaces
 /// the fixture's demo list; `workspace_bound` drives the workspace paragraph
@@ -50,7 +72,8 @@ fn a_short_terminal_keeps_the_keyboard_hint() {
 }
 
 /// The art is pure decoration: it is gone while every line of text still
-/// fits, and it stays gone as the squeeze deepens and guidance is kept.
+/// fits, and it stays gone as the squeeze deepens and the state lines are
+/// kept.
 #[test]
 fn a_short_terminal_drops_the_art_first() {
     // Full text fits (with the concept line), compact mascot does not.
@@ -60,39 +83,37 @@ fn a_short_terminal_drops_the_art_first() {
         "the art is dropped while every line of text still fits:\n{text_only}"
     );
     assert!(
-        text_only.contains(NO_DATABASE_HEADLINE) && text_only.contains(HINT),
+        text_only.contains("AI        ready") && text_only.contains(HINT),
         "nothing but the art was dropped:\n{text_only}"
     );
-    // Deeper squeeze: the art has not come back, the guidance has not left.
+    // Deeper squeeze: the art has not come back, the state has not left.
     let squeezed = splash(80, 12, &[], false);
     assert!(
         !squeezed.contains(ART_GLYPH),
         "the art stays gone under a deeper squeeze:\n{squeezed}"
     );
     assert!(
-        squeezed.contains(NO_DATABASE_HEADLINE),
-        "guidance outlives the art:\n{squeezed}"
+        squeezed.contains("AI        ready") && squeezed.contains(DATABASE_NONE),
+        "the state lines outlive the art:\n{squeezed}"
     );
 }
 
-/// With no profiles configured, the guidance is a stated absence, not
-/// chrome: it survives a squeeze that drops the example prompts.
+/// The three state lines are a stated absence, not chrome: they survive a
+/// squeeze that drops the example prompts.
 #[test]
-fn the_no_database_guidance_outlives_the_examples() {
+fn the_three_state_lines_outlive_the_examples() {
     let buffer = splash(80, 12, &[], true);
     assert!(
-        buffer.contains(NO_DATABASE_HEADLINE),
-        "the no-database headline is kept:\n{buffer}"
+        buffer.contains("AI        ready"),
+        "the AI readiness line is kept:\n{buffer}"
     );
-    for step in NO_DATABASE_STEPS {
-        assert!(
-            buffer.contains(step),
-            "the step is kept ({step:?}):\n{buffer}"
-        );
-    }
     assert!(
-        buffer.contains(NO_DATABASE_FOOTER),
-        "the footer is kept:\n{buffer}"
+        buffer.contains(PROJECT_READY),
+        "the project readiness line is kept:\n{buffer}"
+    );
+    assert!(
+        buffer.contains(DATABASE_NONE),
+        "the database line is kept:\n{buffer}"
     );
     assert!(
         !buffer.contains("try asking"),
@@ -101,15 +122,148 @@ fn the_no_database_guidance_outlives_the_examples() {
     assert!(buffer.contains(HINT), "the hint is kept too:\n{buffer}");
 }
 
-/// The redesign's concepts — chapters, activity, results — are named on the
-/// first screen at a normal height, as one line.
+/// The provider-only coding setup — AI ready, a bound workspace, no
+/// database — reads as workable: the three readiness lines state their
+/// facts independently, and nothing calls the absent database required or
+/// sends the user to `config init` for it.
 #[test]
-fn the_first_screen_names_the_chapter_concept() {
-    let buffer = splash(80, 30, &[], false);
+fn the_provider_only_setup_never_says_the_database_is_required() {
+    let buffer = splash(80, 24, &[], true);
     assert!(
-        buffer.contains(CONCEPT),
-        "the first screen names the chapter concept:\n{buffer}"
+        buffer.contains("AI        ready"),
+        "the AI line reads ready:\n{buffer}"
     );
+    assert!(
+        buffer.contains("Project   ready"),
+        "the project line reads ready:\n{buffer}"
+    );
+    assert!(
+        buffer.contains(DATABASE_NONE),
+        "the absent database reads as optional:\n{buffer}"
+    );
+    assert!(
+        buffer.contains(START_CODE_BOUND),
+        "coding in the bound project is offered:\n{buffer}"
+    );
+    for absent in [
+        "No database is configured",
+        "required",
+        "Run `saya config init`",
+    ] {
+        assert!(
+            !buffer.contains(absent),
+            "`{absent}` must not appear on a screen where coding is ready:\n{buffer}"
+        );
+    }
+}
+
+/// When the provider is not set up, the AI line carries the instruction —
+/// the commands that fix it — and the configured databases stay a plain
+/// informational line.
+#[test]
+fn an_unready_provider_names_its_remedy_and_leaves_the_database_alone() {
+    let app = empty_app_with_startup(unready_ai());
+    let buffer = paint(&app, 80, 30, true);
+    assert!(
+        buffer.contains("AI        not set up"),
+        "the AI line reads not set up:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("no api_key reference configured"),
+        "the failing check's detail is kept:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("try /provider, /model or `saya setup`"),
+        "the AI line names its remedy:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("Database  analytics  ·  billing"),
+        "the configured databases stay informational:\n{buffer}"
+    );
+}
+
+/// With every need absent, all three lines are present, independent, and
+/// each carries its own remedy — nothing says one need depends on another.
+#[test]
+fn all_three_needs_are_independent_when_everything_is_absent() {
+    let mut app = empty_app_with_startup(unready_ai());
+    app.profiles.clear();
+    let buffer = paint(&app, 80, 30, false);
+    assert!(
+        buffer.contains("AI        not set up")
+            && buffer.contains("try /provider, /model or `saya setup`"),
+        "the AI line states its own fact and remedy:\n{buffer}"
+    );
+    for line in NO_WORKSPACE_LINES {
+        assert!(
+            buffer.contains(line),
+            "the workspace line states its own fact and remedy ({line:?}):\n{buffer}"
+        );
+    }
+    assert!(
+        buffer.contains(DATABASE_NONE),
+        "the database line states its own fact and remedy:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("required"),
+        "nothing is presented as required:\n{buffer}"
+    );
+}
+
+/// The configured-profile path still lists the databases — the drop order
+/// must not disturb what the splash says about a present database, and a
+/// fully-ready session carries no absence copy at all.
+#[test]
+fn the_empty_state_is_unchanged_when_a_database_is_configured() {
+    let buffer = splash(80, 24, &["analytics", "billing"], true);
+    assert!(
+        buffer.contains("Database  analytics  ·  billing"),
+        "the state line lists the profiles:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("none yet"),
+        "a configured database draws no optional-absence copy:\n{buffer}"
+    );
+    assert!(buffer.contains("AI        ready"), "the AI line:\n{buffer}");
+    assert!(
+        buffer.contains("Project   ready"),
+        "the project line:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("No database is configured"),
+        "no missing-database guidance:\n{buffer}"
+    );
+    assert!(buffer.contains(HINT), "the hint:\n{buffer}");
+}
+
+/// On a short terminal the entry choices shed first — the three state
+/// lines and the hint are what outlive everything.
+#[test]
+fn short_terminal_drops_the_choices_before_the_state_lines() {
+    let buffer = splash(80, 12, &["analytics", "billing"], false);
+    assert!(
+        buffer.contains("AI        ready"),
+        "the AI line survives the squeeze:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("Database  analytics  ·  billing"),
+        "the database line survives the squeeze:\n{buffer}"
+    );
+    for line in NO_WORKSPACE_LINES {
+        assert!(
+            buffer.contains(line),
+            "the workspace line survives the squeeze ({line:?}):\n{buffer}"
+        );
+    }
+    assert!(
+        !buffer.contains(START_HEADER),
+        "the choices drop before the state lines:\n{buffer}"
+    );
+    assert!(
+        !buffer.contains("try asking"),
+        "the examples drop too:\n{buffer}"
+    );
+    assert!(buffer.contains(HINT), "the hint survives:\n{buffer}");
 }
 
 /// Nothing is dropped when there is room — the fix must not over-trim.
@@ -126,17 +280,27 @@ fn a_tall_terminal_still_shows_everything() {
         "the tagline:\n{buffer}"
     );
     assert!(
-        buffer.contains(NO_DATABASE_HEADLINE),
-        "the no-database headline:\n{buffer}"
+        buffer.contains("AI        ready"),
+        "the AI readiness line:\n{buffer}"
     );
-    for step in NO_DATABASE_STEPS {
-        assert!(buffer.contains(step), "the step ({step:?}):\n{buffer}");
-    }
-    assert!(buffer.contains(NO_DATABASE_FOOTER), "the footer:\n{buffer}");
+    assert!(
+        buffer.contains(DATABASE_NONE),
+        "the optional-absence database line:\n{buffer}"
+    );
     for line in NO_WORKSPACE_LINES {
         assert!(
             buffer.contains(line),
             "the workspace line ({line:?}):\n{buffer}"
+        );
+    }
+    assert!(
+        buffer.contains(START_HEADER),
+        "the choices header:\n{buffer}"
+    );
+    for choice in [START_CODE_UNBOUND, START_QUERY, START_OPEN, START_AI] {
+        assert!(
+            buffer.contains(choice),
+            "the choice ({choice:?}):\n{buffer}"
         );
     }
     assert!(buffer.contains(CONCEPT), "the concept line:\n{buffer}");
@@ -157,19 +321,36 @@ fn a_tall_terminal_still_shows_everything() {
     assert!(buffer.contains(HINT), "the hint:\n{buffer}");
 }
 
-/// The configured-profile path still lists the databases — the drop order
-/// must not disturb what the splash says about a present database.
+/// The entry choices offer exactly the five ways in — guided setup, demo,
+/// data file, and the two AI commands — and the dead-end manual route the
+/// old guidance carried is gone.
 #[test]
-fn the_empty_state_is_unchanged_when_a_database_is_configured() {
-    let buffer = splash(80, 24, &["analytics", "billing"], true);
-    assert!(buffer.contains("databases"), "the state line:\n{buffer}");
-    assert!(buffer.contains("analytics"), "the first profile:\n{buffer}");
-    assert!(buffer.contains("billing"), "the second profile:\n{buffer}");
-    assert!(
-        !buffer.contains(NO_DATABASE_HEADLINE),
-        "a configured database draws no missing-database guidance:\n{buffer}"
-    );
-    assert!(buffer.contains(HINT), "the hint:\n{buffer}");
+fn the_entry_choices_name_exactly_the_five_commands() {
+    let buffer = splash(80, 24, &[], true);
+    for choice in [START_CODE_BOUND, START_QUERY, START_OPEN, START_AI] {
+        assert!(
+            buffer.contains(choice),
+            "the choice line paints ({choice:?}):\n{buffer}"
+        );
+    }
+    for command in [
+        "saya setup",
+        "saya demo",
+        "saya open",
+        "/provider",
+        "/model",
+    ] {
+        assert!(
+            buffer.contains(command),
+            "the choices offer `{command}`:\n{buffer}"
+        );
+    }
+    for gone in ["saya config init", "saya connection test"] {
+        assert!(
+            !buffer.contains(gone),
+            "the dead-end command is gone ({gone:?}):\n{buffer}"
+        );
+    }
 }
 
 /// The concept line is copy on the first screen: it must survive the same
@@ -183,15 +364,15 @@ fn the_concept_line_fits_a_narrow_terminal() {
     );
 }
 
-/// The no-database state's first step is the one-command way forward: the
-/// synthetic demo database, opened read-only. Pinned by snapshot beside the
-/// explicit assertion, so the copy cannot drift silently.
+/// The absent database's line is the next action: optional, with the two
+/// one-command remedies. Pinned by snapshot beside the explicit assertion,
+/// so the copy cannot drift silently.
 #[test]
 fn empty_state_has_next_action() {
     let buffer = splash(80, 30, &[], false);
     assert!(
-        buffer.contains("Try it now: `saya demo` — a read-only sample database."),
-        "the first step offers `saya demo`:\n{buffer}"
+        buffer.contains(DATABASE_NONE),
+        "the absent database reads as optional with two one-command remedies:\n{buffer}"
     );
     insta::assert_snapshot!(buffer);
 }
@@ -243,6 +424,33 @@ fn the_composed_first_screen_keeps_the_hint_on_a_short_terminal() {
     assert!(
         buffer.contains(HINT),
         "the composed screen keeps the hint on a short terminal:\n{buffer}"
+    );
+    insta::assert_snapshot!(buffer);
+}
+
+/// The whole composed frame through the real `ui::draw`, provider-only:
+/// AI ready, workspace bound, no database — the coding-ready first screen
+/// the old splash misread as broken.
+#[test]
+fn the_composed_first_screen_reports_all_three_needs() {
+    let mut app = empty_app();
+    app.profiles.clear();
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        buffer.contains("AI        ready"),
+        "the AI line reads ready:\n{buffer}"
+    );
+    assert!(
+        buffer.contains("Project   ready"),
+        "the project line reads ready:\n{buffer}"
+    );
+    assert!(
+        buffer.contains(DATABASE_NONE),
+        "the absent database reads as optional:\n{buffer}"
+    );
+    assert!(
+        buffer.contains(START_CODE_BOUND),
+        "coding in the project is offered:\n{buffer}"
     );
     insta::assert_snapshot!(buffer);
 }

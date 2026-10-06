@@ -12,6 +12,7 @@ use saya_store::SqliteStateStore;
 
 use super::super::history::History;
 use super::super::input::InputBuffer;
+use super::super::startup_readiness::StartupReadiness;
 use super::super::transcript::Transcript;
 use super::super::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::interactive::session_prompt::StatusView;
@@ -100,6 +101,10 @@ pub(crate) fn unused_store() -> SqliteStateStore {
 /// An idle `App` with an empty transcript and a fixed profile list. Built
 /// directly so no history file is read (`App::new` calls `History::load`).
 pub(crate) fn empty_app() -> App {
+    // The startup fact set derives from the fixture's own runtime, so the
+    // baseline cannot drift from it: Ollama with `test-model` needs no
+    // key, so the fixture's AI line reads ready — "ollama, model test-model".
+    let runtime = unused_runtime();
     App {
         sql_task: None,
         compact_task: None,
@@ -108,6 +113,7 @@ pub(crate) fn empty_app() -> App {
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into(), "billing".into()],
+        startup: StartupReadiness::from_runtime(&runtime),
         pending: None,
         request: RequestState::default(),
         overlays: OverlayState::default(),
@@ -128,7 +134,7 @@ pub(crate) fn empty_app() -> App {
         agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
-        runtime: unused_runtime(),
+        runtime,
         state_db: unused_store(),
         session: std::sync::Arc::new(
             crate::interactive::session_universe::SessionUniverse::empty(),
@@ -143,6 +149,15 @@ pub(crate) fn empty_app() -> App {
 pub(crate) fn empty_app_with_text(text: &str) -> App {
     let mut app = empty_app();
     app.input.set_text(text);
+    app
+}
+
+/// An `empty_app` whose startup fact set is overridden — for tests that
+/// need a first screen whose AI line reads a different verdict, e.g. a
+/// provider that is not set up.
+pub(crate) fn empty_app_with_startup(startup: StartupReadiness) -> App {
+    let mut app = empty_app();
+    app.startup = startup;
     app
 }
 

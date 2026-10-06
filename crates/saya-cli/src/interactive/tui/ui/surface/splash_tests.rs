@@ -27,46 +27,66 @@ fn splash_art_yields_to_the_text_when_the_terminal_is_short() {
     assert!(splash_art(0, 11).is_none());
 }
 
-/// The guidance must not name a config path. Init's default moved from the
-/// project layer to the user one and this copy kept naming `.saya/`, which
-/// nothing asserted — so it stayed wrong through a release.
+/// The state and choice copy names no config path. Init's default moved
+/// from the project layer to the user one and old guidance kept naming
+/// `.saya/`, which nothing asserted — so it stayed wrong through a release.
 #[test]
 fn first_run_guidance_names_no_config_path() {
-    for line in NO_DATABASE_STEPS
-        .iter()
-        .chain([&NO_DATABASE_HEADLINE, &NO_DATABASE_FOOTER])
-    {
+    for line in [
+        AI_READY,
+        AI_NOT_SET_UP,
+        AI_REMEDY,
+        PROJECT_READY,
+        DATABASE_NONE,
+        START_HEADER,
+        START_CODE_BOUND,
+        START_CODE_UNBOUND,
+        START_QUERY,
+        START_OPEN,
+        START_AI,
+    ] {
         assert!(
             !line.contains(".saya"),
-            "guidance must let `config init` report the path: {line}"
+            "guidance must not name a config path: {line}"
         );
     }
 }
 
-/// Every command the guidance names has to exist, or it is a dead end in the
-/// one place a new user has nothing else to go on.
+/// Every command the first screen names has to exist, or it is a dead end
+/// in the one place a new user has nothing else to go on.
 #[test]
 fn first_run_guidance_names_real_commands() {
-    let all = NO_DATABASE_STEPS.join(" ") + NO_DATABASE_FOOTER;
+    let all = [AI_REMEDY, START_QUERY, START_OPEN, START_AI].join(" ");
     for command in [
         "saya setup",
         "saya demo",
-        "saya config init",
-        "saya connection test",
-        "saya config doctor",
+        "saya open",
+        "/provider",
+        "/model",
     ] {
         assert!(all.contains(command), "guidance should offer `{command}`");
     }
 }
 
-/// The guided-setup step is the second no-database step (S16): the one-command
-/// demo first, then the guided flow, then the manual template route.
+/// The database choice leads with the two one-command ways in — the guided
+/// flow and the read-only demo — and nothing manual in between.
 #[test]
-fn the_second_step_offers_guided_setup() {
+fn the_database_choice_offers_guided_setup_and_the_demo() {
     assert_eq!(
-        NO_DATABASE_STEPS[1],
-        "Or run `saya setup` for a guided connection."
+        START_QUERY,
+        "Query a database — `saya setup` (guided) or `saya demo` (sample data)"
     );
+}
+
+/// The three state labels pad to one width, or the three values do not
+/// align down the screen.
+#[test]
+fn the_state_labels_are_padded_to_one_width() {
+    let labels = [AI_LABEL, PROJECT_LABEL, DATABASE_LABEL];
+    let width = labels[0].chars().count();
+    for label in labels {
+        assert_eq!(label.chars().count(), width, "ragged label: {label:?}");
+    }
 }
 
 /// The unbound-workspace line states the fact and the same two remedies
@@ -93,16 +113,30 @@ fn unbound_workspace_line_names_the_fact_and_the_remedy() {
     );
 }
 
-/// The splash is centred, so a line wider than a narrow terminal wraps and
-/// breaks the centring for every line under it.
+/// The splash is centred, so a line wider than the terminal wraps and
+/// breaks the centring for every line under it. The workspace lines keep
+/// the 64-column rule they were written to; the frozen entry-choice copy
+/// runs longer (69 and 74 chars), so its floor is the 80-column smoke
+/// width the splash is asserted at end to end.
 #[test]
-fn first_run_guidance_fits_a_narrow_terminal() {
-    for line in NO_DATABASE_STEPS
-        .iter()
-        .chain([&NO_DATABASE_HEADLINE, &NO_DATABASE_FOOTER])
-        .chain(&NO_WORKSPACE_LINES)
-    {
+fn first_run_guidance_fits_the_terminal() {
+    for line in NO_WORKSPACE_LINES {
         assert!(line.chars().count() <= 64, "too wide to centre: {line}");
+    }
+    for line in [
+        AI_READY,
+        AI_NOT_SET_UP,
+        AI_REMEDY,
+        PROJECT_READY,
+        DATABASE_NONE,
+        START_HEADER,
+        START_CODE_BOUND,
+        START_CODE_UNBOUND,
+        START_QUERY,
+        START_OPEN,
+        START_AI,
+    ] {
+        assert!(line.chars().count() <= 80, "too wide to centre: {line}");
     }
 }
 
