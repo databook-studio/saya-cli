@@ -3,11 +3,17 @@ pub(crate) mod session_activation;
 // nothing in this session's composition.
 pub(crate) mod allow_refusal;
 pub(crate) mod auto_compact;
+// The session record's capacity seam: the one near-limit notice and the
+// friendly refusal at the 4 MiB cap, shared by every save surface.
 pub(crate) mod compact_task;
 #[cfg(test)]
 #[path = "compact_task_tui_metrics_tests.rs"]
 mod compact_task_tui_metrics_tests;
 pub(crate) mod session_auto_compact;
+pub(crate) mod session_capacity;
+#[cfg(test)]
+#[path = "session_capacity_test_support.rs"]
+mod session_capacity_test_support;
 mod session_commands;
 pub(crate) mod session_compact;
 #[cfg(test)]

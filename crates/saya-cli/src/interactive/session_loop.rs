@@ -1,5 +1,6 @@
 use super::session_paths::default_session_dir;
 use super::{
+    session_capacity::{SaveFailure, notice_after_save, save_with_explanation},
     session_commands::SessionAction,
     session_request::PromptResult,
     session_resume::{SessionDefaults, block_on, load_session},
@@ -12,7 +13,7 @@ use crate::{
     render::{TerminalEvent, TurnStatus},
     slash::{SlashCommand, parse_slash_command},
 };
-use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
+use saya_store::{FsSessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};
 
 /// Runs the interactive session loop.
@@ -250,7 +251,19 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         }
         state.host_composed = session.universe().host_composed();
         state.denied_programs = session.universe().deny_programs();
-        block_on(store.save(state.redacted()))?;
+        // The last save of a TUI session: a refusal at the record cap says
+        // its sentence through the Error event once the terminal is
+        // restored, and keeps the TUI's own exit code.
+        match save_with_explanation(&store, &state) {
+            Err(SaveFailure::LimitReached(text)) => super::session_emit::emit_action(
+                SessionAction::Error(text),
+                format,
+                &mut state,
+                &store,
+            )?,
+            Err(SaveFailure::Other(error)) => return Err(error.into()),
+            Ok(()) => {}
+        }
         return Ok(code);
     }
     // Piped / non-TTY input (scripts, CI) uses the headless line executor.
@@ -291,12 +304,28 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             emit_scripted_turn_result(&mut ctx, turn_outcome);
         }
         crate::chart::cleanup_session_charts();
-        block_on(store.save(state.redacted()))?;
-        return match outcome? {
-            TurnOutcome::Completed => Ok(0),
-            TurnOutcome::Errored => Ok(5),
-            TurnOutcome::Exit => Ok(0),
+        let mut code = match outcome? {
+            TurnOutcome::Completed | TurnOutcome::Exit => 0,
+            TurnOutcome::Errored => 5,
         };
+        // The scripted run's last save: a refusal at the record cap says its
+        // sentence through the Error event and makes the run errored (exit
+        // 5) even when the turn itself completed — the last good record
+        // stays on disk, resumable by id.
+        match save_with_explanation(&store, &state) {
+            Err(SaveFailure::LimitReached(text)) => {
+                super::session_emit::emit_action(
+                    SessionAction::Error(text),
+                    format,
+                    &mut state,
+                    &store,
+                )?;
+                code = 5;
+            }
+            Err(SaveFailure::Other(error)) => return Err(error.into()),
+            Ok(()) => {}
+        }
+        return Ok(code);
     }
     let mut ctx = TurnContext {
         state: &mut state,
@@ -312,7 +341,19 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let outcome = run_plain_loop(&mut ctx);
     crate::chart::cleanup_session_charts();
     outcome?;
-    block_on(store.save(state.redacted()))?;
+    // The piped loop's last save: a refusal at the record cap says its
+    // sentence through the Error event (the loop has ended; nothing more to
+    // continue) and keeps today's exit contract.
+    match save_with_explanation(&store, &state) {
+        Err(SaveFailure::LimitReached(text)) => super::session_emit::emit_action(
+            SessionAction::Error(text),
+            format,
+            &mut state,
+            &store,
+        )?,
+        Err(SaveFailure::Other(error)) => return Err(error.into()),
+        Ok(()) => {}
+    }
     Ok(0)
 }
 
@@ -430,6 +471,7 @@ fn read_turn_file(path: &std::path::Path) -> Result<String, String> {
 /// The outcome of the single `--turn-file` turn: completed (exit 0),
 /// errored (exit 5, the streamed `TerminalEvent::Error` names it), or an
 /// explicit `/exit` (still exit 0 — the turn ran and asked to leave).
+#[derive(Debug)]
 enum TurnOutcome {
     Completed,
     Errored,
@@ -570,6 +612,33 @@ fn handle_line(line: &str, ctx: &mut TurnContext) -> Result<bool, Box<dyn std::e
     ))
 }
 
+/// The one save every headless turn ends with. A save refused at the 4 MiB
+/// record cap says its friendly sentence as the turn's Error event and the
+/// turn ends errored while the loop keeps reading — it must not die; any
+/// other store error stays fatal, exactly as before. After a successful
+/// save the one-time near-limit notice, if it fires, rides a result event —
+/// ahead of the scripted run's closing `turn_result`. `Ok(Some(outcome))`
+/// overrides the call site's own outcome; `Ok(None)` — the save succeeded —
+/// leaves it.
+fn persist(
+    state: &mut SessionState,
+    store: &FsSessionStore,
+    format: RenderFormat,
+) -> Result<Option<TurnOutcome>, Box<dyn std::error::Error>> {
+    match save_with_explanation(store, state) {
+        Err(SaveFailure::LimitReached(text)) => {
+            super::session_emit::emit_action(SessionAction::Error(text), format, state, store)?;
+            return Ok(Some(TurnOutcome::Errored));
+        }
+        Err(SaveFailure::Other(error)) => return Err(error.into()),
+        Ok(()) => {}
+    }
+    if let Some(text) = notice_after_save(store, state) {
+        super::session_emit::emit_action(SessionAction::Message(text), format, state, store)?;
+    }
+    Ok(None)
+}
+
 /// The one per-turn entry every headless path shares: the piped loop
 /// pre-trims each line (`handle_line`), while `--turn-file` passes the file
 /// bytes verbatim (no trimming, no blank-line skipping). An empty turn here
@@ -602,7 +671,9 @@ fn handle_line_verbatim(
                 state,
                 store,
             )?;
-            block_on(store.save(state.redacted()))?;
+            if let Some(outcome) = persist(state, store, format)? {
+                return Ok(outcome);
+            }
             return Ok(TurnOutcome::Errored);
         }
     };
@@ -771,7 +842,9 @@ fn handle_line_verbatim(
             format,
             state_db,
         ))?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if completed {
             TurnOutcome::Completed
         } else {
@@ -786,7 +859,9 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Sql(sql) = action {
@@ -797,7 +872,9 @@ fn handle_line_verbatim(
             terminal,
             format,
         ))?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Contracts(command) = action {
@@ -807,7 +884,9 @@ fn handle_line_verbatim(
         let code = block_on(crate::commands::run_contracts(
             command, runtime, format, state_db,
         ))?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if code == 0 {
             TurnOutcome::Completed
         } else {
@@ -838,13 +917,17 @@ fn handle_line_verbatim(
                 state,
                 store,
             )?;
-            block_on(store.save(state.redacted()))?;
+            if let Some(outcome) = persist(state, store, format)? {
+                return Ok(outcome);
+            }
             return Ok(TurnOutcome::Errored);
         }
         let code = block_on(crate::commands::run_investigation(
             command, runtime, format, terminal, state_db,
         ))?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if code == 0 {
             TurnOutcome::Completed
         } else {
@@ -866,7 +949,9 @@ fn handle_line_verbatim(
         let code = block_on(crate::commands::run_management(
             command, runtime, format, approval, state_db,
         ))?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if code == 0 {
             TurnOutcome::Completed
         } else {
@@ -887,7 +972,9 @@ fn handle_line_verbatim(
             approval,
             state_db,
         ))?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if code == 0 {
             TurnOutcome::Completed
         } else {
@@ -928,7 +1015,9 @@ fn handle_line_verbatim(
                 TurnOutcome::Errored
             }
         };
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(outcome);
     }
     if let SessionAction::Grants = action {
@@ -944,7 +1033,9 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Context = action {
@@ -963,7 +1054,9 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::SessionsList = action {
@@ -977,7 +1070,9 @@ fn handle_line_verbatim(
                 Err(text) => (TurnOutcome::Errored, SessionAction::Error(text)),
             };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(outcome);
     }
     if let SessionAction::SessionsDelete(id) = action {
@@ -1004,7 +1099,9 @@ fn handle_line_verbatim(
             SessionAction::Error(message)
         };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(outcome);
     }
     if let SessionAction::Preferences(command) = action {
@@ -1025,7 +1122,9 @@ fn handle_line_verbatim(
             SessionAction::Error(message)
         };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if code == 0 {
             TurnOutcome::Completed
         } else {
@@ -1050,13 +1149,16 @@ fn handle_line_verbatim(
             SessionAction::Error(message)
         };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if ok {
             TurnOutcome::Completed
         } else {
             TurnOutcome::Errored
         });
     }
+
     if let SessionAction::Run(tail) = action {
         // `/run --seed-grants <tail…>` seeds the child's `--allow` from this
         // session's grants on request: only tokens the run's parser accepts
@@ -1082,7 +1184,9 @@ fn handle_line_verbatim(
             }
         };
         super::session_run::spawn_run_child(runtime, format, state, &seed.forwarded, tail)?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(TurnOutcome::Completed);
     }
     if let SessionAction::Compact = action {
@@ -1112,7 +1216,9 @@ fn handle_line_verbatim(
             SessionAction::Message(outcome.message)
         };
         super::session_emit::emit_action(action, format, state, store)?;
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(if failed {
             TurnOutcome::Errored
         } else {
@@ -1200,7 +1306,12 @@ fn handle_line_verbatim(
                 store,
             )?,
         }
-        block_on(store.save(state.redacted()))?;
+        // The resumed session's save: a near-limit notice fires here for a
+        // large record the resume just re-opened — the per-process flag is
+        // armed again on the fresh state.
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(outcome);
     }
     if let SessionAction::Rotate = action {
@@ -1257,7 +1368,9 @@ fn handle_line_verbatim(
                     TurnOutcome::Errored
                 }
             };
-        block_on(store.save(state.redacted()))?;
+        if let Some(outcome) = persist(state, store, format)? {
+            return Ok(outcome);
+        }
         return Ok(outcome);
     }
     let outcome = action_outcome(&action);
@@ -1283,7 +1396,9 @@ fn handle_line_verbatim(
             )?;
         }
     }
-    block_on(store.save(state.redacted()))?;
+    if let Some(outcome) = persist(state, store, format)? {
+        return Ok(outcome);
+    }
     Ok(outcome)
 }
 
@@ -1352,3 +1467,64 @@ mod turn_file_tests {
 #[cfg(test)]
 #[path = "session_headless_receipt_tests.rs"]
 mod session_headless_receipt_tests;
+
+#[cfg(test)]
+mod capacity_persist_tests {
+    use super::*;
+    use crate::interactive::session_capacity_test_support::{state_with_turns, temp_store_root};
+    use saya_store::SessionCapacityStatus;
+
+    /// A save refused at the cap reports the errored outcome — the sentence
+    /// rides the Error event — and never dies: the piped REPL keeps reading.
+    #[test]
+    fn a_save_refused_at_the_limit_reports_one_errored_outcome_and_the_loop_continues() {
+        let root = temp_store_root("loop-limit");
+        let store = FsSessionStore::new(&root);
+        let mut state = state_with_turns("cap-loop", 500, 11_500);
+        assert_eq!(
+            store
+                .capacity_of(state.redacted())
+                .expect("measures")
+                .status,
+            SessionCapacityStatus::OverCap,
+            "the fixture is genuinely over the cap"
+        );
+        let outcome = persist(&mut state, &store, RenderFormat::Ndjson);
+        assert!(
+            matches!(outcome, Ok(Some(TurnOutcome::Errored))),
+            "the refused save says the sentence and lets the loop continue, not die: {outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_healthy_save_returns_no_override_and_leaves_the_flag_unarmed() {
+        let root = temp_store_root("loop-ok");
+        let store = FsSessionStore::new(&root);
+        let mut state = state_with_turns("cap-loop-ok", 2, 64);
+        let outcome = persist(&mut state, &store, RenderFormat::Ndjson);
+        assert!(
+            matches!(outcome, Ok(None)),
+            "an ordinary save changes no outcome: {outcome:?}"
+        );
+        assert!(!state.capacity_warned, "a small record arms nothing");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_warning_level_save_arms_the_one_time_notice_flag() {
+        let root = temp_store_root("loop-warn");
+        let store = FsSessionStore::new(&root);
+        let mut state = state_with_turns("cap-loop-warn", 300, 11_500);
+        let outcome = persist(&mut state, &store, RenderFormat::Ndjson);
+        assert!(
+            matches!(outcome, Ok(None)),
+            "a warn-level record still saves: {outcome:?}"
+        );
+        assert!(
+            state.capacity_warned,
+            "the near-limit notice armed after the save"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

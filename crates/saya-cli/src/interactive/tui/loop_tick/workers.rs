@@ -14,7 +14,7 @@ use saya_store::FsSessionStore;
 // lifecycle line, and its episode transcript advance when the run
 // has news; the event loop never blocks on the run.
 pub(crate) fn tick_workers(app: &mut App, store: &FsSessionStore, state: &mut SessionState) {
-    poll_session_save(app, store);
+    poll_session_save(app, store, state);
 
     app.poll_run_panel(state.show_thinking);
 

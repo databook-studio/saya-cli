@@ -645,6 +645,24 @@ compact further. If the successor cannot be opened — for example its
 session lock is held by another process — the rotation stops with the
 successor saved and resumable and your current session untouched.
 
+### When the record nears the cap
+
+The session tells you before the cap: after a save whose stored record
+has reached **3 MiB** of the **4 MiB** limit, it says this once:
+
+> This session's saved record is 3.4 MiB of its 4 MiB limit. Run
+> /compact, then /rotate to continue in a smaller successor session.
+
+At the cap itself a save is refused — the latest turn is not saved, the
+last good record stays on disk untouched, and the session says:
+
+> This session's record has reached its 4 MiB limit, so the latest turn
+> could not be saved. Run /compact, then /rotate to continue in a smaller
+> successor session; /resume &lt;id&gt; restores the last saved state.
+
+Nothing is ever truncated or pruned to fit. Run `/compact`, then
+`/rotate`; `/resume <id>` re-opens the last saved state at any time.
+
 ## Undoing agent file edits: `/recovery`
 
 `/recovery` covers the agent's **direct file edits** inside the bound
