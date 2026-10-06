@@ -492,7 +492,19 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         &crate::config::sources::user_config_dir(),
         remaining,
     );
+    let after_instructions = projection.blocks.len();
     context_blocks.splice(0..0, projection.blocks);
+    // Explicit worktree preferences follow the instruction blocks on the same untrusted lane.
+    let preferences = super::preference_context::project_preferences(
+        state_db.as_ref(),
+        session.as_ref().and_then(|session| session.root()),
+        super::preference_context::remaining_request_bytes(
+            saya_agent::turn_bytes(system_prompt.as_deref(), &context_blocks, prompt),
+            runtime.resolved.ai.context_byte_budget,
+        ),
+    )
+    .await;
+    context_blocks.splice(after_instructions..after_instructions, preferences.blocks);
     sink.emit(knowledge_supplied_event(&receipt)).await;
     let receipt = Arc::new(receipt);
     let learning = super::learning::LearningSetup::from(memory.mode);
