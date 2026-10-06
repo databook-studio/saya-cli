@@ -14,7 +14,10 @@ use crate::interactive::SessionState;
 /// (`RuntimeConfig` is a large resolved struct the failure arm must not pay
 /// for); callers move it straight into their `Arc` handle.
 pub(crate) enum ReloadOutcome {
-    Reloaded { new: Box<RuntimeConfig>, text: String },
+    Reloaded {
+        new: Box<RuntimeConfig>,
+        text: String,
+    },
     Failed(String),
 }
 
