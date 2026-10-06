@@ -48,6 +48,7 @@ mod run_worker;
 mod scope_tests;
 pub(crate) mod session;
 mod session_save;
+mod setup_apply;
 mod sql_task;
 mod startup_readiness;
 mod stream_events;

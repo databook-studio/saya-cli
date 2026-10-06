@@ -41,6 +41,7 @@ fn first_run_guidance_names_no_config_path() {
         START_HEADER,
         START_CODE_BOUND,
         START_CODE_UNBOUND,
+        START_SETUP,
         START_QUERY,
         START_OPEN,
         START_AI,
@@ -52,29 +53,67 @@ fn first_run_guidance_names_no_config_path() {
     }
 }
 
-/// Every command the first screen names has to exist, or it is a dead end
-/// in the one place a new user has nothing else to go on.
+/// The first screen is the TUI's own front door: the setup choice names the
+/// in-session command, the demo and data-file choices keep their shell
+/// commands, and no line sends the in-TUI user to the shell for setup —
+/// `saya setup` stays out of the splash entirely (it remains in /help and
+/// the docs as the shell alternative).
 #[test]
-fn first_run_guidance_names_real_commands() {
-    let all = [AI_REMEDY, START_QUERY, START_OPEN, START_AI].join(" ");
-    for command in [
-        "saya setup",
-        "saya demo",
-        "saya open",
-        "/provider",
-        "/model",
-    ] {
-        assert!(all.contains(command), "guidance should offer `{command}`");
+fn the_first_screen_points_at_the_in_session_setup() {
+    assert_eq!(
+        START_SETUP,
+        "Set up AI and a database — /setup (guided, in this window)"
+    );
+    assert_eq!(START_QUERY, "Query a sample database — `saya demo`");
+    assert_eq!(AI_REMEDY, "; try /setup, /provider or /model");
+    assert_eq!(
+        DATABASE_NONE,
+        "none yet — optional; /setup (guided) or `saya demo` adds one"
+    );
+    for line in [AI_REMEDY, DATABASE_NONE, START_SETUP, START_QUERY] {
+        assert!(
+            !line.contains("saya setup"),
+            "the in-TUI first screen points in-session, not at the shell: {line}"
+        );
+        assert!(
+            line.contains("/setup") || line.contains("`saya demo`"),
+            "the line offers an in-window or demo remedy: {line}"
+        );
     }
 }
 
-/// The database choice leads with the two one-command ways in — the guided
-/// flow and the read-only demo — and nothing manual in between.
+/// Every command the first screen names has to exist, or it is a dead end
+/// in the one place a new user has nothing else to go on. The guided setup
+/// is the in-session `/setup` since U07; the shell alternatives that remain
+/// (`saya demo`, `saya open`) are the commands a terminal session cannot run.
+#[test]
+fn first_run_guidance_names_real_commands() {
+    let all = [
+        AI_REMEDY,
+        DATABASE_NONE,
+        START_SETUP,
+        START_QUERY,
+        START_OPEN,
+        START_AI,
+    ]
+    .join(" ");
+    for command in ["/setup", "saya demo", "saya open", "/provider", "/model"] {
+        assert!(all.contains(command), "guidance should offer `{command}`");
+    }
+    assert!(
+        !all.contains("saya setup"),
+        "the shell setup command is not the first screen's pointer: {all}"
+    );
+}
+
+/// The database choice is the sample-data one-command route; the guided
+/// setup moved to its own choice line naming the in-session `/setup`.
 #[test]
 fn the_database_choice_offers_guided_setup_and_the_demo() {
+    assert_eq!(START_QUERY, "Query a sample database — `saya demo`");
     assert_eq!(
-        START_QUERY,
-        "Query a database — `saya setup` (guided) or `saya demo` (sample data)"
+        START_SETUP,
+        "Set up AI and a database — /setup (guided, in this window)"
     );
 }
 
@@ -132,6 +171,7 @@ fn first_run_guidance_fits_the_terminal() {
         START_HEADER,
         START_CODE_BOUND,
         START_CODE_UNBOUND,
+        START_SETUP,
         START_QUERY,
         START_OPEN,
         START_AI,
