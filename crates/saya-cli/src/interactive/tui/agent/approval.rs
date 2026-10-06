@@ -225,6 +225,7 @@ pub(crate) struct StreamRequest {
     pub(crate) agent_mode: AgentMode,
     pub(crate) prior_tool_outcomes:
         Option<crate::interactive::session_continuation::PriorToolOutcomes>,
+    pub(crate) continuation: Option<saya_store::StoredContinuation>,
     pub(crate) compaction_summary: Option<String>,
     /// The question scope this turn began with: `Some` on the session paths —
     /// the runtime runs on the scope's token and the stream-finalize settles

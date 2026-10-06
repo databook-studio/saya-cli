@@ -45,6 +45,7 @@ async fn a_real_turn_records_into_the_question_scope_through_the_wrapped_sink() 
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     })
     .await

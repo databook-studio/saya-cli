@@ -213,6 +213,7 @@ async fn agent_turn(
             agent_mode: AgentMode::Build,
             capture: None,
             prior_tool_outcomes: state.prior_tool_outcomes.clone(),
+            continuation: state.continuation.clone(),
             compaction_summary: state.compaction_summary_text(),
         },
         None,

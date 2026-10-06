@@ -369,6 +369,7 @@ async fn answering_deadline_starts_before_postgres_setup_and_awaits_the_source()
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     });
     tokio::pin!(work);
@@ -455,6 +456,7 @@ async fn answering_deadline_disarms_before_source_observed_extraction() {
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     });
     tokio::pin!(work);
@@ -626,6 +628,7 @@ async fn supplied_unlimited_question_does_not_inherit_a_new_setup_deadline() {
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     });
     tokio::pin!(work);
@@ -690,6 +693,7 @@ async fn supplied_scope_charges_answering_once_and_pauses_for_learning() {
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     });
     tokio::pin!(work);

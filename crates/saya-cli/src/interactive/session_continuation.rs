@@ -8,11 +8,13 @@ mod assemble;
 mod outcomes;
 mod recall;
 mod record;
+mod record_block;
 mod restore;
 mod summary;
 pub(crate) use assemble::{assemble_continuation, digest_resolver};
 pub(crate) use outcomes::{PriorToolOutcomes, ToolOutcomeKind};
 pub(crate) use record::{SessionObservations, now_unix_ms};
+pub(crate) use record_block::render_record_block;
 pub(crate) use restore::restore_continuation;
 pub(crate) use summary::render_summary_block;
 

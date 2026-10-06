@@ -188,6 +188,7 @@ fn the_spawn_path_wraps_the_collector_and_settlement_keeps_its_snapshot() {
         journal: None,
         agent_mode: saya_agent::AgentMode::Build,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
         question_scope: Some(scope.clone()),
     }));

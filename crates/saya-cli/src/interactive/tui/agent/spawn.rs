@@ -45,6 +45,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
         journal,
         agent_mode,
         prior_tool_outcomes,
+        continuation,
         compaction_summary,
         question_scope,
     } = request;
@@ -122,6 +123,7 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
                     agent_mode,
                     capture: Some(capture),
                     prior_tool_outcomes,
+                    continuation,
                     compaction_summary,
                 },
             ));

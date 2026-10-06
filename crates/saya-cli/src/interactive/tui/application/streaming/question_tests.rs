@@ -200,6 +200,7 @@ fn a_clarification_reply_reuses_its_question_scope() {
         journal: None,
         agent_mode: saya_agent::AgentMode::Build,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
         question_scope: Some(failing.clone()),
     }));

@@ -41,6 +41,7 @@ pub(crate) struct SinkPrompt<'a> {
     pub(crate) capture: Option<tools::CaptureHook>,
     pub(crate) prior_tool_outcomes:
         Option<crate::interactive::session_continuation::PriorToolOutcomes>,
+    pub(crate) continuation: Option<saya_store::StoredContinuation>,
     pub(crate) compaction_summary: Option<String>,
 }
 
@@ -63,6 +64,7 @@ pub(crate) struct TurnPrompt<'a> {
     pub(crate) capture: Option<tools::CaptureHook>,
     pub(crate) prior_tool_outcomes:
         Option<crate::interactive::session_continuation::PriorToolOutcomes>,
+    pub(crate) continuation: Option<saya_store::StoredContinuation>,
     pub(crate) compaction_summary: Option<String>,
 }
 
@@ -121,6 +123,7 @@ pub(crate) async fn run_prompt_with_sink(
         agent_mode,
         capture,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     })
     .await
@@ -205,6 +208,7 @@ async fn run_prompt_after_question_start(
         agent_mode,
         capture,
         prior_tool_outcomes,
+        continuation,
         compaction_summary,
     } = request;
     let inputs = match prepare_turn(
@@ -245,6 +249,7 @@ async fn run_prompt_after_question_start(
             agent_mode,
             capture,
             prior_tool_outcomes,
+            continuation,
             compaction_summary,
         },
         answering_settled,
@@ -276,6 +281,9 @@ pub(crate) async fn run_prompt_with_inputs(
     agent_mode: AgentMode,
     // The TUI's capture hook (C1); `None` for every headless caller.
     capture: Option<tools::CaptureHook>,
+    // The session's saved continuation record, carried like the live
+    // outcome bundle: `Some` only where a session state exists.
+    continuation: Option<saya_store::StoredContinuation>,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     run_prompt_with_continuation_inputs_with_signal(
         TurnPrompt {
@@ -296,6 +304,7 @@ pub(crate) async fn run_prompt_with_inputs(
             agent_mode,
             capture,
             prior_tool_outcomes: None,
+            continuation,
             compaction_summary: None,
         },
         None,
@@ -325,6 +334,7 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         agent_mode,
         capture,
         prior_tool_outcomes,
+        continuation,
         compaction_summary,
     } = turn;
     let ai = inputs.ai;
@@ -468,6 +478,16 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
         ) {
             context_blocks.push(block);
         }
+        context_blocks.extend(
+            crate::interactive::session_continuation::render_record_block(
+                continuation.as_ref(),
+                session
+                    .as_ref()
+                    .and_then(|session| session.workspace())
+                    .as_deref(),
+                ai.context_byte_budget,
+            ),
+        );
     }
     // Projected instruction sources ride the user turn first — a stable
     // prefix ahead of the volatile hints — as untrusted labelled context

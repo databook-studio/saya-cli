@@ -60,6 +60,9 @@ pub(crate) async fn run(
     // `/mode` state at the composition root.
     agent_mode: AgentMode,
     prior_tool_outcomes: Option<super::session_continuation::PriorToolOutcomes>,
+    // The session's saved continuation record, carried like the live
+    // outcome bundle: `Some` only where a session state exists.
+    continuation: Option<saya_store::StoredContinuation>,
     compaction_summary: Option<String>,
     scope: QuestionScope,
 ) -> Result<PromptResult, AgentRuntimeError> {
@@ -113,6 +116,7 @@ pub(crate) async fn run(
         agent_mode,
         capture: None,
         prior_tool_outcomes,
+        continuation,
         compaction_summary,
     });
     tokio::pin!(work);

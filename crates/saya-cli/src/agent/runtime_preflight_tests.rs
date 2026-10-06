@@ -217,6 +217,7 @@ async fn a_too_small_known_window_refuses_before_any_provider_request() {
         agent_mode: AgentMode::Build,
         capture: None,
         prior_tool_outcomes: None,
+        continuation: None,
         compaction_summary: None,
     })
     .await

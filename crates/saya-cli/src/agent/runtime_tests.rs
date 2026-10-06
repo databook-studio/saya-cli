@@ -426,6 +426,7 @@ async fn a_turn_supplying_claims_emits_one_event_naming_those_claims() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .unwrap();
@@ -535,6 +536,7 @@ async fn knowledge_supplied_precedes_the_provider_request() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -765,6 +767,7 @@ async fn store_unavailable_still_runs_the_turn_and_emits() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await;
@@ -1006,6 +1009,7 @@ async fn recalled_claim_is_user_context_and_privacy_gate_removes_it_from_actual_
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1104,6 +1108,7 @@ async fn recalled_claim_is_user_context_and_privacy_gate_removes_it_from_actual_
         None,
         None,
         saya_agent::AgentMode::Build,
+        None,
         None,
     )
     .await
@@ -1259,6 +1264,7 @@ async fn test_runtime_runs_post_turn_extraction_and_emits_proposed_event() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1394,6 +1400,7 @@ async fn the_extraction_call_reports_its_usage_on_the_stream() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1515,6 +1522,7 @@ async fn an_extraction_with_no_response_emits_no_usage_event() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes despite the extraction failure");
@@ -1608,6 +1616,7 @@ async fn test_runtime_extraction_failure_never_fails_turn() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -1718,6 +1727,7 @@ async fn test_runtime_extraction_skipped_when_memory_mode_off() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -1848,6 +1858,7 @@ async fn test_anti_self_reinforcement_end_to_end() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -1927,6 +1938,7 @@ async fn runtime_turn_with_recall_off_emits_knowledge_outcome_off() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -2037,6 +2049,7 @@ async fn session_turn_system_prompt_names_connection_and_workspace_root() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -2120,6 +2133,7 @@ async fn runtime_turn_with_closed_privacy_gate_emits_knowledge_outcome_skipped()
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -2326,6 +2340,7 @@ async fn a_turn_contradicting_a_confirmed_claim_emits_one_knowledge_overridden()
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -2404,6 +2419,7 @@ async fn a_turn_honouring_the_claim_emits_no_knowledge_overridden() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -2471,6 +2487,7 @@ async fn a_turn_with_unparseable_sql_emits_no_knowledge_overridden() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -2540,6 +2557,7 @@ async fn a_candidate_claim_contradicted_emits_nothing() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -2617,6 +2635,7 @@ async fn no_identity_leaks_into_the_knowledge_overridden_event() {
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -2721,6 +2740,7 @@ async fn run_breaker_turn(
         session,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -3277,6 +3297,7 @@ async fn a_gate_declined_turn_emits_no_learning_event() {
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
         None,
+        None,
     )
     .await
     .expect("turn completes");
@@ -3384,6 +3405,7 @@ async fn a_turn_whose_extraction_errors_emits_learning_skipped_failed_and_comple
         None,
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
@@ -3591,6 +3613,7 @@ async fn an_interactive_session_queries_writes_and_scratches_each_via_one_ask() 
         Some(Arc::clone(&session)),
         saya_agent::AgentMode::Build,
         // No capture hook in these headless turn tests (C1).
+        None,
         None,
     )
     .await
