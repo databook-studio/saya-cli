@@ -232,7 +232,10 @@ publishes it — a background of 7–15 selects the light palette, anything else
 stays dark — and falls back to dark when `COLORFGBG` is absent or unparseable,
 since a silent guess at the wrong theme is worse than the common case. The
 `--theme <dark|light|auto>` global flag overrides this for a single invocation
-and follows the usual CLI-over-config precedence.
+and follows the usual CLI-over-config precedence — and today the flag's
+built-in `auto` default is always applied, so this setting has no effect:
+choose a palette per invocation with `--theme dark` or `--theme light`
+(a known defect, listed in the 0.4.2 changelog's known limitations).
 
 The `[ai]` table tunes the provider request the agent loop assembles.
 `context_byte_budget` is the ceiling on the approximate byte size of the whole
