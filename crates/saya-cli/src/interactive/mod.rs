@@ -81,6 +81,9 @@ mod session_runner;
 pub(crate) mod turn_summary;
 // The session's recovery handle (E06b): the checkpoint store, the session
 // id, and the opt-in enable flag the per-turn file tools attach.
+#[cfg(test)]
+#[path = "session_launch_posture_tests.rs"]
+mod session_launch_posture_tests;
 pub(crate) mod session_recovery;
 pub(crate) mod session_runtime;
 mod session_schema;

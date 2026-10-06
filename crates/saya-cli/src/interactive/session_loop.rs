@@ -155,20 +155,14 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     if fresh {
         session.recompose_with_launch(&runtime, state.workspace_root.as_deref(), Some(&launch))?;
     }
-    // The deny list journals once at session start when non-empty — no noise
-    // when empty — through the existing seam, never a second rule set. The
-    // status header's facts ride the session state: the lane bit and the
-    // deny list, so every prompt carries the `host:` segment.
-    if fresh {
-        let universe = session.universe();
-        state.sync_host_posture(&universe);
-        let denied = universe.deny_programs();
-        if !denied.is_empty()
-            && let Err(error) = session.journal().deny_list(&denied)
-        {
-            eprintln!("{}", super::session_grants::journal_warning(&error));
-        }
-    }
+    // The launch posture, once per process, for every launch kind — fresh,
+    // `--continue`, `--resume`: the header facts derive from the universe the
+    // launch composed, and the deny list journals on a fresh start only. The
+    // derivation is unconditional (a resumed launch's universe composes the
+    // lane wherever a root binds, so its header must say so); the deny
+    // JOURNAL write stays fresh-only — the launch statement belonged to the
+    // previous process, whose start journaled its own list.
+    derive_launch_posture(&mut state, &session, fresh);
     if fresh && !cli.options.allow.is_empty() {
         // Every stated `--allow` token — `command:` included — goes through
         // the one grammar-then-composition gate `/allow` uses
@@ -417,6 +411,38 @@ pub(crate) fn resume_approval_mode(
         config::runtime::approval_name(options)
     } else {
         Ok(persisted.to_owned())
+    }
+}
+
+/// The launch posture, once per process, for every launch kind — fresh,
+/// `--continue`, `--resume`. The status header's facts — the lane bit and the
+/// deny list — copy from the universe this process composed, so every prompt
+/// carries the `host:` segment the session will actually run under. The lane
+/// composes wherever a root binds through the one composer behind both paths
+/// (`acquire` composed a resumed launch's universe from the recorded pin; a
+/// fresh start recomposed with the launch statement), so the derivation is
+/// unconditional: guarded to fresh starts, a resumed session's header stayed
+/// on the `#[serde(skip)]` defaults (`host:off`, no deny list) while its
+/// universe advertised and executed the lane — only the TUI-exit site
+/// corrected it after the fact.
+///
+/// The deny JOURNAL write keeps its fresh-only guard, a separate statement
+/// from the posture copy: a resumed session restarts unstated (the launch
+/// statement belonged to the previous process, whose start journaled its own
+/// list), so nothing re-journals here.
+pub(crate) fn derive_launch_posture(
+    state: &mut SessionState,
+    session: &SessionRuntime,
+    fresh: bool,
+) {
+    let universe = session.universe();
+    state.sync_host_posture(&universe);
+    let denied = universe.deny_programs();
+    if fresh
+        && !denied.is_empty()
+        && let Err(error) = session.journal().deny_list(&denied)
+    {
+        eprintln!("{}", super::session_grants::journal_warning(&error));
     }
 }
 
