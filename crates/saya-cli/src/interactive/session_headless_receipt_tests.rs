@@ -117,7 +117,7 @@ fn headless_turn_over_each_receipt_action_ends_errored() {
     ] {
         let mut ctx = TurnContext {
             state: &mut *state,
-            runtime: &runtime,
+            runtime: std::sync::Arc::new(crate::config::runtime::RuntimeConfig::clone(&runtime)),
             store: &store,
             state_db: &state_db,
             format: RenderFormat::Text,
@@ -125,6 +125,7 @@ fn headless_turn_over_each_receipt_action_ends_errored() {
             session: &mut *session,
             trusted_echo: None,
             last_turn: None,
+            launch_options: crate::cli::GlobalOptions::default(),
         };
         let outcome = handle_line_verbatim(line, &mut ctx).expect("the turn runs");
         assert!(

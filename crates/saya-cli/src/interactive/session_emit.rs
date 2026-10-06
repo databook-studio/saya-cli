@@ -63,6 +63,11 @@ pub(crate) fn emit_action(
         // the TUI routes the action to its own handoff. The arm keeps the
         // match exhaustive.
         | SessionAction::Setup
+        // `/reload` is intercepted in the session loop: it re-reads the
+        // configuration with the launch options and swaps the loop's
+        // runtime handle only on success; the arm keeps the match
+        // exhaustive.
+        | SessionAction::Reload
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {

@@ -709,6 +709,38 @@ last good record stays on disk untouched, and the session says:
 Nothing is ever truncated or pruned to fit. Run `/compact`, then
 `/rotate`; `/resume <id>` re-opens the last saved state at any time.
 
+## Reloading configuration: `/reload`
+
+Settings that `saya` loads at launch normally stay fixed for the session.
+`/reload` re-reads the configuration **between turns** — with the same
+launch options, from the same files — applies what is safe to apply now,
+and says exactly what it did. It never prompts (pipe-safe), and an
+invalid configuration changes nothing: the report says the previous
+configuration is still in use, and the session keeps running on it.
+
+The report has three sections:
+
+- **Applied from the next turn** — settings the agent re-reads per turn:
+  row caps, timeouts, budgets, iteration limits, and the connection
+  profiles (new or removed profiles are picked up; the completion and
+  `@`-references follow).
+- **Updated for this session** — the session copies re-seeded now:
+  provider, model, default profile, and endpoint. If you overrode one of
+  these with `/provider`, `/model`, or `/connect`, your override stays
+  yours: the setting is named as *not applied* instead of being silently
+  replaced.
+- **Not applied in this session** — what a running session never
+  changes, with the reason. Data sharing (`/privacy` is the way to change
+  it in-session), host commands and session denies, the jobs runner
+  (runner allow-list, program dir, timeouts), and theme/thinking display
+  all take effect in a new session.
+
+The reload is classified against your session: settings you overrode are
+never silently replaced, and authority-sensitive settings never move for
+a running session. Grants and the approval mode are untouched. To see
+which file supplied a value in the first place, run
+`saya config show --explain`.
+
 ## Undoing agent file edits: `/recovery`
 
 `/recovery` covers the agent's **direct file edits** inside the bound

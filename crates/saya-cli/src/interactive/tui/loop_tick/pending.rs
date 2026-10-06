@@ -21,12 +21,15 @@ use std::sync::Arc;
 /// The `/setup` handoff inputs, threaded from `session::run` (which owns the
 /// terminal guard) and the launch site (which owns the CLI options). A
 /// bundle rather than two more positional parameters, so the call sites read
-/// by name.
+/// by name. The name still names its first caller; `/reload` reads the same
+/// `options` for its `ReloadInputs::from_launch`, so the launch options ride
+/// one bundle.
 pub(crate) struct SetupInputs<'a> {
     /// The TUI's terminal modes, so the handoff can release and reacquire
     /// them; the live loop passes its `TerminalGuard`.
     pub(crate) modes: &'a mut dyn TerminalModes,
-    /// The launch's CLI options, for the wizard's real flow options.
+    /// The launch's CLI options, for the wizard's real flow options and
+    /// `/reload`'s same-launch-options re-read.
     pub(crate) options: &'a GlobalOptions,
 }
 
@@ -140,6 +143,35 @@ pub(crate) fn tick_pending(
                 let mut flow = crate::setup::flow_options::FlowOptions::real(setup.options.clone());
                 let outcome = run_guided_setup(&mut *setup.modes, &mut flow);
                 handle_setup_outcome(outcome, &mut app.transcript)?;
+            }
+            // `/reload` — re-read the configuration with the SAME launch
+            // options and, only on success, swap the app's runtime handle:
+            // the swap is observed by the NEXT loop iteration (each one
+            // derives its `&RuntimeConfig` from `app.runtime`), never by the
+            // tick that is still borrowing the old one. The busy gate above
+            // guarantees a reload never overlaps a running stream, query,
+            // compaction, or replay — it waits in the queue like every
+            // command. A failed build changes nothing and says the previous
+            // configuration is still in use. Data sharing, host commands,
+            // grants and the approval mode are classified pending by the
+            // shared plan and never move.
+            Dispatch::Reload => {
+                let inputs = crate::config::reload::ReloadInputs::from_launch(setup.options);
+                let old = Arc::clone(&app.runtime);
+                match crate::config::reload::reload_runtime(&inputs, &old, state) {
+                    crate::config::reload::ReloadOutcome::Reloaded { new, text } => {
+                        // The profile list the app keeps feeds the completion
+                        // popup and the @-references: rebuild it from the new
+                        // runtime, exactly as `build_app` seeded it.
+                        app.profiles = new.connections.profiles.keys().cloned().collect();
+                        app.runtime = Arc::new(*new);
+                        app.reload_at_refs(state);
+                        app.transcript.push(BlockKind::System, text);
+                    }
+                    crate::config::reload::ReloadOutcome::Failed(text) => {
+                        app.transcript.push(BlockKind::Error, text);
+                    }
+                }
             }
         }
         // A `/resume` swapped the session: the engine side too, so the
