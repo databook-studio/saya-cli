@@ -7,6 +7,9 @@
 pub(crate) mod classify;
 pub(crate) mod plan;
 pub(crate) mod report;
+pub(crate) mod run;
+
+pub(crate) use run::{ReloadOutcome, reload_runtime};
 
 use crate::cli::GlobalOptions;
 use crate::config::runtime::{RuntimeConfig, load_with_sources};

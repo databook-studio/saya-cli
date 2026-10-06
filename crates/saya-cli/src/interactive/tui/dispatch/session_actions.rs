@@ -49,6 +49,7 @@ pub(super) fn apply_session_action(
                 | SessionAction::Runs(_)
                 | SessionAction::RunCancel(_)
                 | SessionAction::Setup
+                | SessionAction::Reload
         )
     ) {
         return None;
@@ -193,6 +194,10 @@ pub(super) fn apply_session_action(
         // terminal suspension and the wizard run under the busy gate — the
         // dispatch only picks the outcome, it never runs the wizard.
         SessionAction::Setup => return Some(Dispatch::RunSetup),
+        // `/reload` routes the swap the same way: tick_pending owns it (it
+        // holds the app's runtime handle and the launch options); the
+        // dispatch only picks the outcome.
+        SessionAction::Reload => return Some(Dispatch::Reload),
         // The guard above decided ownership; if it ever drifts, put the
         // action back and report "not mine" rather than dropping or panicking.
         other => {

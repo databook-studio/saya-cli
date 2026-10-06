@@ -37,4 +37,9 @@ pub(crate) enum Dispatch {
     /// outcome into the transcript. Never dispatched while the app is busy —
     /// the queued-prompt gate holds it like any other command.
     RunSetup,
+    /// `/reload` — re-read the configuration with the launch options and
+    /// swap the app's runtime handle between turns. The caller (the loop's
+    /// queued-prompt drain) owns the swap: it holds the launch options and
+    /// the app, and a failed reload changes nothing.
+    Reload,
 }

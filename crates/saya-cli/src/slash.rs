@@ -89,6 +89,12 @@ pub enum SlashCommand {
     /// The TUI owns the handoff; headless surfaces refuse with the pointer
     /// to run `saya setup` from the shell.
     Setup,
+    /// `/reload` — re-read the configuration with the launch options and
+    /// apply what is safe between turns. The loops own the behaviour (they
+    /// hold the runtime handle and the session state); the form takes no
+    /// argument. Data sharing, host commands, and the approval mode never
+    /// change for a running session: the plan classifies them as pending.
+    Reload,
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
     Columns(Option<String>),
@@ -600,6 +606,15 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
                 return Err(SlashParseError("setup takes no argument: /setup".into()));
             }
             SlashCommand::Setup
+        }
+        "reload" => {
+            // `/reload` takes no argument: it re-reads the same launch
+            // inputs, so anything else typed after it is a mistake worth
+            // naming, never a silent ignore.
+            if !arg.is_empty() {
+                return Err(SlashParseError("reload takes no argument: /reload".into()));
+            }
+            SlashCommand::Reload
         }
         "preferences" => {
             // `/preferences` is free text on the add and edit forms, so the

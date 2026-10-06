@@ -69,6 +69,10 @@ pub(crate) const CLASS_TABLE: &[(&str, Class)] = &[
 ];
 
 /// Unlisted fields default to pending; this documents which that is today.
+/// Test-only: its one consumer is the drift guard in `reload_tests.rs`, and
+/// a documentation constant that no production path reads would otherwise be
+/// dead code now that the module compiles ungated.
+#[cfg(test)]
 pub(crate) const DEFAULTS_TO_PENDING: &[&str] = &["output_format"];
 
 const OVERRIDE_NOTE: &str =

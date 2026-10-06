@@ -15,6 +15,7 @@ use crate::{
 };
 use saya_store::{FsSessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};
+use std::sync::Arc;
 
 /// Runs the interactive session loop.
 ///
@@ -290,7 +291,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         };
         let mut ctx = TurnContext {
             state: &mut state,
-            runtime: &runtime,
+            runtime: Arc::new(runtime),
             store: &store,
             state_db: &state_db,
             format,
@@ -298,6 +299,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             session: &mut session,
             trusted_echo: None,
             last_turn: None,
+            launch_options: cli.options.clone(),
         };
         let outcome = run_single_turn(turn, &mut ctx);
         // The one terminal result of the scripted run: emitted after the
@@ -332,7 +334,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     }
     let mut ctx = TurnContext {
         state: &mut state,
-        runtime: &runtime,
+        runtime: Arc::new(runtime),
         store: &store,
         state_db: &state_db,
         format,
@@ -340,6 +342,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         session: &mut session,
         trusted_echo,
         last_turn: None,
+        launch_options: cli.options.clone(),
     };
     let outcome = run_plain_loop(&mut ctx);
     crate::chart::cleanup_session_charts();
@@ -488,7 +491,10 @@ enum TurnOutcome {
 /// and whether turns may prompt.
 struct TurnContext<'a> {
     state: &'a mut SessionState,
-    runtime: &'a RuntimeConfig,
+    /// An owned handle so a `/reload` can swap it between lines: the swap
+    /// is observed by the NEXT line, never mid-turn. Every line re-clones
+    /// it into the `&RuntimeConfig` its consumers take.
+    runtime: Arc<RuntimeConfig>,
     store: &'a FsSessionStore,
     state_db: &'a SqliteStateStore,
     format: RenderFormat,
@@ -501,6 +507,10 @@ struct TurnContext<'a> {
     /// tool tally — for the scripted run's one terminal result. `None` for
     /// slash-command turns (no prose turn ran).
     last_turn: Option<TurnSummary>,
+    /// The launch's CLI options, cloned once: `/reload` re-reads the
+    /// configuration with the SAME launch options via
+    /// `ReloadInputs::from_launch`.
+    launch_options: GlobalOptions,
 }
 
 /// Runs exactly one turn through the session's one per-turn entry
@@ -567,7 +577,7 @@ fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error
         eprintln!("{echo}");
     }
     if let Some(line) =
-        super::session_activation::line_if_bypass(ctx.state, ctx.runtime, &ctx.session.universe())
+        super::session_activation::line_if_bypass(ctx.state, &ctx.runtime, &ctx.session.universe())
     {
         let rendered =
             crate::render_event(&TerminalEvent::Diagnostic { message: line }, ctx.format);
@@ -652,7 +662,8 @@ fn handle_line_verbatim(
     ctx: &mut TurnContext,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let state = &mut *ctx.state;
-    let runtime = ctx.runtime;
+    let runtime_handle = Arc::clone(&ctx.runtime);
+    let runtime: &RuntimeConfig = &runtime_handle;
     let store = ctx.store;
     let state_db = ctx.state_db;
     let format = ctx.format;
@@ -1390,6 +1401,40 @@ fn handle_line_verbatim(
         }
         return Ok(outcome);
     }
+    if let SessionAction::Reload = action {
+        // `/reload` re-reads the configuration with the SAME launch options
+        // and, only on success, swaps the loop's runtime handle — the swap
+        // is observed by the NEXT line, never mid-turn. The shared operation
+        // plans every change against the running runtime, re-seeds the
+        // session copies the user never overrode, and renders the report;
+        // data sharing, host commands, grants and the approval mode are
+        // classified pending and never move. A failed build changes nothing
+        // and says the previous configuration is still in use. Never
+        // prompts: the inputs are the launch's, and the pipe stays the pipe.
+        let inputs = crate::config::reload::ReloadInputs::from_launch(&ctx.launch_options);
+        match crate::config::reload::reload_runtime(&inputs, runtime, state) {
+            crate::config::reload::ReloadOutcome::Reloaded { new, text } => {
+                ctx.runtime = Arc::new(*new);
+                super::session_emit::emit_action(
+                    SessionAction::Message(text),
+                    format,
+                    state,
+                    store,
+                )?;
+                if let Some(outcome) = persist(state, store, format)? {
+                    return Ok(outcome);
+                }
+                return Ok(TurnOutcome::Completed);
+            }
+            crate::config::reload::ReloadOutcome::Failed(text) => {
+                super::session_emit::emit_action(SessionAction::Error(text), format, state, store)?;
+                if let Some(outcome) = persist(state, store, format)? {
+                    return Ok(outcome);
+                }
+                return Ok(TurnOutcome::Errored);
+            }
+        }
+    }
     let outcome = action_outcome(&action);
     super::session_emit::emit_action(action, format, state, store)?;
     if approvals_set {
@@ -1601,7 +1646,7 @@ mod setup_turn_tests {
         .expect("the setup-turn session acquires");
         let mut ctx = TurnContext {
             state: &mut *state,
-            runtime: &runtime,
+            runtime: Arc::new(runtime),
             store: &store,
             state_db: &state_db,
             format: RenderFormat::Text,
@@ -1609,6 +1654,7 @@ mod setup_turn_tests {
             session: &mut *session,
             trusted_echo: None,
             last_turn: None,
+            launch_options: GlobalOptions::default(),
         };
         let outcome = handle_line_verbatim("/setup", &mut ctx).expect("the turn runs");
         assert!(

@@ -31,6 +31,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "resume",
     "rotate",
     "setup",
+    "reload",
     "columns",
     "contracts",
     "contract",

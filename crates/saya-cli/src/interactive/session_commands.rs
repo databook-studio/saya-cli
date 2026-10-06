@@ -149,6 +149,12 @@ pub enum SessionAction {
     /// `saya setup` pointer. Never a capability: the wizard writes user
     /// configuration files only, through the existing consent flow.
     Setup,
+    /// `/reload` — re-read the configuration with the launch options and
+    /// apply what is safe between turns. Intercepted in both loops (they
+    /// own the runtime handle and the session state, and a failed reload
+    /// must leave both untouched); the arm here keeps the match exhaustive.
+    /// Never prompts and never a model-callable tool.
+    Reload,
     Exit,
 }
 
@@ -373,6 +379,7 @@ impl SessionState {
             SlashCommand::Preferences(command) => SessionAction::Preferences(command),
             SlashCommand::Recovery(command) => SessionAction::Recovery(command),
             SlashCommand::Setup => SessionAction::Setup,
+            SlashCommand::Reload => SessionAction::Reload,
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

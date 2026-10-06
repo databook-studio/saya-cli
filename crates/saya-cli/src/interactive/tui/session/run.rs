@@ -6,6 +6,7 @@ use super::super::terminal::TerminalGuard;
 use super::super::ui;
 use super::startup::build_app;
 use super::{TrustOutcome, TuiSession};
+use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_prompt;
 use crate::local_metrics::LocalMetrics;
 use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase};
@@ -71,6 +72,13 @@ pub(crate) fn run(args: TuiSession<'_>) -> Result<TrustOutcome, Box<dyn std::err
     let mut first_paint_recorded = false;
 
     while !app.should_quit {
+        // Every iteration derives its runtime handle from the app, so a
+        // `/reload` that swapped `app.runtime` between turns is observed by
+        // the NEXT tick — never by the one still borrowing the old handle.
+        // In-flight workers keep the Arc they spawned with; that is the
+        // documented immutability contract (`capture_save_tests`).
+        let runtime_handle = Arc::clone(&app.runtime);
+        let runtime: &RuntimeConfig = &runtime_handle;
         app.poll_session_picker();
         app.poll_investigation_picker();
         session_save::poll_session_save(&mut app, store, state);

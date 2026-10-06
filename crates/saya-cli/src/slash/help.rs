@@ -93,6 +93,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "Continue in a new, smaller session that keeps your summary and notes (run /compact first)",
     ),
     ("setup", "Run the guided setup (full-screen terminal only)"),
+    (
+        "reload",
+        "Re-read the configuration between turns: applies what is safe now, says what needs a new session. Data sharing and host commands never change in a running session.",
+    ),
     ("columns", "Choose which columns wide result tables show"),
     ("contracts", "List contracts, or show one object's contract"),
     ("contract", "Alias for /contracts"),
@@ -219,6 +223,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("resume", "/resume <id>"),
             ("rotate", "/rotate"),
             ("setup", "/setup"),
+            ("reload", "/reload"),
             ("context", "/context"),
             ("doctor", "/doctor"),
             ("usage", "/usage"),
@@ -454,6 +459,19 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              NEXT saya session — the running one keeps the settings it loaded. Headless \
              surfaces (piped REPL, --turn-file) refuse with the pointer to run \
              `saya setup` from your shell. Example: /setup",
+        ),
+        "reload" => Some(
+            "reload — re-read the configuration with the SAME launch options between turns: \
+              the report has three sections. `Applied from the next turn` lists settings the \
+              agent re-reads per turn (row caps, timeouts, budgets, connections); `Updated \
+              for this session` lists the session copies re-seeded now (provider, model, \
+              default profile, endpoint) unless you overrode them with /provider, /model or \
+              /connect — an override stays yours and is named instead; `Not applied in this \
+              session` lists what a running session never changes: data sharing (use /privacy), \
+              host commands and session denies (new session), the jobs runner, theme and \
+              thinking display. An invalid configuration changes nothing and says the previous \
+              one is still in use. Never prompts. Takes no argument. \
+              Example: /reload   or   /help reload   (see also: saya config show --explain)",
         ),
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
