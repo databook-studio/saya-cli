@@ -455,10 +455,11 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
             "setup — run the guided setup from the full-screen TUI: it hands the terminal \
              to the same wizard `saya setup` runs and takes it back when the wizard \
              finishes, is cancelled (Ctrl-D), or fails. Takes no argument. The wizard \
-             writes your user configuration; the new configuration applies to your \
-             NEXT saya session — the running one keeps the settings it loaded. Headless \
-             surfaces (piped REPL, --turn-file) refuse with the pointer to run \
-             `saya setup` from your shell. Example: /setup",
+             writes your user configuration. When it finishes, the new configuration \
+             is applied right away, as /reload does; settings that cannot change in \
+             a running session (data sharing, host commands) are listed as not \
+             applied. Headless surfaces (piped REPL, --turn-file) refuse with the \
+             pointer to run `saya setup` from your shell. Example: /setup",
         ),
         "reload" => Some(
             "reload — re-read the configuration with the SAME launch options between turns: \
@@ -1155,6 +1156,26 @@ mod tests {
         assert!(
             !help.contains("guarantees the model"),
             "the /mode help must never claim Plan guarantees the model's behaviour: {help}"
+        );
+    }
+
+    /// `/help setup` must describe the shipped behaviour: since the automatic
+    /// reload, a finished `/setup` applies the new configuration immediately,
+    /// the same way `/reload` does — the PTY test
+    /// `first_run_setup_applies_immediately_without_a_restart` pins that and
+    /// `docs/commands.md` documents it. Help that still says the new
+    /// configuration "applies to your NEXT saya session" is wrong exactly
+    /// where most people read it.
+    #[test]
+    fn setup_help_describes_the_immediate_apply() {
+        let help = command_help("setup").expect("setup has per-command help");
+        assert!(
+            help.contains("applied right away"),
+            "the /setup help must say the new configuration is applied right away: {help}"
+        );
+        assert!(
+            !help.contains("NEXT"),
+            "the /setup help must not claim the configuration waits for the NEXT session: {help}"
         );
     }
 }
