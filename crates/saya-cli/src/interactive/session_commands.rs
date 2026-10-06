@@ -47,6 +47,12 @@ pub(crate) fn sessions_delete_text(
     (code == 0, message)
 }
 
+/// The headless refusal for `/setup`: names the surface it needs and the
+/// command to run instead. Shared by the loop arm so the wording has one
+/// home; the TUI never uses it (there, `/setup` really runs).
+pub(crate) const SETUP_TUI_ONLY_ERROR: &str =
+    "Guided setup needs the full-screen terminal. Run `saya setup` from your shell.";
+
 // `Agent(AgentOutput)` carries agent events backed by `serde_json::Value`, so
 // this enum is `PartialEq` but not `Eq`.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,6 +132,12 @@ pub enum SessionAction {
     /// and the session's root); the arm here keeps the match exhaustive.
     /// Never prompts and never a model-callable tool.
     Preferences(crate::cli::PreferencesCommand),
+    /// `/setup` — hand the terminal to the guided setup. The full-screen TUI
+    /// runs it through the terminal-handoff boundary (`Dispatch::RunSetup`);
+    /// headless sessions intercept it in the loop and refuse with the
+    /// `saya setup` pointer. Never a capability: the wizard writes user
+    /// configuration files only, through the existing consent flow.
+    Setup,
     Exit,
 }
 
@@ -347,6 +359,7 @@ impl SessionState {
             SlashCommand::SessionsList => SessionAction::SessionsList,
             SlashCommand::SessionsDelete(id) => SessionAction::SessionsDelete(id),
             SlashCommand::Preferences(command) => SessionAction::Preferences(command),
+            SlashCommand::Setup => SessionAction::Setup,
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

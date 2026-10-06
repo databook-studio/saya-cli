@@ -52,6 +52,11 @@ pub(crate) fn emit_action(
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)
+        // `/setup` is intercepted in the session loop: the headless refusal
+        // is emitted there as an Error action naming the shell command, and
+        // the TUI routes the action to its own handoff. The arm keeps the
+        // match exhaustive.
+        | SessionAction::Setup
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {

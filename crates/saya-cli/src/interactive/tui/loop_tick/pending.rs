@@ -4,16 +4,31 @@ use super::super::application::SecondSqlDecision;
 use super::super::dispatch::Dispatch;
 use super::super::session_save::queue_session_save;
 use super::super::sql_task;
+use super::super::terminal_handoff::{TerminalModes, handle_setup_outcome, run_guided_setup};
 use super::super::transcript::BlockKind;
 use super::super::types::App;
 use super::resume::adopt_resumed_session;
+use crate::cli::GlobalOptions;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::compact_task;
 use crate::interactive::session_runtime::SessionRuntime;
 use crate::interactive::session_state::SessionState;
 use crate::render::RenderFormat;
 use saya_store::FsSessionStore;
+use std::io;
 use std::sync::Arc;
+
+/// The `/setup` handoff inputs, threaded from `session::run` (which owns the
+/// terminal guard) and the launch site (which owns the CLI options). A
+/// bundle rather than two more positional parameters, so the call sites read
+/// by name.
+pub(crate) struct SetupInputs<'a> {
+    /// The TUI's terminal modes, so the handoff can release and reacquire
+    /// them; the live loop passes its `TerminalGuard`.
+    pub(crate) modes: &'a mut dyn TerminalModes,
+    /// The launch's CLI options, for the wizard's real flow options.
+    pub(crate) options: &'a GlobalOptions,
+}
 
 // Queued prompts (submitted while busy) wait until the request ends.
 pub(crate) fn tick_pending(
@@ -23,7 +38,8 @@ pub(crate) fn tick_pending(
     store: &FsSessionStore,
     format: RenderFormat,
     session: &mut SessionRuntime,
-) {
+    setup: &mut SetupInputs<'_>,
+) -> io::Result<()> {
     if !app.is_busy()
         && let Some(line) = app.pending.take()
     {
@@ -114,6 +130,17 @@ pub(crate) fn tick_pending(
             // investigation in the bar) or refuse — never a silent
             // replacement of the running query or replay.
             Dispatch::ReplayTask(task) => app.start_replay(task),
+            // `/setup` — the guided-setup handoff, run here (the loop thread)
+            // so the wizard owns stdin/stdout in the normal screen and the
+            // TUI event loop simply waits. The busy gate above guarantees
+            // this never runs under a streaming request, query, compaction,
+            // or replay. A lost terminal (the reacquire failed) is an error:
+            // the loop must stop — the error returns through `run`.
+            Dispatch::RunSetup => {
+                let mut flow = crate::setup::flow_options::FlowOptions::real(setup.options.clone());
+                let outcome = run_guided_setup(&mut *setup.modes, &mut flow);
+                handle_setup_outcome(outcome, &mut app.transcript)?;
+            }
         }
         // A `/resume` swapped the session: the engine side too, so the
         // app's universe is the resumed session's, not the old one's.
@@ -127,4 +154,5 @@ pub(crate) fn tick_pending(
         }
         queue_session_save(&mut *app, store, state);
     }
+    Ok(())
 }

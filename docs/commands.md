@@ -129,6 +129,16 @@ the automatic-compaction trigger after a failure latch (a successful
 compaction re-arms it too). Tool arguments, responses, credentials, headers,
 and rows are never restored into provider history.
 
+In the full-screen TUI, `/setup` hands the terminal to the guided setup: the
+interface gives the terminal to the same wizard `saya setup` runs in the
+normal screen and takes it back when the wizard finishes, is cancelled
+(Ctrl-D), or fails — typed-ahead input is dropped and the transcript reports
+where control stands. It takes no argument, and only the full-screen TUI
+offers it: the piped REPL and `--turn-file` refuse with the pointer to run
+`saya setup` from your shell. The wizard writes your user configuration
+(`config.toml`/`connections.toml`); the new configuration applies to your
+**next** saya session — the running one keeps the settings it loaded.
+
 When the compaction mode is `auto` — the default (`manual` compacts only on
 an explicit `/compact`, and `off` also silences the context-window warning) —
 a finished turn at or above 95% of a known context window, measured by the

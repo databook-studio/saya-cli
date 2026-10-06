@@ -13,6 +13,7 @@ use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_store::{FsSessionStore, SessionStore};
 use saya_types::DatabaseProfile;
 
+use crate::cli::GlobalOptions;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session_resume::block_on;
 use crate::interactive::session_runtime::SessionRuntime;
@@ -188,17 +189,40 @@ impl Seed {
 
     /// The real queued-prompt drain: the typed `/resume <id>` rides
     /// `tick_pending` exactly as the live loop does (the line is queued and
-    /// drained once the gate sees the app idle).
+    /// drained once the gate sees the app idle). The handoff inputs are the
+    /// loop's: a no-op `TerminalModes` double (no `/setup` line is ever
+    /// drained here, so neither half can run) and default CLI options.
     fn drain_pending(&mut self, line: &str) {
         self.app.pending = Some(line.to_string());
-        tick_pending(
+        let mut modes = NoModes;
+        let options = GlobalOptions::default();
+        let mut setup = crate::interactive::tui::loop_tick::pending::SetupInputs {
+            modes: &mut modes,
+            options: &options,
+        };
+        let _ = tick_pending(
             &mut self.app,
             &mut self.state,
             self.runtime.as_ref(),
             &self.store,
             RenderFormat::Text,
             &mut self.session,
+            &mut setup,
         );
+    }
+}
+
+/// The handoff inputs the drain passes but never uses: these tests drain
+/// `/resume` lines only, so neither terminal-mode half can ever run.
+struct NoModes;
+
+impl crate::interactive::tui::terminal_handoff::TerminalModes for NoModes {
+    fn release(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    fn reacquire(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

@@ -32,4 +32,9 @@ pub(crate) enum Dispatch {
         allow: Vec<String>,
         budget: Vec<String>,
     },
+    /// `/setup` — the guided-setup handoff: the caller suspends the TUI's
+    /// terminal modes, runs the wizard in the normal screen, and renders the
+    /// outcome into the transcript. Never dispatched while the app is busy —
+    /// the queued-prompt gate holds it like any other command.
+    RunSetup,
 }

@@ -5,11 +5,21 @@
 //! of byte-exact restoration is U06's.
 
 use super::terminal_handoff::{
-    SetupHandoff, TerminalModes, run_guided_setup, run_guided_setup_with, with_terminal_released,
+    SetupHandoff, TerminalModes, handle_setup_outcome, run_guided_setup, run_guided_setup_with,
+    with_terminal_released,
 };
 use crate::cli::GlobalOptions;
+use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session_state::SessionState;
+use crate::interactive::tui::application::tests_support::{idle_app, unused_runtime};
+use crate::interactive::tui::loop_tick::pending::tick_pending;
+use crate::interactive::tui::transcript::{BlockKind, Transcript};
+use crate::interactive::tui::types::CompactOutcome;
+use crate::render::RenderFormat;
 use crate::setup::flow_options::FlowOptions;
 use crate::setup::probe::{DatabaseProbe, FlowProbes, ProbeResult, ProviderProbe};
+use saya_agent::ApprovalPolicy;
+use saya_store::FsSessionStore;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Cursor};
@@ -311,4 +321,179 @@ fn run_guided_setup_is_the_real_streams_entry_point() {
     let entry: fn(&mut Recorder, &mut FlowOptions) -> io::Result<SetupHandoff> =
         run_guided_setup::<Recorder>;
     let _ = entry;
+}
+
+// ---------------------------------------------------------------------------
+// U06: the `/setup` outcome rendering and the tick_pending gate.
+// ---------------------------------------------------------------------------
+
+/// The pinned closed wording: `Finished(0)` — which includes the wizard's own
+/// cancel — is a System block saying the new configuration applies to the
+/// NEXT session. No config reload happens in this packet.
+#[test]
+fn finished_zero_pushes_the_closed_system_block() {
+    let mut transcript = Transcript::new();
+    handle_setup_outcome(Ok(SetupHandoff::Finished(0)), &mut transcript).expect("renders");
+    let blocks = transcript.blocks();
+    assert_eq!(blocks.len(), 1, "one block, not two: {:?}", blocks);
+    assert_eq!(blocks[0].kind, BlockKind::System);
+    assert_eq!(
+        blocks[0].text,
+        "Guided setup closed. Any new configuration applies to your next saya session."
+    );
+}
+
+/// A non-zero exit code is an Error block naming the code and what was NOT
+/// applied beyond what the wizard itself reported.
+#[test]
+fn finished_nonzero_pushes_the_exit_code_error_block() {
+    let mut transcript = Transcript::new();
+    handle_setup_outcome(Ok(SetupHandoff::Finished(2)), &mut transcript).expect("renders");
+    let blocks = transcript.blocks();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].kind, BlockKind::Error);
+    assert_eq!(
+        blocks[0].text,
+        "Guided setup ended with exit code 2. Nothing was applied that the wizard did not report."
+    );
+}
+
+/// A wizard failure surfaces its rendered error text as an Error block.
+#[test]
+fn failed_pushes_the_failure_error_block() {
+    let mut transcript = Transcript::new();
+    handle_setup_outcome(Ok(SetupHandoff::Failed("x".into())), &mut transcript).expect("renders");
+    let blocks = transcript.blocks();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].kind, BlockKind::Error);
+    assert_eq!(blocks[0].text, "Guided setup failed: x");
+}
+
+/// A lost terminal (the reacquire failed) propagates and renders nothing:
+/// the loop must stop, not keep drawing into a terminal it no longer owns.
+#[test]
+fn io_error_propagates_without_a_block() {
+    let mut transcript = Transcript::new();
+    let error = handle_setup_outcome(Err(io::Error::other("reacquire failed")), &mut transcript)
+        .expect_err("a lost terminal is an error, not a rendered outcome");
+    assert!(error.to_string().contains("reacquire failed"), "{error}");
+    assert!(
+        transcript.blocks().is_empty(),
+        "nothing renders on a lost terminal"
+    );
+}
+
+/// One fixture for the `tick_pending` gate: the pieces the live loop passes,
+/// over a throwaway root.
+struct PendingFixture {
+    app: crate::interactive::tui::types::App,
+    state: SessionState,
+    session: SessionRuntime,
+    runtime: crate::config::runtime::RuntimeConfig,
+    store: FsSessionStore,
+    root: PathBuf,
+}
+
+impl PendingFixture {
+    fn build(tag: &str) -> Self {
+        let root = temp_dir(tag);
+        let runtime = unused_runtime();
+        let session = SessionRuntime::acquire(
+            &runtime,
+            Some(&root),
+            true,
+            None,
+            "handoff-busy",
+            ApprovalPolicy::Ask,
+            &root.join("session-dirs"),
+        )
+        .expect("the pending-fixture session acquires");
+        let state = SessionState::new("handoff-busy", None, "model");
+        let store = FsSessionStore::new(root.join("store"));
+        Self {
+            app: idle_app(),
+            state,
+            session,
+            runtime,
+            store,
+            root,
+        }
+    }
+
+    /// The real queued-prompt drain with a `TerminalModes` double, exactly as
+    /// the live loop passes the guard.
+    fn drain(&mut self, modes: &mut dyn TerminalModes) -> io::Result<()> {
+        let options = GlobalOptions::default();
+        let mut setup = crate::interactive::tui::loop_tick::pending::SetupInputs {
+            modes,
+            options: &options,
+        };
+        tick_pending(
+            &mut self.app,
+            &mut self.state,
+            &self.runtime,
+            &self.store,
+            RenderFormat::Text,
+            &mut self.session,
+            &mut setup,
+        )
+    }
+}
+
+impl Drop for PendingFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+/// `/setup` typed while busy waits like every other command: the busy gate
+/// holds the queued line and the handoff never starts.
+#[test]
+fn setup_typed_while_busy_waits_like_every_other_command() {
+    let mut fx = PendingFixture::build("busy-gate");
+    fx.app.pending = Some("/setup".to_string());
+    // A running compaction makes the app busy, exactly like a query or an
+    // agent stream would.
+    let (_tx, rx) = std::sync::mpsc::channel::<CompactOutcome>();
+    fx.app.compact_task = Some(rx);
+    let mut recorder = Recorder::ok();
+    fx.drain(&mut recorder).expect("the busy tick runs");
+    assert_eq!(
+        fx.app.pending.as_deref(),
+        Some("/setup"),
+        "the busy gate holds the line"
+    );
+    assert!(
+        recorder.log.entries().is_empty(),
+        "the handoff never ran while busy: {:?}",
+        recorder.log.entries()
+    );
+}
+
+/// A handoff whose release fails returns the io error — the loop stops —
+/// and the best-effort repair still reacquired the half-released terminal.
+/// The release failing means the wizard never ran (no stdin read), so this
+/// exercises the real `tick_pending` path with a fake.
+#[test]
+fn a_failed_handoff_returns_the_error_and_stops_the_loop() {
+    let mut fx = PendingFixture::build("failed-handoff");
+    fx.app.pending = Some("/setup".to_string());
+    let mut recorder = Recorder::failing_release();
+    let error = fx
+        .drain(&mut recorder)
+        .expect_err("a failed handoff stops the loop");
+    assert!(error.to_string().contains("release failed"), "{error}");
+    assert_eq!(
+        recorder.log.entries(),
+        vec!["release", "reacquire"],
+        "the half-released terminal gets its best-effort repair"
+    );
+    assert!(
+        fx.app
+            .transcript
+            .blocks()
+            .iter()
+            .all(|block| !block.text.contains("Guided setup")),
+        "nothing renders on a lost handoff"
+    );
 }
