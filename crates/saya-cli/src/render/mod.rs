@@ -15,8 +15,11 @@ mod render_delta;
 mod render_doctor;
 mod render_io;
 mod render_json;
+// The scripted run's one terminal result: the text-mode warning shape and
+// the json/ndjson `turn_result` rendering.
 mod render_learned;
 mod render_memory;
+pub(crate) mod render_turn;
 /// The shared tool-call grouper and shaper both adapters consume: the piped
 /// text renderer buffers through it, the TUI transcript follows in slice 3.
 pub(crate) mod tool_groups;
@@ -82,6 +85,17 @@ impl From<OutputFormat> for RenderFormat {
         }
     }
 }
+/// How a scripted (`--turn-file`) turn ended, named in the one
+/// `turn_result` terminal event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnStatus {
+    Completed,
+    Failed,
+    Cancelled,
+    BudgetStopped,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum TerminalEvent {
@@ -159,6 +173,20 @@ pub enum TerminalEvent {
         options: Vec<String>,
     },
     Complete,
+    /// The ONE terminal result of a scripted (`--turn-file`) run, emitted
+    /// last on stdout under json/ndjson: how the turn ended, the process
+    /// exit code (0 completed — an explicit `/exit` included — and 5
+    /// otherwise, cancelled and budget-stopped included, unlike `ask`/`run`),
+    /// and the honest tool tally: the calls that completed plus the
+    /// requested-but-unfinished calls whose effects the stream never
+    /// settled. Text mode says nothing here; its unfinished calls warn as a
+    /// separate stderr diagnostic (render_turn).
+    TurnResult {
+        status: TurnStatus,
+        exit_code: i32,
+        tools_completed: usize,
+        tools_unfinished: Vec<String>,
+    },
     /// The provider stream failed mid-answer and the turn is being retried
     /// (`AgentEvent::TurnReset`). The partial answer printed so far is
     /// discarded; the retry re-streams the full answer. Carried on the
@@ -420,6 +448,13 @@ fn text_event(event: &TerminalEvent) -> Rendered {
         },
         TerminalEvent::Complete => Rendered {
             stdout: "\n".into(),
+            stderr: String::new(),
+        },
+        // Text mode reports the scripted run's result only through the
+        // unfinished-tools warning (render_turn); the result itself is a
+        // machine event.
+        TerminalEvent::TurnResult { .. } => Rendered {
+            stdout: String::new(),
             stderr: String::new(),
         },
         TerminalEvent::TurnReset => Rendered {

@@ -4,11 +4,12 @@ use super::{
     session_request::PromptResult,
     session_resume::{SessionDefaults, block_on, load_session},
     session_runtime::SessionRuntime,
+    turn_summary::{ProseOutcome, ToolTally, TurnSummary, prose_status},
 };
 use crate::budget_wording::{budget_dimension, budget_partial_message};
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
-    render::TerminalEvent,
+    render::{TerminalEvent, TurnStatus},
     slash::{SlashCommand, parse_slash_command},
 };
 use saya_store::{FsSessionStore, SessionStore, SqliteStateStore};
@@ -280,8 +281,15 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             terminal: false,
             session: &mut session,
             trusted_echo: None,
+            last_turn: None,
         };
         let outcome = run_single_turn(turn, &mut ctx);
+        // The one terminal result of the scripted run: emitted after the
+        // turn's own stream, before the save and the exit-code return. The
+        // `exit_code` in the event equals the process exit code.
+        if let Ok(turn_outcome) = &outcome {
+            emit_scripted_turn_result(&mut ctx, turn_outcome);
+        }
         crate::chart::cleanup_session_charts();
         block_on(store.save(state.redacted()))?;
         return match outcome? {
@@ -299,6 +307,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         terminal,
         session: &mut session,
         trusted_echo,
+        last_turn: None,
     };
     let outcome = run_plain_loop(&mut ctx);
     crate::chart::cleanup_session_charts();
@@ -443,6 +452,10 @@ struct TurnContext<'a> {
     /// The trust answer's echo, said once at startup where the headless loop
     /// says its other startup facts. `None` on every path that did not trust.
     trusted_echo: Option<String>,
+    /// The settled prose turn's summary — its status and the live sink's
+    /// tool tally — for the scripted run's one terminal result. `None` for
+    /// slash-command turns (no prose turn ran).
+    last_turn: Option<TurnSummary>,
 }
 
 /// Runs exactly one turn through the session's one per-turn entry
@@ -458,6 +471,38 @@ fn run_single_turn(
     // `/schema` can complete without appending a session message, while an
     // error can leave unrelated state untouched.
     handle_line_verbatim(&turn, ctx)
+}
+
+/// The ONE terminal result a scripted run reports, after the turn's own
+/// stream and before the save and exit-code return: under json/ndjson the
+/// machine-readable `turn_result` event ends stdout; in text mode only the
+/// unfinished-tools warning is said, on stderr, and only when a cancelled
+/// turn may have left a write's effects unknown. The `exit_code` in the
+/// event equals the process exit code.
+fn emit_scripted_turn_result(ctx: &mut TurnContext, outcome: &TurnOutcome) {
+    let (status, tally) = match ctx.last_turn.take() {
+        // A prose turn ran: its settled status and its tool tally.
+        Some(summary) => (summary.status, summary.tally),
+        // A slash-command turn ran no prose turn: the status derives from
+        // the outcome, and no tool ran.
+        None => (
+            match outcome {
+                TurnOutcome::Completed | TurnOutcome::Exit => TurnStatus::Completed,
+                TurnOutcome::Errored => TurnStatus::Failed,
+            },
+            ToolTally::default(),
+        ),
+    };
+    let unfinished = tally.unfinished_entries();
+    let rendered = crate::render::render_turn::turn_result_rendered(
+        ctx.format,
+        status,
+        super::turn_summary::exit_code(status),
+        tally.completed(),
+        &unfinished,
+    );
+    print!("{}", rendered.stdout);
+    eprint!("{}", rendered.stderr);
 }
 
 /// Reads lines from stdin without the rich editor, printing the status header
@@ -630,60 +675,82 @@ fn handle_line_verbatim(
                 state.compaction_summary_text(),
                 scope,
             )) {
-                Ok(PromptResult::Completed(output)) => {
-                    let clarification = output.events.iter().any(|event| {
-                        matches!(event, saya_agent::AgentEvent::ClarificationNeeded { .. })
-                    });
-                    session.settle_question(&completed, clarification);
-                    state.task_list = session.universe().tasks().current();
-                    state.record_agent_output(line, &output);
-                    // Feed the session accumulator so /usage is honest in
-                    // headless mode too (the TUI does this in drain_stream).
-                    state.usage.record(&output.usage);
-                    // Fold the extraction call's usage into the learning total
-                    // before the output moves into the action. `None` (no
-                    // extraction or no response) records nothing, so a session
-                    // with learning disabled is unaffected.
-                    state.usage.record_learning(output.learning_usage);
-                    // The shared automatic-compaction decision at the same settlement
-                    // the TUI reads; a pending clarification and a stop refuse
-                    // inside the adapter.
-                    if let Some(compact) = super::session_auto_compact::settle_auto_compact(
-                        runtime,
-                        state,
-                        session,
-                        &output,
-                        clarification,
-                        false,
-                    ) {
-                        super::session_emit::emit_action(compact, format, state, store)?;
+                Ok(settled) => match settled.result {
+                    PromptResult::Completed(output) => {
+                        let clarification = output.events.iter().any(|event| {
+                            matches!(event, saya_agent::AgentEvent::ClarificationNeeded { .. })
+                        });
+                        session.settle_question(&completed, clarification);
+                        state.task_list = session.universe().tasks().current();
+                        state.record_agent_output(line, &output);
+                        // Feed the session accumulator so /usage is honest in
+                        // headless mode too (the TUI does this in drain_stream).
+                        state.usage.record(&output.usage);
+                        // Fold the extraction call's usage into the learning total
+                        // before the output moves into the action. `None` (no
+                        // extraction or no response) records nothing, so a session
+                        // with learning disabled is unaffected.
+                        state.usage.record_learning(output.learning_usage);
+                        // The shared automatic-compaction decision at the same settlement
+                        // the TUI reads; a pending clarification and a stop refuse
+                        // inside the adapter.
+                        if let Some(compact) = super::session_auto_compact::settle_auto_compact(
+                            runtime,
+                            state,
+                            session,
+                            &output,
+                            clarification,
+                            false,
+                        ) {
+                            super::session_emit::emit_action(compact, format, state, store)?;
+                        }
+                        ctx.last_turn = Some(TurnSummary {
+                            // A completed turn reports completed, budget latched
+                            // or not (the partial wording is said separately).
+                            status: prose_status(ProseOutcome::Completed, false),
+                            tally: settled.tally,
+                        });
+                        SessionAction::Agent(*output)
                     }
-                    SessionAction::Agent(*output)
-                }
-                Ok(PromptResult::Cancelled {
-                    answering_usage,
-                    learning_usage,
-                }) => {
-                    session.abandon_question();
-                    if let Some(usage) = answering_usage {
-                        state.usage.answering.record_call(&usage);
+                    PromptResult::Cancelled {
+                        answering_usage,
+                        learning_usage,
+                    } => {
+                        session.abandon_question();
+                        if let Some(usage) = answering_usage {
+                            state.usage.answering.record_call(&usage);
+                        }
+                        state.usage.record_learning(learning_usage);
+                        let budget = budget_dimension(completed.cancellation().reason());
+                        ctx.last_turn = Some(TurnSummary {
+                            status: prose_status(ProseOutcome::Cancelled, budget.is_some()),
+                            tally: settled.tally,
+                        });
+                        match budget {
+                            Some(dimension) => {
+                                SessionAction::Error(budget_partial_message(dimension))
+                            }
+                            None => SessionAction::Cancelled,
+                        }
                     }
-                    state.usage.record_learning(learning_usage);
-                    match budget_dimension(completed.cancellation().reason()) {
-                        Some(dimension) => SessionAction::Error(budget_partial_message(dimension)),
-                        None => SessionAction::Cancelled,
+                    PromptResult::Failed(error, usage) => {
+                        session.abandon_question();
+                        if let Some(usage) = usage {
+                            state.usage.answering.record_call(&usage);
+                        }
+                        let budget = budget_dimension(completed.cancellation().reason());
+                        ctx.last_turn = Some(TurnSummary {
+                            status: prose_status(ProseOutcome::Failed, budget.is_some()),
+                            tally: settled.tally,
+                        });
+                        match budget {
+                            Some(dimension) => {
+                                SessionAction::Error(budget_partial_message(dimension))
+                            }
+                            None => SessionAction::Error(error.to_string()),
+                        }
                     }
-                }
-                Ok(PromptResult::Failed(error, usage)) => {
-                    session.abandon_question();
-                    if let Some(usage) = usage {
-                        state.usage.answering.record_call(&usage);
-                    }
-                    match budget_dimension(completed.cancellation().reason()) {
-                        Some(dimension) => SessionAction::Error(budget_partial_message(dimension)),
-                        None => SessionAction::Error(error.to_string()),
-                    }
-                }
+                },
                 Err(error) => {
                     session.abandon_question();
                     SessionAction::Error(error.to_string())

@@ -9,8 +9,10 @@
 mod harness;
 
 use harness::{
-    Round, RoundFn, digest_from, env, request_json, run, script, stdout, tool_names, tool_results,
+    Round, RoundFn, digest_from, env, request_json, run, run_background, script, sigint, stdout,
+    tool_names, tool_results, wait_until_holding,
 };
+use std::time::Duration;
 
 const FIXTURE: &str = "pub fn add(a: i32, b: i32) -> i32 { a - b }\n";
 const EDITED: &str = "pub fn add(a: i32, b: i32) -> i32 { a + b }\n";
@@ -38,11 +40,22 @@ fn assert_tool_flow(out: &str, expected: &[(&str, &str)]) {
         .map(|(kind, name)| (kind.to_owned(), name.to_owned()))
         .collect();
     assert_eq!(pairs, expected, "tool events in order; stdout:\n{out}");
+    // The stream ends with the one terminal result, and the last event before
+    // it is `complete` (the result trails the turn's own stream).
+    let lines: Vec<&str> = out.lines().filter(|line| !line.is_empty()).collect();
     assert!(
-        out.lines()
+        lines
             .last()
+            .is_some_and(|line| line.contains("\"event\":\"turn_result\"")),
+        "the stream ends with the terminal result; stdout:\n{out}"
+    );
+    assert!(
+        lines
+            .iter()
+            .rev()
+            .nth(1)
             .is_some_and(|line| line.contains("\"event\":\"complete\"")),
-        "the stream ends complete; stdout:\n{out}"
+        "the stream ends complete before the result; stdout:\n{out}"
     );
 }
 
@@ -362,6 +375,188 @@ fn no_database_profile_is_needed() {
         std::fs::read_to_string(&file).unwrap(),
         EDITED,
         "the full read-edit-report flow ran with no database; stdout:\n{out}"
+    );
+    drop(scripted);
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
+/// The non-empty stdout lines of a run, all required to parse as JSON (the
+/// ndjson surface stays machine-readable even when a turn is cancelled).
+fn json_lines(out: &str) -> Vec<&str> {
+    let lines: Vec<&str> = out.lines().filter(|line| !line.is_empty()).collect();
+    for line in &lines {
+        serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|error| panic!("stdout line is not JSON: {line:?}: {error}"));
+    }
+    lines
+}
+
+/// The one terminal result every scripted run must end with: a completed
+/// turn reports status `completed`, exit code 0, and the honest tool tally
+/// (two tool calls ran and completed), trailing the `complete` event.
+#[test]
+fn a_completed_scripted_turn_ends_with_one_turn_result() {
+    let env = env("turn-result");
+    let file = env.project.join("src/lib.rs");
+    std::fs::write(&file, FIXTURE).unwrap();
+    let scripted = script(read_edit_rounds(None));
+    let output = run(
+        &env,
+        &scripted,
+        "bypass",
+        "fix the add function in src/lib.rs\n",
+    );
+    let out = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    let lines = json_lines(&out);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("\"event\":\"turn_result\""))
+            .count(),
+        1,
+        "exactly one terminal result; stdout:\n{out}"
+    );
+    assert_eq!(
+        lines.last().copied().unwrap_or_default(),
+        "{\"event\":\"turn_result\",\"status\":\"completed\",\"exit_code\":0,\"tools_completed\":2,\"tools_unfinished\":[]}",
+        "the terminal result is the last stdout line; stdout:\n{out}"
+    );
+    assert_eq!(
+        lines[lines.len() - 2],
+        "{\"event\":\"complete\"}",
+        "the result trails the complete event; stdout:\n{out}"
+    );
+    drop(scripted);
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
+/// SIGINT while a model request is held open: exactly one `turn_result`
+/// (status `cancelled`, exit code 5) ends the stdout stream, the retained
+/// partial text stays on stdout, exactly one cancellation diagnostic is said
+/// on stderr, stdout stays JSON-only — and NO follow-up tool call is started
+/// (the scripted round-3 write is never requested, so `after.txt` never
+/// exists, and exactly two requests reach the mock).
+#[cfg(unix)]
+#[test]
+fn sigint_during_a_model_request_cancels_with_one_result_and_no_follow_up_effect() {
+    let env = env("sigint");
+    std::fs::write(env.project.join("src/lib.rs"), FIXTURE).unwrap();
+    let scripted = script(vec![
+        Box::new(|_| Round::Tool {
+            name: "workspace_read",
+            arguments: serde_json::json!({"path": "src/lib.rs"}),
+        }),
+        Box::new(|_| Round::Hold("partial")),
+        Box::new(|_| Round::Tool {
+            name: "workspace_write",
+            arguments: serde_json::json!({"path": "after.txt", "content": "landed"}),
+        }),
+    ]);
+    let mut child = run_background(&env, &scripted, "bypass", "read the file then keep going\n");
+    wait_until_holding(&scripted, Duration::from_secs(30));
+    child.wait_for_stdout(b"\"text\":\"partial\"", "the retained partial text");
+    sigint(child.id());
+    let status = child
+        .wait_for_exit(Duration::from_secs(20))
+        .expect("the run exits after SIGINT");
+    assert_eq!(status.code(), Some(5), "a cancelled run exits 5");
+    let out = child.stdout();
+    let lines = json_lines(&out);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.contains("\"event\":\"turn_result\""))
+            .count(),
+        1,
+        "exactly one terminal result; stdout:\n{out}"
+    );
+    assert_eq!(
+        lines.last().copied().unwrap_or_default(),
+        "{\"event\":\"turn_result\",\"status\":\"cancelled\",\"exit_code\":5,\"tools_completed\":1,\"tools_unfinished\":[]}",
+        "the cancelled result is the last stdout line; stdout:\n{out}"
+    );
+    assert!(
+        out.contains("\"text\":\"partial\""),
+        "the retained partial result stays on stdout; stdout:\n{out}"
+    );
+    let err = child.stderr();
+    let diagnostics: Vec<&str> = err
+        .lines()
+        .filter(|line| line.contains("\"event\":\"diagnostic\""))
+        .collect();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "exactly one diagnostic on stderr: {err}"
+    );
+    assert!(
+        diagnostics[0].contains("\"Request cancelled.\""),
+        "the cancellation diagnostic is said: {err}"
+    );
+    assert!(
+        !env.project.join("after.txt").exists(),
+        "no follow-up write ran after the cancel"
+    );
+    {
+        let bodies = scripted.bodies.lock().unwrap();
+        assert_eq!(
+            bodies.len(),
+            2,
+            "exactly two requests reached the mock: the read and the held round"
+        );
+    }
+    // The record saved for the run does not contain the incomplete turn
+    // (existing contract, tests/mvp/session.rs).
+    let saved = std::fs::read_dir(&env.sessions)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+        .expect("the run saved its session record");
+    assert!(
+        !saved.contains("read the file then keep going") && !saved.contains("partial"),
+        "the incomplete turn is not in the saved record: {saved}"
+    );
+    drop(child);
+    drop(scripted);
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
+/// A provider that fails every attempt: the turn is failed, said on stderr,
+/// and the terminal result names `failed` with exit code 5.
+#[test]
+fn a_failed_turn_reports_failed_with_exit_five() {
+    let env = env("fail-500");
+    let scripted = script(vec![
+        Box::new(|_| Round::Fail500),
+        Box::new(|_| Round::Fail500),
+        Box::new(|_| Round::Fail500),
+        Box::new(|_| Round::Fail500),
+    ]);
+    let output = run(&env, &scripted, "bypass", "tell me about the tree\n");
+    let out = stdout(&output);
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "a failed turn exits 5; stdout:\n{out}\nstderr:\n{}",
+        stderr(&output)
+    );
+    let lines = json_lines(&out);
+    assert_eq!(
+        lines.last().copied().unwrap_or_default(),
+        "{\"event\":\"turn_result\",\"status\":\"failed\",\"exit_code\":5,\"tools_completed\":0,\"tools_unfinished\":[]}",
+        "the failed result is the last stdout line; stdout:\n{out}"
+    );
+    assert!(
+        stderr(&output).contains("\"event\":\"error\""),
+        "the failure is said on stderr: {}",
+        stderr(&output)
     );
     drop(scripted);
     let _ = std::fs::remove_dir_all(&env.root);

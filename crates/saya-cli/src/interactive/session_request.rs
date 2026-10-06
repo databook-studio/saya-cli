@@ -16,7 +16,10 @@ use saya_agent::{
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
-use super::session_universe::SessionUniverse;
+use super::{
+    session_universe::SessionUniverse,
+    turn_summary::{TallyHandle, ToolTally, tally_handle},
+};
 
 pub(crate) enum PromptResult {
     /// Boxed because the variant dwarfs `Cancelled`, which carries only usage;
@@ -28,6 +31,20 @@ pub(crate) enum PromptResult {
         answering_usage: Option<TokenUsage>,
         learning_usage: Option<TokenUsage>,
     },
+}
+
+/// What one settled turn hands the loop: the prompt result and the live
+/// sink's tool tally, so the scripted run's one terminal result can report
+/// the tally honestly.
+pub(crate) struct PromptOutcome {
+    pub(crate) result: PromptResult,
+    pub(crate) tally: ToolTally,
+}
+
+/// The settled tally snapshot: no more agent events flow once the turn has
+/// settled, so this is the run's final count.
+fn tally_snapshot(tally: &TallyHandle) -> ToolTally {
+    tally.lock().expect("tool tally").clone()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -62,7 +79,7 @@ pub(crate) async fn run(
     prior_tool_outcomes: Option<super::session_continuation::PriorToolOutcomes>,
     compaction_summary: Option<String>,
     scope: QuestionScope,
-) -> Result<PromptResult, AgentRuntimeError> {
+) -> Result<PromptOutcome, AgentRuntimeError> {
     let cancellation = scope.cancellation();
     // A stop-owner clone: the scope moves into the turn, but the Ctrl-C
     // branch must still capture the application-side stop instant.
@@ -71,7 +88,10 @@ pub(crate) async fn run(
     // settled boundary below prints the snapshot the run just finished
     // filling — the same collector the clarification reply turn reuses.
     let metrics = scope.metrics();
-    let terminal = TerminalSink::new(format);
+    // The shared tally the live sink records tool events into: handed to the
+    // loop beside the result so the scripted terminal result can report it.
+    let tally = tally_handle();
+    let terminal = TerminalSink::new(format).with_tally(Arc::clone(&tally));
     let sink = MetricsSink::new(&terminal, scope.metrics());
     // The decider is the terminal ask over the session's policy: the mode
     // resolves there, and a session grant recorded by an answer lands in the
@@ -119,15 +139,18 @@ pub(crate) async fn run(
     tokio::select! {
         result = &mut work => {
             let budget = budget_dimension(cancellation.reason());
-            let result = match result {
-                Ok(output) => Ok(PromptResult::Completed(Box::new(output))),
-                Err(error) => Ok(PromptResult::Failed(error, terminal.take_answering_usage())),
+            let settled = match result {
+                Ok(output) => PromptResult::Completed(Box::new(output)),
+                Err(error) => PromptResult::Failed(error, terminal.take_answering_usage()),
             };
             crate::local_metrics_format::print_metrics_section(&metrics);
-            if matches!(result, Ok(PromptResult::Completed(_))) {
+            if matches!(settled, PromptResult::Completed(_)) {
                 emit_partial_diagnostic(budget, format);
             }
-            result
+            Ok(PromptOutcome {
+                result: settled,
+                tally: tally_snapshot(&tally),
+            })
         }
         _ = tokio::signal::ctrl_c() => {
             stop_scope.request_stop();
@@ -136,12 +159,15 @@ pub(crate) async fn run(
                 Err(_) => None,
             };
             stop_scope.record_stop_settlement();
-            let result = Ok(PromptResult::Cancelled {
+            let settled = PromptResult::Cancelled {
                 answering_usage: terminal.take_answering_usage(),
                 learning_usage,
-            });
+            };
             crate::local_metrics_format::print_metrics_section(&metrics);
-            result
+            Ok(PromptOutcome {
+                result: settled,
+                tally: tally_snapshot(&tally),
+            })
         }
     }
 }
