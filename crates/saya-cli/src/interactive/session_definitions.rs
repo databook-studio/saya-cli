@@ -8,53 +8,28 @@
 //! advertised-but-deny effect the run surface carries for plan-gated tools
 //! (`requires_approval: false`) becomes per-call approval here — the engine
 //! decides every call, which is the whole point of the unified universe.
+//!
+//! The digest-guarded file tools (`workspace_write`, `workspace_edit`)
+//! live in the sibling `session_file_definitions` — derived from the run
+//! surface's own definitions, re-exported here for their callers.
 
 use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 
-fn write_shape(external_side_effect: bool) -> ToolEffect {
+// The digest-guarded file tools now live beside this module, derived from
+// the run surface's own definitions so their parameter schemas cannot
+// drift from the executor's; the re-export keeps the crate-reachable path
+// (`session_definitions::workspace_write`) the approval tests use.
+pub(crate) use super::session_file_definitions::{workspace_edit, workspace_write};
+
+/// The session's write shape: every definition this module pushes declares
+/// approval honestly — the engine resolves the per-call ask, and no static
+/// permit answers for the user.
+pub(super) fn write_shape(external_side_effect: bool) -> ToolEffect {
     ToolEffect {
         database_data: false,
         external_side_effect,
-        // The session's gate is the per-call ask: the definition declares
-        // approval honestly, the engine resolves it, and no static permit
-        // answers for the user.
         requires_approval: true,
         local_state: LocalStateEffect::WriteWorkspace,
-    }
-}
-
-/// `workspace_write`, bound to the session's workspace — the project tree.
-pub(crate) fn workspace_write() -> ToolDefinition {
-    ToolDefinition {
-        name: "workspace_write".into(),
-        description: "Write one file into this session's workspace — the project tree the \
-            session is bound to; its canonical root is shown in the status header. Pass `path` \
-            relative to the workspace root and `content` as the full text to store; the file \
-            is written atomically — replaced whole or not at all, never partially. Absolute \
-            paths, `..` escapes, and symlinks are refused, content over the write bound is \
-            refused whole, and existing files are replaced by the new content. Returns the \
-            `path` and `bytes_written`."
-            .into(),
-        read_only: false,
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "File path relative to the workspace root."
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The full text to store in the file, replacing \
-                        any previous content."
-                }
-            },
-            "required": ["path", "content"],
-            "additionalProperties": false
-        }),
-        effect: write_shape(false),
-        concurrency: ToolConcurrency::Serial,
-        completion: Some("workspace file written".into()),
     }
 }
 

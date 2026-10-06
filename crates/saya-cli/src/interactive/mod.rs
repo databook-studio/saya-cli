@@ -45,6 +45,9 @@ mod session_tasks_view_tests;
 // tests build the real grantable shapes the frontends are asked about.
 pub(crate) mod session_definitions;
 mod session_emit;
+// The session's digest-guarded file tools, derived from the run surface's
+// definitions so the parameter schemas cannot drift.
+pub(crate) mod session_file_definitions;
 mod session_loop;
 pub(crate) mod session_paths;
 // `/allow` and `/grants`: the session grant store's one behaviour, shared

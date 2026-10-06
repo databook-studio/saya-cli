@@ -170,7 +170,8 @@ fn terminal_unbound_prompts_and_trust_binds_cwd() {
         .map(|definition| definition.name)
         .collect();
     assert!(
-        names.contains(&"workspace_write".to_string()),
+        names.contains(&"workspace_write".to_string())
+            && names.contains(&"workspace_edit".to_string()),
         "trust restores the file tools: {names:?}"
     );
     let _ = (fs::remove_dir_all(&cwd), fs::remove_dir_all(&state));
@@ -308,7 +309,8 @@ fn continue_unbound_keeps_today_s_shape() {
         .map(|definition| definition.name)
         .collect();
     assert!(
-        !names.contains(&"workspace_write".to_string()),
+        !names.contains(&"workspace_write".to_string())
+            && !names.contains(&"workspace_edit".to_string()),
         "the write tools stay hidden: {names:?}"
     );
     // A resume never prompts — pinned or pre-workspace alike.

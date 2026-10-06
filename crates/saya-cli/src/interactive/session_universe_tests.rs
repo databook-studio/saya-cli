@@ -122,8 +122,9 @@ fn compose_result(
     SessionUniverse::compose(runtime, None, None, true, cwd, state_dir)
 }
 
-const SESSION_WRITE_TOOLS: [&str; 6] = [
+const SESSION_WRITE_TOOLS: [&str; 7] = [
     "workspace_write",
+    "workspace_edit",
     "scratch_sql",
     "scratch_import",
     "http_fetch",
@@ -485,6 +486,7 @@ fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
         );
         for tool in [
             "workspace_write",
+            "workspace_edit",
             "scratch_sql",
             "http_fetch",
             "http_download",
@@ -503,16 +505,66 @@ fn bypass_advertises_the_write_shaped_tools_without_a_prompt_surface() {
             false,
             false,
         );
-        let write = definitions
-            .iter()
-            .find(|definition| definition.name == "workspace_write")
-            .expect("workspace_write is advertised under bypass");
-        assert!(
-            write.effect.requires_approval,
-            "the definition still declares its approval shape honestly: the engine resolves it"
-        );
+        for tool in ["workspace_write", "workspace_edit"] {
+            let write = definitions
+                .iter()
+                .find(|definition| definition.name == tool)
+                .expect("the guarded file tool is advertised under bypass");
+            assert!(
+                write.effect.requires_approval,
+                "{tool} still declares its approval shape honestly: the engine resolves it"
+            );
+        }
     }
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The digest-guarded edit rides beside the write, and only there: a bound
+/// Build session advertises `workspace_edit` exactly once — no duplicate
+/// from the run surface (whose `permit_workspace_writes` is off) and no
+/// drift into compositions that cannot use it — while an unbound session
+/// (no workspace root) and Plan mode never see it.
+#[test]
+fn a_bound_session_advertises_workspace_edit_exactly_once_and_unbound_and_plan_do_not() {
+    let project = worktree("edit-advertise");
+    let state = temp_dir("edit-advertise-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| *name == "workspace_edit")
+            .count(),
+        1,
+        "the bound Build session advertises workspace_edit exactly once: {names:?}"
+    );
+    let plain = temp_dir("edit-advertise-unbound");
+    let plain_state = temp_dir("edit-advertise-unbound-state");
+    let unbound = SessionUniverse::compose(
+        &session_runtime(None),
+        None,
+        None,
+        true,
+        &plain,
+        &plain_state,
+    )
+    .expect("composition succeeds without a root");
+    assert!(
+        !advertised(&unbound, AgentMode::Build, ApprovalPolicy::Bypass, false)
+            .contains(&"workspace_edit".to_string()),
+        "no root, no edit tool"
+    );
+    assert!(
+        !advertised(&universe, AgentMode::Plan, ApprovalPolicy::Bypass, false)
+            .contains(&"workspace_edit".to_string()),
+        "Plan hides the edit tool even under bypass"
+    );
+    let _ = (
+        fs::remove_dir_all(&project),
+        fs::remove_dir_all(&state),
+        fs::remove_dir_all(&plain),
+        fs::remove_dir_all(&plain_state),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -573,6 +625,7 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
     let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
     for tool in [
         "workspace_write",
+        "workspace_edit",
         "scratch_sql",
         "scratch_import",
         "http_fetch",
@@ -593,6 +646,7 @@ fn a_worktree_session_advertises_every_write_shaped_tool_ask_gated() {
     );
     for tool in [
         "workspace_write",
+        "workspace_edit",
         "scratch_sql",
         "scratch_import",
         "http_fetch",
@@ -1735,8 +1789,9 @@ fn a_pre_workspace_resume_stays_silent_when_unbound() {
 /// plus the host lane. `run_program` joins the asserted absence only where
 /// the runner composes, so the runner-bearing test below names it explicitly
 /// while this shared list names the four the plain composition carries.
-const PLAN_HIDDEN_TOOLS: [&str; 7] = [
+const PLAN_HIDDEN_TOOLS: [&str; 8] = [
     "workspace_write",
+    "workspace_edit",
     "scratch_sql",
     "scratch_import",
     "http_fetch",
@@ -1791,6 +1846,7 @@ fn plan_hides_write_shaped_tools_under_bypass_too() {
     let build = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
     for tool in [
         "workspace_write",
+        "workspace_edit",
         "scratch_sql",
         "http_fetch",
         "http_download",
@@ -1861,6 +1917,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "designate_answer",
                 "tasks_set",
                 "workspace_write",
+                "workspace_edit",
                 "scratch_sql",
                 "scratch_import",
                 "http_fetch",
@@ -1887,6 +1944,7 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
                 "designate_answer",
                 "tasks_set",
                 "workspace_write",
+                "workspace_edit",
                 "scratch_sql",
                 "scratch_import",
                 "http_fetch",
