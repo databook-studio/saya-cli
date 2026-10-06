@@ -1,4 +1,4 @@
-use crate::cli::{ContractsCommand, InvestigationCommand};
+use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
 use saya_agent::{AgentMode, ApprovalPolicy};
 use std::{fmt, str::FromStr};
 
@@ -68,6 +68,13 @@ pub enum SlashCommand {
     /// The loops pass the session's own id as the current one, so the
     /// session can never delete itself; the form never prompts.
     SessionsDelete(String),
+    /// `/preferences …` — a project-preference command, already translated
+    /// to the same `PreferencesCommand` the headless `saya preferences`
+    /// parser produces. Both loops hand it to the shared `run_in_session`
+    /// operation scoped to the session's bound worktree root — no second
+    /// parsing, DTO, or rendering; the form never prompts and never
+    /// becomes a model-callable tool.
+    Preferences(PreferencesCommand),
     Resume(String),
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
@@ -304,6 +311,86 @@ fn parse_report(tail: &str) -> Result<ReportRequest, SlashParseError> {
     })
 }
 
+/// Parses the `/preferences` tail: bare or `list` lists; `add <text>` and
+/// `edit <id> <text>` keep the text verbatim (outer ends trimmed, interior
+/// spacing intact); `forget <id>` takes exactly one id; `forget-all` takes
+/// nothing. Every malformed form is a usage error naming its remedy.
+fn parse_preferences(tail: &str) -> Result<PreferencesCommand, SlashParseError> {
+    const USAGE: &str = " (usage: /preferences, /preferences add <text>, \
+         /preferences edit <id> <text>, /preferences forget <id>, /preferences forget-all)";
+    if tail.is_empty() {
+        return Ok(PreferencesCommand::List);
+    }
+    let (head, rest) = tail.split_once(char::is_whitespace).unwrap_or((tail, ""));
+    let rest = rest.trim();
+    match head {
+        "list" => {
+            if rest.is_empty() {
+                Ok(PreferencesCommand::List)
+            } else {
+                Err(SlashParseError(format!(
+                    "preferences list takes no argument{USAGE}"
+                )))
+            }
+        }
+        "add" => {
+            if rest.is_empty() {
+                return Err(SlashParseError(
+                    "preferences add requires text: /preferences add <text>".into(),
+                ));
+            }
+            Ok(PreferencesCommand::Add {
+                text: rest.to_string(),
+            })
+        }
+        "edit" => {
+            let (id, text) = rest.split_once(char::is_whitespace).ok_or_else(|| {
+                SlashParseError(
+                    "preferences edit requires an id and text: /preferences edit <id> <text>"
+                        .into(),
+                )
+            })?;
+            let (id, text) = (id.trim(), text.trim());
+            if id.is_empty() || text.is_empty() {
+                return Err(SlashParseError(
+                    "preferences edit requires an id and text: /preferences edit <id> <text>"
+                        .into(),
+                ));
+            }
+            Ok(PreferencesCommand::Edit {
+                id: id.to_string(),
+                text: text.to_string(),
+            })
+        }
+        "forget" => {
+            if rest.is_empty() {
+                return Err(SlashParseError(
+                    "preferences forget requires an id: /preferences forget <id>".into(),
+                ));
+            }
+            if rest.split_whitespace().count() > 1 {
+                return Err(SlashParseError(
+                    "preferences forget takes exactly one id: /preferences forget <id>".into(),
+                ));
+            }
+            Ok(PreferencesCommand::Forget {
+                id: rest.to_string(),
+            })
+        }
+        "forget-all" => {
+            if !rest.is_empty() {
+                return Err(SlashParseError(format!(
+                    "preferences forget-all takes no argument{USAGE}"
+                )));
+            }
+            Ok(PreferencesCommand::ForgetAll)
+        }
+        other => Err(SlashParseError(format!(
+            "unknown /preferences subcommand: {other}{USAGE}"
+        ))),
+    }
+}
+
 pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashParseError> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
@@ -383,6 +470,15 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             }
         }
         "resume" => SlashCommand::Resume(required()?),
+        "preferences" => {
+            // `/preferences` is free text on the add and edit forms, so the
+            // tail keeps its interior whitespace verbatim — the `/sql`
+            // idiom, not the whitespace-collapsing default — and the
+            // sub-word split happens once, here, mapping onto the same
+            // `PreferencesCommand` the headless parser produces.
+            let tail = trimmed.strip_prefix("/preferences").unwrap_or("").trim();
+            SlashCommand::Preferences(parse_preferences(tail)?)
+        }
         "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
         "doctor" => SlashCommand::Doctor,
         "usage" => SlashCommand::Usage,
@@ -1114,6 +1210,111 @@ mod tests {
                 SlashCommand::Approvals(Some(_))
             ),
             "the gate still matches its own /approvals shape"
+        );
+    }
+
+    /// `/preferences` grammar: every form parses onto the same
+    /// `PreferencesCommand` the headless `saya preferences` parser
+    /// produces — no second DTO — and bare `/preferences` lists.
+    #[test]
+    fn test_parse_preferences_forms() {
+        assert_eq!(
+            parse_slash_command("/preferences"),
+            Ok(Some(SlashCommand::Preferences(PreferencesCommand::List)))
+        );
+        assert_eq!(
+            parse_slash_command("/preferences list"),
+            Ok(Some(SlashCommand::Preferences(PreferencesCommand::List)))
+        );
+        assert_eq!(
+            parse_slash_command("/preferences add prefer tabs over spaces"),
+            Ok(Some(SlashCommand::Preferences(PreferencesCommand::Add {
+                text: "prefer tabs over spaces".into()
+            })))
+        );
+        assert_eq!(
+            parse_slash_command("/preferences edit pp-1 new text here"),
+            Ok(Some(SlashCommand::Preferences(PreferencesCommand::Edit {
+                id: "pp-1".into(),
+                text: "new text here".into()
+            })))
+        );
+        assert_eq!(
+            parse_slash_command("/preferences forget pp-1"),
+            Ok(Some(SlashCommand::Preferences(
+                PreferencesCommand::Forget { id: "pp-1".into() }
+            )))
+        );
+        assert_eq!(
+            parse_slash_command("/preferences forget-all"),
+            Ok(Some(SlashCommand::Preferences(
+                PreferencesCommand::ForgetAll
+            )))
+        );
+    }
+
+    /// Preference text is free text: the tail keeps its interior whitespace
+    /// verbatim — the `/sql` idiom, not the whitespace-collapsing default —
+    /// so a preference is stored exactly as typed.
+    #[test]
+    fn preferences_keeps_interior_spacing_verbatim() {
+        assert_eq!(
+            parse_slash_command("/preferences add  a  b"),
+            Ok(Some(SlashCommand::Preferences(PreferencesCommand::Add {
+                text: "a  b".into()
+            })))
+        );
+        assert_eq!(
+            parse_slash_command("/preferences edit pp-1  keep  this"),
+            Ok(Some(SlashCommand::Preferences(PreferencesCommand::Edit {
+                id: "pp-1".into(),
+                text: "keep  this".into()
+            })))
+        );
+    }
+
+    /// Every malformed form is a usage error naming its remedy; the
+    /// unknown-subcommand error lists every valid form.
+    #[test]
+    fn preferences_malformed_forms_are_usage_errors() {
+        let add_empty = parse_slash_command("/preferences add").unwrap_err();
+        assert!(
+            add_empty.0.contains("preferences add requires text"),
+            "{add_empty}"
+        );
+        let edit_empty = parse_slash_command("/preferences edit").unwrap_err();
+        assert!(
+            edit_empty
+                .0
+                .contains("preferences edit requires an id and text"),
+            "{edit_empty}"
+        );
+        let edit_no_text = parse_slash_command("/preferences edit pp-1").unwrap_err();
+        assert!(
+            edit_no_text
+                .0
+                .contains("preferences edit requires an id and text"),
+            "{edit_no_text}"
+        );
+        let forget_empty = parse_slash_command("/preferences forget").unwrap_err();
+        assert!(
+            forget_empty.0.contains("preferences forget requires an id"),
+            "{forget_empty}"
+        );
+        let forget_two = parse_slash_command("/preferences forget a b").unwrap_err();
+        assert!(forget_two.0.contains("exactly one id"), "{forget_two}");
+        let list_extra = parse_slash_command("/preferences list foo").unwrap_err();
+        assert!(list_extra.0.contains("takes no argument"), "{list_extra}");
+        let forget_all_extra = parse_slash_command("/preferences forget-all now").unwrap_err();
+        assert!(
+            forget_all_extra.0.contains("forget-all takes no argument"),
+            "{forget_all_extra}"
+        );
+        let unknown = parse_slash_command("/preferences bogus").unwrap_err();
+        assert!(
+            unknown.0.contains("unknown /preferences subcommand: bogus")
+                && unknown.0.contains("/preferences forget-all"),
+            "the unknown-subcommand error names every valid form: {unknown}"
         );
     }
 }

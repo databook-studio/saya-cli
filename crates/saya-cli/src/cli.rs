@@ -374,7 +374,7 @@ pub enum SessionsCommand {
 /// Project-preference subcommands: one explicit, bounded CRUD family over
 /// per-worktree guidance the user confirmed — never created by the model,
 /// never an authority.
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum PreferencesCommand {
     /// List this worktree's project preferences: explicit, per-worktree
     /// guidance; never permissions.

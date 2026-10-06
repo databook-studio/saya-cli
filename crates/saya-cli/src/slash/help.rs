@@ -74,6 +74,11 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "sessions",
         "Browse saved sessions: list or delete; bare opens a picker in the TUI",
     ),
+    (
+        "preferences",
+        "Explicit per-worktree guidance you confirmed: list, add, edit, forget; \
+         never permissions; separate from /remember",
+    ),
     ("resume", "Resume a saved session by id"),
     ("columns", "Choose which columns wide result tables show"),
     ("contracts", "List contracts, or show one object's contract"),
@@ -215,6 +220,10 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("contracts", "/contracts [table]"),
             ("remember", "/remember <table> <kind> <value…>"),
             ("forget", "/forget <id>"),
+            (
+                "preferences",
+                "/preferences [list|add <text>|edit <id> <text>|forget <id>|forget-all]",
+            ),
             ("queue", "/queue [limit]"),
             ("confirm", "/confirm <prefix>"),
             ("reject", "/reject <prefix>"),
@@ -345,6 +354,18 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
                  deletes one saved session the same way (never prompts; the current session \
                  and any live session are refused), and bare `/sessions` opens a picker in \
                  the TUI. Example: /sessions list",
+        ),
+        "preferences" => Some(
+            "preferences [list|add <text>|edit <id> <text>|forget <id>|forget-all] — explicit, \
+             per-worktree guidance you confirmed yourself: never permissions, and stored \
+             separately from /remember and the typed contract knowledge. Bare or `list` \
+             prints this worktree's preferences, `add <text>` confirms one, `edit <id> \
+             <text>` replaces one, `forget <id>` removes one, and `forget-all` removes \
+             every preference in this worktree. The worktree is this session's bound \
+             workspace root; a session with none bound refuses every form. Never prompts. \
+             Example: /preferences add prefer tabs over spaces   or   /preferences list   \
+             or   /preferences edit pp-… <new text>   or   /preferences forget pp-…   or   \
+             /preferences forget-all",
         ),
         "context" => Some(
             "context — show which project and personal instruction files are loaded into \
@@ -934,6 +955,51 @@ mod tests {
             help.contains("No tasks are being tracked."),
             "the /tasks help names the empty-list words: {help}"
         );
+    }
+
+    /// `/preferences` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing, and the per-command
+    /// help. The entry states the contract — explicit, per-worktree
+    /// guidance; never permissions; separate from /remember — with one
+    /// example per subcommand.
+    #[test]
+    fn preferences_is_registered_listed_and_described() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"preferences"),
+            "preferences is registered"
+        );
+        assert!(
+            description_for("preferences").is_some(),
+            "preferences has a popup description"
+        );
+        let listing = help_text();
+        assert!(
+            listing
+                .contains("/preferences [list|add <text>|edit <id> <text>|forget <id>|forget-all]"),
+            "the listing shows the /preferences usage: {listing}"
+        );
+        let help = command_help("preferences").expect("preferences has per-command help");
+        assert!(
+            help.contains("never permissions"),
+            "the /preferences help states the never-permissions contract: {help}"
+        );
+        assert!(
+            help.contains("separately from /remember"),
+            "the /preferences help states the /remember separation: {help}"
+        );
+        for form in [
+            "/preferences list",
+            "/preferences add",
+            "/preferences edit",
+            "/preferences forget pp-…",
+            "/preferences forget-all",
+        ] {
+            assert!(
+                help.contains(form),
+                "the /preferences help shows an example for {form}: {help}"
+            );
+        }
     }
 
     /// `/mode` is wired at every hand-maintained touchpoint the

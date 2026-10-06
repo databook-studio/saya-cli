@@ -39,6 +39,7 @@ pub(super) fn apply_session_action(
                 | SessionAction::Context
                 | SessionAction::SessionsList
                 | SessionAction::SessionsDelete(_)
+                | SessionAction::Preferences(_)
                 | SessionAction::Resume(_)
                 | SessionAction::Sql(_)
                 | SessionAction::Contracts(_)
@@ -94,6 +95,25 @@ pub(super) fn apply_session_action(
             );
             transcript.push(
                 if ok {
+                    BlockKind::System
+                } else {
+                    BlockKind::Error
+                },
+                message,
+            );
+        }
+        SessionAction::Preferences(command) => {
+            // `/preferences …` — the shared project-preference operations
+            // the headless `saya preferences` runs, scoped to the session's
+            // bound worktree root (never the launch cwd; no bound root is
+            // the shared NoWorktree refusal). The words are the headless
+            // rendering; a refusal (exit 2) is an Error block, never a
+            // silent no-op.
+            let (code, message) = crate::interactive::session_resume::block_on(
+                crate::commands::preferences::run_in_session(command, session.root(), state_db),
+            );
+            transcript.push(
+                if code == 0 {
                     BlockKind::System
                 } else {
                     BlockKind::Error

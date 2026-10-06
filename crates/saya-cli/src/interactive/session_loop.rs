@@ -939,6 +939,31 @@ fn handle_line_verbatim(
         block_on(store.save(state.redacted()))?;
         return Ok(outcome);
     }
+    if let SessionAction::Preferences(command) = action {
+        // `/preferences …` — the shared project-preference operations the
+        // headless `saya preferences` runs, scoped to the session's bound
+        // worktree root (never the launch cwd; no bound root is the shared
+        // NoWorktree refusal). The words are the headless rendering, said
+        // through the shared emit seam like `/grants`; a refusal is an
+        // errored turn, so `--turn-file` exits non-zero.
+        let (code, message) = block_on(crate::commands::preferences::run_in_session(
+            command,
+            session.root(),
+            state_db,
+        ));
+        let emitted = if code == 0 {
+            SessionAction::Message(message)
+        } else {
+            SessionAction::Error(message)
+        };
+        super::session_emit::emit_action(emitted, format, state, store)?;
+        block_on(store.save(state.redacted()))?;
+        return Ok(if code == 0 {
+            TurnOutcome::Completed
+        } else {
+            TurnOutcome::Errored
+        });
+    }
     if let SessionAction::Run(tail) = action {
         // `/run --seed-grants <tail…>` seeds the child's `--allow` from this
         // session's grants on request: only tokens the run's parser accepts
