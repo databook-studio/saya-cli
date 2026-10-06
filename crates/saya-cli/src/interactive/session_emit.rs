@@ -42,13 +42,16 @@ pub(crate) fn emit_action(
         // intercepted too — the shared saved-session operations run in the
         // loop, which owns the store and the sessions root. `/preferences`
         // is intercepted likewise: the shared operations run in the loop,
-        // scoped to the session's bound worktree root.
+        // scoped to the session's bound worktree root. `/recovery` is
+        // intercepted too: the shared `run_recovery` runs in the loop,
+        // over the session's own recovery handle.
         | SessionAction::Allow(_)
         | SessionAction::Grants
         | SessionAction::Context
         | SessionAction::SessionsList
         | SessionAction::SessionsDelete(_)
         | SessionAction::Preferences(_)
+        | SessionAction::Recovery(_)
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)

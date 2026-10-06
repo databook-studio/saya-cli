@@ -10,6 +10,10 @@ use saya_harness::workspace::Workspace;
 use saya_store::{CheckpointStoreError, FsSessionStore};
 use saya_types::{BeforeImage, CheckpointId, MAX_CHECKPOINT_FILE_BYTES};
 
+// The output-line cap is read by the tests (through `super::diff`); the
+// other bounds are enforced below, so their re-export doubles as the
+// internal import and stays ungated.
+#[cfg(test)]
 pub(crate) use hunks::DIFF_MAX_OUTPUT_LINES;
 pub(crate) use line_diff::{DIFF_MAX_BYTES, DIFF_MAX_CELLS, DIFF_MAX_LINES};
 

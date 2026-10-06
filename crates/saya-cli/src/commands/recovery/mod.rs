@@ -1,9 +1,9 @@
 //! Surface-neutral recovery operations over the session's recorded edit
 //! checkpoints: listing every recorded edit with its current restore
-//! status, previewing a restore as a bounded in-house diff, and restoring
-//! through the guarded workspace operations. Typed outcomes and plain
-//! text only — no slash command, no UI. E08 wires this into the `/recovery`
-//! surface and removes this module's test-only gate.
+//! status, previewing a restore as a bounded in-house diff, restoring
+//! through the guarded workspace operations, and the `/recovery` command
+//! layer (`session.rs`) every surface runs. Typed outcomes and plain
+//! text only — no UI.
 
 mod diff;
 mod hunks;
@@ -12,12 +12,16 @@ mod ops;
 mod render;
 mod render_outcome;
 mod restore;
+mod session;
 
-pub(crate) use diff::{diff_change, render_diff};
+pub(crate) use diff::diff_change;
+#[cfg(test)]
+pub(crate) use diff::render_diff;
 pub(crate) use ops::{list_changes, sha256_hex};
 pub(crate) use render::render_changes;
 pub(crate) use render_outcome::{render_diff_outcome, render_restore};
 pub(crate) use restore::restore_change;
+pub(crate) use session::{RecoveryCommand, run_recovery};
 
 use saya_types::{CheckpointState, CheckpointUsage, EditSource, FileVersion, RestoreEligibility};
 
@@ -134,5 +138,8 @@ mod render_tests;
 #[cfg(test)]
 #[path = "restore_tests.rs"]
 mod restore_tests;
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod session_tests;
 #[cfg(test)]
 mod testing;

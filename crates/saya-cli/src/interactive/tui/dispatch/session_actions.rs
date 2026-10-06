@@ -40,6 +40,7 @@ pub(super) fn apply_session_action(
                 | SessionAction::SessionsList
                 | SessionAction::SessionsDelete(_)
                 | SessionAction::Preferences(_)
+                | SessionAction::Recovery(_)
                 | SessionAction::Resume(_)
                 | SessionAction::Sql(_)
                 | SessionAction::Contracts(_)
@@ -114,6 +115,32 @@ pub(super) fn apply_session_action(
             );
             transcript.push(
                 if code == 0 {
+                    BlockKind::System
+                } else {
+                    BlockKind::Error
+                },
+                message,
+            );
+        }
+        SessionAction::Recovery(command) => {
+            // `/recovery …` — the one shared `run_recovery` operation the
+            // headless loop runs too, over the session's own recovery
+            // handle (its store, its id, its flag — the recorder's parts)
+            // and the bound workspace. The words are the shared wording; a
+            // refusal is an Error block, never a silent no-op. The restore
+            // itself cannot overlap a running request: a line typed while
+            // one runs is queued and dispatched only once it finishes (the
+            // same gate the typed `/resume` and `/compact` pass through —
+            // `loop_tick::pending`), so a turn is never interrupted
+            // mid-write.
+            let (ok, message) = crate::commands::recovery::run_recovery(
+                command,
+                session.recovery(),
+                session.universe().workspace().as_deref(),
+                crate::interactive::session_continuation::now_unix_ms(),
+            );
+            transcript.push(
+                if ok {
                     BlockKind::System
                 } else {
                     BlockKind::Error

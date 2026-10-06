@@ -35,20 +35,18 @@ impl RecoveryHandle {
         }
     }
 
-    /// Whether recovery is on for this session. Test-reachable only until
-    /// the toggle packet (E08) reads it from a command; the flag cell
-    /// itself is live and shared.
-    #[cfg(test)]
+    /// Whether recovery is on for this session: what `/recovery` reports
+    /// and the recorders gate every capture on. The flag cell itself is
+    /// live and shared by every clone of the handle.
     pub(crate) fn is_enabled(&self) -> bool {
         use std::sync::atomic::Ordering;
         self.enabled.load(Ordering::Acquire)
     }
 
-    /// Flips the session's recovery flag. Test-reachable only until the
-    /// toggle packet (E08) flips it from a command; every clone of this
-    /// handle — and every recorder built from `parts` — sees the same
-    /// cell.
-    #[cfg(test)]
+    /// Flips the session's recovery flag: what `/recovery on|off` sets.
+    /// Every clone of this handle — and every recorder built from `parts`
+    /// — sees the same cell, so a toggle reaches the already-attached
+    /// recorders on their next edit.
     pub(crate) fn set_enabled(&self, on: bool) {
         use std::sync::atomic::Ordering;
         self.enabled.store(on, Ordering::Release);

@@ -126,6 +126,12 @@ pub enum SessionAction {
     /// and the session's root); the arm here keeps the match exhaustive.
     /// Never prompts and never a model-callable tool.
     Preferences(crate::cli::PreferencesCommand),
+    /// `/recovery …` — the parsed recovery command, carried verbatim. The
+    /// loops intercept it (they hold the session's recovery handle — its
+    /// own flag, store and id) and hand it to the shared `run_recovery`
+    /// operation; the arm here keeps the match exhaustive. Never prompts
+    /// and never a model-callable tool.
+    Recovery(crate::commands::recovery::RecoveryCommand),
     Exit,
 }
 
@@ -347,6 +353,7 @@ impl SessionState {
             SlashCommand::SessionsList => SessionAction::SessionsList,
             SlashCommand::SessionsDelete(id) => SessionAction::SessionsDelete(id),
             SlashCommand::Preferences(command) => SessionAction::Preferences(command),
+            SlashCommand::Recovery(command) => SessionAction::Recovery(command),
             SlashCommand::Exit => SessionAction::Exit,
         }
     }
@@ -827,6 +834,29 @@ mod tests {
             assert!(
                 message.contains("run /compact first"),
                 "the refusal names the /compact remedy: {message}"
+            );
+        }
+    }
+
+    /// `/recovery …` passes through `apply` untouched: the loops own the
+    /// recovery handle (the session's own flag, store and id), so the
+    /// mapping carries the parsed command verbatim to both surfaces.
+    #[test]
+    fn recovery_commands_pass_through_to_the_loops() {
+        use crate::commands::recovery::RecoveryCommand;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        for command in [
+            RecoveryCommand::Status,
+            RecoveryCommand::On,
+            RecoveryCommand::Off,
+            RecoveryCommand::List,
+            RecoveryCommand::Diff("ck-abcdef".into()),
+            RecoveryCommand::Restore("ck-abcdef1234".into()),
+        ] {
+            assert_eq!(
+                state.apply(SlashCommand::Recovery(command.clone()), &[]),
+                SessionAction::Recovery(command),
+                "the parsed command is carried verbatim"
             );
         }
     }
