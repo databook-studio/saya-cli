@@ -136,8 +136,15 @@ normal screen and takes it back when the wizard finishes, is cancelled
 where control stands. It takes no argument, and only the full-screen TUI
 offers it: the piped REPL and `--turn-file` refuse with the pointer to run
 `saya setup` from your shell. The wizard writes your user configuration
-(`config.toml`/`connections.toml`); the new configuration applies to your
-**next** saya session — the running one keeps the settings it loaded.
+(`config.toml`/`connections.toml`), and the closed wizard's result is
+applied immediately: the TUI runs the same reload `/reload` runs and shows
+one block — `Guided setup closed.` plus the reload report. When the wizard
+was cancelled (or wrote nothing) the report reads `Configuration is
+unchanged.`; when it added a profile, the running session adopts it — the
+first screen's database line and `/connections` follow without a restart.
+A reload that fails (a file the wizard wrote does not load) says so and
+keeps the configuration the session already had; a wizard that exits
+non-zero or fails reports that and never reloads.
 
 When the compaction mode is `auto` — the default (`manual` compacts only on
 an explicit `/compact`, and `off` also silences the context-window warning) —
@@ -264,9 +271,11 @@ for nothing, writes nothing, and exits `2` with guidance to
 `saya config init` (starter templates) or `saya demo` (sample database).
 A cancelled flow changes nothing and exits `0`.
 
-The first screen: with no database configured, the TUI leads with
-`saya demo`, then `saya setup`; once a schema is cached, the empty state
-shows up to three starter questions derived from it.
+The first screen names the ways to start: coding in the project, guided
+setup of AI and a database through the in-session `/setup`, the sample
+database with `saya demo`, a data file with `saya open <file.csv>`, and
+`/provider`/`/model` for the AI commands; once a schema is cached, the
+empty state shows up to three starter questions derived from it.
 
 ## Saved investigations: `saya investigation`
 

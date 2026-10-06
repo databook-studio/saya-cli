@@ -8,7 +8,7 @@
 
 use super::super::splash::{
     DATABASE_NONE, PROJECT_READY, START_AI, START_CODE_BOUND, START_CODE_UNBOUND, START_HEADER,
-    START_OPEN, START_QUERY,
+    START_OPEN, START_QUERY, START_SETUP,
 };
 use super::*;
 use crate::interactive::tui::startup_readiness::{ReadinessLine, StartupReadiness};
@@ -173,7 +173,7 @@ fn an_unready_provider_names_its_remedy_and_leaves_the_database_alone() {
         "the failing check's detail is kept:\n{buffer}"
     );
     assert!(
-        buffer.contains("try /provider, /model or `saya setup`"),
+        buffer.contains("try /setup, /provider or /model"),
         "the AI line names its remedy:\n{buffer}"
     );
     assert!(
@@ -191,7 +191,7 @@ fn all_three_needs_are_independent_when_everything_is_absent() {
     let buffer = paint(&app, 80, 30, false);
     assert!(
         buffer.contains("AI        not set up")
-            && buffer.contains("try /provider, /model or `saya setup`"),
+            && buffer.contains("try /setup, /provider or /model"),
         "the AI line states its own fact and remedy:\n{buffer}"
     );
     for line in NO_WORKSPACE_LINES {
@@ -297,7 +297,13 @@ fn a_tall_terminal_still_shows_everything() {
         buffer.contains(START_HEADER),
         "the choices header:\n{buffer}"
     );
-    for choice in [START_CODE_UNBOUND, START_QUERY, START_OPEN, START_AI] {
+    for choice in [
+        START_CODE_UNBOUND,
+        START_SETUP,
+        START_QUERY,
+        START_OPEN,
+        START_AI,
+    ] {
         assert!(
             buffer.contains(choice),
             "the choice ({choice:?}):\n{buffer}"
@@ -321,31 +327,32 @@ fn a_tall_terminal_still_shows_everything() {
     assert!(buffer.contains(HINT), "the hint:\n{buffer}");
 }
 
-/// The entry choices offer exactly the five ways in — guided setup, demo,
-/// data file, and the two AI commands — and the dead-end manual route the
-/// old guidance carried is gone.
+/// The entry choices offer the five ways in — in-session guided setup, the
+/// sample database, the data file, and the two AI commands — and the
+/// dead-end shell pointer the old guidance carried is gone: the first
+/// screen points inside the window (U07).
 #[test]
 fn the_entry_choices_name_exactly_the_five_commands() {
     let buffer = splash(80, 24, &[], true);
-    for choice in [START_CODE_BOUND, START_QUERY, START_OPEN, START_AI] {
+    for choice in [
+        START_CODE_BOUND,
+        START_SETUP,
+        START_QUERY,
+        START_OPEN,
+        START_AI,
+    ] {
         assert!(
             buffer.contains(choice),
             "the choice line paints ({choice:?}):\n{buffer}"
         );
     }
-    for command in [
-        "saya setup",
-        "saya demo",
-        "saya open",
-        "/provider",
-        "/model",
-    ] {
+    for command in ["/setup", "saya demo", "saya open", "/provider", "/model"] {
         assert!(
             buffer.contains(command),
             "the choices offer `{command}`:\n{buffer}"
         );
     }
-    for gone in ["saya config init", "saya connection test"] {
+    for gone in ["saya setup", "saya config init", "saya connection test"] {
         assert!(
             !buffer.contains(gone),
             "the dead-end command is gone ({gone:?}):\n{buffer}"

@@ -17,7 +17,6 @@ use ratatui::crossterm::{
 };
 
 use super::terminal::TerminalGuard;
-use super::transcript::{BlockKind, Transcript};
 use crate::setup::flow::run_with;
 use crate::setup::flow_options::FlowOptions;
 
@@ -117,30 +116,6 @@ pub(crate) fn run_guided_setup_with<M: TerminalModes + ?Sized>(
     })
 }
 
-/// Renders the handoff's outcome into the transcript after the terminal is
-/// back. The wizard said everything it did; the TUI adds only where control
-/// stands now. A lost terminal (`Err`) is returned, never rendered: the
-/// caller must stop the loop rather than keep drawing into a terminal it no
-/// longer owns.
-pub(crate) fn handle_setup_outcome(
-    outcome: io::Result<SetupHandoff>,
-    transcript: &mut Transcript,
-) -> Result<(), io::Error> {
-    match outcome? {
-        SetupHandoff::Finished(0) => transcript.push(
-            BlockKind::System,
-            "Guided setup closed. Any new configuration applies to your next saya session.",
-        ),
-        SetupHandoff::Finished(code) => transcript.push(
-            BlockKind::Error,
-            format!(
-                "Guided setup ended with exit code {code}. \
-                 Nothing was applied that the wizard did not report."
-            ),
-        ),
-        SetupHandoff::Failed(message) => {
-            transcript.push(BlockKind::Error, format!("Guided setup failed: {message}"))
-        }
-    }
-    Ok(())
-}
+// The outcome's rendering and the post-setup reload apply live in the
+// sibling `setup_apply` (U07): they need the session's runtime and state,
+// which are the dispatch loop's concerns, not the terminal boundary's.

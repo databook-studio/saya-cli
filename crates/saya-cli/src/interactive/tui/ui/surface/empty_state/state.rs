@@ -11,7 +11,7 @@ use super::super::super::theme::{accent, secondary, warning};
 use super::super::splash::{
     AI_LABEL, AI_NOT_SET_UP, AI_READY, AI_REMEDY, DATABASE_LABEL, DATABASE_NONE, PROJECT_LABEL,
     PROJECT_READY, START_AI, START_CODE_BOUND, START_CODE_UNBOUND, START_HEADER, START_OPEN,
-    START_QUERY,
+    START_QUERY, START_SETUP,
 };
 use super::plain;
 use crate::interactive::tui::startup_readiness::ReadinessLine;
@@ -82,9 +82,10 @@ pub(super) fn state_lines<'a>(app: &'a App, workspace_bound: Option<bool>) -> Ve
     lines
 }
 
-/// The entry-choices block: the four ways to start, fixed copy. It tiers
+/// The entry-choices block: the ways to start, fixed copy. It tiers
 /// with the state so a short terminal sheds it before the three readiness
-/// lines; the coding line's shape follows the workspace binding.
+/// lines; the coding line's shape follows the workspace binding, and the
+/// guided setup is the in-session command (U07).
 pub(super) fn choice_lines(workspace_bound: Option<bool>) -> Vec<Line<'static>> {
     let code = if workspace_bound == Some(true) {
         START_CODE_BOUND
@@ -92,7 +93,7 @@ pub(super) fn choice_lines(workspace_bound: Option<bool>) -> Vec<Line<'static>> 
         START_CODE_UNBOUND
     };
     let mut lines = vec![Line::from(""), plain(START_HEADER)];
-    for text in [code, START_QUERY, START_OPEN, START_AI] {
+    for text in [code, START_SETUP, START_QUERY, START_OPEN, START_AI] {
         lines.push(plain(text));
     }
     lines

@@ -21,20 +21,20 @@ pub(in crate::interactive::tui) const AI_READY: &str = "ready — ";
 
 /// The AI verdict when the provider is not configured. The first failing
 /// doctor check's detail follows, then the remedy: the AI line carries
-/// the instruction, never the database line.
+/// the in-session instruction, never the database line.
 pub(in crate::interactive::tui) const AI_NOT_SET_UP: &str = "not set up — ";
-pub(in crate::interactive::tui) const AI_REMEDY: &str = "; try /provider, /model or `saya setup`";
+pub(in crate::interactive::tui) const AI_REMEDY: &str = "; try /setup, /provider or /model";
 
 /// The bound-project verdict: with a root bound, coding needs nothing
 /// else — the file tools are the difference.
 pub(in crate::interactive::tui) const PROJECT_READY: &str = "ready — file tools are available";
 
 /// The no-database verdict: coding does not wait on a database — the
-/// line reads as optional and offers the two one-command ways to add one.
+/// line reads as optional and offers the two in-window ways to add one.
 pub(in crate::interactive::tui) const DATABASE_NONE: &str =
-    "none yet — optional; `saya demo` or `saya setup` adds one";
+    "none yet — optional; /setup (guided) or `saya demo` adds one";
 
-/// The entry-choices header: the four ways to start, one block.
+/// The entry-choices header: the ways to start, one block.
 pub(in crate::interactive::tui) const START_HEADER: &str = "Start with:";
 
 /// The coding choice when a workspace is bound: just ask.
@@ -45,9 +45,13 @@ pub(in crate::interactive::tui) const START_CODE_BOUND: &str =
 pub(in crate::interactive::tui) const START_CODE_UNBOUND: &str =
     "Code in a project — launch inside a git worktree or pass --workspace <dir>";
 
-/// The database choice: guided setup or the read-only demo database.
-pub(in crate::interactive::tui) const START_QUERY: &str =
-    "Query a database — `saya setup` (guided) or `saya demo` (sample data)";
+/// The guided-setup choice: the in-session command (U07) — the wizard runs
+/// in this window and its result is applied here, no restart.
+pub(in crate::interactive::tui) const START_SETUP: &str =
+    "Set up AI and a database — /setup (guided, in this window)";
+
+/// The database choice: the read-only demo database.
+pub(in crate::interactive::tui) const START_QUERY: &str = "Query a sample database — `saya demo`";
 
 /// The data-file choice.
 pub(in crate::interactive::tui) const START_OPEN: &str =
