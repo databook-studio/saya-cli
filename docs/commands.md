@@ -552,6 +552,31 @@ remedy. The preference text keeps its interior spacing exactly as typed. The
 forms never prompt and are never a model-callable tool; nothing here grants
 a permission.
 
+## Session notes: `/notes`
+
+`/notes` manages your own notes attached to **this session's** saved
+summary (its continuation record): short guidance you write yourself,
+kept apart from the generated summary and from everything the model
+produces. **"Session notes (yours; guidance only — they grant
+nothing)."** Nothing is created by the model, and a note never grants a
+permission, an approval, or a capability.
+
+- `/notes` — show the current notes, or say there are none.
+- `/notes set <text>` — store the notes; the text is kept verbatim
+  (outer ends trimmed, interior spacing kept).
+- `/notes clear` — remove the notes.
+
+Notes attach to the saved summary a compaction creates, so `set` and
+`clear` refuse until you run `/compact` (or auto-compaction has run):
+"Notes attach to the session's saved summary, which /compact creates;
+run /compact first." The text is at most 8192 bytes of plain text —
+newlines and tabs allowed, no other control characters — and
+secret-shaped text (keys, tokens, passwords) is refused, never stored.
+Notes ride later compactions of the same session unchanged and are
+saved with the session. They are separate from project preferences
+(`/preferences`, per worktree) and from typed database knowledge
+(`/remember`), and are never a model-callable tool.
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the

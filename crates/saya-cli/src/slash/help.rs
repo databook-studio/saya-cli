@@ -45,6 +45,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
         "tasks",
         "Show the session's task list, or clear it with /tasks clear",
     ),
+    (
+        "notes",
+        "Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember",
+    ),
     ("sql", "Run a raw SQL query against the active profile"),
     (
         "export",
@@ -210,6 +214,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("workspace", "/workspace"),
             ("thinking", "/thinking [on|off]"),
             ("tasks", "/tasks [clear]"),
+            ("notes", "/notes [set <text>|clear]"),
             ("help", "/help [command]"),
             ("exit", "/exit  (alias /quit)"),
         ],
@@ -391,6 +396,16 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
         ),
         "tasks" => Some(
             "tasks [clear] — show the session's task list: what the model is tracking, one line per task with its state. Bare /tasks shows the list (No tasks are being tracked. when empty); /tasks clear empties it, so the next turn injects no task block. The model's list to write, yours to inspect or clear — no per-task editing lives here. Example: /tasks   or   /tasks clear",
+        ),
+        "notes" => Some(
+            "notes [set <text>|clear] — your own notes attached to this session's saved summary \
+             (its continuation record): /notes shows them, /notes set <text> stores them \
+             (interior spacing kept), /notes clear removes them. Yours; guidance only — they \
+             grant nothing, the model never writes them, and they are separate from /preferences \
+             (per worktree) and /remember (database knowledge). A record exists only after \
+             /compact: with none, set and clear refuse with that remedy. Text is at most 8192 \
+             bytes of plain text (newlines and tabs allowed), and secret-shaped text is refused, \
+             never stored. Example: /notes set prefer bounded queries",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
         "contracts" => Some(
