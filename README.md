@@ -129,7 +129,7 @@ LIBSQLITE3_FLAGS=-DSQLITE_ENABLE_MATH_FUNCTIONS cargo install saya-cli
 saya config init                          # starter config in your user config dir (init prints the path)
 $EDITOR ~/.config/saya/connections.toml   # point the example profile at your database
 export SAYA_ANALYTICS_PASSWORD='...'      # the profile references it; never commit it
-saya config doctor                        # secrets resolve? provider reachable?
+saya config doctor                        # secrets resolve? what is configured?
 saya                                      # start the TUI
 ```
 

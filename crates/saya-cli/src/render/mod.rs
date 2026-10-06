@@ -1,3 +1,4 @@
+use crate::config::doctor_task::TaskCheck;
 use saya_agent::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
     ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, TokenUsage, ToolEffect,
@@ -11,6 +12,7 @@ mod io_view;
 mod render_clarification;
 mod render_contract;
 mod render_delta;
+mod render_doctor;
 mod render_io;
 mod render_json;
 mod render_learned;
@@ -223,6 +225,13 @@ pub enum TerminalEvent {
     },
     Diagnostic {
         message: String,
+    },
+    /// One task's `config doctor --task` readiness. Text is shaped in
+    /// [`render_doctor`]; JSON/NDJSON fall out of the serde derive.
+    DoctorTask {
+        task: String,
+        ready: bool,
+        checks: Vec<TaskCheck>,
     },
     Error {
         message: String,
@@ -477,6 +486,7 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: format!("Not implemented: {feature}\n"),
             stderr: String::new(),
         },
+        TerminalEvent::DoctorTask { .. } => render_doctor::task_text(event),
         TerminalEvent::ContractList { contracts } => render_contract::list(contracts),
         TerminalEvent::ContractShow { contract } => render_contract::show(contract),
         TerminalEvent::ContractChanged {

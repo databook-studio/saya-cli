@@ -432,6 +432,46 @@ picker never writes to the store.
 command: the fields you pass replace the stored ones and the next run needs
 `--revalidate`.
 
+## Readiness: `saya config doctor`
+
+`saya config doctor` prints the flat diagnosis and exits 0 when a database
+profile is selected and its secrets resolve, else 3. Nothing changes without
+`--task`.
+
+With `--task <query|ai|coding>` it reports **one** task's readiness as
+structured checks, computed from the resolved configuration only — no network
+calls, no database connection, no provider call, and no secret value is ever
+printed. Exit 0 when the task is ready, 3 when it is not, so a script can
+tell:
+
+- `query` — can this config run a database query? Checks `profile` (a profile
+  is selected) and `secrets` (every secret reference of the selected profile
+  resolves). Ready iff both pass — the same decision the flagless doctor's
+  exit code makes.
+- `ai` — can this config answer? Checks `provider` (a provider and model are
+  configured), `credentials` (a cloud provider's `api_key` reference resolves;
+  local providers need none), and `endpoint` (the configured endpoint
+  `host:port`, a warning when none can be stated). Ready when no check fails.
+- `coding` — can this directory support coding sessions? The `ai` checks plus
+  `workspace` (the launch directory sits inside a git worktree). The database
+  is NOT consulted: a ready AI provider with zero profiles is coding-ready.
+
+The check names are stable. Text output is one summary line per task plus one
+line per check (`✓` pass, `!` warning, `✗` failure):
+
+```
+task ai: NOT ready
+✓ provider: openai, model gpt-4o
+✗ credentials: no api_key reference configured — requests to openai will be unauthenticated
+```
+
+With `--format json` or `--format ndjson` the readiness is one `doctor_task`
+event on stdout:
+
+```json
+{"event":"doctor_task","task":"coding","ready":true,"checks":[{"name":"workspace","status":"ok","detail":"/home/me/project"},{"name":"credentials","status":"ok","detail":"no credentials required for ollama"}]}
+```
+
 ## Saved sessions: `saya sessions`
 
 `saya sessions list` prints one line per stored session, newest first: the

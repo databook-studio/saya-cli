@@ -424,7 +424,13 @@ pub enum ConfigCommand {
     /// Diagnose configuration: secrets resolve? what provider endpoint is
     /// configured? Exits non-zero (3) when the setup cannot run a query, so a
     /// script can tell.
-    Doctor,
+    Doctor {
+        /// Report one task's readiness from the resolved configuration:
+        /// query (a database profile), ai (a provider and its key reference),
+        /// coding (an AI provider plus a project directory). No network calls.
+        #[arg(long, value_enum)]
+        task: Option<DoctorTaskArg>,
+    },
     /// Print the effective (redacted) configuration as JSON.
     Show,
 }
@@ -858,6 +864,15 @@ pub enum ForgetReasonArg {
     Incorrect,
     Obsolete,
     Privacy,
+}
+
+/// The task `config doctor --task` reports readiness for: `query`, `ai`, or
+/// `coding`. Clap's mirror of `config::doctor_task::DoctorTask`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DoctorTaskArg {
+    Query,
+    Ai,
+    Coding,
 }
 
 /// The decision a `/confirm`, `/reject`, or `/use` short-reference command
