@@ -437,6 +437,40 @@ picker never writes to the store.
 command: the fields you pass replace the stored ones and the next run needs
 `--revalidate`.
 
+### Scripted turns: `--turn-file`
+
+Every scripted (`--turn-file`) run ends with exactly one machine-readable
+result, the last stdout line under `--format json|ndjson`:
+
+```json
+{"event":"turn_result","status":"completed","exit_code":0,"tools_completed":2,"tools_unfinished":[]}
+```
+
+`status` is `completed`, `failed`, `cancelled`, or `budget_stopped`; the
+`exit_code` field equals the process exit code — `0` only for a completed
+turn (an explicit `/exit` included), `5` otherwise. Unlike `saya ask`/`saya
+run`, a cancelled or budget-stopped turn-file run also exits `5` here, not
+`130`/`6`. Under json/ndjson the result goes to stdout; diagnostics and
+errors go to stderr.
+
+The result also carries an honest tool tally: `tools_completed` counts the
+tool calls that ran to completion, and `tools_unfinished` names (up to
+eight, each capped at 120 characters, overflow as `… and N more`) the calls
+the stream requested but never settled — when a run is cancelled, a
+cancelled `workspace_edit`/`workspace_write` may already have written the
+file (writes land atomically before cancellation is checked). In `--format
+text` mode nothing extra prints for the result itself, except one stderr
+line when calls are unfinished:
+
+```
+Unfinished tool calls (their effects are unknown — check these files): workspace_edit src/lib.rs
+```
+
+Send SIGINT (Ctrl-C) to cancel cleanly: the run stops, keeps any partial
+assistant text already streamed, starts no new tool call, and ends with the
+one `turn_result` (status `cancelled`). SIGTERM is unhandled: the process
+terminates immediately, without a result line.
+
 ## Readiness: `saya config doctor`
 
 `saya config doctor` prints the flat diagnosis and exits 0 when a database

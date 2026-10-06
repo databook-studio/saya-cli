@@ -123,6 +123,7 @@ fn headless_turn_over_each_receipt_action_ends_errored() {
             terminal: false,
             session: &mut *session,
             trusted_echo: None,
+            last_turn: None,
         };
         let outcome = handle_line_verbatim(line, &mut ctx).expect("the turn runs");
         assert!(

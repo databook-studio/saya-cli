@@ -68,8 +68,11 @@ mod session_resume;
 pub(crate) use session_resume::adopt_picker_resumed;
 mod session_rotate;
 mod session_rotate_run;
+// The one terminal result a scripted turn reports: its status, exit code,
+// and the honest tool tally.
 mod session_run;
 mod session_runner;
+pub(crate) mod turn_summary;
 // The session's recovery handle (E06b): the checkpoint store, the session
 // id, and the opt-in enable flag the per-turn file tools attach.
 pub(crate) mod session_recovery;

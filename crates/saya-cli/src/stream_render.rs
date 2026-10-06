@@ -1,6 +1,6 @@
 use crate::{
-    RenderFormat, TerminalEvent, answering_receipts::AnsweringReceipts, render::Rendered,
-    render_event,
+    RenderFormat, TerminalEvent, answering_receipts::AnsweringReceipts,
+    interactive::turn_summary::TallyHandle, render::Rendered, render_event,
 };
 use async_trait::async_trait;
 use saya_agent::{AgentEvent, AgentEventSink};
@@ -14,6 +14,10 @@ pub(crate) struct TerminalSink {
     text_open: Mutex<bool>,
     group: Mutex<TextGroupState>,
     answering_usage: AnsweringReceipts,
+    /// The shared tool tally this sink records requested/completed events
+    /// into — the scripted run's one terminal result reports it. `None` for
+    /// sinks no tally asked for.
+    tally: Option<TallyHandle>,
 }
 impl TerminalSink {
     pub(crate) fn new(format: RenderFormat) -> Self {
@@ -22,7 +26,15 @@ impl TerminalSink {
             text_open: Mutex::new(false),
             group: Mutex::new(TextGroupState::new()),
             answering_usage: AnsweringReceipts::default(),
+            tally: None,
         }
+    }
+
+    /// Records this sink's tool events into a shared tally the caller reads
+    /// once the turn settles.
+    pub(crate) fn with_tally(mut self, tally: TallyHandle) -> Self {
+        self.tally = Some(tally);
+        self
     }
 
     pub(crate) fn take_answering_usage(&self) -> Option<saya_agent::TokenUsage> {
@@ -34,6 +46,9 @@ impl TerminalSink {
 impl AgentEventSink for TerminalSink {
     async fn emit(&self, event: AgentEvent) {
         self.answering_usage.record(&event);
+        if let Some(tally) = &self.tally {
+            tally.lock().expect("tool tally").record(&event);
+        }
         let rendered = render_text_stream(
             event,
             self.format,
