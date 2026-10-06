@@ -506,12 +506,15 @@ tell:
   is NOT consulted: a ready AI provider with zero profiles is coding-ready.
 
 The check names are stable. Text output is one summary line per task plus one
-line per check (`✓` pass, `!` warning, `✗` failure):
+line per check (`✓` pass, `!` warning, `✗` failure); a failing or warning
+check that knows what to edit adds a `fix:` line naming the setting or file —
+never a secret value:
 
 ```
 task ai: NOT ready
 ✓ provider: openai, model gpt-4o
 ✗ credentials: no api_key reference configured — requests to openai will be unauthenticated
+   fix: Set [ai] api_key = { env = "NAME" } in /home/me/.config/saya/config.toml (or export SAYA_AI_API_KEY).
 ```
 
 With `--format json` or `--format ndjson` the readiness is one `doctor_task`
@@ -520,6 +523,39 @@ event on stdout:
 ```json
 {"event":"doctor_task","task":"coding","ready":true,"checks":[{"name":"workspace","status":"ok","detail":"/home/me/project"},{"name":"credentials","status":"ok","detail":"no credentials required for ollama"}]}
 ```
+
+A check with an edit hint carries it as a string `hint` field; checks that
+pass carry no `hint` key at all.
+
+## Which layer supplied a setting: `saya config show --explain`
+
+`saya config show --explain` prints the same effective settings as
+`saya config show`, each annotated with the layer that supplied it. Values
+stay redacted exactly as without the flag — a secret is still its
+`env:NAME`-style reference label, and an environment-sourced setting names
+the variable, never the value:
+
+```
+ai.model                              gpt-4o  ← user config file (/home/me/.config/saya/config.toml)
+run.max_rows                          100  ← built-in default
+ai.api_key                            env:SAYA_AI_API_KEY  ← environment (SAYA_AI_API_KEY)
+```
+
+The source vocabulary: `built-in default`, `user config file`,
+`project config file`, `env file (VAR)`, `environment (VAR)`, and
+`command line (--flag)`; the file layers also name the file path the layer
+was read from. When the project layer tried to set security-critical
+settings, they are listed after a blank line with the reason each was
+ignored:
+
+```
+Ignored from the project file:
+  the project file cannot set ai.base_url: it is security-critical; set it in your user config file or pass --trust-project-config
+```
+
+With `--format json` or `--format ndjson` the explanation is one JSON object
+with `settings` and `ignored_project_overrides`. Without `--explain`,
+`config show` prints exactly what it always printed.
 
 ## Saved sessions: `saya sessions`
 
