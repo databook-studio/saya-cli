@@ -1,16 +1,29 @@
 use std::collections::BTreeMap;
 
-use crate::{AiProvider, CliOverrides, CompactionMode, ConfigError, ConfigFile, OutputFormat};
+use crate::{
+    AiProvider, CliOverrides, CompactionMode, ConfigError, ConfigFile, OutputFormat,
+    provenance::{Recorder, SettingSource, record_endpoint_fields},
+};
 use saya_types::SecretRef;
 
-pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
-    macro_rules! apply { ($($path:ident).+) => { if layer.$($path).+.is_some() { base.$($path).+ = layer.$($path).+.clone(); } }; }
+pub(crate) fn merge(
+    base: &mut ConfigFile,
+    layer: &ConfigFile,
+    recorder: &mut Recorder,
+    source: SettingSource,
+) {
+    macro_rules! apply { ($($path:ident).+) => { if layer.$($path).+.is_some() { base.$($path).+ = layer.$($path).+.clone(); recorder.record(stringify!($($path).+), source.clone()); } }; }
     apply!(default_profile);
     apply!(ai.provider);
     apply!(ai.model);
     apply!(ai.base_url);
     apply!(ai.allow_data_sharing);
-    apply!(ai.api_key);
+    // The API key records the winning reference's redacted label, not just
+    // the layer — the reference is the only display-safe fact about a secret.
+    if let Some(secret) = layer.ai.api_key.as_ref() {
+        base.ai.api_key = Some(secret.clone());
+        recorder.record_secret("ai.api_key", source.clone(), secret);
+    }
     apply!(ai.temperature);
     apply!(ai.timeout_seconds);
     apply!(ai.idle_timeout_seconds);
@@ -41,15 +54,18 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
     // typed refusal in `resolve.rs` fires first).
     if !layer.host_commands.pass_env.is_empty() {
         base.host_commands.pass_env = layer.host_commands.pass_env.clone();
+        recorder.record("host_commands.pass_env", source.clone());
     }
     if layer.host_commands.timeout_seconds.is_some() {
         base.host_commands.timeout_seconds = layer.host_commands.timeout_seconds;
+        recorder.record("host_commands.timeout_seconds", source.clone());
     }
     // `[session_commands] deny` merges like any ordinary user-layer section
     // here — the project layer never reaches this merge with the section set
     // (the typed refusal in `resolve.rs` fires first).
     if !layer.session_commands.deny.is_empty() {
         base.session_commands.deny = layer.session_commands.deny.clone();
+        recorder.record("session_commands.deny", source.clone());
     }
     apply!(output.format);
     apply!(output.color);
@@ -94,93 +110,220 @@ pub(crate) fn merge(base: &mut ConfigFile, layer: &ConfigFile) {
             }
             None => base.ai.endpoints.push(endpoint.clone()),
         }
+        record_endpoint_fields(recorder, &endpoint.name, endpoint, source.clone());
     }
 }
 
 pub(crate) fn apply_env(
     file: &mut ConfigFile,
     env: &BTreeMap<String, String>,
+    recorder: &mut Recorder,
+    source: &dyn Fn(&str) -> SettingSource,
 ) -> Result<(), ConfigError> {
-    apply_string(&mut file.ai.model, env, "SAYA_AI_MODEL");
-    apply_string(&mut file.ai.base_url, env, "SAYA_AI_BASE_URL");
-    apply_secret(&mut file.ai.api_key, env, "SAYA_AI_API_KEY");
+    apply_string(
+        &mut file.ai.model,
+        env,
+        "SAYA_AI_MODEL",
+        "ai.model",
+        recorder,
+        source,
+    );
+    apply_string(
+        &mut file.ai.base_url,
+        env,
+        "SAYA_AI_BASE_URL",
+        "ai.base_url",
+        recorder,
+        source,
+    );
+    apply_secret(
+        &mut file.ai.api_key,
+        env,
+        "SAYA_AI_API_KEY",
+        "ai.api_key",
+        recorder,
+        source,
+    );
     apply_parsed(
         &mut file.ai.provider,
         env,
         "SAYA_AI_PROVIDER",
+        "ai.provider",
+        recorder,
+        source,
         AiProvider::parse,
     )?;
-    apply_string(&mut file.ai.model, env, "SAYA_MODEL");
-    apply_string(&mut file.ai.base_url, env, "SAYA_PROVIDER_BASE_URL");
-    apply_secret(&mut file.ai.api_key, env, "SAYA_API_KEY");
+    apply_string(
+        &mut file.ai.model,
+        env,
+        "SAYA_MODEL",
+        "ai.model",
+        recorder,
+        source,
+    );
+    apply_string(
+        &mut file.ai.base_url,
+        env,
+        "SAYA_PROVIDER_BASE_URL",
+        "ai.base_url",
+        recorder,
+        source,
+    );
+    apply_secret(
+        &mut file.ai.api_key,
+        env,
+        "SAYA_API_KEY",
+        "ai.api_key",
+        recorder,
+        source,
+    );
     apply_parsed(
         &mut file.ai.provider,
         env,
         "SAYA_PROVIDER",
+        "ai.provider",
+        recorder,
+        source,
         AiProvider::parse,
     )?;
     apply_parsed(
         &mut file.ai.allow_data_sharing,
         env,
         "SAYA_ALLOW_DATA_SHARING",
+        "ai.allow_data_sharing",
+        recorder,
+        source,
         parse_value,
     )?;
     apply_parsed(
         &mut file.ai.compaction,
         env,
         "SAYA_COMPACTION",
+        "ai.compaction",
+        recorder,
+        source,
         CompactionMode::parse,
     )?;
-    apply_parsed(&mut file.run.read_only, env, "SAYA_READ_ONLY", parse_value)?;
-    apply_parsed(&mut file.run.max_rows, env, "SAYA_MAX_ROWS", parse_value)?;
+    apply_parsed(
+        &mut file.run.read_only,
+        env,
+        "SAYA_READ_ONLY",
+        "run.read_only",
+        recorder,
+        source,
+        parse_value,
+    )?;
+    apply_parsed(
+        &mut file.run.max_rows,
+        env,
+        "SAYA_MAX_ROWS",
+        "run.max_rows",
+        recorder,
+        source,
+        parse_value,
+    )?;
     apply_parsed(
         &mut file.run.max_iterations,
         env,
         "SAYA_MAX_ITERATIONS",
+        "run.max_iterations",
+        recorder,
+        source,
         parse_value,
     )?;
     apply_parsed(
         &mut file.run.candidates,
         env,
         "SAYA_CANDIDATES",
+        "run.candidates",
+        recorder,
+        source,
         parse_value,
     )?;
     apply_parsed(
         &mut file.run.query_timeout_seconds,
         env,
         "SAYA_QUERY_TIMEOUT_SECONDS",
+        "run.query_timeout_seconds",
+        recorder,
+        source,
         parse_value,
     )?;
     apply_parsed(
         &mut file.output.format,
         env,
         "SAYA_OUTPUT_FORMAT",
+        "output.format",
+        recorder,
+        source,
         OutputFormat::parse,
     )?;
     Ok(())
 }
 
-pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides) {
+pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides, recorder: &mut Recorder) {
     if cli.provider.is_some() {
         file.ai.provider = cli.provider;
+        recorder.record(
+            "ai.provider",
+            SettingSource::Cli {
+                flag: "--provider".into(),
+            },
+        );
     }
     if cli.model.is_some() {
         file.ai.model = cli.model.clone();
+        recorder.record(
+            "ai.model",
+            SettingSource::Cli {
+                flag: "--model".into(),
+            },
+        );
     }
     if cli.allow_data_sharing.is_some() {
         file.ai.allow_data_sharing = cli.allow_data_sharing;
+        recorder.record(
+            "ai.allow_data_sharing",
+            SettingSource::Cli {
+                flag: "--allow-data-sharing".into(),
+            },
+        );
     }
     if cli.max_rows.is_some() {
         file.run.max_rows = cli.max_rows;
+        recorder.record(
+            "run.max_rows",
+            SettingSource::Cli {
+                flag: "--max-rows".into(),
+            },
+        );
     }
     if cli.candidates.is_some() {
         file.run.candidates = cli.candidates;
+        recorder.record(
+            "run.candidates",
+            SettingSource::Cli {
+                flag: "--candidates".into(),
+            },
+        );
     }
     if cli.show_thinking.is_some() {
         file.ai.show_thinking = cli.show_thinking;
+        recorder.record(
+            "ai.show_thinking",
+            SettingSource::Cli {
+                flag: "--show-thinking".into(),
+            },
+        );
     }
     if cli.theme.is_some() {
         file.ui.theme = cli.theme;
+        recorder.record(
+            "ui.theme",
+            SettingSource::Cli {
+                flag: "--theme".into(),
+            },
+        );
     }
 }
 
@@ -443,33 +586,53 @@ fn revert_instruction<T: Clone + PartialEq>(
     }
 }
 
-fn apply_string(target: &mut Option<String>, env: &BTreeMap<String, String>, name: &str) {
-    if let Some(value) = env.get(name) {
+fn apply_string(
+    target: &mut Option<String>,
+    env: &BTreeMap<String, String>,
+    var: &str,
+    key: &str,
+    recorder: &mut Recorder,
+    source: &dyn Fn(&str) -> SettingSource,
+) {
+    if let Some(value) = env.get(var) {
         *target = Some(value.clone());
+        recorder.record(key, source(var));
     }
 }
 
+/// The API key is never read from the environment: `contains_key` matches
+/// the name alone, the recorded reference is built from the variable NAME,
+/// and no value ever flows into the recorder.
 fn apply_secret(
     target: &mut Option<saya_types::SecretRef>,
     env: &BTreeMap<String, String>,
-    name: &str,
+    var: &str,
+    key: &str,
+    recorder: &mut Recorder,
+    source: &dyn Fn(&str) -> SettingSource,
 ) {
-    if env.contains_key(name) {
-        *target = Some(saya_types::SecretRef::Env { env: name.into() });
+    if env.contains_key(var) {
+        let reference = saya_types::SecretRef::Env { env: var.into() };
+        *target = Some(reference.clone());
+        recorder.record_secret(key, source(var), &reference);
     }
 }
 
 fn apply_parsed<T: Copy>(
     target: &mut Option<T>,
     env: &BTreeMap<String, String>,
-    name: &str,
+    var: &str,
+    key: &str,
+    recorder: &mut Recorder,
+    source: &dyn Fn(&str) -> SettingSource,
     parse: impl Fn(&str) -> Option<T>,
 ) -> Result<(), ConfigError> {
-    if let Some(value) = env.get(name) {
+    if let Some(value) = env.get(var) {
         *target = Some(parse(value).ok_or_else(|| ConfigError::InvalidEnvironment {
-            name: name.into(),
+            name: var.into(),
             reason: "invalid value".into(),
         })?);
+        recorder.record(key, source(var));
     }
     Ok(())
 }

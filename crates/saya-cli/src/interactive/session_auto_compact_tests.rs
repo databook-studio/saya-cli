@@ -75,6 +75,7 @@ fn runtime_with_window(window: Option<u64>) -> crate::config::runtime::RuntimeCo
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: Default::default(),
         },
         connections: Default::default(),

@@ -14,6 +14,7 @@ mod memory;
 mod model;
 mod postgres_env;
 mod profile_env;
+mod provenance;
 mod resolve;
 mod secret;
 mod values;
@@ -39,6 +40,7 @@ pub use model::{
     ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile, JobsFile,
     SessionCommandsFile,
 };
+pub use provenance::{SettingOrigin, SettingProvenance, SettingSource};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::SecretRef;
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};

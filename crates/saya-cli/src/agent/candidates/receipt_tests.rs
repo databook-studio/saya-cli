@@ -286,6 +286,7 @@ async fn runtime_with_sqlite(root: &Path, base_url: String) -> RuntimeConfig {
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: BTreeMap::new(),
         },
         connections: ConnectionsFile {

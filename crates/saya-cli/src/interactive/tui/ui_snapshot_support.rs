@@ -80,6 +80,7 @@ pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: BTreeMap::new(),
         },
         connections: ConnectionsFile::default(),
