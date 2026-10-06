@@ -286,6 +286,10 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
                 );
                 print!("{}", rendered.stdout);
                 eprint!("{}", rendered.stderr);
+                // The run failed before its turn: the promised terminal
+                // result still ends stdout, with the exit code the process
+                // returns for the propagated error (2).
+                emit_turn_result(format, TurnStatus::Failed, 2, ToolTally::default());
                 return Err(error.into());
             }
         };
@@ -299,37 +303,76 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             session: &mut session,
             trusted_echo: None,
             last_turn: None,
+            save_refused: false,
             launch_options: cli.options.clone(),
         };
         let outcome = run_single_turn(turn, &mut ctx);
-        // The one terminal result of the scripted run: emitted after the
-        // turn's own stream, before the save and the exit-code return. The
-        // `exit_code` in the event equals the process exit code.
-        if let Ok(turn_outcome) = &outcome {
-            emit_scripted_turn_result(&mut ctx, turn_outcome);
-        }
         crate::chart::cleanup_session_charts();
-        let mut code = match outcome? {
-            TurnOutcome::Completed | TurnOutcome::Exit => 0,
-            TurnOutcome::Errored => 5,
-        };
-        // The scripted run's last save: a refusal at the record cap says its
-        // sentence through the Error event and makes the run errored (exit
-        // 5) even when the turn itself completed — the last good record
-        // stays on disk, resumable by id.
-        match save_with_explanation(&store, &state) {
-            Err(SaveFailure::LimitReached(text)) => {
-                super::session_emit::emit_action(
-                    SessionAction::Error(text),
-                    format,
-                    &mut state,
-                    &store,
-                )?;
-                code = 5;
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // The run failed during its turn (a store or IO error, a
+                // bad persisted approval mode): the terminal result still
+                // ends stdout with the process's exit code, whatever tool
+                // tally the turn left behind, and the error propagates.
+                let tally = ctx
+                    .last_turn
+                    .take()
+                    .map(|summary| summary.tally)
+                    .unwrap_or_default();
+                emit_turn_result(ctx.format, TurnStatus::Failed, 2, tally);
+                return Err(error);
             }
-            Err(SaveFailure::Other(error)) => return Err(error.into()),
-            Ok(()) => {}
-        }
+        };
+        // The turn's settled summary and the save-refusal fact, taken before
+        // the save reborrows the state: the render happens after the final
+        // save so the reported exit code is the code the process returns.
+        let summary = ctx.last_turn.take();
+        let save_refused = ctx.save_refused;
+        // The scripted run's final save: a refusal at the record cap makes
+        // the run errored even when the turn itself completed, and — when
+        // the per-turn save already said the refusal — never repeats the
+        // identical sentence. The last good record stays on disk, resumable
+        // by id. Any other store error propagates after its own failed-run
+        // result.
+        let save_errored = match save_with_explanation(&store, &state) {
+            Err(SaveFailure::LimitReached(text)) => {
+                if !save_refused {
+                    super::session_emit::emit_action(
+                        SessionAction::Error(text),
+                        format,
+                        &mut state,
+                        &store,
+                    )?;
+                }
+                true
+            }
+            Err(SaveFailure::Other(error)) => {
+                let tally = summary
+                    .as_ref()
+                    .map(|turn| turn.tally.clone())
+                    .unwrap_or_default();
+                emit_turn_result(format, TurnStatus::Failed, 2, tally);
+                return Err(error.into());
+            }
+            Ok(()) => false,
+        };
+        // The final outcome: the turn's settled status corrected by the
+        // run's own outcome — a completed turn whose save was refused ends
+        // errored — and the exit code computed once from it, rendered and
+        // returned as the same value.
+        let run_errored = matches!(outcome, TurnOutcome::Errored) || save_errored;
+        let base = summary.unwrap_or_else(|| TurnSummary {
+            status: if run_errored {
+                TurnStatus::Failed
+            } else {
+                TurnStatus::Completed
+            },
+            tally: ToolTally::default(),
+        });
+        let settled = super::turn_summary::final_summary(base, run_errored);
+        let code = if run_errored { 5 } else { 0 };
+        emit_turn_result(format, settled.status, code, settled.tally);
         return Ok(code);
     }
     let mut ctx = TurnContext {
@@ -342,6 +385,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         session: &mut session,
         trusted_echo,
         last_turn: None,
+        save_refused: false,
         launch_options: cli.options.clone(),
     };
     let outcome = run_plain_loop(&mut ctx);
@@ -507,6 +551,10 @@ struct TurnContext<'a> {
     /// tool tally — for the scripted run's one terminal result. `None` for
     /// slash-command turns (no prose turn ran).
     last_turn: Option<TurnSummary>,
+    /// Whether a save has already been refused (and said its friendly
+    /// sentence) in this run: the scripted run's end-of-run save must not
+    /// repeat the identical refusal the per-turn save reported.
+    save_refused: bool,
     /// The launch's CLI options, cloned once: `/reload` re-reads the
     /// configuration with the SAME launch options via
     /// `ReloadInputs::from_launch`.
@@ -528,31 +576,19 @@ fn run_single_turn(
     handle_line_verbatim(&turn, ctx)
 }
 
-/// The ONE terminal result a scripted run reports, after the turn's own
-/// stream and before the save and exit-code return: under json/ndjson the
+/// The one terminal result a scripted run reports: under json/ndjson the
 /// machine-readable `turn_result` event ends stdout; in text mode only the
 /// unfinished-tools warning is said, on stderr, and only when a cancelled
-/// turn may have left a write's effects unknown. The `exit_code` in the
-/// event equals the process exit code.
-fn emit_scripted_turn_result(ctx: &mut TurnContext, outcome: &TurnOutcome) {
-    let (status, tally) = match ctx.last_turn.take() {
-        // A prose turn ran: its settled status and its tool tally.
-        Some(summary) => (summary.status, summary.tally),
-        // A slash-command turn ran no prose turn: the status derives from
-        // the outcome, and no tool ran.
-        None => (
-            match outcome {
-                TurnOutcome::Completed | TurnOutcome::Exit => TurnStatus::Completed,
-                TurnOutcome::Errored => TurnStatus::Failed,
-            },
-            ToolTally::default(),
-        ),
-    };
+/// turn may have left a write's effects unknown. The `exit_code` is the
+/// value the process returns: the caller computes it once from the final
+/// outcome and passes the same value here. A stdout write error surfaces
+/// exactly as `print!` surfaces it today; the emission never fails the run.
+fn emit_turn_result(format: RenderFormat, status: TurnStatus, exit_code: i32, tally: ToolTally) {
     let unfinished = tally.unfinished_entries();
     let rendered = crate::render::render_turn::turn_result_rendered(
-        ctx.format,
+        format,
         status,
-        super::turn_summary::exit_code(status),
+        exit_code,
         tally.completed(),
         &unfinished,
     );
@@ -626,20 +662,23 @@ fn handle_line(line: &str, ctx: &mut TurnContext) -> Result<bool, Box<dyn std::e
 }
 
 /// The one save every headless turn ends with. A save refused at the 4 MiB
-/// record cap says its friendly sentence as the turn's Error event and the
-/// turn ends errored while the loop keeps reading — it must not die; any
-/// other store error stays fatal, exactly as before. After a successful
-/// save the one-time near-limit notice, if it fires, rides a result event —
-/// ahead of the scripted run's closing `turn_result`. `Ok(Some(outcome))`
-/// overrides the call site's own outcome; `Ok(None)` — the save succeeded —
-/// leaves it.
+/// record cap says its friendly sentence as the turn's Error event, records
+/// the refusal through `save_refused` (so the scripted run's end-of-run
+/// save never repeats the identical sentence), and the turn ends errored
+/// while the loop keeps reading — it must not die; any other store error
+/// stays fatal, exactly as before. After a successful save the one-time
+/// near-limit notice, if it fires, rides a result event — ahead of the
+/// scripted run's closing `turn_result`. `Ok(Some(outcome))` overrides the
+/// call site's own outcome; `Ok(None)` — the save succeeded — leaves it.
 fn persist(
     state: &mut SessionState,
     store: &FsSessionStore,
     format: RenderFormat,
+    save_refused: &mut bool,
 ) -> Result<Option<TurnOutcome>, Box<dyn std::error::Error>> {
     match save_with_explanation(store, state) {
         Err(SaveFailure::LimitReached(text)) => {
+            *save_refused = true;
             super::session_emit::emit_action(SessionAction::Error(text), format, state, store)?;
             return Ok(Some(TurnOutcome::Errored));
         }
@@ -669,6 +708,7 @@ fn handle_line_verbatim(
     let format = ctx.format;
     let terminal = ctx.terminal;
     let session = &mut *ctx.session;
+    let save_refused = &mut ctx.save_refused;
     if line.trim().is_empty() {
         // Piped input treats blank lines as no-ops. `read_turn_file` rejects
         // an all-blank file before this entry is reached.
@@ -685,7 +725,7 @@ fn handle_line_verbatim(
                 state,
                 store,
             )?;
-            if let Some(outcome) = persist(state, store, format)? {
+            if let Some(outcome) = persist(state, store, format, save_refused)? {
                 return Ok(outcome);
             }
             return Ok(TurnOutcome::Errored);
@@ -858,7 +898,7 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        persist(state, store, format)?;
+        persist(state, store, format, save_refused)?;
         return Ok(TurnOutcome::Errored);
     }
     if let SessionAction::Schema(refresh) = action {
@@ -870,7 +910,7 @@ fn handle_line_verbatim(
             format,
             state_db,
         ))?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if completed {
@@ -887,7 +927,7 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(TurnOutcome::Completed);
@@ -900,7 +940,7 @@ fn handle_line_verbatim(
             terminal,
             format,
         ))?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(TurnOutcome::Completed);
@@ -912,7 +952,7 @@ fn handle_line_verbatim(
         let code = block_on(crate::commands::run_contracts(
             command, runtime, format, state_db,
         ))?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if code == 0 {
@@ -945,7 +985,7 @@ fn handle_line_verbatim(
                 state,
                 store,
             )?;
-            if let Some(outcome) = persist(state, store, format)? {
+            if let Some(outcome) = persist(state, store, format, save_refused)? {
                 return Ok(outcome);
             }
             return Ok(TurnOutcome::Errored);
@@ -953,7 +993,7 @@ fn handle_line_verbatim(
         let code = block_on(crate::commands::run_investigation(
             command, runtime, format, terminal, state_db,
         ))?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if code == 0 {
@@ -977,7 +1017,7 @@ fn handle_line_verbatim(
         let code = block_on(crate::commands::run_management(
             command, runtime, format, approval, state_db,
         ))?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if code == 0 {
@@ -1000,7 +1040,7 @@ fn handle_line_verbatim(
             approval,
             state_db,
         ))?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if code == 0 {
@@ -1043,7 +1083,7 @@ fn handle_line_verbatim(
                 TurnOutcome::Errored
             }
         };
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(outcome);
@@ -1061,7 +1101,7 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(TurnOutcome::Completed);
@@ -1082,7 +1122,7 @@ fn handle_line_verbatim(
             state,
             store,
         )?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(TurnOutcome::Completed);
@@ -1098,7 +1138,7 @@ fn handle_line_verbatim(
                 Err(text) => (TurnOutcome::Errored, SessionAction::Error(text)),
             };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(outcome);
@@ -1127,7 +1167,7 @@ fn handle_line_verbatim(
             SessionAction::Error(message)
         };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(outcome);
@@ -1150,7 +1190,7 @@ fn handle_line_verbatim(
             SessionAction::Error(message)
         };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if code == 0 {
@@ -1177,7 +1217,7 @@ fn handle_line_verbatim(
             SessionAction::Error(message)
         };
         super::session_emit::emit_action(emitted, format, state, store)?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if ok {
@@ -1212,7 +1252,7 @@ fn handle_line_verbatim(
             }
         };
         super::session_run::spawn_run_child(runtime, format, state, &seed.forwarded, tail)?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(TurnOutcome::Completed);
@@ -1244,7 +1284,7 @@ fn handle_line_verbatim(
             SessionAction::Message(outcome.message)
         };
         super::session_emit::emit_action(action, format, state, store)?;
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(if failed {
@@ -1337,7 +1377,7 @@ fn handle_line_verbatim(
         // The resumed session's save: a near-limit notice fires here for a
         // large record the resume just re-opened — the per-process flag is
         // armed again on the fresh state.
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(outcome);
@@ -1396,7 +1436,7 @@ fn handle_line_verbatim(
                     TurnOutcome::Errored
                 }
             };
-        if let Some(outcome) = persist(state, store, format)? {
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
             return Ok(outcome);
         }
         return Ok(outcome);
@@ -1421,14 +1461,14 @@ fn handle_line_verbatim(
                     state,
                     store,
                 )?;
-                if let Some(outcome) = persist(state, store, format)? {
+                if let Some(outcome) = persist(state, store, format, save_refused)? {
                     return Ok(outcome);
                 }
                 return Ok(TurnOutcome::Completed);
             }
             crate::config::reload::ReloadOutcome::Failed(text) => {
                 super::session_emit::emit_action(SessionAction::Error(text), format, state, store)?;
-                if let Some(outcome) = persist(state, store, format)? {
+                if let Some(outcome) = persist(state, store, format, save_refused)? {
                     return Ok(outcome);
                 }
                 return Ok(TurnOutcome::Errored);
@@ -1458,7 +1498,7 @@ fn handle_line_verbatim(
             )?;
         }
     }
-    if let Some(outcome) = persist(state, store, format)? {
+    if let Some(outcome) = persist(state, store, format, save_refused)? {
         return Ok(outcome);
     }
     Ok(outcome)
@@ -1654,6 +1694,7 @@ mod setup_turn_tests {
             session: &mut *session,
             trusted_echo: None,
             last_turn: None,
+            save_refused: false,
             launch_options: GlobalOptions::default(),
         };
         let outcome = handle_line_verbatim("/setup", &mut ctx).expect("the turn runs");
@@ -1673,6 +1714,8 @@ mod capacity_persist_tests {
 
     /// A save refused at the cap reports the errored outcome — the sentence
     /// rides the Error event — and never dies: the piped REPL keeps reading.
+    /// The refusal also records the fact on the run's save-refusal flag, so
+    /// a scripted run's end-of-run save can never repeat the sentence.
     #[test]
     fn a_save_refused_at_the_limit_reports_one_errored_outcome_and_the_loop_continues() {
         let root = temp_store_root("loop-limit");
@@ -1686,10 +1729,15 @@ mod capacity_persist_tests {
             SessionCapacityStatus::OverCap,
             "the fixture is genuinely over the cap"
         );
-        let outcome = persist(&mut state, &store, RenderFormat::Ndjson);
+        let mut save_refused = false;
+        let outcome = persist(&mut state, &store, RenderFormat::Ndjson, &mut save_refused);
         assert!(
             matches!(outcome, Ok(Some(TurnOutcome::Errored))),
             "the refused save says the sentence and lets the loop continue, not die: {outcome:?}"
+        );
+        assert!(
+            save_refused,
+            "the refusal records the fact for the end-of-run save"
         );
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1699,12 +1747,14 @@ mod capacity_persist_tests {
         let root = temp_store_root("loop-ok");
         let store = FsSessionStore::new(&root);
         let mut state = state_with_turns("cap-loop-ok", 2, 64);
-        let outcome = persist(&mut state, &store, RenderFormat::Ndjson);
+        let mut save_refused = false;
+        let outcome = persist(&mut state, &store, RenderFormat::Ndjson, &mut save_refused);
         assert!(
             matches!(outcome, Ok(None)),
             "an ordinary save changes no outcome: {outcome:?}"
         );
         assert!(!state.capacity_warned, "a small record arms nothing");
+        assert!(!save_refused, "an ordinary save refuses nothing");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1713,7 +1763,8 @@ mod capacity_persist_tests {
         let root = temp_store_root("loop-warn");
         let store = FsSessionStore::new(&root);
         let mut state = state_with_turns("cap-loop-warn", 300, 11_500);
-        let outcome = persist(&mut state, &store, RenderFormat::Ndjson);
+        let mut save_refused = false;
+        let outcome = persist(&mut state, &store, RenderFormat::Ndjson, &mut save_refused);
         assert!(
             matches!(outcome, Ok(None)),
             "a warn-level record still saves: {outcome:?}"
@@ -1722,6 +1773,7 @@ mod capacity_persist_tests {
             state.capacity_warned,
             "the near-limit notice armed after the save"
         );
+        assert!(!save_refused, "a warn-level save refuses nothing");
         let _ = std::fs::remove_dir_all(root);
     }
 }

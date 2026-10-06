@@ -466,11 +466,14 @@ result, the last stdout line under `--format json|ndjson`:
 ```
 
 `status` is `completed`, `failed`, `cancelled`, or `budget_stopped`; the
-`exit_code` field equals the process exit code — `0` only for a completed
-turn (an explicit `/exit` included), `5` otherwise. Unlike `saya ask`/`saya
-run`, a cancelled or budget-stopped turn-file run also exits `5` here, not
-`130`/`6`. Under json/ndjson the result goes to stdout; diagnostics and
-errors go to stderr.
+`exit_code` field equals the process exit code in every case: `0` only for a
+completed turn (an explicit `/exit` included), `5` otherwise. Unlike `saya
+ask`/`saya run`, a cancelled or budget-stopped turn-file run also exits `5`
+here, not `130`/`6`. A run that fails before or after its turn (an
+unreadable turn file, a store error) still ends with a `turn_result` with
+`status: failed` and `exit_code: 2` — the code the process itself exits
+with. Under json/ndjson the result goes to stdout; diagnostics and errors
+go to stderr.
 
 The result also carries an honest tool tally: `tools_completed` counts the
 tool calls that ran to completion, and `tools_unfinished` names (up to
