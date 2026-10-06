@@ -8,6 +8,7 @@ pub(crate) mod decide;
 pub(crate) mod extraction_trace;
 pub(crate) mod knowledge_event;
 pub(crate) mod learning;
+pub(crate) mod preference_context;
 pub(crate) mod preflight_config;
 pub(crate) mod profile;
 pub(crate) mod provider;

@@ -493,7 +493,9 @@ at most 64 preferences with a 16 KiB aggregate. The identity is the
 canonical worktree root, so a run from a subdirectory of the same worktree
 sees the same preferences, and a sibling worktree sees none of them.
 `forget` of an id this worktree does not hold is a refusal that changes
-nothing. The command never prompts and never reads stdin.
+nothing. The command never prompts and never reads stdin. Preferences are
+sent with each request in this worktree as untrusted guidance, up to 16 KiB;
+`/context` is unchanged.
 
 Exit codes follow the global scheme: `0` on success; `2` for every refusal
 — no project worktree, refused text, an unknown or malformed id, either
