@@ -177,11 +177,17 @@ pub(crate) fn tick_pending(
             // pending by the shared plan and never move.
             Dispatch::Reload => {
                 let inputs = crate::config::reload::ReloadInputs::from_launch(setup.options);
+                // The re-seed runs after the dispatch's `state.apply`
+                // comparison, so the reload captures the key here and retires
+                // the question authority once a successful reload moved it —
+                // the same shared abandon step every mutating command uses.
+                let before = state.context_key();
                 let old = Arc::clone(&app.runtime);
                 match crate::config::reload::reload_runtime(&inputs, &old, state) {
                     crate::config::reload::ReloadOutcome::Reloaded { new, text } => {
                         apply_reloaded_runtime(app, state, new);
                         app.transcript.push(BlockKind::System, text);
+                        state.abandon_question_when_context_changed(&before, session);
                     }
                     crate::config::reload::ReloadOutcome::Failed(text) => {
                         app.transcript.push(BlockKind::Error, text);

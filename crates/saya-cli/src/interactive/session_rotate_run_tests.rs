@@ -110,33 +110,54 @@ impl Fixture {
     /// A live session (`OLD`) over a nested store root: the tombstone dir
     /// lives at the root's parent, so every fixture owns its own.
     fn build(tag: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
+        Self::build_with_pin(tag, None)
+    }
+
+    /// A live session over a bound root: the pin rides the state, so the
+    /// recomposed universe composes the host lane (a root binds — no root,
+    /// no lane), and a rotation's re-acquire re-binds it for the successor.
+    fn build_pinned(tag: &str) -> Self {
+        let root = Self::root_for(tag);
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).expect("the pinned project dir");
+        Self::build_with_pin(tag, Some(project.display().to_string()))
+    }
+
+    fn root_for(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
             "saya-rotate-run-{tag}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock after epoch")
                 .as_nanos()
-        ));
+        ))
+    }
+
+    fn build_with_pin(tag: &str, pin: Option<String>) -> Self {
+        let root = Self::root_for(tag);
         std::fs::create_dir_all(&root).expect("rotate fixture root");
         let sessions = root.join("sessions");
         let runtime = test_runtime();
-        // `fresh: false` with no pin and no explicit statement composes an
-        // unbound universe and never walks up to the test cwd's worktree.
+        // `fresh: false` with no explicit statement composes from the pin
+        // alone: with a pin the lane composes, without one the universe is
+        // unbound and never walks up to the test cwd's worktree.
         let session = SessionRuntime::acquire(
             &runtime,
             None,
             false,
-            None,
+            pin.as_deref(),
             OLD,
             ApprovalPolicy::Ask,
             &sessions,
         )
         .expect("the fixture session acquires");
+        let mut state = compacted_state(OLD);
+        state.workspace_root = pin;
         Self {
             store: FsSessionStore::new(&sessions),
             runtime,
-            state: compacted_state(OLD),
+            state,
             session,
             root: RootGuard(root),
         }
@@ -312,6 +333,107 @@ fn an_over_cap_session_refuses_with_the_compact_further_sentence() {
         "no successor record exists"
     );
     assert_eq!(fx.state.turns[4].user, huge, "the session is unchanged");
+}
+
+/// A rotation re-derives the header facts from the SUCCESSOR's universe: the
+/// swap installs a state whose runtime-only host facts are whatever the
+/// parent state carried (stale false and a stale deny list — the shape a
+/// `/resume`d state has while its recomposed universe composes the lane),
+/// while `reacquire` recomposed the universe for the successor. The pinned
+/// root re-binds, so the successor's lane composes and the header must say
+/// so.
+#[test]
+fn a_rotation_syncs_the_header_facts_from_the_successor_s_universe() {
+    let mut fx = Fixture::build_pinned("header-sync");
+    assert!(
+        fx.session.universe().host_composed(),
+        "the pinned root composed the lane for the parent too"
+    );
+    // The stale shape the swap replaces: a state whose header facts never
+    // said what its own universe composes (the resumed state), carrying a
+    // deny list its universe does not.
+    fx.state.host_composed = false;
+    fx.state.denied_programs = vec!["curl".to_owned()];
+
+    let outcome = rotate_session_with_id(
+        &fx.store,
+        &fx.runtime,
+        &mut fx.state,
+        &mut fx.session,
+        SUCCESSOR,
+    );
+    let RotateResult::Rotated { .. } = outcome else {
+        panic!("a compacted session rotates: {outcome:?}");
+    };
+    assert!(
+        fx.state.host_composed,
+        "the successor's pinned root re-binds: the lane composes for the header"
+    );
+    assert_eq!(
+        fx.state.host_composed,
+        fx.session.universe().host_composed(),
+        "the header's lane bit is the successor universe's fact"
+    );
+    assert!(
+        fx.state.denied_programs.is_empty(),
+        "the parent's stale deny list does not survive the swap: {:?}",
+        fx.state.denied_programs
+    );
+    assert_eq!(
+        fx.state.denied_programs,
+        fx.session.universe().deny_programs(),
+        "the header's deny list is the successor universe's fact"
+    );
+}
+
+/// The helper both surfaces share: the header facts are the live universe's,
+/// never the state's carried-over values. A composed lane reads true with
+/// the deny list copied; an unbound universe reads false.
+#[test]
+fn sync_host_posture_derives_the_header_facts_from_the_live_universe() {
+    // None ⇒ false: the unbound fixture composes no lane.
+    let unbound = Fixture::build("posture-unbound");
+    let mut state = SessionState::new("s1", None, "m");
+    state.host_composed = true;
+    state.denied_programs = vec!["curl".to_owned()];
+    state.sync_host_posture(&unbound.session.universe());
+    assert!(
+        !state.host_composed,
+        "no workspace root binds: the lane did not compose"
+    );
+    assert_eq!(
+        state.denied_programs,
+        unbound.session.universe().deny_programs(),
+        "the deny list is copied from the universe"
+    );
+    drop(unbound);
+
+    // Composed ⇒ true, deny list copied: the pinned fixture composes the
+    // lane, and a deny-only launch recomposition puts the names on the
+    // universe the helper must copy.
+    let mut pinned = Fixture::build_pinned("posture-pinned");
+    let launch =
+        crate::interactive::session_host::HostLaunch::from_deny_for_tests(vec!["curl".to_owned()]);
+    pinned
+        .session
+        .recompose_with_launch(
+            &pinned.runtime,
+            pinned.state.workspace_root.as_deref(),
+            Some(&launch),
+        )
+        .expect("the deny-only launch recomposes");
+    let mut state = SessionState::new("s2", None, "m");
+    state.sync_host_posture(&pinned.session.universe());
+    assert!(
+        state.host_composed,
+        "the pinned root composes the lane: the header says host:unsandboxed"
+    );
+    assert_eq!(
+        state.denied_programs,
+        vec!["curl".to_owned()],
+        "the deny list is copied from the universe: {:?}",
+        state.denied_programs
+    );
 }
 
 /// A live holder on the successor id stops the swap after the publish: the

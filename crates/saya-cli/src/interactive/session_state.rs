@@ -1,3 +1,4 @@
+use super::session_universe::SessionUniverse;
 use crate::interactive::tui::types::SessionUsage;
 use saya_agent::{AgentOutput, ChatMessage, ToolMetadata};
 use saya_store::{
@@ -195,6 +196,18 @@ impl SessionState {
             self.provider_endpoint = endpoint.map(str::to_owned);
             self.provider_endpoint_bound = true;
         }
+    }
+
+    /// Re-derives the runtime-only host-posture facts (the status header's
+    /// `host:` segment and its deny list) from the session's live universe.
+    /// A state swapped in after a `reacquire` — a `/resume` or a `/rotate` —
+    /// arrives with both reset (the `#[serde(skip)]` defaults), while the
+    /// recomposed universe composes the host lane wherever a workspace root
+    /// binds: the header must say what the swapped-in session will actually
+    /// run, never what the previous state carried.
+    pub(crate) fn sync_host_posture(&mut self, universe: &SessionUniverse) {
+        self.host_composed = universe.host_composed();
+        self.denied_programs = universe.deny_programs();
     }
 
     pub fn record_turn(

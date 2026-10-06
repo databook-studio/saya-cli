@@ -115,10 +115,13 @@ pub(crate) fn rotate_session_with_id(
              resume it with /resume {successor_id} after fixing the cause."
         ));
     }
-    // (6) The swap: the same lines `/resume` runs.
+    // (6) The swap: the same lines `/resume` runs. The header facts ride the
+    // NEW universe: `reacquire` recomposed it for the successor, and the
+    // successor state arrived carrying the parent's runtime-only values.
     *state = successor;
     state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
     session.universe().seed_tasks(state.task_list.clone());
+    state.sync_host_posture(&session.universe());
     RotateResult::Rotated {
         old,
         new: successor_id.to_owned(),

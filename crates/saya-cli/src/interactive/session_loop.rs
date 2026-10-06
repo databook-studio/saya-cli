@@ -160,9 +160,9 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // status header's facts ride the session state: the lane bit and the
     // deny list, so every prompt carries the `host:` segment.
     if fresh {
-        state.host_composed = session.universe().host_composed();
-        state.denied_programs = session.universe().deny_programs();
-        let denied = session.universe().deny_programs();
+        let universe = session.universe();
+        state.sync_host_posture(&universe);
+        let denied = universe.deny_programs();
         if !denied.is_empty()
             && let Err(error) = session.journal().deny_list(&denied)
         {
@@ -253,8 +253,7 @@ pub fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
         if let Some(root) = session.record_root(fresh) {
             state.workspace_root = Some(root);
         }
-        state.host_composed = session.universe().host_composed();
-        state.denied_programs = session.universe().deny_programs();
+        state.sync_host_posture(&session.universe());
         // The last save of a TUI session: a refusal at the record cap says
         // its sentence through the Error event once the terminal is
         // restored, and keeps the TUI's own exit code.
@@ -1282,6 +1281,10 @@ fn handle_line_verbatim(
                         *state = loaded;
                         state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
                         session.universe().seed_tasks(state.task_list.clone());
+                        // The header facts ride the NEW universe: `reacquire`
+                        // recomposed it, and the swapped-in state arrived with
+                        // the `#[serde(skip)]` defaults.
+                        state.sync_host_posture(&session.universe());
                         super::session_emit::emit_action(
                             SessionAction::Message(format!("Resumed session {id}")),
                             format,
@@ -1412,6 +1415,13 @@ fn handle_line_verbatim(
         // and says the previous configuration is still in use. Never
         // prompts: the inputs are the launch's, and the pipe stays the pipe.
         let inputs = crate::config::reload::ReloadInputs::from_launch(&ctx.launch_options);
+        // The re-seed runs after the `state.apply` comparison above, so the
+        // reload captures the key here and retires the question authority
+        // once a successful reload moved it — the same shared abandon step
+        // every mutating command uses: a pending clarification must not
+        // answer under the new provider/model/profile with the old
+        // question's scope.
+        let before = state.context_key();
         match crate::config::reload::reload_runtime(&inputs, runtime, state) {
             crate::config::reload::ReloadOutcome::Reloaded { new, text } => {
                 ctx.runtime = Arc::new(*new);
@@ -1421,6 +1431,7 @@ fn handle_line_verbatim(
                     state,
                     store,
                 )?;
+                state.abandon_question_when_context_changed(&before, session);
                 if let Some(outcome) = persist(state, store, format)? {
                     return Ok(outcome);
                 }

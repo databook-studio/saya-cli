@@ -1200,6 +1200,89 @@ fn reload_drained_through_tick_pending_swaps_on_success_and_keeps_the_old_on_fai
     );
 }
 
+/// `/reload` drained through the real `tick_pending` retires a pending
+/// clarification exactly when the reload's re-seed moved the answering
+/// context: the key is captured before the re-seed and the shared abandon
+/// step runs after a successful reload. A reseeded model (an untouched
+/// session) moves the key; a live-only key (max_rows) does not.
+#[test]
+fn a_reload_that_moves_the_context_key_abandons_the_pending_question() {
+    let mut fx = ChainFixture::build("reload-model");
+    seed_runtime_from_launch_options(&mut fx);
+    // The untouched session: its model copy IS the runtime's, so a changed
+    // config model is re-seeded onto it.
+    fx.state.model = "test-model".to_string();
+    fx.session.abandon_question();
+    let pending = fx
+        .session
+        .begin_question(&fx.runtime)
+        .expect("the question begins");
+    fx.session.settle_question(&pending, true);
+
+    let config = fx.launch_options.config.clone().expect("the --config path");
+    std::fs::write(&config, "[ai]\nmodel = \"m2\"\n[run]\nmax_rows = 100\n")
+        .expect("the model edit writes");
+    fx.app.pending = Some("/reload".to_string());
+    drain_through_tick_pending(&mut fx);
+    assert_eq!(
+        fx.state.model, "m2",
+        "the reload re-seeded the untouched model copy"
+    );
+    assert!(
+        pending.cancellation().is_cancelled(),
+        "the reseeded model moved the answering context: the pending question is abandoned"
+    );
+    let next = fx
+        .session
+        .begin_question(&fx.runtime)
+        .expect("the next question begins");
+    assert!(
+        !next.is_same_question(&pending),
+        "the next begin mints a different question after the reload"
+    );
+}
+
+/// The preserve side of the same rule: a reload whose only change is a LIVE
+/// key (max_rows) re-seeds nothing, so the key stands and the pending
+/// clarification survives with its token live.
+#[test]
+fn a_reload_that_changes_only_a_live_key_preserves_the_pending_question() {
+    let mut fx = ChainFixture::build("reload-rows");
+    seed_runtime_from_launch_options(&mut fx);
+    fx.state.model = "test-model".to_string();
+    fx.session.abandon_question();
+    let pending = fx
+        .session
+        .begin_question(&fx.runtime)
+        .expect("the question begins");
+    fx.session.settle_question(&pending, true);
+
+    let config = fx.launch_options.config.clone().expect("the --config path");
+    std::fs::write(
+        &config,
+        "[ai]\nmodel = \"test-model\"\n[run]\nmax_rows = 7\n",
+    )
+    .expect("the max_rows edit writes");
+    fx.app.pending = Some("/reload".to_string());
+    drain_through_tick_pending(&mut fx);
+    assert_eq!(
+        fx.state.model, "test-model",
+        "no reseed fired for a live-only change"
+    );
+    let next = fx
+        .session
+        .begin_question(&fx.runtime)
+        .expect("the next question begins");
+    assert!(
+        next.is_same_question(&pending),
+        "a live-only reload preserves the pending question"
+    );
+    assert!(
+        !next.cancellation().is_cancelled(),
+        "the preserved question's token stays live"
+    );
+}
+
 /// A `/reload` submitted while a request is running WAITS: the busy gate
 /// holds the line in the queue like every command — it never overlaps a
 /// stream, query, compaction, or replay — and once idle the queued line
