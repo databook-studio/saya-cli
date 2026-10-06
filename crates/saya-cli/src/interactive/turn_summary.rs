@@ -138,10 +138,36 @@ pub(crate) fn tally_handle() -> TallyHandle {
 
 /// The process exit code a terminal status reports: 0 only for a completed
 /// turn (an explicit `/exit` included); 5 otherwise, unlike `ask`/`run`.
+/// Test seam: production derives the rendered code from the run's own
+/// outcome (`emit_turn_result`'s caller computes it once and returns the
+/// same value); the unit tests pin that [`final_summary`]'s corrected
+/// status always maps back to that same code.
+#[cfg(test)]
 pub(crate) fn exit_code(status: TurnStatus) -> i32 {
     match status {
         TurnStatus::Completed => 0,
         TurnStatus::Failed | TurnStatus::Cancelled | TurnStatus::BudgetStopped => 5,
+    }
+}
+
+/// The final summary a scripted run reports: the turn's settled status
+/// corrected by the run's own outcome, so the rendered `exit_code` equals
+/// the process exit code for every combination. A completed settlement whose
+/// run ended errored — the per-turn save refused at the record cap —
+/// reclassifies as `failed` (exit 5), never the completed/0 the process
+/// contradicts; a failed, cancelled, or budget-stopped settlement keeps its
+/// status when the run errored; a run that did not error reports completed,
+/// the only status whose exit code is 0. The tool tally always passes
+/// through untouched.
+pub(crate) fn final_summary(summary: TurnSummary, run_errored: bool) -> TurnSummary {
+    let status = match (summary.status, run_errored) {
+        (TurnStatus::Completed, true) => TurnStatus::Failed,
+        (status, true) => status,
+        (_, false) => TurnStatus::Completed,
+    };
+    TurnSummary {
+        status,
+        tally: summary.tally,
     }
 }
 

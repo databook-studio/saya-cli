@@ -125,6 +125,7 @@ fn headless_turn_over_each_receipt_action_ends_errored() {
             session: &mut *session,
             trusted_echo: None,
             last_turn: None,
+            save_refused: false,
             launch_options: crate::cli::GlobalOptions::default(),
         };
         let outcome = handle_line_verbatim(line, &mut ctx).expect("the turn runs");
