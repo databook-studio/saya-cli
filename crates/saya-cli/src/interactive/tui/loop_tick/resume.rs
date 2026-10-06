@@ -22,12 +22,20 @@ pub(crate) fn clear_query_state(app: &mut App) {
 }
 
 /// The shared tail of a successful resume (picker or typed): the old
-/// session's query state retires with it, the app adopts the resumed
-/// session's universe (seeded with the task list), and the runtime metrics
-/// collector is re-taken — `reacquire` replaced the runtime, so the startup
-/// handle would otherwise keep counting into the retired collector.
-pub(crate) fn adopt_resumed_session(app: &mut App, state: &SessionState, session: &SessionRuntime) {
+/// session's query state retires with it, the header facts are re-derived
+/// from the resumed session's universe (`reacquire` recomposed it; the
+/// swapped-in state arrived with the `#[serde(skip)]` defaults), the app
+/// adopts the resumed session's universe (seeded with the task list), and
+/// the runtime metrics collector is re-taken — `reacquire` replaced the
+/// runtime, so the startup handle would otherwise keep counting into the
+/// retired collector.
+pub(crate) fn adopt_resumed_session(
+    app: &mut App,
+    state: &mut SessionState,
+    session: &SessionRuntime,
+) {
     clear_query_state(app);
+    state.sync_host_posture(&session.universe());
     app.session = session.universe();
     app.session.seed_tasks(state.task_list.clone());
     app.session_metrics = session.session_metrics();

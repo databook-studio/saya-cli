@@ -70,6 +70,10 @@ pub(super) fn resume(
                 Ok(()) => {
                     *state = loaded;
                     state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
+                    // The header facts ride the NEW universe: `reacquire`
+                    // recomposed it, and the swapped-in state arrived with
+                    // the `#[serde(skip)]` defaults.
+                    state.sync_host_posture(&session.universe());
                     transcript.push(BlockKind::System, format!("Resumed session {id}"));
                     if let Some(notice) = session.notice() {
                         transcript.push(BlockKind::System, notice.to_string());
