@@ -582,6 +582,35 @@ saved with the session. They are separate from project preferences
 (`/preferences`, per worktree) and from typed database knowledge
 (`/remember`), and are never a model-callable tool.
 
+## Rotating a long session: `/rotate`
+
+A session record is capped at **4 MiB**; the store warns at **3 MiB**.
+Compaction (`/compact`) keeps the model's working memory small, but the
+saved record still grows with the verbatim tail it keeps. When a session
+has grown large — a long conversation, many turns — `/rotate` continues
+your work in a **new, smaller session** instead of growing the old record
+further.
+
+- `/rotate` takes no argument. Run `/compact` first: a session with no
+  saved summary has nothing to carry over, and the command refuses with
+  that remedy.
+- What carries over: the saved summary (the compaction narrative), your
+  session notes (`/notes`), the file and check facts recorded with it,
+  and the not-yet-summarised tail of the conversation, verbatim.
+- What does **not**: grants (`/allow`), approvals, denials, and the
+  recovery setting. The successor starts empty on all of them — nothing
+  is inherited.
+- The old session stays on disk, complete and resumable any time with
+  `/resume <old id>`. Nothing is pruned or deleted.
+
+The rotation saves the current session, publishes the successor linked
+to it (the link is lineage only — it records where the session came from
+and grants nothing), and continues in the successor. If the successor
+would still exceed the 4 MiB cap, the rotation refuses and asks you to
+compact further. If the successor cannot be opened — for example its
+session lock is held by another process — the rotation stops with the
+successor saved and resumable and your current session untouched.
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the

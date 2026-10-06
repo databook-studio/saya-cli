@@ -685,6 +685,51 @@ fn turn_file_notes_show_and_set_refuse_without_a_continuation() {
     let _ = std::fs::remove_dir_all(&env.root);
 }
 
+/// `/rotate` through the real headless binary: a `--turn-file` run starts a
+/// fresh session, so the rotation always refuses with the /compact-first
+/// remedy — exit 5, the streamed error names it, no provider round runs,
+/// and stdout stays valid NDJSON. The success path is covered by the
+/// `session_rotate_run` unit tests against a real store and runtime.
+#[test]
+fn turn_file_rotate_refuses_a_fresh_session_and_exits_five() {
+    let env = test_root("rotate-slash");
+    let (address, bodies) = mock("unused");
+    let path = env.root.join("instruction.md");
+    std::fs::write(&path, "/rotate\n").unwrap();
+    let mut args = base_args(&env);
+    args.push("--turn-file".into());
+    args.push(path.to_str().unwrap().into());
+    let output = saya(
+        &env,
+        &address,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+    .output()
+    .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "the refusal exits 5; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        stderr.contains("run /compact first"),
+        "the refusal names the /compact remedy: {stderr}"
+    );
+    assert!(
+        bodies.lock().unwrap().is_empty(),
+        "a slash command runs no provider round"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines().filter(|line| !line.is_empty()) {
+        serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|error| panic!("stdout line is not NDJSON: {line:?}: {error}"));
+    }
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
 /// Startup notices stay off the machine-readable stdout stream: every line
 /// there must remain valid NDJSON, while the human bypass explanation remains
 /// visible on stderr.

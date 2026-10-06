@@ -1111,6 +1111,63 @@ fn handle_line_verbatim(
         block_on(store.save(state.redacted()))?;
         return Ok(outcome);
     }
+    if let SessionAction::Rotate = action {
+        // `/rotate` — continue in a small successor. The shared steps run
+        // once, in `session_rotate_run`, for both surfaces: save the
+        // parent, publish the lineage-linked successor, re-acquire the
+        // runtime for it, and swap only on success. A refusal or a failed
+        // swap is an errored turn; the completed rotation's save below
+        // persists the successor (the swapped state).
+        let outcome =
+            match super::session_rotate_run::rotate_session(store, runtime, state, session) {
+                super::session_rotate_run::RotateResult::Rotated { old, new } => {
+                    super::session_emit::emit_action(
+                        SessionAction::Message(super::session_rotate_run::rotated_message(
+                            &old, &new,
+                        )),
+                        format,
+                        state,
+                        store,
+                    )?;
+                    if let Some(notice) = session.notice() {
+                        super::session_emit::emit_action(
+                            SessionAction::Message(notice.to_string()),
+                            format,
+                            state,
+                            store,
+                        )?;
+                    }
+                    // A bypass successor re-prints its activation line — the
+                    // mode is real again in the new session, the same tail a
+                    // resumed bypass session gets.
+                    if let Some(line) = super::session_activation::line_if_bypass(
+                        state,
+                        runtime,
+                        &session.universe(),
+                    ) {
+                        super::session_emit::emit_action(
+                            SessionAction::Message(line),
+                            format,
+                            state,
+                            store,
+                        )?;
+                    }
+                    TurnOutcome::Completed
+                }
+                super::session_rotate_run::RotateResult::Refused(message)
+                | super::session_rotate_run::RotateResult::Incomplete(message) => {
+                    super::session_emit::emit_action(
+                        SessionAction::Error(message),
+                        format,
+                        state,
+                        store,
+                    )?;
+                    TurnOutcome::Errored
+                }
+            };
+        block_on(store.save(state.redacted()))?;
+        return Ok(outcome);
+    }
     let outcome = action_outcome(&action);
     super::session_emit::emit_action(action, format, state, store)?;
     if approvals_set {

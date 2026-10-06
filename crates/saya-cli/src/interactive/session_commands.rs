@@ -64,6 +64,11 @@ pub enum SessionAction {
     /// Run `config doctor` and surface its report as a message.
     Doctor,
     Resume(String),
+    /// `/rotate` — continue the session in a small successor. Intercepted
+    /// in both loops (they own the store and the runtime, and the shared
+    /// `session_rotate_run` runner needs both); the arm here keeps the
+    /// match exhaustive.
+    Rotate,
     Schema(bool),
     Sql(String),
     /// `/export` — the parsed request (mode, overwrite, path) the TUI's
@@ -285,6 +290,7 @@ impl SessionState {
             }
             SlashCommand::Sessions => SessionAction::History,
             SlashCommand::Resume(id) => SessionAction::Resume(id),
+            SlashCommand::Rotate => SessionAction::Rotate,
             SlashCommand::Tasks(subcommand) => match subcommand.as_deref() {
                 // `/tasks clear` empties the stored list, so the next turn
                 // injects no task block. Nothing else edits from here: the
@@ -767,6 +773,18 @@ mod tests {
         };
         let action = state.apply(SlashCommand::Preferences(command.clone()), &[]);
         assert_eq!(action, SessionAction::Preferences(command));
+    }
+
+    /// `/rotate` carries through as its own action — the loops own the
+    /// behaviour through the shared `session_rotate_run` runner; the
+    /// adapter owns nothing but the mapping.
+    #[test]
+    fn rotate_maps_to_its_action() {
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        assert_eq!(
+            state.apply(SlashCommand::Rotate, &[]),
+            SessionAction::Rotate
+        );
     }
 
     /// `/notes` runs the shared `run_notes` operation inside `apply` — the

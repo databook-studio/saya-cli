@@ -181,8 +181,9 @@ pub(crate) fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
 /// A readable, filename-safe id: `<UTC stamp>-<nanos hex>`, e.g.
 /// `20260826-143210-9f3a`. The nanos suffix keeps ids unique within a second
 /// without pulling in a random source; the store's path validation accepts
-/// alphanumerics and hyphens.
-fn new_id() -> String {
+/// alphanumerics and hyphens. Crate-reachable so `/rotate` derives its
+/// successor id from the same mint.
+pub(crate) fn new_id() -> String {
     let now = SystemTime::now();
     new_id_from(now)
 }

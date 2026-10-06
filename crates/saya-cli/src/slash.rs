@@ -77,6 +77,12 @@ pub enum SlashCommand {
     /// becomes a model-callable tool.
     Preferences(PreferencesCommand),
     Resume(String),
+    /// `/rotate` — continue the session in a new, smaller successor that
+    /// keeps the saved summary, the notes, and the not-yet-summarised tail;
+    /// grants, approvals and the recovery setting are never inherited. The
+    /// loops own the behaviour (they hold the store and the runtime); the
+    /// form takes no argument.
+    Rotate,
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
     Columns(Option<String>),
@@ -522,6 +528,14 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             }
         }
         "resume" => SlashCommand::Resume(required()?),
+        "rotate" => {
+            // `/rotate` takes no argument: a trailing word is a mistake
+            // worth naming, never a silent ignore.
+            if !arg.is_empty() {
+                return Err(SlashParseError("rotate takes no argument: /rotate".into()));
+            }
+            SlashCommand::Rotate
+        }
         "preferences" => {
             // `/preferences` is free text on the add and edit forms, so the
             // tail keeps its interior whitespace verbatim — the `/sql`
@@ -1227,6 +1241,18 @@ mod tests {
             parse_slash_command("/mode Plan").is_err(),
             "the parse is case-sensitive like /approvals"
         );
+    }
+
+    /// `/rotate` parses bare and refuses any argument: the rotation is one
+    /// command, and a trailing word is a mistake worth naming.
+    #[test]
+    fn rotate_parses_bare_and_refuses_arguments() {
+        assert_eq!(
+            parse_slash_command("/rotate"),
+            Ok(Some(SlashCommand::Rotate))
+        );
+        let error = parse_slash_command("/rotate now").unwrap_err();
+        assert_eq!(error.0, "rotate takes no argument: /rotate");
     }
 
     /// `/tasks` shows the list bare and clears it on `clear`; anything else
