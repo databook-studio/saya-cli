@@ -93,6 +93,41 @@ impl ChainFixture {
             root: RootGuard(root),
         }
     }
+
+    /// The unbound variant: no explicit root, no pin, and `fresh: false` so
+    /// no walk-up runs (a walk-up would bind this repo's own worktree from
+    /// the test cwd). The pre-workspace resume shape — nothing binds, which
+    /// is what the no-root refusals must be tested against.
+    fn build_unbound(tag: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "saya-chain-unbound-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("unbound chain test root");
+        let runtime = unused_runtime();
+        let session = SessionRuntime::acquire(
+            &runtime,
+            None,
+            false,
+            None,
+            "chain-test",
+            ApprovalPolicy::Ask,
+            &root.join("sessions"),
+        )
+        .expect("the unbound chain test session acquires");
+        Self {
+            app: idle_app(),
+            state: SessionState::new("chain-test", None, "model"),
+            session,
+            store: FsSessionStore::new(root.join("session-store")),
+            runtime,
+            root: RootGuard(root),
+        }
+    }
 }
 
 /// The real `dispatch`, called with the fixture's pieces exactly as the
@@ -141,6 +176,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
         "compact" => "/compact",
         "history" => "/history",
         "sessions" => "/sessions",
+        "preferences" => "/preferences",
         "resume" => "/resume 20260101-000000-abc",
         "columns" => "/columns",
         "contracts" => "/contracts",
@@ -570,6 +606,83 @@ fn sessions_delete_dispatch_refuses_an_invalid_id() {
     assert!(
         error.contains("not a valid session id"),
         "the refusal is the invalid-id one: {error}"
+    );
+}
+
+/// `/preferences list` in a session with no bound root: the shared
+/// NoWorktree refusal as an Error block, the exact words the headless CLI
+/// prints — never an empty listing, never the launch cwd.
+#[test]
+fn preferences_dispatch_refuses_without_a_bound_root() {
+    let mut fx = ChainFixture::build_unbound("preferences-no-root");
+    assert!(
+        matches!(
+            dispatch_line("/preferences list", &mut fx),
+            Dispatch::Handled
+        ),
+        "the refusal is inline"
+    );
+    let error =
+        last_block(&fx.app.transcript, BlockKind::Error).expect("the refusal is an error block");
+    assert!(
+        error.contains("no project worktree here"),
+        "the shared worktree remedy, verbatim: {error}"
+    );
+}
+
+/// `/preferences bogus` is a parse error block naming the offence and
+/// every valid form.
+#[test]
+fn preferences_dispatch_reports_an_unknown_subcommand() {
+    let mut fx = ChainFixture::build("preferences-bogus");
+    assert!(
+        matches!(
+            dispatch_line("/preferences bogus", &mut fx),
+            Dispatch::Handled
+        ),
+        "the parse error is inline"
+    );
+    let error =
+        last_block(&fx.app.transcript, BlockKind::Error).expect("a parse error is an error block");
+    assert!(
+        error.contains("unknown /preferences subcommand: bogus")
+            && error.contains("/preferences forget-all"),
+        "the error names the offence and the usage: {error}"
+    );
+}
+
+/// The rooted success path through the real dispatch: `add` confirms one
+/// preference and `list` shows it back with its `pp-` id — the same shared
+/// operations the headless `saya preferences` runs, scoped to the session's
+/// bound root. The fixture's default state db is the empty-path in-memory
+/// store (per-connection databases), so this test points the App at a
+/// file-backed store under the fixture root — production semantics — before
+/// dispatching.
+#[test]
+fn preferences_add_and_list_through_dispatch() {
+    let mut fx = ChainFixture::build("preferences-add-list");
+    fx.app.state_db = saya_store::SqliteStateStore::new(fx.root.0.join("state.sqlite3"));
+    assert!(
+        matches!(
+            dispatch_line("/preferences add prefer tabs over spaces", &mut fx),
+            Dispatch::Handled
+        ),
+        "the add is inline"
+    );
+    let added = last_block(&fx.app.transcript, BlockKind::System).expect("the add says something");
+    assert!(added.contains("Added preference pp-"), "{added}");
+    assert!(
+        matches!(
+            dispatch_line("/preferences list", &mut fx),
+            Dispatch::Handled
+        ),
+        "the listing is inline"
+    );
+    let listing = last_block(&fx.app.transcript, BlockKind::System).expect("the listing is said");
+    assert!(listing.contains("prefer tabs over spaces"), "{listing}");
+    assert!(
+        listing.contains("pp-"),
+        "the listing carries the id: {listing}"
     );
 }
 

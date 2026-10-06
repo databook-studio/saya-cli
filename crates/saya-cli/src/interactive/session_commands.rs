@@ -120,6 +120,12 @@ pub enum SessionAction {
     /// as stated. Intercepted in both loops, which pass the session's own
     /// id as the current one; the arm here keeps the match exhaustive.
     SessionsDelete(String),
+    /// `/preferences …` — the shared project-preference operations the
+    /// headless `saya preferences` runs, scoped to the session's bound
+    /// worktree root. Intercepted in both loops (they own the state store
+    /// and the session's root); the arm here keeps the match exhaustive.
+    /// Never prompts and never a model-callable tool.
+    Preferences(crate::cli::PreferencesCommand),
     Exit,
 }
 
@@ -326,6 +332,7 @@ impl SessionState {
             SlashCommand::Context => SessionAction::Context,
             SlashCommand::SessionsList => SessionAction::SessionsList,
             SlashCommand::SessionsDelete(id) => SessionAction::SessionsDelete(id),
+            SlashCommand::Preferences(command) => SessionAction::Preferences(command),
             SlashCommand::Exit => SessionAction::Exit,
         }
     }
@@ -401,7 +408,7 @@ mod tests {
     use saya_store::{RedactedMessage, RedactedSession, SessionStore};
 
     fn scratch(label: &str) -> std::path::PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let base = std::env::temp_dir().join(format!(
             "saya-session-commands-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -409,9 +416,15 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        root
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("sessions")).unwrap();
+        // The tombstone lives in the store root's PARENT (`<root>/../lifecycle`),
+        // so scratch roots that are direct children of the temp dir share ONE
+        // lifecycle directory across every test in the module — a parallel
+        // test's tombstone appeared in another test's "empty" listing. Nesting
+        // the sessions root gives each scratch its own parent, and with it its
+        // own lifecycle dir.
+        base.join("sessions")
     }
 
     #[test]
@@ -725,6 +738,21 @@ mod tests {
             state.apply(SlashCommand::SessionsDelete("abc".into()), &[]),
             SessionAction::SessionsDelete("abc".into())
         );
+    }
+
+    /// `/preferences` carries the translated command through unchanged —
+    /// both loops hand it to the shared `run_in_session` operation scoped
+    /// to the session's bound root; the adapter owns nothing but the
+    /// mapping.
+    #[test]
+    fn preferences_command_maps_to_the_same_action() {
+        use crate::cli::PreferencesCommand;
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let command = PreferencesCommand::Add {
+            text: "prefer tabs over spaces".into(),
+        };
+        let action = state.apply(SlashCommand::Preferences(command.clone()), &[]);
+        assert_eq!(action, SessionAction::Preferences(command));
     }
 
     /// `/sessions list` through the shared builder: the same listing the

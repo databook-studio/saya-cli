@@ -499,6 +499,17 @@ Exit codes follow the global scheme: `0` on success; `2` for every refusal
 — no project worktree, refused text, an unknown or malformed id, either
 bound, or a store error.
 
+In an interactive session the same operations are slash commands with the
+same behaviour and the same words: `/preferences` and `/preferences list`
+print the same listing, `/preferences add <text>` confirms one, `/preferences
+edit <id> <text>` replaces one, `/preferences forget <id>` removes one, and
+`/preferences forget-all` removes every preference in this worktree. The
+worktree is the session's bound workspace root — never the launch directory —
+and a session with no bound root refuses every form with the same worktree
+remedy. The preference text keeps its interior spacing exactly as typed. The
+forms never prompt and are never a model-callable tool; nothing here grants
+a permission.
+
 ## Files: `saya open`
 
 `saya open` turns a local CSV or Parquet file into a read-only session: the

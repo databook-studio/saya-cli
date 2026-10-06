@@ -40,12 +40,15 @@ pub(crate) fn emit_action(
         // well: the view needs the runtime's settings and the session's
         // workspace root. `/sessions list` and `/sessions delete <id>` are
         // intercepted too — the shared saved-session operations run in the
-        // loop, which owns the store and the sessions root.
+        // loop, which owns the store and the sessions root. `/preferences`
+        // is intercepted likewise: the shared operations run in the loop,
+        // scoped to the session's bound worktree root.
         | SessionAction::Allow(_)
         | SessionAction::Grants
         | SessionAction::Context
         | SessionAction::SessionsList
         | SessionAction::SessionsDelete(_)
+        | SessionAction::Preferences(_)
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)

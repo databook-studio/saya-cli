@@ -11,6 +11,11 @@
 
 pub(crate) mod operations;
 pub(crate) mod render;
+pub(crate) mod session;
+pub(crate) use session::run_in_session;
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod session_tests;
 #[cfg(test)]
 #[path = "operations_tests.rs"]
 mod tests;
@@ -84,13 +89,7 @@ pub(crate) async fn run(
     format: RenderFormat,
     state: &SqliteStateStore,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    let outcome = match command {
-        PreferencesCommand::List => list(state).await,
-        PreferencesCommand::Add { text } => add(state, &text).await,
-        PreferencesCommand::Edit { id, text } => edit(state, &id, &text).await,
-        PreferencesCommand::Forget { id } => forget(state, &id).await,
-        PreferencesCommand::ForgetAll => forget_all(state).await,
-    };
+    let outcome = execute(command, resolved_worktree(), state).await;
     let (code, message) = render::render(&outcome);
     if code == 0 {
         result(message, format)
@@ -99,37 +98,31 @@ pub(crate) async fn run(
     }
 }
 
-async fn list(state: &SqliteStateStore) -> PreferenceOutcome {
-    match resolved_worktree() {
-        Ok(worktree) => operations::list_preferences(state, &worktree).await,
+/// The one command→operation mapping, shared by the headless subcommand
+/// and the session surfaces (M04b): a refused worktree refuses the whole
+/// command, otherwise the command runs against that worktree through the
+/// same operations every surface uses.
+pub(crate) async fn execute(
+    command: PreferencesCommand,
+    worktree: Result<WorktreeId, PreferenceRefusal>,
+    state: &SqliteStateStore,
+) -> PreferenceOutcome {
+    match worktree {
         Err(refusal) => PreferenceOutcome::Refused(refusal),
-    }
-}
-
-async fn add(state: &SqliteStateStore, text: &str) -> PreferenceOutcome {
-    match resolved_worktree() {
-        Ok(worktree) => operations::add_preference(state, &worktree, text).await,
-        Err(refusal) => PreferenceOutcome::Refused(refusal),
-    }
-}
-
-async fn edit(state: &SqliteStateStore, id: &str, text: &str) -> PreferenceOutcome {
-    match resolved_worktree() {
-        Ok(worktree) => operations::edit_preference(state, &worktree, id, text).await,
-        Err(refusal) => PreferenceOutcome::Refused(refusal),
-    }
-}
-
-async fn forget(state: &SqliteStateStore, id: &str) -> PreferenceOutcome {
-    match resolved_worktree() {
-        Ok(worktree) => operations::forget_preference(state, &worktree, id).await,
-        Err(refusal) => PreferenceOutcome::Refused(refusal),
-    }
-}
-
-async fn forget_all(state: &SqliteStateStore) -> PreferenceOutcome {
-    match resolved_worktree() {
-        Ok(worktree) => operations::forget_all_preferences(state, &worktree).await,
-        Err(refusal) => PreferenceOutcome::Refused(refusal),
+        Ok(worktree) => match command {
+            PreferencesCommand::List => operations::list_preferences(state, &worktree).await,
+            PreferencesCommand::Add { text } => {
+                operations::add_preference(state, &worktree, &text).await
+            }
+            PreferencesCommand::Edit { id, text } => {
+                operations::edit_preference(state, &worktree, &id, &text).await
+            }
+            PreferencesCommand::Forget { id } => {
+                operations::forget_preference(state, &worktree, &id).await
+            }
+            PreferencesCommand::ForgetAll => {
+                operations::forget_all_preferences(state, &worktree).await
+            }
+        },
     }
 }
