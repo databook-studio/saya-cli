@@ -13,6 +13,7 @@ use saya_harness::session_lifecycle::SessionLock;
 use saya_store::{BypassSource, SessionJournal};
 
 use super::session_paths::create_state_dir;
+use super::session_recovery::RecoveryHandle;
 use super::session_universe::{SessionComposition, SessionUniverse};
 use crate::agent::question_scope::QuestionScope;
 use crate::local_metrics::{LocalMetrics, LocalPhaseSnapshot};
@@ -63,6 +64,12 @@ pub(crate) struct SessionRuntime {
     /// The session's local metrics collector, when local metrics are on:
     /// runtime-only, never serialized, and never in `SessionState`.
     session_metrics: Option<Arc<LocalMetrics>>,
+    /// The session's recovery handle: the checkpoint store over this
+    /// sessions root, the acquired id, and the session-scoped enable
+    /// flag — OFF at acquisition (recovery is opt-in). One handle per
+    /// acquisition: every recomposition carries the same one, and a
+    /// resume re-acquires so it starts off again.
+    recovery: RecoveryHandle,
 }
 
 enum QuestionLifecycle {
@@ -160,6 +167,10 @@ impl SessionRuntime {
                 }
                 other => format!("could not claim the session lock: {other}"),
             })?;
+        // One recovery handle per acquisition, once the lock is held: the
+        // session's checkpoint store rides the same id, and the flag is
+        // the opt-in default — OFF; nothing here flips it.
+        let recovery = RecoveryHandle::new(sessions_root, id);
         let walk_when_unpinned = fresh;
         // The trusted directory binds exactly like an explicit
         // `--workspace` — but only where no explicit statement exists, and
@@ -172,14 +183,18 @@ impl SessionRuntime {
         let asked = trusted_explicit.clone();
         let effective_explicit: Option<&Path> =
             explicit.or(trusted_explicit.as_deref().map(Path::new));
-        let universe = SessionUniverse::compose(
+        let universe = SessionUniverse::compose_with_launch_and_path(SessionComposition {
             runtime,
-            effective_explicit,
+            explicit: effective_explicit,
             pinned_root,
             walk_when_unpinned,
-            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            &state_dir,
-        )?;
+            cwd: &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            state_dir: &state_dir,
+            launch: None,
+            path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
+            scratch: None,
+            recovery: Some(recovery.clone()),
+        })?;
         let explicit = explicit.map(Path::to_path_buf).or(asked);
         Ok(Self {
             universe: Arc::new(universe),
@@ -195,6 +210,7 @@ impl SessionRuntime {
             question: QuestionLifecycle::Idle,
             last_question_metrics: None,
             session_metrics: crate::local_metrics::enabled().then(|| Arc::new(LocalMetrics::new())),
+            recovery,
         })
     }
 
@@ -340,6 +356,7 @@ impl SessionRuntime {
             launch,
             path: std::env::var_os("PATH").map(|value| value.to_string_lossy().into_owned()),
             scratch: self.universe.scratch(),
+            recovery: Some(self.recovery().clone()),
         })
     }
 
@@ -401,6 +418,13 @@ impl SessionRuntime {
     /// The composed universe, shared with every turn of this session.
     pub(crate) fn universe(&self) -> Arc<SessionUniverse> {
         Arc::clone(&self.universe)
+    }
+
+    /// The session's recovery handle: what the per-turn attach reads and
+    /// the toggle will flip. One handle per acquisition; clones share the
+    /// flag cell.
+    pub(crate) fn recovery(&self) -> &RecoveryHandle {
+        &self.recovery
     }
 
     /// The canonical workspace root, when one binds.

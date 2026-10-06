@@ -17,7 +17,10 @@ pub(crate) mod recall_context;
 // mechanism only — not yet wired into the agent loop; a later change decides when it runs
 pub(crate) mod roundtrip;
 pub(crate) mod runtime;
+// The session wiring for checkpoint recovery (E06b): the one line the
+// per-turn `DatabaseTools` build gains.
 pub(crate) mod session_facts;
+pub(crate) mod session_recovery_attach;
 pub(crate) mod state_tools;
 pub(crate) mod system_prompt;
 pub(crate) mod tools;

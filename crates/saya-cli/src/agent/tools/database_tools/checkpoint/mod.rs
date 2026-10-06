@@ -8,8 +8,9 @@
 //! result says so. The recorder owns no policy beyond the enable flag:
 //! screening and quota are the store's gates, surfaced here as a
 //! model-safe refusal or an honest "not recorded" class. The session
-//! wiring (who builds the recorder, where the flag lives) is the next
-//! packet; production leaves the tools' field `None`.
+//! wiring builds the recorder from the session's recovery handle through
+//! `DatabaseTools::with_recovery`; the one-shot `ask` path leaves the
+//! tools' field `None`.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,10 +45,10 @@ pub(in crate::agent::tools) struct CheckpointRecorder {
 }
 
 impl CheckpointRecorder {
-    /// Builds a recorder over one session's store and enable flag. Test-only
-    /// until the session wiring packet attaches it in production; production
-    /// leaves the tools' field `None`.
-    #[cfg(test)]
+    /// Builds a recorder over one session's store and enable flag. The
+    /// session wiring builds it from `RecoveryHandle::parts` through
+    /// `DatabaseTools::with_recovery`; the flag stays the recorder's only
+    /// policy.
     pub(in crate::agent::tools) fn new(
         store: Arc<FsSessionStore>,
         session_id: String,
