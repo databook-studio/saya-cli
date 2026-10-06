@@ -526,6 +526,7 @@ impl SessionUniverse {
         }
         if self.workspace.is_some() {
             defs.push(session_definitions::workspace_write());
+            defs.push(session_definitions::workspace_edit());
         }
         defs.push(session_definitions::scratch_sql());
         if self.workspace.is_some() {

@@ -110,8 +110,9 @@ fn compose(project: &Path, state_dir: &Path) -> SessionUniverse {
 /// runner composes (nothing staged a program dir), so no `run_program` —
 /// the honest shape, not a hidden capability. The unstated host lane does
 /// compose over a bound root, so `run_command` rides.
-const WRITE_SHAPED: [&str; 6] = [
+const WRITE_SHAPED: [&str; 7] = [
     "workspace_write",
+    "workspace_edit",
     "scratch_sql",
     "scratch_import",
     "http_fetch",
@@ -243,6 +244,10 @@ fn tui_and_repl_advertise_identical_sets_under_ask() {
     assert!(
         tui.contains("workspace_write"),
         "both surfaces advertise the write the user asked for: {tui:?}"
+    );
+    assert!(
+        tui.contains("workspace_edit"),
+        "both surfaces advertise the guarded edit: {tui:?}"
     );
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }

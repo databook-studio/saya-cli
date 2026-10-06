@@ -833,13 +833,18 @@ root binds; and the all-bounds discipline is untouched. Bypass changes only
 who answers the per-call question — and the answer is always yes.
 
 What bypass opens honestly: the write-shaped session tools (`workspace_write`,
-`scratch_sql`, `http_fetch`, `http_download`) are advertised whether or not a
-prompt surface exists — a piped REPL runs under bypass too — and the session's
+`workspace_edit`, `scratch_sql`, `http_fetch`, `http_download`) are advertised
+whether or not a prompt surface exists — a piped REPL runs under bypass too —
+and the session's
 interpreter door opens to the interpreters the trusted config staged in
 `[jobs.interpreter] allow` (the project layer is untrusted without
 `--trust-project-config`; the door is the same staged universe under every
 mode — under `ask` it is reachable through a granted
-`interpreter:<program>` token, under bypass without the ask). An interpreter
+`interpreter:<program>` token, under bypass without the ask). On every
+surface, run and session alike, replacing an existing file requires an
+observed `expected_digest` — the sha256 digest from a fresh read or the
+previous write/edit result — and a stale overwrite refuses instead of
+clobbering. An interpreter
 child is confined by the same sandbox as any runner child: same fs roots,
 same empty egress — and the process-fork fact is the platform's own: on
 macOS the Seatbelt profile denies fork by omission, so a child an
