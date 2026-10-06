@@ -136,6 +136,7 @@ fn build_successor(
     successor.observations = Default::default();
     successor.usage = Default::default();
     successor.context_warned = false;
+    successor.capacity_warned = false;
     successor.auto_compact_failed = false;
     successor.denied_programs = Default::default();
     successor

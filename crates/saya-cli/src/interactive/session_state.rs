@@ -116,6 +116,13 @@ pub struct SessionState {
     /// usage rather than persisting a stale flag.
     #[serde(skip, default = "default_context_warned")]
     pub context_warned: bool,
+    /// Whether the near-limit capacity notice already fired for this session
+    /// process: one notice after the first successful save whose stored
+    /// record sits at or above the 3 MiB warning level. In-memory only
+    /// (`#[serde(skip)]`, the `context_warned` precedent): a resumed session
+    /// — and a rotation successor — starts with it armed again.
+    #[serde(skip, default = "default_capacity_warned")]
+    pub capacity_warned: bool,
     /// Whether an automatic compaction already tried and failed this session.
     /// Set on an automatic failure, cleared by `/clear` and by any
     /// successful compaction (manual or automatic). In-memory only
@@ -167,6 +174,7 @@ impl SessionState {
             usage: SessionUsage::default(),
             host_composed: false,
             context_warned: default_context_warned(),
+            capacity_warned: default_capacity_warned(),
             auto_compact_failed: default_auto_compact_failed(),
             denied_programs: Vec::new(),
         }
@@ -367,6 +375,13 @@ fn default_agent_mode() -> String {
 /// `#[serde(skip)]`, so nothing on disk sets it, and an armed start means the
 /// next turn's usage re-derives the flag from a live report.
 fn default_context_warned() -> bool {
+    false
+}
+
+/// A deserialized session starts with the capacity notice armed: the flag is
+/// `#[serde(skip)]`, so nothing on disk sets it, and a resumed session — a
+/// new session process — may see the near-limit notice once again.
+fn default_capacity_warned() -> bool {
     false
 }
 
