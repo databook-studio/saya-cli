@@ -12,7 +12,7 @@ mod restore;
 mod summary;
 pub(crate) use assemble::{assemble_continuation, digest_resolver};
 pub(crate) use outcomes::{PriorToolOutcomes, ToolOutcomeKind};
-pub(crate) use record::{SessionObservations, now_unix_ms};
+pub(crate) use record::{SessionObservations, now_unix_ms, source_digest};
 pub(crate) use restore::restore_continuation;
 pub(crate) use summary::render_summary_block;
 
