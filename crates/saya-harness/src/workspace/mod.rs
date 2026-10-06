@@ -58,6 +58,7 @@ pub(crate) mod dirfd;
 pub(crate) mod download;
 #[cfg(unix)]
 pub(crate) mod fd;
+mod guarded_remove;
 mod guarded_write;
 pub mod manifest;
 pub mod patch;
