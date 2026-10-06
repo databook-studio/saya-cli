@@ -42,7 +42,9 @@ pub(crate) fn emit_action(
         // intercepted too — the shared saved-session operations run in the
         // loop, which owns the store and the sessions root. `/preferences`
         // is intercepted likewise: the shared operations run in the loop,
-        // scoped to the session's bound worktree root.
+        // scoped to the session's bound worktree root. `/rotate` is
+        // intercepted too: the rotation runs in the loop through the shared
+        // runner, which owns the store and the runtime.
         | SessionAction::Allow(_)
         | SessionAction::Grants
         | SessionAction::Context
@@ -52,6 +54,7 @@ pub(crate) fn emit_action(
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)
+        | SessionAction::Rotate
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {

@@ -3,7 +3,7 @@
 //! action is taken exactly when this helper owns the arm, and an owned arm
 //! with no task to hand back still reports handled.
 
-use super::super::dispatch_actions::{list_sessions, resume};
+use super::super::dispatch_actions::{list_sessions, resume, rotate};
 use super::super::dispatch_contracts::run_contracts;
 use super::super::dispatch_investigation::run_investigation;
 use super::super::dispatch_runs;
@@ -41,6 +41,7 @@ pub(super) fn apply_session_action(
                 | SessionAction::SessionsDelete(_)
                 | SessionAction::Preferences(_)
                 | SessionAction::Resume(_)
+                | SessionAction::Rotate
                 | SessionAction::Sql(_)
                 | SessionAction::Contracts(_)
                 | SessionAction::Investigation(_)
@@ -67,6 +68,7 @@ pub(super) fn apply_session_action(
             );
         }
         SessionAction::Resume(id) => resume(transcript, state, runtime, store, session, &id),
+        SessionAction::Rotate => rotate(transcript, state, runtime, store, session),
         SessionAction::SessionsList => {
             // `/sessions list` — the same listing the headless REPL prints,
             // through the one shared builder: rows, pending deletions, and

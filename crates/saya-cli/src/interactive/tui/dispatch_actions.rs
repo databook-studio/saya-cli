@@ -91,3 +91,39 @@ pub(super) fn resume(
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
     }
 }
+
+/// Continues the session in a small successor: the shared steps run once in
+/// `session_rotate_run` for both surfaces, so this adapter only renders the
+/// outcome. The adoption tail is the typed `/resume` one — the successor's
+/// notice and (under bypass) its activation line ride the swap — and the
+/// app-level adoption (universe, metrics, query-state retirement) happens
+/// through the loop's id-change check once this returns.
+pub(super) fn rotate(
+    transcript: &mut Transcript,
+    state: &mut SessionState,
+    runtime: &RuntimeConfig,
+    store: &FsSessionStore,
+    session: &mut SessionRuntime,
+) {
+    use crate::interactive::session_rotate_run::{RotateResult, rotate_session, rotated_message};
+    match rotate_session(store, runtime, state, session) {
+        RotateResult::Rotated { old, new } => {
+            transcript.push(BlockKind::System, rotated_message(&old, &new));
+            if let Some(notice) = session.notice() {
+                transcript.push(BlockKind::System, notice.to_string());
+            }
+            // A bypass successor re-prints its activation line: the mode is
+            // real again, in its own words.
+            if let Some(line) = crate::interactive::session_activation::line_if_bypass(
+                state,
+                runtime,
+                &session.universe(),
+            ) {
+                transcript.push(BlockKind::System, line);
+            }
+        }
+        RotateResult::Refused(message) | RotateResult::Incomplete(message) => {
+            transcript.push(BlockKind::Error, message);
+        }
+    }
+}

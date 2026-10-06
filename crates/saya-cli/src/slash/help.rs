@@ -84,6 +84,10 @@ pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
          never permissions; separate from /remember",
     ),
     ("resume", "Resume a saved session by id"),
+    (
+        "rotate",
+        "Continue in a new, smaller session that keeps your summary and notes (run /compact first)",
+    ),
     ("columns", "Choose which columns wide result tables show"),
     ("contracts", "List contracts, or show one object's contract"),
     ("contract", "Alias for /contracts"),
@@ -208,6 +212,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
             ("history", "/history"),
             ("sessions", "/sessions [list|delete <id>]"),
             ("resume", "/resume <id>"),
+            ("rotate", "/rotate"),
             ("context", "/context"),
             ("doctor", "/doctor"),
             ("usage", "/usage"),
@@ -408,6 +413,17 @@ pub(crate) fn command_help(name: &str) -> Option<&'static str> {
              never stored. Example: /notes set prefer bounded queries",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
+        "rotate" => Some(
+            "rotate — continue in a new, smaller session: saves this session, publishes a \
+             successor linked to it (the link is lineage only), and continues there. Requires \
+             /compact first: a session with no saved summary has nothing to carry over. The \
+             successor keeps the saved summary, your notes and file/check facts, and the \
+             not-yet-summarised tail of the conversation; it inherits no grants, approvals, \
+             denials, or recovery setting. The parent stays on disk, unchanged and resumable \
+             (/resume <old id>). Run it when the session record nears the 4 MiB cap (the \
+             store warns at 3 MiB) and compaction alone no longer keeps it small. \
+             Example: /rotate",
+        ),
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
         ),
@@ -939,6 +955,38 @@ mod tests {
             listing.contains("/approvals [ask|read-only|never|bypass]"),
             "the /help listing must show the full mode vocabulary: {listing}"
         );
+    }
+
+    /// `/rotate` is wired at every hand-maintained touchpoint the
+    /// cli-application standard names: the registry, the description table
+    /// (the popup's single source), the `/help` listing (the Session group),
+    /// and the per-command help that states what carries over, what does
+    /// not, and the /compact-first requirement.
+    #[test]
+    fn rotate_is_registered_listed_and_described() {
+        assert!(
+            registry::KNOWN_COMMANDS.contains(&"rotate"),
+            "rotate is registered"
+        );
+        assert_eq!(
+            description_for("rotate"),
+            Some(
+                "Continue in a new, smaller session that keeps your summary and notes (run /compact first)"
+            ),
+            "the description is the shared one-liner"
+        );
+        let listing = help_text();
+        assert!(
+            listing.contains("/rotate"),
+            "the listing shows the /rotate usage: {listing}"
+        );
+        let help = command_help("rotate").expect("rotate has per-command help");
+        for stated in ["/compact", "grants", "resumable"] {
+            assert!(
+                help.contains(stated),
+                "the /rotate help states {stated:?}: {help}"
+            );
+        }
     }
 
     /// `/tasks` is wired at every hand-maintained touchpoint the
