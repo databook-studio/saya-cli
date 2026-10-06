@@ -628,6 +628,63 @@ fn turn_file_preferences_slash_forms_drive_the_shared_operations() {
     let _ = std::fs::remove_dir_all(&env.root);
 }
 
+/// `/notes` through the real headless binary: bare `/notes` says there are
+/// no session notes (exit zero, the remedy named), and `/notes set <text>`
+/// refuses with the /compact-first remedy and exits non-zero — a
+/// continuation record exists only after a compaction, and `--turn-file`
+/// runs a fresh session per turn on the same session dir, so both runs are
+/// the empty/refusal shapes.
+#[test]
+fn turn_file_notes_show_and_set_refuse_without_a_continuation() {
+    let env = test_root("notes-slash");
+    let (address, _bodies) = mock("unused");
+    let run = |line: &str| {
+        let path = env.root.join("instruction.md");
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+        let mut args = base_args(&env);
+        args.push("--turn-file".into());
+        args.push(path.to_str().unwrap().into());
+        saya(
+            &env,
+            &address,
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        )
+        .output()
+        .unwrap()
+    };
+
+    // Bare `/notes`: exit zero, the no-notes words with the remedy.
+    let shown = run("/notes");
+    assert_eq!(
+        shown.status.code(),
+        Some(0),
+        "the show completes; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&shown.stdout),
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&shown.stdout).into_owned();
+    assert!(
+        stdout.contains("No session notes") && stdout.contains("/notes set <text>"),
+        "the show names the remedy: {stdout}"
+    );
+
+    // `/notes set x`: exit non-zero, the /compact-first refusal.
+    let refused = run("/notes set remember the failing query");
+    assert_ne!(
+        refused.status.code(),
+        Some(0),
+        "a set with no continuation record must exit non-zero; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        stderr.contains("run /compact first"),
+        "the refusal names the /compact remedy: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&env.root);
+}
+
 /// Startup notices stay off the machine-readable stdout stream: every line
 /// there must remain valid NDJSON, while the human bypass explanation remains
 /// visible on stderr.

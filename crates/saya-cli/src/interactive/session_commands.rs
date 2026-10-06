@@ -297,6 +297,20 @@ impl SessionState {
                     &self.task_list,
                 )),
             },
+            SlashCommand::Notes(command) => {
+                // `/notes …` — the user's own notes on the session's typed
+                // continuation record, through the one shared `run_notes`
+                // operation both surfaces run. The `/tasks clear` shape:
+                // `apply` owns the state, so the change happens here and the
+                // loops' normal Message/Error paths emit it and save the
+                // session on their normal paths. No loop intercept is owed.
+                let (ok, message) = super::session_notes::run_notes(self, command);
+                if ok {
+                    SessionAction::Message(message)
+                } else {
+                    SessionAction::Error(message)
+                }
+            }
             SlashCommand::Columns(_) => {
                 SessionAction::Message("Column selection applies in the interactive TUI.".into())
             }
@@ -753,6 +767,68 @@ mod tests {
         };
         let action = state.apply(SlashCommand::Preferences(command.clone()), &[]);
         assert_eq!(action, SessionAction::Preferences(command));
+    }
+
+    /// `/notes` runs the shared `run_notes` operation inside `apply` — the
+    /// `/tasks clear` shape: apply owns the state, so the loops' normal
+    /// Message/Error paths emit it and every surface saves on its normal
+    /// path. Successes are Messages, refusals are Errors, and the state
+    /// change happens here.
+    #[test]
+    fn notes_command_runs_the_shared_operation_in_apply() {
+        use crate::interactive::session_notes::NotesCommand;
+        use saya_store::StoredContinuation;
+        use saya_types::{CONTINUATION_VERSION, SessionContinuationV1, SourceBoundary};
+        // A clean set over a typed record: a Message, and the notes stored.
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        let record = SessionContinuationV1 {
+            version: CONTINUATION_VERSION,
+            source: SourceBoundary {
+                through_turn: 1,
+                source_sha256: "c".repeat(64),
+                workspace_root: None,
+                profile: None,
+            },
+            narrative: None,
+            user_notes: None,
+            files: Vec::new(),
+            checks: Vec::new(),
+        };
+        state.continuation = Some(StoredContinuation::Current(record));
+        let action = state.apply(
+            SlashCommand::Notes(NotesCommand::Set("keep these".into())),
+            &[],
+        );
+        let SessionAction::Message(message) = action else {
+            panic!("a clean set is a Message, got {action:?}");
+        };
+        assert!(message.contains("Session notes stored."), "{message}");
+        let Some(StoredContinuation::Current(updated)) = &state.continuation else {
+            panic!("the record is still typed");
+        };
+        assert_eq!(updated.user_notes.as_deref(), Some("keep these"));
+        // A clear: a Message, and the notes gone.
+        let action = state.apply(SlashCommand::Notes(NotesCommand::Clear), &[]);
+        let SessionAction::Message(message) = action else {
+            panic!("a clear is a Message, got {action:?}");
+        };
+        assert!(message.contains("Session notes cleared."), "{message}");
+        let Some(StoredContinuation::Current(cleared)) = &state.continuation else {
+            panic!("the record is still typed");
+        };
+        assert_eq!(cleared.user_notes, None);
+        // Without a record, both forms refuse as Errors.
+        let mut state = SessionState::new("test", None, "gpt-4o");
+        for command in [NotesCommand::Set("text".into()), NotesCommand::Clear] {
+            let action = state.apply(SlashCommand::Notes(command), &[]);
+            let SessionAction::Error(message) = action else {
+                panic!("a refusal is an Error, got {action:?}");
+            };
+            assert!(
+                message.contains("run /compact first"),
+                "the refusal names the /compact remedy: {message}"
+            );
+        }
     }
 
     /// `/sessions list` through the shared builder: the same listing the

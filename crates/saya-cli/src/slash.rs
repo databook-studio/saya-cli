@@ -1,4 +1,5 @@
 use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
+use crate::interactive::session_notes::NotesCommand;
 use saya_agent::{AgentMode, ApprovalPolicy};
 use std::{fmt, str::FromStr};
 
@@ -140,6 +141,15 @@ pub enum SlashCommand {
     /// shows it through the shared renderer, `clear` empties it. The model
     /// owns the list's content; no per-task editing lives here.
     Tasks(Option<String>),
+    /// `/notes [set <text>|clear]` — the user's own notes on this session's
+    /// continuation record: bare or `show` displays them, `set <text>`
+    /// stores them (text verbatim: outer ends trimmed, interior spacing
+    /// kept), `clear` removes them. User guidance on the saved summary
+    /// only — never the model's, never an authority; separate from
+    /// `/preferences` (per worktree) and `/remember` (database knowledge).
+    /// Translated once to the same `NotesCommand` the shared `run_notes`
+    /// operation runs on both surfaces.
+    Notes(NotesCommand),
     Exit,
 }
 
@@ -391,6 +401,48 @@ fn parse_preferences(tail: &str) -> Result<PreferencesCommand, SlashParseError> 
     }
 }
 
+/// Parses the `/notes` tail: bare or `show` shows; `set <text>` keeps the
+/// text verbatim (outer ends trimmed, interior spacing intact); `clear`
+/// takes nothing. Every malformed form is a usage error naming its remedy.
+fn parse_notes(tail: &str) -> Result<NotesCommand, SlashParseError> {
+    const USAGE: &str = " (usage: /notes, /notes set <text>, /notes clear)";
+    if tail.is_empty() {
+        return Ok(NotesCommand::Show);
+    }
+    let (head, rest) = tail.split_once(char::is_whitespace).unwrap_or((tail, ""));
+    let rest = rest.trim();
+    match head {
+        "show" => {
+            if rest.is_empty() {
+                Ok(NotesCommand::Show)
+            } else {
+                Err(SlashParseError(format!(
+                    "notes show takes no argument{USAGE}"
+                )))
+            }
+        }
+        "set" => {
+            if rest.is_empty() {
+                return Err(SlashParseError(
+                    "notes set requires text: /notes set <text>".into(),
+                ));
+            }
+            Ok(NotesCommand::Set(rest.to_string()))
+        }
+        "clear" => {
+            if !rest.is_empty() {
+                return Err(SlashParseError(format!(
+                    "notes clear takes no argument{USAGE}"
+                )));
+            }
+            Ok(NotesCommand::Clear)
+        }
+        other => Err(SlashParseError(format!(
+            "unknown /notes subcommand: {other} (usage: /notes, /notes set <text>, /notes clear)"
+        ))),
+    }
+}
+
 pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashParseError> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
@@ -478,6 +530,15 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // `PreferencesCommand` the headless parser produces.
             let tail = trimmed.strip_prefix("/preferences").unwrap_or("").trim();
             SlashCommand::Preferences(parse_preferences(tail)?)
+        }
+        "notes" => {
+            // `/notes` is free text on the set form, so the tail keeps its
+            // interior whitespace verbatim — the `/sql` idiom, like
+            // `/preferences` — and the sub-word split happens once, here,
+            // mapping onto the same `NotesCommand` the shared `run_notes`
+            // operation runs on both surfaces.
+            let tail = trimmed.strip_prefix("/notes").unwrap_or("").trim();
+            SlashCommand::Notes(parse_notes(tail)?)
         }
         "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
         "doctor" => SlashCommand::Doctor,
@@ -1314,6 +1375,70 @@ mod tests {
         assert!(
             unknown.0.contains("unknown /preferences subcommand: bogus")
                 && unknown.0.contains("/preferences forget-all"),
+            "the unknown-subcommand error names every valid form: {unknown}"
+        );
+    }
+
+    /// The `/notes` grammar: bare and `show` show, `set <text>` keeps the
+    /// text verbatim (outer ends trimmed, interior spacing intact), `clear`
+    /// takes nothing.
+    #[test]
+    fn notes_grammar_parses_every_form() {
+        use crate::interactive::session_notes::NotesCommand;
+        assert_eq!(
+            parse_slash_command("/notes"),
+            Ok(Some(SlashCommand::Notes(NotesCommand::Show)))
+        );
+        assert_eq!(
+            parse_slash_command("/notes show"),
+            Ok(Some(SlashCommand::Notes(NotesCommand::Show)))
+        );
+        assert_eq!(
+            parse_slash_command("/notes clear"),
+            Ok(Some(SlashCommand::Notes(NotesCommand::Clear)))
+        );
+        assert_eq!(
+            parse_slash_command("/notes set remember the failing query"),
+            Ok(Some(SlashCommand::Notes(NotesCommand::Set(
+                "remember the failing query".into()
+            ))))
+        );
+    }
+
+    /// Notes text is free text: the tail keeps its interior whitespace
+    /// verbatim — the `/sql` idiom, like `/preferences` — and only the
+    /// outer ends are trimmed.
+    #[test]
+    fn notes_keeps_interior_spacing_verbatim() {
+        use crate::interactive::session_notes::NotesCommand;
+        assert_eq!(
+            parse_slash_command("/notes set  a  b   c  "),
+            Ok(Some(SlashCommand::Notes(NotesCommand::Set(
+                "a  b   c".into()
+            ))))
+        );
+    }
+
+    /// Every malformed form is a usage error naming its remedy; the
+    /// unknown-subcommand error lists every valid form.
+    #[test]
+    fn notes_malformed_forms_are_usage_errors() {
+        let set_empty = parse_slash_command("/notes set").unwrap_err();
+        assert!(
+            set_empty
+                .0
+                .contains("notes set requires text: /notes set <text>"),
+            "{set_empty}"
+        );
+        let show_extra = parse_slash_command("/notes show extra").unwrap_err();
+        assert!(show_extra.0.contains("takes no argument"), "{show_extra}");
+        let clear_extra = parse_slash_command("/notes clear now").unwrap_err();
+        assert!(clear_extra.0.contains("takes no argument"), "{clear_extra}");
+        let unknown = parse_slash_command("/notes bogus").unwrap_err();
+        assert!(
+            unknown.0.contains("unknown /notes subcommand: bogus")
+                && unknown.0.contains("/notes set <text>")
+                && unknown.0.contains("/notes clear"),
             "the unknown-subcommand error names every valid form: {unknown}"
         );
     }

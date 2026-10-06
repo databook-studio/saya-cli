@@ -49,6 +49,7 @@ mod session_emit;
 // definitions so the parameter schemas cannot drift.
 pub(crate) mod session_file_definitions;
 mod session_loop;
+pub(crate) mod session_notes;
 pub(crate) mod session_paths;
 // `/allow` and `/grants`: the session grant store's one behaviour, shared
 // by the headless loop and the TUI dispatch.
