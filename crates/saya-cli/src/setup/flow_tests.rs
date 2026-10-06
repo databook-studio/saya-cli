@@ -833,3 +833,319 @@ fn review_prints_the_full_text_for_a_new_file() {
     );
     let _ = fs::remove_dir_all(dir);
 }
+
+// ------------------------------------------- provider key reference rules ----
+
+/// Completes a provider-only script: skip the database (8), decline the
+/// provider probe, confirm the write.
+fn provider_tail(script_head: &str) -> String {
+    format!("{script_head}8\nn\ny\n")
+}
+
+/// The config.toml the flow wrote, or a panic that shows the flow output.
+fn written_config(dir: &Path, out: &str) -> String {
+    fs::read_to_string(dir.join("config.toml"))
+        .unwrap_or_else(|error| panic!("config.toml was written: {error}; output:\n{out}"))
+}
+
+fn key_flow(dir: &Path, script: &str) -> (i32, String) {
+    run_flow(
+        dir,
+        script,
+        instant_probes(&Arc::new(Mutex::new(Vec::new())), true, true),
+    )
+}
+
+/// A cloud provider suggests exactly its own conventional key NAME; a blank
+/// answer accepts it; the written reference is a name, never a value.
+#[test]
+fn openai_suggests_its_own_key_name_and_a_blank_answer_accepts_it() {
+    let dir = temp_dir("key-openai");
+    let (code, out) = key_flow(&dir, &provider_tail("2\n\n\n"));
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("API key environment variable name [OPENAI_API_KEY] (never the key itself): "),
+        "{out}"
+    );
+    assert!(
+        out.contains("OPENAI_API_KEY is not set.")
+            || out.contains("OPENAI_API_KEY is currently set."),
+        "the presence line names the variable only: {out}"
+    );
+    let config = written_config(&dir, &out);
+    assert!(config.contains("provider = \"openai\""), "{config}");
+    assert!(
+        config.contains("api_key = { env = \"OPENAI_API_KEY\" }"),
+        "{config}"
+    );
+    assert!(
+        !config.contains("base_url"),
+        "openai carries no base URL: {config}"
+    );
+    assert!(
+        !config.contains("api_key = \""),
+        "never an inline value: {config}"
+    );
+    assert!(!out.contains("sk-"), "no secret-looking value shown: {out}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Anthropic and Gemini each suggest only their own name, never another
+/// provider's.
+#[test]
+fn anthropic_and_gemini_suggest_their_own_names() {
+    for (choice, provider, name, others) in [
+        (
+            "4",
+            "anthropic",
+            "ANTHROPIC_API_KEY",
+            ["OPENAI_API_KEY", "GEMINI_API_KEY"],
+        ),
+        (
+            "5",
+            "gemini",
+            "GEMINI_API_KEY",
+            ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+        ),
+    ] {
+        let dir = temp_dir(&format!("key-{provider}"));
+        let (code, out) = key_flow(&dir, &provider_tail(&format!("{choice}\n\n\n")));
+        assert_eq!(code, 0, "{provider}: {out}");
+        assert!(
+            out.contains(&format!(
+                "API key environment variable name [{name}] (never the key itself): "
+            )),
+            "{provider}: {out}"
+        );
+        for other in others {
+            assert!(
+                !out.contains(other),
+                "{provider} never shows {other}: {out}"
+            );
+        }
+        let config = written_config(&dir, &out);
+        assert!(
+            config.contains(&format!("provider = \"{provider}\"")),
+            "{config}"
+        );
+        assert!(
+            config.contains(&format!("api_key = {{ env = \"{name}\" }}")),
+            "{config}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// A compatible endpoint gets no suggested name and a blank answer skips the
+/// key entirely: no reference, no presence line.
+#[test]
+fn a_compatible_endpoint_gets_no_suggested_key_and_a_blank_answer_skips_it() {
+    let dir = temp_dir("key-compat-blank");
+    let (code, out) = key_flow(
+        &dir,
+        &provider_tail("3\n\nhttps://compat.example.com/v1\n\n"),
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("API key environment variable name (blank to skip; never the key itself): "),
+        "{out}"
+    );
+    assert!(
+        !out.contains("API key environment variable name ["),
+        "no bracketed suggestion for a compatible endpoint: {out}"
+    );
+    assert!(
+        !out.contains(" is not set.") && !out.contains(" is currently set."),
+        "a skipped key prints no presence line: {out}"
+    );
+    assert!(!out.contains("OPENAI_API_KEY"), "{out}");
+    let config = written_config(&dir, &out);
+    assert!(
+        config.contains("base_url = \"https://compat.example.com/v1\""),
+        "{config}"
+    );
+    assert!(
+        !config.contains("api_key"),
+        "a blank answer skips the key: {config}"
+    );
+    assert!(!config.contains("OPENAI_API_KEY"), "{config}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// A compatible endpoint writes exactly the env NAME the user typed.
+#[test]
+fn a_compatible_endpoint_uses_only_the_name_the_user_types() {
+    let dir = temp_dir("key-compat-named");
+    let (code, out) = key_flow(
+        &dir,
+        &provider_tail("3\n\nhttps://compat.example.com/v1\nSAYA_TEST_UNSET_KEY_7F3A91\n"),
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("SAYA_TEST_UNSET_KEY_7F3A91 is not set."),
+        "the presence line reports the name only: {out}"
+    );
+    let config = written_config(&dir, &out);
+    assert!(
+        config.contains("api_key = { env = \"SAYA_TEST_UNSET_KEY_7F3A91\" }"),
+        "{config}"
+    );
+    assert!(
+        config.contains("base_url = \"https://compat.example.com/v1\""),
+        "{config}"
+    );
+    assert!(!config.contains("OPENAI_API_KEY"), "{config}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Between the key prompt and the next prompt the flow prints exactly the
+/// presence sentence — no echoed value, nothing else.
+#[test]
+fn the_presence_line_never_prints_a_value() {
+    let dir = temp_dir("key-presence");
+    let (code, out) = key_flow(
+        &dir,
+        &provider_tail("3\n\nhttps://compat.example.com/v1\nSAYA_TEST_UNSET_KEY_7F3A91\n"),
+    );
+    assert_eq!(code, 0, "{out}");
+    let prompt = "API key environment variable name (blank to skip; never the key itself): ";
+    let start = out.find(prompt).expect("the key prompt is shown") + prompt.len();
+    let end = out
+        .find("Choose a database:")
+        .expect("the database menu follows the provider");
+    assert_eq!(
+        &out[start..end],
+        "SAYA_TEST_UNSET_KEY_7F3A91 is not set.\n",
+        "only the name and the presence sentence sit between the prompts"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// A malformed name is refused once and re-asked; three invalid answers burn
+/// the bounded retry and cancel with nothing written.
+#[test]
+fn a_malformed_key_name_is_refused_and_reasked() {
+    let dir = temp_dir("key-malformed");
+    let (code, out) = key_flow(
+        &dir,
+        &provider_tail("3\n\nhttps://compat.example.com/v1\nmy-key\nSAYA_TEST_UNSET_KEY_7F3A91\n"),
+    );
+    assert_eq!(code, 0, "{out}");
+    let reason = "api key environment variable name \"my-key\" must match [A-Z_][A-Z0-9_]{0,63}";
+    assert_eq!(
+        out.matches(reason).count(),
+        1,
+        "the refusal is said once, then the prompt is asked again: {out}"
+    );
+    assert!(
+        out.contains("SAYA_TEST_UNSET_KEY_7F3A91 is not set."),
+        "the flow continues after the refusal: {out}"
+    );
+    let config = written_config(&dir, &out);
+    assert!(
+        config.contains("api_key = { env = \"SAYA_TEST_UNSET_KEY_7F3A91\" }"),
+        "{config}"
+    );
+    let _ = fs::remove_dir_all(dir);
+
+    let dir = temp_dir("key-malformed-cancel");
+    let (code, out) = key_flow(
+        &dir,
+        "3\n\nhttps://compat.example.com/v1\nmy-key\nmy-key\nmy-key\n",
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("No files were changed."), "{out}");
+    assert!(
+        !dir.join("config.toml").exists(),
+        "a cancelled flow writes nothing"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Ollama is local: no key question at all, and no key in the written section.
+#[test]
+fn ollama_never_asks_for_a_key() {
+    let dir = temp_dir("key-ollama");
+    let (code, out) = key_flow(&dir, &provider_tail("1\n\n\n"));
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("API key environment variable name"), "{out}");
+    let config = written_config(&dir, &out);
+    assert!(config.contains("provider = \"ollama\""), "{config}");
+    assert!(
+        config.contains("base_url = \"http://localhost:11434\""),
+        "{config}"
+    );
+    assert!(!config.contains("api_key"), "{config}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// Whatever the wizard collects, an existing config.toml keeps its bytes: the
+/// new endpoint's section goes into the note only, without the old key.
+#[test]
+fn an_existing_config_is_never_rewritten_whatever_provider_is_chosen() {
+    let existing =
+        b"[ai]\nprovider = \"openai\"\nmodel = \"gpt-4o-mini\"\napi_key = { env = \"OPENAI_API_KEY\" }\n"
+            .to_vec();
+
+    let dir = temp_dir("config-kept-blank");
+    fs::write(dir.join("config.toml"), &existing).unwrap();
+    let (code, out) = key_flow(
+        &dir,
+        &provider_tail("3\n\nhttps://compat.example.com/v1\n\n"),
+    );
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(
+        fs::read(dir.join("config.toml")).unwrap(),
+        existing,
+        "the existing config bytes are never rewritten"
+    );
+    assert!(
+        out.contains("note:"),
+        "the section is offered as a note: {out}"
+    );
+    assert!(
+        out.contains("base_url = \"https://compat.example.com/v1\""),
+        "{out}"
+    );
+    assert!(
+        !out.contains("api_key"),
+        "the old key reference is not carried into the new endpoint's snippet: {out}"
+    );
+    assert!(!out.contains("OPENAI_API_KEY"), "{out}");
+    let _ = fs::remove_dir_all(dir);
+
+    let dir = temp_dir("config-kept-named");
+    fs::write(dir.join("config.toml"), &existing).unwrap();
+    let (code, out) = key_flow(
+        &dir,
+        &provider_tail("3\n\nhttps://compat.example.com/v1\nSAYA_TEST_UNSET_KEY_7F3A91\n"),
+    );
+    assert_eq!(code, 0, "{out}");
+    assert_eq!(fs::read(dir.join("config.toml")).unwrap(), existing);
+    assert!(out.contains("note:"), "{out}");
+    assert!(
+        out.contains("api_key = { env = \"SAYA_TEST_UNSET_KEY_7F3A91\" }"),
+        "the note carries the name the user typed: {out}"
+    );
+    assert!(!out.contains("OPENAI_API_KEY"), "{out}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+/// The review shows the exact `api_key` reference before the write is
+/// confirmed, so the user sees what will land in config.toml.
+#[test]
+fn the_review_shows_the_exact_reference_it_will_write() {
+    let dir = temp_dir("key-review");
+    let (code, out) = key_flow(&dir, &provider_tail("2\n\n\n"));
+    assert_eq!(code, 0, "{out}");
+    let confirmed = out
+        .find("Write these files?")
+        .expect("the confirm is asked");
+    let review = &out[..confirmed];
+    assert!(
+        review.contains("api_key = { env = \"OPENAI_API_KEY\" }"),
+        "the user sees the exact reference before writing: {review}"
+    );
+    assert!(review.contains("provider = \"openai\""), "{review}");
+    let _ = fs::remove_dir_all(dir);
+}
