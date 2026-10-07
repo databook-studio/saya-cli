@@ -116,7 +116,7 @@ enabled silently.
 | Deterministic file/check facts from tool activity | saved record | `crates/saya-cli/src/interactive/session_continuation/record.rs` |
 | Session notes | `/notes [set\|clear]` | `crates/saya-cli/src/interactive/session_notes.rs` |
 | Rotation successor + parent link | `/rotate` | `crates/saya-cli/src/interactive/session_rotate.rs`; `crates/saya-store/src/session_lifecycle/successor.rs` |
-| Sessions list/delete, tombstones, lock coordination | `saya sessions list\|delete`, `/sessions list\|delete` | store `crates/saya-store/src/session_lifecycle/delete.rs`, `crates/saya-store/src/session_lifecycle/tombstone.rs`; lock `crates/saya-harness/src/session_lifecycle.rs`; CLI `crates/saya-cli/src/commands/sessions/operations.rs` |
+| Sessions list/delete, tombstones, lock coordination | `saya sessions list\|delete`, `/sessions list\|delete` | store `crates/saya-store/src/session_lifecycle/delete.rs`, `crates/saya-store/src/session_lifecycle/tombstone.rs`; lock `crates/saya-harness/src/session_lifecycle.rs`; CLI `crates/saya-cli/src/commands/saved_sessions/operations.rs` |
 | Capacity report and near-limit warning | every save | `crates/saya-store/src/session_lifecycle.rs` |
 | Digest-guarded create/replace/append, guarded removal | `workspace_write`, `workspace_edit` | harness `crates/saya-harness/src/workspace/guarded_write.rs`, `crates/saya-harness/src/workspace/patch.rs`, `crates/saya-harness/src/workspace/commit_gate.rs`; adapters `crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs`, `crates/saya-cli/src/agent/tools/database_tools/workspace_edit.rs` |
 | Checkpoint capture around direct edits | file tools behind `/recovery on` | `crates/saya-cli/src/agent/tools/database_tools/checkpoint/mod.rs` |

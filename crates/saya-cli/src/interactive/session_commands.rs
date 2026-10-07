@@ -15,11 +15,12 @@ pub(crate) fn sessions_list_text(
     store: &FsSessionStore,
     sessions_root: &Path,
 ) -> Result<String, String> {
-    let listing = super::session_resume::block_on(crate::commands::sessions::list_sessions(store))
-        .map_err(|error| format!("could not list saved sessions: {error}"))?;
-    Ok(crate::commands::sessions::render_listing(
+    let listing =
+        super::session_resume::block_on(crate::commands::saved_sessions::list_sessions(store))
+            .map_err(|error| format!("could not list saved sessions: {error}"))?;
+    Ok(crate::commands::saved_sessions::render_listing(
         &listing,
-        crate::commands::sessions::unix_ms_now(),
+        crate::commands::saved_sessions::unix_ms_now(),
         sessions_root,
     ))
 }
@@ -37,13 +38,13 @@ pub(crate) fn sessions_delete_text(
     id: &str,
     current_session_id: Option<&str>,
 ) -> (bool, String) {
-    let outcome = crate::commands::sessions::delete_saved_session(
+    let outcome = crate::commands::saved_sessions::delete_saved_session(
         store,
         sessions_root,
         id,
         current_session_id,
     );
-    let (code, message) = crate::commands::sessions::render_delete(&outcome, id);
+    let (code, message) = crate::commands::saved_sessions::render_delete(&outcome, id);
     (code == 0, message)
 }
 
