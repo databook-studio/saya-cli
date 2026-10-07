@@ -46,6 +46,13 @@ pub struct DownloadCall<'a> {
     pub workspace: &'a Workspace,
     /// The workspace-relative destination.
     pub destination: &'a str,
+    /// The destination precondition, supplied per call: `None` is
+    /// create-if-absent — an existing destination refuses before any
+    /// network I/O and again at publication; `Some(sha256)` replaces only a
+    /// destination whose current bytes hash to it, judged at the rename. A
+    /// partial's sidecar proves only the partial's own URL, bytes, and
+    /// digest — it never grants replacement authority.
+    pub expected_destination_sha256: Option<&'a str>,
     /// The URL to download.
     pub url: &'a str,
     /// The per-attempt and per-file bounds.
@@ -93,6 +100,12 @@ pub async fn http_download_cancellable(
         Some(meta) => resume::verify_resume(call.workspace, call.destination, meta)?,
         None => None,
     };
+    // Fail-fast, best-effort — the publication guard stays authoritative.
+    super::download_guard::refuse_create_over_existing(
+        call.workspace,
+        call.destination,
+        call.expected_destination_sha256,
+    )?;
     let range_start = plan.as_ref().map(|plan| plan.meta.len);
     let mut url = first;
     let mut hops = 0usize;
@@ -199,7 +212,11 @@ pub async fn http_download_cancellable(
             return Err(DownloadError::Cancelled);
         }
         let digest = partial::hex(session.hasher.finalize().as_slice());
-        partial::promote(call.workspace, call.destination)?;
+        partial::promote(
+            call.workspace,
+            call.destination,
+            call.expected_destination_sha256,
+        )?;
         return Ok(DownloadOutcome {
             destination: call.destination.to_owned(),
             bytes: session.total,
@@ -225,6 +242,8 @@ pub async fn http_download(
         transport,
         workspace,
         destination,
+        // Create-only: this legacy wrapper carries no destination digest.
+        expected_destination_sha256: None,
         url,
         limits,
         budget,

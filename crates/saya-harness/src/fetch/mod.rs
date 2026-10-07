@@ -26,6 +26,7 @@ pub mod budget;
 pub mod definition;
 pub mod download;
 mod download_error;
+mod download_guard;
 mod download_limits;
 pub mod limits;
 pub mod policy;

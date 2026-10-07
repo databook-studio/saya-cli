@@ -134,6 +134,8 @@ impl FetchTools {
             transport: self.transport.as_ref(),
             workspace,
             destination: &destination,
+            // Create-only: the tool lane carries no destination digest yet.
+            expected_destination_sha256: None,
             url: &url,
             limits: self.download_limits,
             budget: &self.budget,
