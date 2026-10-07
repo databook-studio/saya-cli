@@ -22,10 +22,11 @@ use saya_agent::{
     ChatRequest, ChatResponse, ProviderError, ProviderEvent, ProviderStream, ToolCall, ToolError,
     ToolExecutor, run_agent_with_sink,
 };
+use saya_harness::HarnessError;
 use saya_harness::fetch::{
-    DownloadBudget, DownloadError, DownloadLimits, FetchBody, FetchDestination, FetchPolicy,
-    FetchRefusal, FetchRequest, FetchTransport, FetchTransportError, WireResponse, http_download,
-    http_download_definition,
+    DownloadBudget, DownloadCall, DownloadError, DownloadLimits, FetchBody, FetchDestination,
+    FetchPolicy, FetchRefusal, FetchRequest, FetchTransport, FetchTransportError, WireResponse,
+    http_download, http_download_cancellable, http_download_definition,
 };
 use saya_harness::workspace::Workspace;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -460,12 +461,11 @@ fn sidecar_json(root: &std::path::Path) -> serde_json::Value {
 /// identity checks for an appended part and its promotion. Publication is
 /// create-only absent an explicit destination digest, so a pre-existing
 /// destination refuses the promotion: the old content, the completed part,
-/// and its sidecar all stay in place for an explicit retry.
+/// and its sidecar all stay in place for an explicit retry — which carries
+/// the destination's observed digest and replaces it.
 #[cfg(windows)]
 #[tokio::test]
 async fn windows_resume_refuses_an_existing_destination_and_keeps_the_completed_part() {
-    use saya_harness::HarnessError;
-
     let content: Vec<u8> = (0..40u8).collect();
     let (root, workspace) = workspace("windows-identity");
     std::fs::create_dir_all(root.join("downloads")).unwrap();
@@ -525,6 +525,365 @@ async fn windows_resume_refuses_an_existing_destination_and_keeps_the_completed_
         "the completed part stays for an explicit retry"
     );
     assert!(root.join(SIDECAR).exists(), "the sidecar stays too");
+
+    // The explicit retry: the destination's observed digest replaces it.
+    // The recorded prefix is kept, the unaccounted tail re-fetched, and the
+    // completed part promoted over the destination at last.
+    let observed = digest(b"old destination");
+    let policy = policy();
+    let target = url("/doc");
+    let outcome = http_download_cancellable(DownloadCall {
+        policy: &policy,
+        transport: &net,
+        workspace: &workspace,
+        destination: DEST,
+        expected_destination_sha256: Some(&observed),
+        url: &target,
+        limits: DownloadLimits::default(),
+        budget: &DownloadBudget::default(),
+        cancellation: &CancellationToken::new(),
+    })
+    .await
+    .expect("the explicit replacement with the observed digest succeeds");
+    assert_eq!(outcome.bytes, 40);
+    assert_eq!(std::fs::read(root.join(DEST)).unwrap(), content);
+    assert!(!root.join(SIDECAR).exists(), "the sidecar is cleared");
+    assert!(!root.join(PART).exists());
+}
+
+// --- destination intent: the per-call precondition ---------------------------
+
+/// A create-only download over a destination that already exists is refused
+/// before anything streams: no request is made, no part and no sidecar
+/// appear, and the existing destination is untouched. The publication guard
+/// would refuse the same call after a full body had streamed — the
+/// pre-flight refuses it before the first byte is spent.
+#[tokio::test]
+async fn a_create_only_download_over_an_existing_destination_refuses_before_anything_streams() {
+    let (root, workspace) = workspace("preexisting");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    std::fs::write(root.join(DEST), b"old destination").unwrap();
+    let content = b"fresh body".to_vec();
+    let site = LocalSite::spawn(vec![("/doc", route(&content, 4))]).await;
+    let net = transport(&site);
+
+    let error = http_download(
+        &policy(),
+        &net,
+        &workspace,
+        DEST,
+        &url("/doc"),
+        DownloadLimits::default(),
+        &DownloadBudget::default(),
+    )
+    .await
+    .expect_err("create-only over an existing destination refuses");
+    assert!(
+        matches!(
+            error,
+            DownloadError::Workspace(HarnessError::AlreadyExists { ref path }) if path == DEST
+        ),
+        "typed refusal: {error:?}"
+    );
+    assert_eq!(
+        std::fs::read(root.join(DEST)).unwrap(),
+        b"old destination",
+        "the existing destination is untouched"
+    );
+    assert!(
+        site.served().is_empty(),
+        "refused before any network I/O: {:?}",
+        site.served()
+    );
+    let downloads: Vec<String> = std::fs::read_dir(root.join("downloads"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        downloads,
+        vec!["doc.bin".to_owned()],
+        "no part and no sidecar were created: {downloads:?}"
+    );
+}
+
+/// A create-only retry over a destination that appeared while a valid
+/// partial sat interrupted: the pre-flight refuses before any network I/O,
+/// and the refused attempt leaves the destination, the partial, and its
+/// sidecar exactly as they were — for an explicit retry that carries the
+/// destination's digest.
+#[tokio::test]
+async fn a_create_only_retry_over_a_destination_that_appeared_refuses_and_keeps_the_partial() {
+    let content: Vec<u8> = (0..40u8).collect();
+    let (root, workspace) = workspace("appeared");
+    let site = LocalSite::spawn(vec![(
+        "/doc",
+        Route {
+            abort_after: Some(16),
+            ..route(&content, 8)
+        },
+    )])
+    .await;
+    let net = transport(&site);
+
+    // Attempt 1: killed mid-body — a partial and its sidecar remain, and
+    // the destination is still absent.
+    let error = http_download(
+        &policy(),
+        &net,
+        &workspace,
+        DEST,
+        &url("/doc"),
+        DownloadLimits::default(),
+        &DownloadBudget::default(),
+    )
+    .await
+    .expect_err("the killed transfer is a transport failure");
+    assert!(matches!(error, DownloadError::Transport(_)), "{error:?}");
+    assert_eq!(std::fs::read(root.join(PART)).unwrap(), content[..16]);
+    assert!(!root.join(DEST).exists());
+
+    // The destination appears between attempts; the retry carries no
+    // digest, so it can only create — and something is already there.
+    site.routes.lock().expect("routes poisoned")[0]
+        .1
+        .abort_after = None;
+    std::fs::write(root.join(DEST), b"appeared meanwhile").unwrap();
+
+    let error = http_download(
+        &policy(),
+        &net,
+        &workspace,
+        DEST,
+        &url("/doc"),
+        DownloadLimits::default(),
+        &DownloadBudget::default(),
+    )
+    .await
+    .expect_err("create-only over the appeared destination refuses");
+    assert!(
+        matches!(
+            error,
+            DownloadError::Workspace(HarnessError::AlreadyExists { ref path }) if path == DEST
+        ),
+        "typed refusal: {error:?}"
+    );
+    assert_eq!(
+        site.served(),
+        vec!["/doc".to_owned()],
+        "the retry made no request of its own"
+    );
+    assert_eq!(
+        std::fs::read(root.join(DEST)).unwrap(),
+        b"appeared meanwhile",
+        "the appeared destination is untouched"
+    );
+    assert_eq!(
+        std::fs::read(root.join(PART)).unwrap(),
+        content[..16],
+        "the valid partial stays for an explicit retry"
+    );
+    let sidecar = sidecar_json(&root);
+    assert_eq!(sidecar["len"], 16);
+    assert_eq!(sidecar["sha256"], digest(&content[..16]));
+}
+
+/// The caller's destination intent rides every attempt: the destination is
+/// replaced between a killed attempt and its resume, so the resume carrying
+/// the OLD digest streams to completion and is refused at publication
+/// (`ContentChanged` — the stale digest no longer matches the destination's
+/// current bytes), leaving the changed destination and the partial both in
+/// place; the retry with the destination's real digest re-fetches the
+/// unaccounted tail, replaces the destination, and clears the sidecar.
+#[tokio::test]
+async fn a_destination_changed_between_attempts_refuses_the_stale_digest_then_the_retry_replaces() {
+    let content: Vec<u8> = (0..40u8).collect();
+    let (root, workspace) = workspace("stale-digest");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    std::fs::write(root.join(DEST), b"old destination").unwrap();
+    let old_digest = digest(b"old destination");
+    let site = LocalSite::spawn(vec![(
+        "/doc",
+        Route {
+            abort_after: Some(16),
+            ..route(&content, 8)
+        },
+    )])
+    .await;
+    let net = transport(&site);
+    let policy = policy();
+    let target = url("/doc");
+    let budget = DownloadBudget::default();
+    let token = CancellationToken::new();
+
+    // Attempt 1: the caller holds the destination's current digest and the
+    // transfer is killed mid-body — a partial and its sidecar remain.
+    let error = http_download_cancellable(DownloadCall {
+        policy: &policy,
+        transport: &net,
+        workspace: &workspace,
+        destination: DEST,
+        expected_destination_sha256: Some(&old_digest),
+        url: &target,
+        limits: DownloadLimits::default(),
+        budget: &budget,
+        cancellation: &token,
+    })
+    .await
+    .expect_err("the killed transfer is a transport failure");
+    assert!(matches!(error, DownloadError::Transport(_)), "{error:?}");
+    assert_eq!(std::fs::read(root.join(PART)).unwrap(), content[..16]);
+    assert_eq!(
+        std::fs::read(root.join(DEST)).unwrap(),
+        b"old destination",
+        "the unchanged destination survives the killed attempt"
+    );
+
+    // Between attempts the destination is replaced by something else.
+    site.routes.lock().expect("routes poisoned")[0]
+        .1
+        .abort_after = None;
+    std::fs::write(root.join(DEST), b"changed elsewhere").unwrap();
+    let real_digest = digest(b"changed elsewhere");
+
+    // Attempt 2: the stale digest streams to completion and is refused at
+    // publication — the changed destination and the partial both stay.
+    let error = http_download_cancellable(DownloadCall {
+        policy: &policy,
+        transport: &net,
+        workspace: &workspace,
+        destination: DEST,
+        expected_destination_sha256: Some(&old_digest),
+        url: &target,
+        limits: DownloadLimits::default(),
+        budget: &budget,
+        cancellation: &token,
+    })
+    .await
+    .expect_err("the stale digest refuses at publication");
+    assert!(
+        matches!(
+            error,
+            DownloadError::Workspace(HarnessError::ContentChanged {
+                ref expected,
+                ref current,
+                ..
+            }) if expected == &old_digest && current == &real_digest
+        ),
+        "the refusal names both digests: {error:?}"
+    );
+    assert_eq!(
+        std::fs::read(root.join(DEST)).unwrap(),
+        b"changed elsewhere",
+        "the changed destination is untouched by the refused publication"
+    );
+    assert_eq!(
+        std::fs::read(root.join(PART)).unwrap(),
+        content,
+        "the completed partial stays for the explicit retry"
+    );
+    assert!(root.join(SIDECAR).exists(), "the sidecar stays too");
+
+    // Attempt 3: the destination's real digest replaces it — the recorded
+    // prefix is kept, the unaccounted tail re-fetched, the part promoted,
+    // and the sidecar cleared by the success alone.
+    let outcome = http_download_cancellable(DownloadCall {
+        policy: &policy,
+        transport: &net,
+        workspace: &workspace,
+        destination: DEST,
+        expected_destination_sha256: Some(&real_digest),
+        url: &target,
+        limits: DownloadLimits::default(),
+        budget: &budget,
+        cancellation: &token,
+    })
+    .await
+    .expect("the retry with the real digest replaces");
+    assert_eq!(outcome.bytes, 40);
+    assert_eq!(outcome.sha256, digest(&content));
+    assert_eq!(std::fs::read(root.join(DEST)).unwrap(), content);
+    assert!(!root.join(PART).exists() && !root.join(SIDECAR).exists());
+    assert_eq!(
+        site.ranges(),
+        vec![None, Some(16), Some(16)],
+        "each resume asked from the recorded offset"
+    );
+}
+
+/// An explicit destination digest replaces a matching destination in one
+/// fresh call: the publication guard hashes the destination's current
+/// bytes, the rename lands, and the sidecar this attempt created is cleared
+/// by the success alone.
+#[tokio::test]
+async fn an_explicit_matching_digest_replaces_the_destination_and_clears_the_sidecar() {
+    let content: Vec<u8> = (0..40u8).collect();
+    let (root, workspace) = workspace("replace");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    std::fs::write(root.join(DEST), b"old destination").unwrap();
+    let observed = digest(b"old destination");
+    let site = LocalSite::spawn(vec![("/doc", route(&content, 8))]).await;
+    let net = transport(&site);
+    let policy = policy();
+    let outcome = http_download_cancellable(DownloadCall {
+        policy: &policy,
+        transport: &net,
+        workspace: &workspace,
+        destination: DEST,
+        expected_destination_sha256: Some(&observed),
+        url: &url("/doc"),
+        limits: DownloadLimits::default(),
+        budget: &DownloadBudget::default(),
+        cancellation: &CancellationToken::new(),
+    })
+    .await
+    .expect("the matching digest replaces the destination");
+    assert_eq!(outcome.bytes, 40);
+    assert_eq!(outcome.sha256, digest(&content));
+    assert_eq!(std::fs::read(root.join(DEST)).unwrap(), content);
+    assert!(!root.join(SIDECAR).exists(), "the sidecar is cleared");
+    assert!(!root.join(PART).exists());
+}
+
+/// A digest grants no authority to create: a call carrying a destination
+/// digest over an absent destination streams to completion and is refused
+/// at publication (`NotFound`), with the valid partial and its sidecar left
+/// in place for a create-only retry — never a fresh file.
+#[tokio::test]
+async fn a_digest_over_a_missing_destination_refuses_and_keeps_the_partial() {
+    let content: Vec<u8> = (0..40u8).collect();
+    let (root, workspace) = workspace("digest-missing");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    let site = LocalSite::spawn(vec![("/doc", route(&content, 8))]).await;
+    let net = transport(&site);
+    let policy = policy();
+    let observed = digest(&content);
+    let error = http_download_cancellable(DownloadCall {
+        policy: &policy,
+        transport: &net,
+        workspace: &workspace,
+        destination: DEST,
+        expected_destination_sha256: Some(&observed),
+        url: &url("/doc"),
+        limits: DownloadLimits::default(),
+        budget: &DownloadBudget::default(),
+        cancellation: &CancellationToken::new(),
+    })
+    .await
+    .expect_err("a digest never authorizes creation");
+    assert!(
+        matches!(
+            error,
+            DownloadError::Workspace(HarnessError::NotFound { ref path }) if path == DEST
+        ),
+        "typed refusal: {error:?}"
+    );
+    assert!(!root.join(DEST).exists(), "nothing was created");
+    assert_eq!(
+        std::fs::read(root.join(PART)).unwrap(),
+        content,
+        "the completed partial stays for an explicit retry"
+    );
+    assert!(root.join(SIDECAR).exists());
 }
 
 // --- test 1: the budget trip pauses fail-safe, the partial is resumable -----
