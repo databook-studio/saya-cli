@@ -22,6 +22,19 @@ impl DatabaseTools {
         } else {
             None
         };
+        // The replacement precondition parses like `workspace_write`'s: an
+        // explicit null counts as absent (the create form). Validation has
+        // already typed a present non-null digest as a string and refused a
+        // digest without `save_to`; the parse stays fail-closed anyway.
+        let expected_digest = match arguments.get("expected_digest") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .ok_or(ToolError::ExpectedDigestNotString)?
+                    .to_owned(),
+            ),
+        };
         let sql = arguments
             .get("sql")
             .and_then(serde_json::Value::as_str)
@@ -62,16 +75,18 @@ impl DatabaseTools {
 
         let html = crate::chart::render_html(&result, &spec).map_err(ToolError::Chart)?;
         if let Some(path) = saved_path {
-            if html.len() > saya_harness::workspace::MAX_IO_BYTES {
-                return Err(ToolError::WorkspaceWrite(format!(
-                    "content is over the {}-byte workspace write bound",
-                    saya_harness::workspace::MAX_IO_BYTES
-                )));
-            }
-            workspace
-                .ok_or(ToolError::WorkspaceUnavailable)?
-                .write(path, html.as_bytes())
-                .map_err(|error| ToolError::WorkspaceWrite(error.to_string()))?;
+            // Publish through the guarded primitives `workspace_write` uses,
+            // BEFORE the temp copy and the browser open: a refused save opens
+            // nothing. No redaction-marker guard applies — the content is
+            // rendered from the query result, not model-supplied text — and
+            // no checkpoint capture (D5): a chart is a database-derived
+            // artifact, not a direct-file checkpoint.
+            super::chart_save::publish_chart_html(
+                workspace.ok_or(ToolError::WorkspaceUnavailable)?,
+                path,
+                html.as_bytes(),
+                expected_digest.as_deref(),
+            )?;
         }
         let mut chart = crate::chart::reserve_temp_chart().map_err(ToolError::Chart)?;
         chart.write_html(&html).map_err(ToolError::Chart)?;

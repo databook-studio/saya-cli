@@ -564,7 +564,9 @@ impl DatabaseTools {
                     `doughnut` for a category's share of a total, `scatter` for the relationship between two \
                     numeric columns. Optionally name the x (label) column, the y (value) column(s), and a \
                     title. The chart opens from a private temporary copy. When `save_to` is supplied, the same \
-                    HTML is also saved in the workspace and that relative path is returned."
+                    HTML is also saved in the workspace and that relative path is returned. \
+                    Saving over an existing file requires the `expected_digest` you observed by \
+                    reading that file first; without a digest an existing file is refused."
                         .into(),
                     read_only: false,
                 parameters: {
@@ -580,6 +582,13 @@ impl DatabaseTools {
                         properties["save_to"] = serde_json::json!({
                             "type": "string",
                             "description": "Optional workspace-relative destination for the chart HTML."
+                        });
+                        properties["expected_digest"] = serde_json::json!({
+                            "type": "string",
+                            "description": "Optional, only with save_to. Omit it to create the \
+                                file only: an existing file at the destination is refused. To \
+                                replace a file, read it first with workspace_read and pass the \
+                                digest you observed; never invent a digest."
                         });
                     }
                     serde_json::json!({
@@ -680,6 +689,7 @@ pub(super) fn validate_arguments(
                 "y",
                 "title",
                 "save_to",
+                "expected_digest",
             ][..],
             true,
         ),
@@ -707,6 +717,12 @@ pub(super) fn validate_arguments(
             .is_some_and(|value| !value.is_string())
     {
         return Err(ToolError::PathNotString);
+    }
+    // The chart save's digest precondition has its own typing (`chart_save`):
+    // a present non-null digest must be a string, and a digest without a
+    // string `save_to` is a refusal — there is no destination to guard.
+    if name == "render_chart" {
+        super::chart_save::validate_digest_arguments(object)?;
     }
     // Both required `workspace_write` arguments are strings; each names its
     // own typed error so the model can fix the right one. `expected_digest`
