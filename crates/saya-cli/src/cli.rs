@@ -119,10 +119,12 @@ pub struct GlobalOptions {
     /// Disable colored output (overrides the detected terminal capability).
     #[arg(long, global = true)]
     pub no_color: bool,
-    /// Colour palette for the TUI: `dark`, `light`, or `auto` (honour
-    /// `COLORFGBG`, falling back to dark when the terminal reports nothing).
-    #[arg(long, value_enum, default_value_t = ThemeArg::Auto, global = true)]
-    pub theme: ThemeArg,
+    /// Colour palette for the TUI: `dark`, `light`, or `auto`. Defaults to
+    /// the `[ui] theme` config setting, then `auto` (honour `COLORFGBG`,
+    /// falling back to dark when the terminal reports nothing). Absence of
+    /// the flag never overrides config; an explicit `--theme auto` does.
+    #[arg(long, value_enum, global = true)]
+    pub theme: Option<ThemeArg>,
     /// Show the model's chain-of-thought in the transcript as it streams.
     /// Off by default: thinking is verbose and restates database contents in
     /// prose. Display only — reasoning is never persisted to a session file.
