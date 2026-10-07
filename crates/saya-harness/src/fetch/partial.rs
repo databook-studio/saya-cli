@@ -139,12 +139,15 @@ pub(super) fn start_fresh(
     })
 }
 
-/// Promotes the completed part over the destination and clears the sidecar.
-/// The part and the destination are both re-anchored through the contained
-/// walk, so the promotion acts on the directories the walk validates.
+/// Promotes the completed part over the destination — create-if-absent; no
+/// destination digest is supplied — and clears the sidecar only after the
+/// promotion succeeds, so a refused publication leaves the completed part
+/// and its sidecar in place for an explicit retry. The part and the
+/// destination are both re-anchored through the contained walk, so the
+/// promotion acts on the directories the walk validates.
 pub(super) fn promote(workspace: &Workspace, destination: &str) -> Result<(), DownloadError> {
     workspace
-        .promote_download(&part_rel(destination), destination)
+        .promote_download(&part_rel(destination), destination, None)
         .map_err(DownloadError::from)?;
     remove_meta(workspace, destination)
 }

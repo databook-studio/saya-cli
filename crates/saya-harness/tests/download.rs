@@ -456,11 +456,16 @@ fn sidecar_json(root: &std::path::Path) -> serde_json::Value {
 }
 
 /// Windows preserves destination creation metadata across `rename` in some
-/// filesystems. A resumed download therefore exercises the handle identity
-/// checks for an overwritten final file, an appended part, and promotion.
+/// filesystems, and a resumed download therefore exercises the handle
+/// identity checks for an appended part and its promotion. Publication is
+/// create-only absent an explicit destination digest, so a pre-existing
+/// destination refuses the promotion: the old content, the completed part,
+/// and its sidecar all stay in place for an explicit retry.
 #[cfg(windows)]
 #[tokio::test]
-async fn windows_resume_overwrites_and_promotes_with_stable_file_identity() {
+async fn windows_resume_refuses_an_existing_destination_and_keeps_the_completed_part() {
+    use saya_harness::HarnessError;
+
     let content: Vec<u8> = (0..40u8).collect();
     let (root, workspace) = workspace("windows-identity");
     std::fs::create_dir_all(root.join("downloads")).unwrap();
@@ -491,7 +496,7 @@ async fn windows_resume_overwrites_and_promotes_with_stable_file_identity() {
     site.routes.lock().expect("routes poisoned")[0]
         .1
         .abort_after = None;
-    http_download(
+    let error = http_download(
         &policy(),
         &net,
         &workspace,
@@ -501,9 +506,25 @@ async fn windows_resume_overwrites_and_promotes_with_stable_file_identity() {
         &DownloadBudget::default(),
     )
     .await
-    .expect("resume appends and promotes over the old destination");
-
-    assert_eq!(std::fs::read(root.join(DEST)).unwrap(), content);
+    .expect_err("the promotion refuses an existing destination absent a digest");
+    assert!(
+        matches!(
+            error,
+            DownloadError::Workspace(HarnessError::AlreadyExists { .. })
+        ),
+        "create-only refusal, typed: {error:?}"
+    );
+    assert_eq!(
+        std::fs::read(root.join(DEST)).unwrap(),
+        b"old destination",
+        "the existing destination is untouched"
+    );
+    assert_eq!(
+        std::fs::read(root.join(PART)).unwrap(),
+        content,
+        "the completed part stays for an explicit retry"
+    );
+    assert!(root.join(SIDECAR).exists(), "the sidecar stays too");
 }
 
 // --- test 1: the budget trip pauses fail-safe, the partial is resumable -----
