@@ -3,8 +3,9 @@
 //! the value. The invariants under test: every key is a user-facing key in
 //! table order, the layer names the variable/flag for env/CLI sources, file
 //! layers name the path a user would edit, the ignored project overrides
-//! carry the pinned reason, and no secret value ever appears — in JSON or in
-//! the text rendering.
+//! carry the pinned reason, the three `[jobs.runner]` rows display distinct
+//! labels over their one grouped origin, and no secret value ever appears —
+//! in JSON or in the text rendering.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -74,17 +75,23 @@ fn a_default_config_reports_every_setting_as_built_in_default() {
         saya_config::user_facing_keys().len(),
         "every user-facing setting is explained"
     );
-    for setting in &explanation.settings {
+    for (setting, (_, lookup_key)) in explanation
+        .settings
+        .iter()
+        .zip(saya_config::user_facing_keys())
+    {
         assert_eq!(setting.layer, SettingSource::Default, "{:?}", setting.key);
         assert_eq!(setting.source, "built-in default", "{:?}", setting.key);
         assert_eq!(setting.file, None, "{:?}", setting.key);
         assert_eq!(setting.reference, None, "{:?}", setting.key);
-        // Drift guard for the diagnostics-field → dotted-key table: every
-        // explained key is one the merge funnels actually recorded, so a
-        // mistyped key cannot hide behind the Default fallback.
+        // Drift guard for the diagnostics-field → dotted-key table: the
+        // origin is looked up under the table's dotted key (the three
+        // runner rows display distinct labels but share the grouped
+        // `jobs.runner` origin), so a mistyped key cannot hide behind the
+        // Default fallback.
         assert!(
-            runtime.resolved.provenance.get(&setting.key).is_some(),
-            "no origin recorded for {:?}",
+            runtime.resolved.provenance.get(lookup_key).is_some(),
+            "no origin recorded for {lookup_key:?} (row {:?})",
             setting.key
         );
     }
@@ -94,12 +101,21 @@ fn a_default_config_reports_every_setting_as_built_in_default() {
 fn every_key_is_a_user_facing_key_in_table_order() {
     let runtime = runtime_from("", "", CliOverrides::default(), BTreeMap::new(), None);
     let explanation = explain(&runtime);
-    for (setting, (_, key)) in explanation
+    for (setting, (field, lookup_key)) in explanation
         .settings
         .iter()
         .zip(saya_config::user_facing_keys())
     {
-        assert_eq!(setting.key, *key, "order follows the user-facing table");
+        // The three `[jobs.runner]` fields share one grouped lookup key, so
+        // their rows display distinct labels; every other row displays the
+        // lookup key itself.
+        let expected = match *field {
+            "jobs_runner_allow" => "jobs.runner.allow",
+            "jobs_runner_program_dir" => "jobs.runner.program_dir",
+            "jobs_runner_timeout_seconds" => "jobs.runner.timeout_seconds",
+            _ => *lookup_key,
+        };
+        assert_eq!(setting.key, expected, "order follows the user-facing table");
     }
 }
 
@@ -252,6 +268,150 @@ fn the_serialized_shape_is_settings_plus_ignored_project_overrides() {
     assert!(settings[0]["value"].is_string());
     assert!(settings[0].get("file").is_none(), "{:?}", settings[0]);
     assert!(settings[0].get("reference").is_none(), "{:?}", settings[0]);
+}
+
+// --- the runner rows: distinct display labels over one grouped origin ---
+
+#[test]
+fn the_runner_rows_carry_three_distinct_labels_and_their_own_values() {
+    let runtime = runtime_from("", "", CliOverrides::default(), BTreeMap::new(), None);
+    let explanation = explain(&runtime);
+    let allow = entry(&explanation, "jobs.runner.allow");
+    let program_dir = entry(&explanation, "jobs.runner.program_dir");
+    let timeout = entry(&explanation, "jobs.runner.timeout_seconds");
+    assert_eq!(
+        [&allow.key, &program_dir.key, &timeout.key],
+        [
+            "jobs.runner.allow",
+            "jobs.runner.program_dir",
+            "jobs.runner.timeout_seconds"
+        ],
+        "three unique dotted keys, never the bare grouped key"
+    );
+    assert!(!explanation.settings.iter().any(|s| s.key == "jobs.runner"));
+    assert_eq!(allow.value, serde_json::json!([]));
+    assert_eq!(program_dir.value, serde_json::Value::Null);
+    assert_eq!(timeout.value, serde_json::json!(300));
+    for setting in [&allow, &program_dir, &timeout] {
+        assert_eq!(setting.layer, SettingSource::Default, "{:?}", setting.key);
+        assert_eq!(setting.source, "built-in default", "{:?}", setting.key);
+    }
+    // The origin is still recorded — and looked up — under the grouped
+    // `jobs.runner` key the resolver records; only the displayed labels
+    // changed.
+    assert!(
+        runtime.resolved.provenance.get("jobs.runner").is_some(),
+        "the grouped origin must stay recorded under jobs.runner"
+    );
+}
+
+#[test]
+fn a_user_set_runner_value_reports_its_real_origin_on_each_runner_row() {
+    let runtime = runtime_from(
+        "[jobs.runner]\ntimeout_seconds = 120\n",
+        "",
+        CliOverrides::default(),
+        BTreeMap::new(),
+        None,
+    );
+    let explanation = explain(&runtime);
+    for key in [
+        "jobs.runner.allow",
+        "jobs.runner.program_dir",
+        "jobs.runner.timeout_seconds",
+    ] {
+        let setting = entry(&explanation, key);
+        assert_eq!(setting.layer, SettingSource::UserFile, "{key}");
+        assert_eq!(setting.source, "user config file", "{key}");
+        assert_eq!(
+            setting.file.as_deref(),
+            Some(
+                crate::config::sources::user_config_dir()
+                    .join("config.toml")
+                    .to_str()
+                    .unwrap()
+            ),
+            "{key}"
+        );
+    }
+    let timeout = entry(&explanation, "jobs.runner.timeout_seconds");
+    assert_eq!(timeout.value, serde_json::json!(120));
+    // Grouped resolver behavior: the recorder records the section's origin
+    // as a whole, so every runner row carries it even for a sub-key that
+    // was not set — the display must not claim per-field precision the
+    // resolver never recorded.
+    let allow = entry(&explanation, "jobs.runner.allow");
+    assert_eq!(allow.value, serde_json::json!([]));
+    assert_eq!(allow.layer, SettingSource::UserFile);
+}
+
+#[test]
+fn a_project_set_runner_value_reports_the_project_file_on_each_runner_row() {
+    let project = PathBuf::from("/saya-test/project/.saya/config.toml");
+    let runtime = runtime_from(
+        "",
+        "[jobs.runner]\nprogram_dir = '/saya-test/runner-programs'\n",
+        CliOverrides::default(),
+        BTreeMap::new(),
+        Some(project.clone()),
+    );
+    let explanation = explain(&runtime);
+    for key in [
+        "jobs.runner.allow",
+        "jobs.runner.program_dir",
+        "jobs.runner.timeout_seconds",
+    ] {
+        let setting = entry(&explanation, key);
+        assert_eq!(setting.layer, SettingSource::ProjectFile, "{key}");
+        assert_eq!(setting.source, "project config file", "{key}");
+        assert_eq!(
+            setting.file.as_deref(),
+            Some(project.to_str().unwrap()),
+            "{key}"
+        );
+    }
+    let program_dir = entry(&explanation, "jobs.runner.program_dir");
+    assert_eq!(
+        program_dir.value,
+        serde_json::json!("/saya-test/runner-programs")
+    );
+}
+
+#[test]
+fn the_json_and_text_renderings_reflect_the_distinct_runner_labels_and_values() {
+    let runtime = runtime_from(
+        "[jobs.runner]\ntimeout_seconds = 120\n",
+        "",
+        CliOverrides::default(),
+        BTreeMap::new(),
+        None,
+    );
+    let explanation = explain(&runtime);
+    let value: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&explanation).unwrap()).unwrap();
+    let settings = value["settings"].as_array().unwrap();
+    for label in [
+        "jobs.runner.allow",
+        "jobs.runner.program_dir",
+        "jobs.runner.timeout_seconds",
+    ] {
+        assert!(settings.iter().any(|s| s["key"] == label), "{value}");
+    }
+    let timeout = settings
+        .iter()
+        .find(|s| s["key"] == "jobs.runner.timeout_seconds")
+        .unwrap();
+    assert_eq!(timeout["value"], serde_json::json!(120));
+    assert_eq!(timeout["source"], "user config file");
+    let rendered = text(&explanation);
+    for label in [
+        "jobs.runner.allow",
+        "jobs.runner.program_dir",
+        "jobs.runner.timeout_seconds",
+    ] {
+        assert!(rendered.contains(label), "{rendered}");
+    }
+    assert!(rendered.contains("user config file"), "{rendered}");
 }
 
 // --- the text rendering ---
