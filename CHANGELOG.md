@@ -344,6 +344,52 @@ list — leaving the review binding on the old revision, so the next run needs
 - **A missing instruction directory is treated as absent**, not an error.
 - **`saya sessions delete` clears a tombstone-only leftover** from an
   earlier interrupted deletion instead of leaving it pending forever.
+- **Headless launch grants now make their tools usable.** Under
+  `--approval-mode ask` with no prompt surface (`--turn-file`, piped
+  input, `--non-interactive`), a launch `--allow` token now un-hides the
+  matching tool family instead of being accepted and recorded while the
+  tools stayed hidden: `workspace-write` covers `workspace_write` and
+  `workspace_edit`; `scratch` covers `scratch_sql` (and `scratch_import`
+  when a workspace is bound); `fetch:<destination>` covers `http_fetch`
+  (and `http_download` when a workspace is bound); `runner:<program>` /
+  `interpreter:<program>` cover `run_program`; `command:<program>` covers
+  `run_command` where the host lane is composed. A grant only makes the
+  family available — every call is still judged on its own arguments, so
+  a fetch grant for one host does not allow another host, a command
+  grant names one program, and a call no grant covers is refused without
+  prompting and without hanging. `render_chart` and the cross-connection
+  fan-out SQL tool have no grant token; read-only, `never`, and Plan
+  mode never widen; grants last for the run (`--resume` does not restore
+  them); and `--approval-mode bypass` remains the way a headless run
+  uses effects no scope covers.
+- **`config.toml`'s `[ui] theme` is now honoured.** With no `--theme`
+  flag the configured theme applies; an explicit `--theme auto|dark|light`
+  overrides it (including `auto`); with neither, `auto`.
+  Previously the flag's built-in `auto` default was always applied, so
+  the setting did nothing.
+- **`--no-color` now resolves through normal configuration.**
+  `config show --explain` attributes `output.color` to
+  `command line (--no-color)`; previously the value was changed after
+  resolution and its source was misreported.
+- **`config show --explain` now lists the three runner settings by their
+  own names** — `jobs.runner.allow`, `jobs.runner.program_dir`, and
+  `jobs.runner.timeout_seconds` (previously all three were labelled
+  `jobs.runner`); the origin shown is that of the whole `[jobs.runner]`
+  section.
+- **Chart saves and downloads no longer silently overwrite an existing
+  file — a deliberate behaviour change.** `render_chart`'s optional
+  `save_to` and `http_download`'s destination are create-only by
+  default: an existing file stops a chart save before anything is
+  changed or opened, and an existing destination (file, directory, or
+  symlink) stops a download before any request is made (best effort). To replace, the
+  call passes `expected_digest` — the sha256 of the file's current
+  content as a fresh `workspace_read` reports it. A stale digest, a
+  digest for a missing file, and a non-matching digest (reported without
+  revealing the real one) are refused; a download's guard is checked
+  again at publication under the commit gate, and a refused download
+  leaves its completed partial and sidecar in place so a retry with the
+  right precondition does not re-download. Previously a save or a
+  download clobbered whatever was at the destination.
 
 ### Changed
 
@@ -368,12 +414,28 @@ list — leaving the review binding on the old revision, so the next run needs
   failed export. Writes were also tightened to atomic private-temp + rename
   with a 32 MiB encoded-output cap. The same overwrite discipline ships with
   `investigation export`, `/report`, and `investigation run --report`.
+- **Public API and compatibility notes.** `saya_cli::GlobalOptions::theme`
+  is now `Option<ThemeArg>` (was `ThemeArg`); `saya_config::CliOverrides`
+  gains `color: Option<ColorChoice>`; `saya_harness::fetch::DownloadCall`
+  gains `expected_destination_sha256: Option<&str>` (struct-literal
+  callers must add the field; `http_download`'s function signature is
+  unchanged and stays create-only by default); the `render_chart` and
+  `http_download` tool schemas gain an optional `expected_digest`; and
+  callers that relied on a chart save or a download silently replacing
+  an existing file now get a refusal and must pass the digest they
+  observed.
+- **`scripts/inspect-crate-packages.sh` packages and scans every
+  workspace crate without publishing** (a receipt with a per-crate
+  sha256); the `saya sessions` implementation directory moved internally,
+  with no user-visible change.
 
 ### Known limitations
 
-- `config.toml`'s `[ui] theme` has no effect today — the `--theme` flag's
-  built-in `auto` default is always applied; choose a palette per invocation
-  with `--theme dark|light` (a known 0.4.1 defect, not fixed here).
+- The chart-save and download guard is a stale-version check serialized
+  among Saya's own writers only, not an operating-system
+  compare-and-swap; and downloads and chart saves are outside
+  `/recovery`, which covers only the `workspace_write` and
+  `workspace_edit` file tools.
 - Agent `bounded_sql_query` captures are model-limited: exactly the at most
   50 rows the agent saw, never the full result — the snapshot success line
   says the full result may be larger and points at `/export --refresh`, and
