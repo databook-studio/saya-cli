@@ -8,6 +8,8 @@
 //! told one, so an invented or guessed digest can never look like a usable
 //! replacement.
 
+use super::super::download_error::DownloadError;
+use crate::HarnessError;
 use saya_agent::ToolError;
 use serde_json::Value;
 
@@ -44,6 +46,24 @@ pub(super) fn optional_digest_argument(
             }
             Ok(Some(digest.to_owned()))
         }
+    }
+}
+
+/// The download tool lane's typed-error mapping. A `ContentChanged` refusal
+/// — the destination no longer hashes to the `expected_digest` the caller
+/// supplied — is rewritten digest-free: its typed text carries both the
+/// supplied digest and the destination's real one, and a model that invented
+/// the expected value could read the real one straight back out and replace
+/// a file it never read. Every other failure keeps its exact typed text.
+pub(super) fn tool_error(error: DownloadError) -> ToolError {
+    match error {
+        DownloadError::Workspace(HarnessError::ContentChanged { .. }) => ToolError::Fetch(
+            "the destination's content does not match the expected_digest you supplied; \
+             read the file with workspace_read, pass the digest you observe, and retry; \
+             the destination was not changed"
+                .into(),
+        ),
+        error => ToolError::Fetch(error.to_string()),
     }
 }
 

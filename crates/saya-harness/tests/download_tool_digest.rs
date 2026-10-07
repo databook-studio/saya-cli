@@ -54,6 +54,18 @@ fn digest(content: &[u8]) -> String {
         .collect()
 }
 
+/// Whether `text` carries any run of 64 hex characters — a digest-shaped
+/// substring, however it arrived.
+fn contains_64_hex(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() >= 64
+        && (0..=bytes.len() - 64).any(|start| {
+            bytes[start..start + 64]
+                .iter()
+                .all(|byte| byte.is_ascii_hexdigit())
+        })
+}
+
 /// The step's adapter over a logged, canned transport: one 200 body, chunk
 /// by chunk, every GET's URL recorded.
 fn tools(net: LoggedNet, workspace: Arc<Workspace>, budget: DownloadBudget) -> FetchTools {
@@ -359,8 +371,16 @@ async fn a_stale_digest_refuses_and_leaves_the_destination_unchanged() {
         panic!("the lane's typed error, got: {error:?}")
     };
     assert!(
-        detail.contains("content changed"),
+        detail.contains("does not match the expected_digest"),
         "the guarded stale-digest refusal: {detail}"
+    );
+    assert!(
+        !detail.contains(&digest(&on_wire)),
+        "the refusal never echoes the supplied digest: {detail}"
+    );
+    assert!(
+        !detail.contains(&digest(&existing)),
+        "the refusal never leaks the destination's real digest: {detail}"
     );
     assert_eq!(on_disk(&workspace), existing, "the file is untouched");
     assert_eq!(
@@ -368,6 +388,41 @@ async fn a_stale_digest_refuses_and_leaves_the_destination_unchanged() {
         vec![url("/doc")],
         "the precondition is judged at the rename, after the one request"
     );
+}
+
+/// An invented digest — 64 zeros, observed from no read of anything — is
+/// refused at the guarded rename, and the refusal carries no 64-hex
+/// substring at all: nothing a model can mine to learn the destination's
+/// real digest and replace a file it never read.
+#[tokio::test]
+async fn an_invented_digest_cannot_learn_the_real_one() {
+    let on_wire = b"the body the call wanted".to_vec();
+    let existing = b"what is already there".to_vec();
+    let (_root, workspace) = workspace("invented");
+    seed_destination(&workspace, &existing);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let budget = DownloadBudget::default();
+    let net = LoggedNet::serve(&on_wire, 8, Arc::clone(&calls));
+    let tools = tools(net, workspace.clone(), budget);
+    let error = tools
+        .execute(
+            "http_download",
+            serde_json::json!({
+                "url": url("/doc"),
+                "destination": DEST,
+                "expected_digest": "0".repeat(64),
+            }),
+        )
+        .await
+        .expect_err("an invented digest is refused");
+    let ToolError::Fetch(detail) = error else {
+        panic!("the lane's typed error, got: {error:?}")
+    };
+    assert!(
+        !contains_64_hex(&detail),
+        "the refusal never carries a digest-shaped substring: {detail}"
+    );
+    assert_eq!(on_disk(&workspace), existing, "the file is untouched");
 }
 
 /// A digest over a missing destination is a refusal, never creation: the
