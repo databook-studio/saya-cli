@@ -273,7 +273,7 @@ fn floor_char_boundary(text: &str, mut idx: usize) -> usize {
 /// The download errors ride the same lane mapping as the fetch errors.
 impl From<DownloadError> for ToolError {
     fn from(error: DownloadError) -> Self {
-        ToolError::Fetch(error.to_string())
+        download_arguments::tool_error(error)
     }
 }
 
