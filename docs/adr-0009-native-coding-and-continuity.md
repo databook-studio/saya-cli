@@ -103,6 +103,30 @@ enabled silently.
     a failed reload preserves the old configuration, and authority-sensitive settings never
     change for a running session.
 
+### Chart saves and downloads share the replacement discipline
+
+Decisions 8 and 9 extend past the file tools: `render_chart`'s optional
+`save_to` and `http_download`'s destination are create-if-absent by
+default, replacing an existing target only when the call carries the
+`expected_digest` of its current content, as a fresh read reports it. The
+chart tool (`crates/saya-cli/src/agent/tools/database_tools/chart_save.rs`)
+refuses an existing file before anything is changed or opened; the download
+guard (`crates/saya-harness/src/fetch/download_guard.rs`, workspace-side
+check in `crates/saya-harness/src/workspace/download_guard.rs`) refuses an
+existing destination before any request (best effort) and re-checks the
+target at publication under the commit gate — stale-version checks
+serialized among saya's own writers, never an operating-system
+compare-and-swap. A refused download leaves the destination, its completed
+partial, and the sidecar in place so a retry with the right precondition
+does not re-download; the sidecar never grants permission to overwrite, and
+grants last for the run (`--resume` does not restore them), so nothing
+carried across sessions confers overwrite authority. Recovery is not
+extended to these artifacts — `/recovery` still covers exactly
+`workspace_write` and `workspace_edit` — and headless grant families
+(`crates/saya-cli/src/interactive/session_grant_families.rs`) make only the
+covered family available while per-call authority stays in the approval
+engine.
+
 ## What shipped
 
 | Capability | Surface | Where the shared operation lives |
