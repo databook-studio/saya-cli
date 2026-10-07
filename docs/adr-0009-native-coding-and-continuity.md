@@ -299,9 +299,15 @@ exercised by these acceptance tests; its behaviour is not claimed beyond
 
 ## Known limits
 
-- Headless `ask` and read-only sessions advertise no write-shaped tools;
-  headless coding needs `--approval-mode bypass` (and inherits bypass's
-  stated residual risks).
+- Headless `read-only` sessions advertise no write-shaped tools; headless
+  `ask` (no prompt surface: `--turn-file`, piped input, `--non-interactive`)
+  advertises only the tool families a launch `--allow` token covers
+  (`workspace-write`, `scratch`, `fetch:<destination>`,
+  `runner:`/`interpreter:<program>`, `command:<program>`), each call still
+  judged on its own arguments; `render_chart` and the cross-connection
+  fan-out SQL tool are never made available by a grant; effects no scope
+  covers still need `--approval-mode bypass` (which inherits bypass's stated
+  residual risks). Grants are per run and not restored by `--resume`.
 - A session record over 4 MiB cannot be loaded — the bounded read refuses
   at the cap. The 3 MiB notice and `/rotate` exist to keep sessions under
   it; the last good record stays resumable.
@@ -310,10 +316,6 @@ exercised by these acceptance tests; its behaviour is not claimed beyond
   session does.
 - `/reload` never changes data sharing, host commands, session denies, the
   jobs runner, theme, or thinking display in a running session.
-- `config.toml`'s `[ui] theme` has no effect today — the `--theme` flag's
-  default always wins. This is a known 0.4.1 defect, not fixed in 0.4.2;
-  `--theme dark|light` works.
-- `--no-color` is applied after colour resolution, without provenance.
 - SIGTERM terminates a scripted run immediately, without a `turn_result`;
   send SIGINT to cancel cleanly and get one.
 - Checkpoint capture is best-effort around the commit: a crash inside the
