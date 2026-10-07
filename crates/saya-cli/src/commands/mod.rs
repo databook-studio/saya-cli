@@ -13,7 +13,7 @@ pub(crate) mod query_input;
 // REPL, TUI and `--turn-file` all run through one `run_recovery`.
 pub(crate) mod recovery;
 pub(crate) mod run;
-pub(crate) mod sessions;
+pub(crate) mod saved_sessions;
 mod state;
 
 use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
@@ -67,7 +67,7 @@ pub async fn run(
         Command::Connection { command } => {
             connection::run(command, runtime, format, can_prompt, &state).await
         }
-        Command::Sessions { command } => sessions::run(command, format).await,
+        Command::Sessions { command } => saved_sessions::run(command, format).await,
         Command::Preferences { command } => preferences::run(command, format, &state).await,
         Command::Ask { prompt, file } => {
             query::ask(
