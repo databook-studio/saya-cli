@@ -1219,8 +1219,7 @@ arguments. A fetch grant for one host does not allow another host, a command
 grant names one program, and a call no grant covers is refused without
 prompting and without hanging. `render_chart` and the cross-connection
 fan-out SQL tool have no grant token and are never made available by a
-grant. `read-only` and `never` widen nothing, and neither does `saya run`'s
-single plan approval. Grants last for the process that launched them: a
+grant. `read-only`, `never` and Plan mode widen nothing. Grants last for the process that launched them: a
 resumed session (`--resume`) does not restore them. Where a headless
 session needs effects no scope covers, `--approval-mode bypass` is still
 the way.
