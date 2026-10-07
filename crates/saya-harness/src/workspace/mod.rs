@@ -56,6 +56,7 @@ pub mod contain;
 pub(crate) mod dirfd;
 #[cfg(unix)]
 pub(crate) mod download;
+mod download_guard;
 #[cfg(unix)]
 pub(crate) mod fd;
 mod guarded_remove;

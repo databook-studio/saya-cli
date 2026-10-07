@@ -626,51 +626,32 @@ impl Workspace {
         }
     }
 
-    /// Promotes a completed download part over `dest_rel` atomically: the
-    /// rename replaces whatever the path names without following it, and the
-    /// destination is re-verified afterwards (regular file, 0600, never
+    /// Promotes a completed download part over `dest_rel` atomically under
+    /// the destination guard (`download_guard`): create-if-absent with no
+    /// expected digest; with one, replace only when the destination's
+    /// current bytes hash to it — checked at the rename, under the commit
+    /// gate. Both part and destination are anchored to the walked
+    /// descriptors (unix) or resolved by the contained walk (elsewhere), and
+    /// the destination is re-verified afterwards (regular file, 0600, never
     /// executable, still the inode that was renamed) so a completed download
-    /// is never pretended onto a swapped path. Both part and destination are
-    /// anchored to the walked descriptors, so the rename acts on the
-    /// directories the walk validated.
+    /// is never pretended onto a swapped path. Every refusal leaves the part
+    /// in place.
     pub(crate) fn promote_download(
         &self,
         part_rel: &str,
         dest_rel: &str,
+        expected_destination_sha256: Option<&str>,
     ) -> Result<(), HarnessError> {
         #[cfg(unix)]
-        return super::download::promote(self, part_rel, dest_rel);
+        return super::download::promote(self, part_rel, dest_rel, expected_destination_sha256);
 
         #[cfg(not(unix))]
-        {
-            let dest = self.target(dest_rel, true)?;
-            let part = self.target(part_rel, false)?;
-            let part_identity = {
-                let meta = fs::symlink_metadata(&part)
-                    .map_err(|error| io_error("stat download part", &part, error))?;
-                if !meta.is_file() {
-                    return Err(HarnessError::NotRegularFile {
-                        path: part_rel.to_string(),
-                    });
-                }
-                let file = open_identity_path(&part)
-                    .map_err(|error| io_error("stat download part", &part, error))?;
-                file_identity(&file)
-                    .map_err(|error| io_error("stat download part", &part, error))?
-            };
-            replace_file(&part, &dest)?;
-            let final_meta = fs::symlink_metadata(&dest)
-                .map_err(|error| io_error("verify written workspace file", &dest, error))?;
-            let exec_bits = false;
-            let committed = path_identity(&dest)
-                .map_err(|error| io_error("verify written workspace file", &dest, error))?;
-            if committed != part_identity || !final_meta.is_file() || exec_bits {
-                return Err(HarnessError::IdentityChanged {
-                    path: dest_rel.to_string(),
-                });
-            }
-            Ok(())
-        }
+        return super::download_guard::promote_by_path(
+            self,
+            part_rel,
+            dest_rel,
+            expected_destination_sha256,
+        );
     }
 
     /// Removes a workspace file relative to its validated parent; absence is
