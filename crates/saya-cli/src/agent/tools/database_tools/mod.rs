@@ -10,6 +10,9 @@ use crate::contracts::RecallReceipt;
 use crate::local_metrics::LocalMetrics;
 
 mod capture;
+// `pub(super)` so the sibling chart-save tests (registered under
+// `agent::tools`) can reach the pure publish step without opening a browser.
+pub(super) mod chart_save;
 mod chart_tool;
 // `pub(super)` so the sibling checkpoint tests (registered under
 // `agent::tools`) can reach the recorder and its pure refusal mapping.

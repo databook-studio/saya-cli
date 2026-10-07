@@ -100,7 +100,23 @@ pub(super) fn chart_facts(arguments: &Value, primary: Option<&str>) -> Option<St
             "  the same HTML is saved there; the browser opens a private temporary copy"
                 .to_string(),
         );
-        lines.push("  an existing file at this path may be replaced".to_string());
+        // The destination precondition, stated only as the call demonstrates
+        // it: a string digest names the guarded replace (it lands only when
+        // the content matches what the caller observed), absent-or-null names
+        // the create-only form, and any other type refuses at validation, so
+        // it demonstrates neither — the same no-false-facts rule every fact
+        // line follows.
+        match arguments.get("expected_digest") {
+            Some(Value::String(_)) => lines.push(
+                "  replaces the existing file only if its content matches the digest you \
+                 observed"
+                    .to_string(),
+            ),
+            None | Some(Value::Null) => {
+                lines.push("  creates the file only; an existing file is refused".to_string())
+            }
+            Some(_) => {}
+        }
     } else {
         lines.push(
             "  this is why it always asks: the chart file is written and opened in your \
