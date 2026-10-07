@@ -64,7 +64,21 @@ provider (Ollama, OpenAI, an OpenAI-compatible endpoint, Anthropic, or Gemini),
 can inspect schema, and can run bounded SQL according to the approval policy. It
 can also render an interactive Chart.js file from a query via the `render_chart`
 tool; because that writes a file and opens a browser (`external_side_effect`), it
-always requires approval. When additional databases are connected via
+always requires approval.
+
+`render_chart` takes an optional `save_to`: a workspace-relative path to
+write the chart file to. The save's default is create-only — an existing
+file is refused and nothing is changed or opened, with the refusal telling
+the model to read the file first with `workspace_read` and pass the digest
+it observed. `expected_digest` (only meaningful with `save_to`; alone it is
+refused) holding the digest of the file's current content replaces that
+file: a stale digest is refused, and a digest for a missing file is refused
+with "omit expected_digest to create it". The approval prompt states which
+save it approves — "creates the file only; an existing file is refused", or
+"replaces the existing file only if its content matches the digest you
+observed". Chart saves are not covered by `/recovery`.
+
+When additional databases are connected via
 `--include-profile` or interactive `/include`, the AI agent is informed of the name and SQL
 dialect of every connected database in its context and can navigate between them by passing an
 optional `connection` argument to its schema-inspection and query tools (with the primary database as default). If a secondary database fails to connect, it is skipped while the primary run continues. Connection and schema failures return code
@@ -474,7 +488,9 @@ unreadable turn file, a store error) still ends with a `turn_result` with
 `status: failed` and `exit_code: 2` — the code the process itself exits
 with. A configuration that fails to load exits `2` before any turn starts and
 prints no result. Under json/ndjson the result goes to stdout; diagnostics and
-errors go to stderr.
+errors go to stderr. Under `--approval-mode ask`, a launch `--allow` token
+can make a tool family usable in a headless run like this one — see
+[Headless grants under ask](#headless-grants-under-ask).
 
 The result also carries an honest tool tally: `tools_completed` counts the
 tool calls that ran to completion, and `tools_unfinished` names (up to
@@ -557,7 +573,12 @@ ai.api_key                            env:SAYA_AI_API_KEY  ← environment (SAYA
 The source vocabulary: `built-in default`, `user config file`,
 `project config file`, `env file (VAR)`, `environment (VAR)`, and
 `command line (--flag)`; the file layers also name the file path the layer
-was read from. When the project layer tried to set security-critical
+was read from. Two shapes are worth knowing. `--no-color` resolves through
+the ordinary configuration: with the flag, the `output.color` row reads
+`output.color never ← command line (--no-color)`. And the `[jobs.runner]`
+section appears as three distinct rows — `jobs.runner.allow`,
+`jobs.runner.program_dir`, and `jobs.runner.timeout_seconds` — each
+annotated with the origin of the whole section. When the project layer tried to set security-critical
 settings, they are listed after a blank line with the reason each was
 ignored:
 
@@ -777,7 +798,7 @@ them back.
   anything is mutated; you can delete the recorded edits
   (`/sessions delete`) or turn recovery off for later edits.
 - **What it does NOT cover.** Restoring never undoes commands, downloads,
-  scratch tables or database effects, and files that look like
+  chart saves, scratch tables or database effects, and files that look like
   credentials or secrets are edited without a copy.
 
 - `/recovery` — the flag, how many edits are recorded, and the quota use.
@@ -1092,7 +1113,26 @@ one bounded GET's body into the model's context as a labelled, escaped,
 untrusted block (never raw bytes, never the system prompt), and
 `http_download` streams one file into the run workspace under the run's
 shared download budget: a tripped bound pauses the run fail-safe (`exit 6`),
-leaving a resumable partial. Note the destination list is the *only* network
+leaving a resumable partial.
+
+Replacing an existing destination takes an optional `expected_digest`: the
+64 lowercase hex sha256 of the destination's current content, as a fresh
+`workspace_read` reports it. Without it the download is create-only — an
+existing destination (file, directory, or symlink) is refused before any
+request is made (best effort; the check is repeated at publication under the
+commit gate). With a matching digest the destination is replaced; a
+non-matching digest is refused with a message that does not reveal the real
+digest ("does not match the expected_digest you supplied; read the file with
+workspace_read …"), a digest for a missing destination is refused and
+nothing is created, and a malformed digest is refused before any request or
+budget use. A refused publication leaves the destination, the completed
+partial, and its sidecar in place, so a retry with the right precondition
+does not re-download — and the sidecar never grants permission to overwrite.
+Downloads are not covered by `/recovery`, and the digest guard is a
+stale-version check serialized among Saya's own writers, not an
+operating-system compare-and-swap.
+
+Note the destination list is the *only* network
 egress a run has: hosts outside it are refused, and every hop of a redirect
 is re-judged. `runner:<program>` gives the steps that asked for it one tool,
 `run_program`: one allowlisted program with typed argv — no shell, no
@@ -1160,6 +1200,30 @@ session: they are never
 persisted, and a resumed session starts empty. `/allow none` states the
 empty approval and seeds nothing — it is not a revoke.
 
+### Headless grants under ask
+
+A session with no prompt surface — `--turn-file`, piped input, or
+`--non-interactive` — cannot answer an approval question. Under
+`--approval-mode ask`, its launch `--allow` token now makes the matching
+tool family usable instead of leaving the tools hidden:
+
+- `workspace-write` — `workspace_write` + `workspace_edit`
+- `scratch` — `scratch_sql` (+ `scratch_import` when a workspace is bound)
+- `fetch:<destination>` — `http_fetch` (+ `http_download` when a workspace
+  is bound)
+- `runner:<program>` / `interpreter:<program>` — `run_program`
+- `command:<program>` — `run_command` (only where the host lane is composed)
+
+Available is not authorised: every call is still judged on its own
+arguments. A fetch grant for one host does not allow another host, a command
+grant names one program, and a call no grant covers is refused without
+prompting and without hanging. `render_chart` and the cross-connection
+fan-out SQL tool have no grant token and are never made available by a
+grant. `read-only`, `never` and Plan mode widen nothing. Grants last for the process that launched them: a
+resumed session (`--resume`) does not restore them. Where a headless
+session needs effects no scope covers, `--approval-mode bypass` is still
+the way.
+
 ## The fourth approval mode: `bypass`
 
 `--approval-mode bypass` (or `/approvals bypass`) runs every tool call
@@ -1187,7 +1251,9 @@ mode — under `ask` it is reachable through a granted
 surface, run and session alike, replacing an existing file requires an
 observed `expected_digest` — the sha256 digest from a fresh read or the
 previous write/edit result — and a stale overwrite refuses instead of
-clobbering. An interpreter
+clobbering. For `http_download` the default without the digest is
+create-only: an existing destination — file, directory, or symlink — is
+refused before any request is made. An interpreter
 child is confined by the same sandbox as any runner child: same fs roots,
 same empty egress — and the process-fork fact is the platform's own: on
 macOS the Seatbelt profile denies fork by omission, so a child an
