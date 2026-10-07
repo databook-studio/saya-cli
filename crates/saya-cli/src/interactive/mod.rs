@@ -72,6 +72,11 @@ mod session_grants_tests;
 // the per-family availability decision `definitions` consumes. Its tests
 // ride the module itself (`session_grant_surface_tests.rs`).
 pub(crate) mod session_grant_surface;
+// The remaining composed families' per-family grant availability
+// decisions (scratch, fetch, runner, command) beside the workspace file
+// family's own. Their tests ride the module itself
+// (`session_grant_families_tests.rs`).
+pub(crate) mod session_grant_families;
 pub(crate) mod session_prompt;
 mod session_request;
 mod session_resume;
