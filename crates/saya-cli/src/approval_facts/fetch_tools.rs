@@ -63,9 +63,9 @@ fn fetch_lines(
     Some(("http_fetch — external fetch".to_string(), lines))
 }
 
-/// `http_download`'s fact lines: the URL, the target path, and the
-/// *remaining* download budget. The scope sentence renders only when a
-/// session grant is actually on offer.
+/// `http_download`'s fact lines: the URL, the target path, the destination
+/// precondition the call names, and the *remaining* download budget. The
+/// scope sentence renders only when a session grant is actually on offer.
 fn download_lines(
     arguments: &Value,
     grant: Option<&str>,
@@ -80,6 +80,9 @@ fn download_lines(
             crate::agent::tools::collapse_whitespace(destination)
         ),
     ];
+    if let Some(semantics) = destination_semantics(arguments) {
+        lines.push(semantics);
+    }
     if let Some(wallet) = fetch.and_then(|fetch| fetch.download.as_ref()) {
         lines.push(format!(
             "  remaining download budget: {} bytes of {}",
@@ -94,4 +97,32 @@ fn download_lines(
         "http_download — downloads into this session's workspace".to_string(),
         lines,
     ))
+}
+
+/// The destination-precondition line, only when the call demonstrates it: a
+/// valid-looking digest names replacement-if-matching; no digest (an
+/// explicit null included — the adapter reads it as absent) names the
+/// create-only form. A present-but-unusable digest refuses before
+/// transport, so it demonstrates neither — no line claims either, the same
+/// no-false-facts rule every fact line follows.
+fn destination_semantics(arguments: &Value) -> Option<String> {
+    match arguments.get("expected_digest") {
+        Some(Value::String(digest)) if is_digest_shape(digest) => Some(
+            "  replaces the destination only if its current content matches the digest you \
+             observed"
+                .to_string(),
+        ),
+        None | Some(Value::Null) => {
+            Some("  creates the destination only; an existing file is refused".to_string())
+        }
+        Some(_) => None,
+    }
+}
+
+/// The digest shape a fresh read reports: 64 lowercase hex characters.
+fn is_digest_shape(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
