@@ -160,12 +160,10 @@ pub fn load_with_sources(
                 None
             },
             theme: options.theme.map(ThemeArg::to_choice),
+            color: options.no_color.then_some(saya_config::ColorChoice::Never),
             trust_project_config: options.trust_project_config,
         });
-    let mut resolved = resolve(input)?;
-    if options.no_color {
-        resolved.output_color = saya_config::ColorChoice::Never;
-    }
+    let resolved = resolve(input)?;
     let cache_scope = super::scope::resolve(selected_connections, cwd);
     Ok(RuntimeConfig {
         resolved,

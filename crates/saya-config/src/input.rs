@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{AiProvider, ConfigFile, ConnectionsFile, ThemeChoice};
+use crate::{AiProvider, ColorChoice, ConfigFile, ConnectionsFile, ThemeChoice};
 
 /// Command-line values which have the highest configuration precedence.
 #[derive(Debug, Clone, Default)]
@@ -13,6 +13,12 @@ pub struct CliOverrides {
     pub candidates: Option<usize>,
     pub show_thinking: Option<bool>,
     pub theme: Option<ThemeChoice>,
+    /// Explicit colour override for this invocation: `Never` when the
+    /// `--no-color` flag is passed, `None` when absent so the config layers
+    /// and the built-in default keep their ordinary precedence. Resolved in
+    /// the layer chain like every other CLI override, so the provenance names
+    /// the flag instead of the resolved value being mutated after the fact.
+    pub color: Option<ColorChoice>,
     /// Explicitly trust security-critical settings from the project layer's
     /// `.saya/config.toml` (`ai.base_url`, `ai.api_key`,
     /// `ai.allow_data_sharing`, `run.read_only`, and the endpoint pool's

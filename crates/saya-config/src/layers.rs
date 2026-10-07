@@ -325,6 +325,15 @@ pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides, recorder: &mu
             },
         );
     }
+    if cli.color.is_some() {
+        file.output.color = cli.color;
+        recorder.record(
+            "output.color",
+            SettingSource::Cli {
+                flag: "--no-color".into(),
+            },
+        );
+    }
 }
 
 /// The values of security-critical settings captured after the user layer
