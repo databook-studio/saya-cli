@@ -104,6 +104,13 @@ pub(crate) async fn run(
     // session composition's prompt facts, which its prompts may state.
     let primary = session.primary.clone();
     let facts = session.approval_facts(runtime);
+    // The turn's grant view rides the universe: the definitions gate reads
+    // the live store this turn's decider shares, so a launch `--allow` seed
+    // or an answer's `[s]` grant makes the granted family advertise under a
+    // headless ask. Per-turn, mirroring `primary`'s bind — a mid-session
+    // `/allow` takes effect next turn, and a recomposed universe binds
+    // fresh from the policy.
+    session.bind_grants(policy.grants());
     let decider: Arc<dyn ApprovalDecider> = Arc::new(
         crate::prompt_approval::TerminalApproval::from_session_with_cancellation(
             policy,

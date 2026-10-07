@@ -72,6 +72,11 @@ pub(crate) fn start(request: StreamRequest) -> Stream {
     // read off the universe and the resolved config — the modal states only
     // these.
     let facts = session.approval_facts(&runtime);
+    // The turn's grant view rides the universe: the definitions gate reads
+    // the live store this turn's decider (`policy`) shares. Per-turn,
+    // mirroring `primary`'s bind — never an all-true stand-in, the store
+    // itself.
+    session.bind_grants(policy.grants());
     // The capture hook rides the same channel: a successful agent query
     // hands the TUI the typed result the model saw (C1; the pairing is C2).
     let capture = capture_hook(tx.clone());

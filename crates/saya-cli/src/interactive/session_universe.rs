@@ -93,6 +93,11 @@ pub(crate) struct SessionUniverse {
     /// connected to — and a mid-session `/connect` rebinds it for the next
     /// turn, never stale.
     pub(crate) primary: crate::grant_token::TurnPrimary,
+    /// The turn's grant view: the live grant store the session surfaces
+    /// bind from the policy they hold, once per turn, mirroring
+    /// `primary`'s bind. `definitions` reads it for the per-family
+    /// availability decision; unbound is the closed shape.
+    grants: super::session_grant_surface::GrantView,
     /// The session's post-turn extraction circuit breaker: two consecutive
     /// misses disable learning for the rest of the session. Not persisted —
     /// a new or resumed session always starts enabled.
@@ -128,6 +133,7 @@ impl SessionUniverse {
             deny: super::session_deny::SessionDeny::default(),
             tasks: super::session_tasks::SessionTasks::default(),
             primary: crate::grant_token::TurnPrimary::default(),
+            grants: super::session_grant_surface::GrantView::default(),
             notice: None,
             recovery: None,
             probe_refused: false,
@@ -308,6 +314,7 @@ impl SessionUniverse {
             deny,
             tasks: super::session_tasks::SessionTasks::default(),
             primary: crate::grant_token::TurnPrimary::default(),
+            grants: super::session_grant_surface::GrantView::default(),
             notice,
             recovery,
             probe_refused,
@@ -339,6 +346,14 @@ impl SessionUniverse {
     /// fresh one, composed enabled.
     pub(crate) fn learning_breaker(&self) -> &LearningBreaker {
         &self.learning_breaker
+    }
+
+    /// Binds the turn's live grant store — what the session surfaces do
+    /// once per turn, from the policy they hold (`session_request::run`,
+    /// the TUI spawn). Mirrors `primary`'s per-turn bind; an unbound view
+    /// is the closed shape.
+    pub(crate) fn bind_grants(&self, grants: &saya_agent::SessionGrants) {
+        self.grants.bind(grants);
     }
 
     /// The approval prompts' facts, read off this universe's composed
@@ -492,10 +507,21 @@ impl SessionUniverse {
     /// The turn's definitions: the database tools' own surface plus this
     /// session's write-shaped members — advertised exactly where the mode's
     /// consent shape makes them usable: `ask` needs an approval surface to
-    /// answer its asks; `bypass` **is** the consent (no ask, no surface —
+    /// answer its asks, or an explicit grant the live policy holds that
+    /// pre-answers the call; `bypass` **is** the consent (no ask, no surface —
     /// the piped-REPL demo runs on this); `read-only` and `never` can
-    /// neither obtain an approval nor allow. Each write-shaped call is
-    /// decided through the approval engine per call.
+    /// neither obtain an approval nor consult a grant. Each write-shaped
+    /// call is decided through the approval engine per call.
+    ///
+    /// The grant arm is per family: only the workspace file family
+    /// (`workspace_write`, `workspace_edit`) widens to a held
+    /// `workspace-write` grant under `ask` — the one family whose token the
+    /// engine resolves to `Allow` without a surface (the grant pre-answers
+    /// the ask). Every other write-shaped member keeps the approval-surface
+    /// rule, and the chart save rides the surface alone, never the grant.
+    /// The decision lives in `session_grant_surface`, over the grant view
+    /// the session surfaces bind per turn; an unbound view is the closed
+    /// shape.
     ///
     /// `can_obtain_approval` means "this surface can obtain a per-call
     /// approval at all" — the line REPL's live-terminal fact, the TUI's
@@ -528,6 +554,20 @@ impl SessionUniverse {
             ApprovalPolicy::Bypass => true,
             _ => false,
         } && agent_mode == AgentMode::Build;
+        // The workspace file family's own availability: the approval-surface
+        // rule above, or — new — an explicit `workspace-write` grant the
+        // live policy holds under `ask` (the grant pre-answers the call the
+        // mode would have asked about). Read-only, never, and Plan never
+        // widen, and no other family moves. When the surface advertises
+        // everything, this equals the standing rule; the chart save below
+        // keeps depending on `advertises` alone, never on the grant.
+        let grants = self.grants.get();
+        let workspace_files = super::session_grant_surface::workspace_files_available(
+            agent_mode,
+            mode,
+            can_obtain_approval,
+            grants.as_ref(),
+        ) && self.workspace.is_some();
         // The database surface, always with the write permit off — the
         // session's own workspace_write below is the advertised one, and the
         // run-worded definition must not leak into the session's list. The
@@ -547,18 +587,22 @@ impl SessionUniverse {
         if advertises_tasks {
             defs.push(super::session_tasks_render::tasks_set_definition());
         }
-        if !advertises {
-            // Read-only and never cannot prompt: everything write-shaped
-            // stays hidden, not advertised. Bypass never lands here — its
-            // advertised tools are usable, so the advertised-but-unusable
-            // anti-pattern cannot return under it. `tasks_set` above is the
-            // one exception: admitted by the approval engine under read-only
-            // and Plan, so advertised there too.
-            return defs;
-        }
-        if self.workspace.is_some() {
+        if workspace_files {
             defs.push(session_definitions::workspace_write());
             defs.push(session_definitions::workspace_edit());
+        }
+        if !advertises {
+            // A headless ask with only the grant advertises the granted
+            // file family and nothing else: scratch, fetch, the runner, and
+            // the host lane keep the approval-surface rule — hidden, not
+            // advertised. Read-only and never cannot prompt and never
+            // consult grants: everything write-shaped stays hidden there.
+            // Bypass never lands here — its advertised tools are usable, so
+            // the advertised-but-unusable anti-pattern cannot return under
+            // it. `tasks_set` above is the one exception: admitted by the
+            // approval engine under read-only and Plan, so advertised there
+            // too.
+            return defs;
         }
         defs.push(session_definitions::scratch_sql());
         if self.workspace.is_some() {
