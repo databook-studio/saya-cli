@@ -6,11 +6,12 @@
 //! one-turn session reads a file, edits it with the digest-guarded tool, and
 //! reports — with NO database profile and no `--connections`.
 
+mod grant_surface;
 mod harness;
 
 use harness::{
-    Round, RoundFn, digest_from, env, request_json, run, run_background, script, sigint, stdout,
-    tool_names, tool_results, wait_until_holding,
+    Round, RoundFn, digest_from, env, last_tool_result, request_json, run, run_background, script,
+    sigint, stderr, stdout, tool_names, wait_until_holding,
 };
 use std::time::Duration;
 
@@ -80,20 +81,6 @@ fn read_edit_rounds(wrong: Option<String>) -> Vec<RoundFn> {
         }),
         Box::new(|_| Round::Text("fixed")),
     ]
-}
-
-fn stderr(output: &std::process::Output) -> String {
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
-/// The last tool-result message of a captured request: the model-facing
-/// result of the call the previous round made.
-fn last_tool_result(raw: &str) -> String {
-    tool_results(&request_json(raw))
-        .last()
-        .copied()
-        .expect("the request carries a tool result")
-        .to_owned()
 }
 
 #[test]
