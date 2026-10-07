@@ -2,6 +2,7 @@
 
 use saya_config::{SettingSource, user_facing_keys};
 
+use super::explain_labels::display_key;
 use super::runtime::RuntimeConfig;
 
 /// One setting's explanation: the dotted key, the redacted value exactly as
@@ -53,7 +54,7 @@ pub(crate) fn explain(runtime: &RuntimeConfig) -> ConfigExplanation {
             };
             let file = file_for(&layer, runtime);
             Some(SettingExplanation {
-                key: (*key).to_owned(),
+                key: display_key(field, key),
                 value: value.clone(),
                 source: source_text(&layer),
                 layer,
