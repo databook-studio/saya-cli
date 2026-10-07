@@ -41,6 +41,8 @@ use super::tools::{FetchToolError, HttpFetchTool};
 use super::transport::FetchTransport;
 use crate::workspace::Workspace;
 
+use self::download_arguments::optional_digest_argument;
+
 /// The two fetch tools as one step's executor member: the policy is the
 /// step's, the transport, workspace, and download wallet are the run's
 /// shared ones (the wallet by clone — a trip anywhere is seen everywhere).
@@ -129,13 +131,16 @@ impl FetchTools {
         };
         let url = string_argument(&arguments, "url")?;
         let destination = string_argument(&arguments, "destination")?;
+        // The caller's destination precondition, judged to the digest shape
+        // a fresh read reports before anything is transported: `None` is
+        // create-only, a digest replaces only on a match at the rename.
+        let expected_digest = optional_digest_argument(&arguments, "expected_digest")?;
         let outcome = http_download_cancellable(DownloadCall {
             policy: &self.policy,
             transport: self.transport.as_ref(),
             workspace,
             destination: &destination,
-            // Create-only: the tool lane carries no destination digest yet.
-            expected_destination_sha256: None,
+            expected_destination_sha256: expected_digest.as_deref(),
             url: &url,
             limits: self.download_limits,
             budget: &self.budget,
@@ -271,6 +276,11 @@ impl From<DownloadError> for ToolError {
         ToolError::Fetch(error.to_string())
     }
 }
+
+/// The download tool lane's argument readers — the optional
+/// `expected_digest` precondition — beside the adapter, not grown into it.
+#[path = "download_arguments.rs"]
+mod download_arguments;
 
 #[cfg(test)]
 #[path = "adapter_tests.rs"]

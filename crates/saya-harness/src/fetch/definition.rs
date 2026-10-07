@@ -65,6 +65,10 @@ pub fn http_download_definition() -> ToolDefinition {
                 "destination": {
                     "type": "string",
                     "description": "Where the file lands, relative to the run workspace. Contained: it cannot escape the workspace."
+                },
+                "expected_digest": {
+                    "type": "string",
+                    "description": "Optional destination precondition. Omitted: the download creates the destination only and an existing file is refused. To replace an existing file you must read it first and pass the sha256 digest you observed (64 lowercase hex characters); never invent or guess a digest."
                 }
             },
             "required": ["url", "destination"],
