@@ -78,7 +78,10 @@ pub(crate) struct TurnPrompt<'a> {
 /// below for `ask`), never the stdin fallback. The line REPL passes its
 /// live-terminal fact for both; the TUI passes `false` for the first and
 /// `true` for the second (its modal); the one-shot `ask` path passes the
-/// same value for both (unchanged behaviour). Keep them split.
+/// same value for both (unchanged behaviour). Keep them split. The
+/// session's grant view rides the universe the session surfaces bind per
+/// turn (`session_grant_surface`): a held `workspace-write` grant widens
+/// only that family under `ask`, surface or no surface.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_prompt_with_sink(
     runtime: &RuntimeConfig,

@@ -68,6 +68,10 @@ mod session_approval_surface_tests;
 pub(crate) mod session_grants;
 #[cfg(test)]
 mod session_grants_tests;
+// The grant surface: the per-turn grant view the session surfaces bind and
+// the per-family availability decision `definitions` consumes. Its tests
+// ride the module itself (`session_grant_surface_tests.rs`).
+pub(crate) mod session_grant_surface;
 pub(crate) mod session_prompt;
 mod session_request;
 mod session_resume;

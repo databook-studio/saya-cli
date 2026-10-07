@@ -2155,3 +2155,423 @@ fn every_plan_advertised_definition_is_not_denied_by_plan_enforcement() {
     }
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
+
+// ---------------------------------------------------------------------------
+// the grant surface — an explicit workspace-write grant in headless ask
+// ---------------------------------------------------------------------------
+
+/// A session policy with `tokens` granted, bound onto the universe exactly
+/// the way the session surfaces bind each turn: `session_request::run` and
+/// the TUI spawn read the policy they hold and bind its grant store onto
+/// the session universe before the turn runs. Returns the policy so a test
+/// can resolve through it like the turn's decider does.
+fn granted(universe: &SessionUniverse, tokens: &[&str]) -> saya_agent::SessionPolicy {
+    let policy = saya_agent::SessionPolicy::new(ApprovalPolicy::Ask);
+    for token in tokens {
+        policy.grants().grant(token);
+    }
+    universe.bind_grants(policy.grants());
+    policy
+}
+
+/// POST-03, red at the real definitions boundary: a headless ask session
+/// (no approval surface, `can_obtain_approval=false`) whose live policy
+/// holds an explicit `workspace-write` grant advertises exactly the two
+/// guarded file tools — the grant pre-answers their calls
+/// (`SessionPolicy::resolve` → `Allow`), so the advertised tools are
+/// usable, never the advertised-but-unusable anti-pattern — and nothing
+/// else write-shaped: the grant is one family, not a posture. No
+/// `render_chart` (the chart rides the approval surface alone), no
+/// `scratch_sql`, no `run_command`, no `run_program`.
+#[test]
+fn a_headless_ask_session_advertises_only_the_two_file_tools_under_its_workspace_write_grant() {
+    let project = worktree("grant-headless");
+    let state = temp_dir("grant-headless-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let policy = granted(&universe, &["workspace-write"]);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, false);
+    for tool in ["workspace_write", "workspace_edit"] {
+        assert!(
+            names.contains(&tool.to_string()),
+            "the granted workspace file family advertises under headless ask: {names:?}"
+        );
+    }
+    for tool in [
+        "scratch_sql",
+        "scratch_import",
+        "http_fetch",
+        "http_download",
+        "run_program",
+        "run_command",
+        "render_chart",
+    ] {
+        assert!(
+            !names.contains(&tool.to_string()),
+            "a workspace-write grant widens no other family: {tool} stays hidden: {names:?}"
+        );
+    }
+    // The advertised calls are usable and honestly declared: the engine
+    // resolves the grant to `Allow`, and each definition still carries its
+    // per-call approval shape.
+    let definitions = universe.definitions(
+        AgentMode::Build,
+        ApprovalPolicy::Ask,
+        false,
+        true,
+        false,
+        false,
+    );
+    for tool in ["workspace_write", "workspace_edit"] {
+        let definition = definitions
+            .iter()
+            .find(|definition| definition.name == tool)
+            .expect("the granted file tool is advertised");
+        assert!(
+            definition.effect.requires_approval,
+            "{tool} declares its approval shape honestly: the engine resolves the grant"
+        );
+    }
+    let effect = &definitions
+        .iter()
+        .find(|definition| definition.name == "workspace_write")
+        .expect("workspace_write advertised")
+        .effect;
+    assert_eq!(
+        policy.resolve(effect, Some("workspace-write")),
+        saya_agent::ApprovalDecision::Allow,
+        "the grant pre-answers the advertised call: usable, not advertised-but-denied"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// A held workspace-write grant cannot widen a restrictive posture:
+/// read-only and never never consult grants (the engine denies without
+/// them), and Plan denies before the approval match — so the file tools
+/// stay hidden under each, grant or no grant. The advertisement rule never
+/// outruns the engine.
+#[test]
+fn a_workspace_write_grant_cannot_widen_read_only_never_or_plan() {
+    let project = worktree("grant-restrictive");
+    let state = temp_dir("grant-restrictive-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    granted(&universe, &["workspace-write"]);
+    for (agent_mode, mode, can_obtain_approval, label) in [
+        (
+            AgentMode::Build,
+            ApprovalPolicy::ReadOnly,
+            true,
+            "read-only",
+        ),
+        (AgentMode::Build, ApprovalPolicy::Never, true, "never"),
+        (
+            AgentMode::Plan,
+            ApprovalPolicy::Ask,
+            false,
+            "plan, headless",
+        ),
+        (
+            AgentMode::Plan,
+            ApprovalPolicy::Ask,
+            true,
+            "plan, with a surface",
+        ),
+    ] {
+        let names = advertised(&universe, agent_mode, mode, can_obtain_approval);
+        for tool in ["workspace_write", "workspace_edit"] {
+            assert!(
+                !names.contains(&tool.to_string()),
+                "{label} stays closed under a held grant: {names:?}"
+            );
+        }
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// No grant, no advertisement — the headless ask shape stays exactly as
+/// today — and a grant from another family (`scratch`) is not the workspace
+/// file family: one token authorizes its own family only.
+#[test]
+fn an_unbound_view_and_a_foreign_grant_keep_the_headless_ask_closed() {
+    let project = worktree("grant-closed");
+    let state = temp_dir("grant-closed-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, false);
+    for tool in ["workspace_write", "workspace_edit"] {
+        assert!(
+            !names.contains(&tool.to_string()),
+            "no grant: the headless ask stays closed exactly as today: {names:?}"
+        );
+    }
+    granted(&universe, &["scratch"]);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, false);
+    for tool in ["workspace_write", "workspace_edit"] {
+        assert!(
+            !names.contains(&tool.to_string()),
+            "a foreign family's grant authorizes nothing here: {names:?}"
+        );
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The interactive shapes do not move: ask with an approval surface
+/// advertises the full write-shaped set exactly as before, grant held or
+/// not — and the granted case advertises the file tools exactly once, no
+/// duplicate from the grant arm. Bypass is untouched: the mode allows on
+/// its own.
+#[test]
+fn interactive_ask_advertisement_is_unchanged_under_a_bound_grant_view() {
+    let project = worktree("grant-interactive");
+    let state = temp_dir("grant-interactive-state");
+    let universe = compose(&session_runtime(None), &project, &state);
+    granted(&universe, &["workspace-write"]);
+    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
+    for tool in [
+        "workspace_write",
+        "workspace_edit",
+        "scratch_sql",
+        "scratch_import",
+        "http_fetch",
+        "http_download",
+        "run_command",
+    ] {
+        assert!(
+            names.contains(&tool.to_string()),
+            "an approval surface advertises as before, grant or no grant: {names:?}"
+        );
+    }
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| *name == "workspace_edit")
+            .count(),
+        1,
+        "the granted ask advertises workspace_edit exactly once: {names:?}"
+    );
+    let bypass = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
+    for tool in [
+        "workspace_write",
+        "workspace_edit",
+        "scratch_sql",
+        "http_fetch",
+    ] {
+        assert!(
+            bypass.contains(&tool.to_string()),
+            "bypass unchanged under a bound grant view: {bypass:?}"
+        );
+    }
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The process-level confirmation, through the turn boundary: a headless
+/// ask session whose live policy holds the workspace-write grant runs a
+/// `workspace_write` call the model issues — the definitions the turn
+/// builds include the granted family, the derived workspace-write permit
+/// follows, and the file lands in the workspace. Without the grant the
+/// same call is an unsupported tool call: the family stays hidden and the
+/// turn fails closed.
+#[tokio::test]
+async fn a_headless_ask_session_runs_a_workspace_write_call_under_its_grant() {
+    use crate::agent::runtime::run_prompt_with_inputs;
+    use crate::agent::turn_inputs::TurnInputs;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct ScriptedWrite {
+        answered_tool_call: AtomicBool,
+    }
+    #[async_trait::async_trait]
+    impl saya_agent::ChatProvider for ScriptedWrite {
+        fn name(&self) -> &str {
+            "scripted-write"
+        }
+        async fn complete(
+            &self,
+            _request: saya_agent::ChatRequest,
+        ) -> Result<saya_agent::ChatResponse, saya_agent::ProviderError> {
+            if !self.answered_tool_call.swap(true, Ordering::SeqCst) {
+                let mut message = saya_agent::ChatMessage::text("assistant", "");
+                message.tool_calls = vec![saya_agent::ToolCall {
+                    id: "call-1".into(),
+                    name: "workspace_write".into(),
+                    arguments: serde_json::json!({
+                        "path": "grant-headless.txt",
+                        "content": "written under the grant\n"
+                    }),
+                }];
+                Ok(saya_agent::ChatResponse::new(message))
+            } else {
+                Ok(saya_agent::ChatResponse::new(
+                    saya_agent::ChatMessage::text("assistant", "done"),
+                ))
+            }
+        }
+    }
+    struct RecordingSink(std::sync::Mutex<Vec<saya_agent::AgentEvent>>);
+    #[async_trait::async_trait]
+    impl saya_agent::AgentEventSink for RecordingSink {
+        async fn emit(&self, event: saya_agent::AgentEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    let project = worktree("grant-process");
+    let state = temp_dir("grant-process-state");
+    let runtime = session_runtime(None);
+    let universe = Arc::new(compose(&runtime, &project, &state));
+    let policy = granted(&universe, &["workspace-write"]);
+    // The turn's real decider: over the same live policy (a clone shares
+    // the grant store), unable to prompt, carrying the session's own facts
+    // and primary handle — the shape `session_request::run` builds.
+    let decider: Arc<dyn saya_agent::ApprovalDecider> = Arc::new(
+        crate::prompt_approval::TerminalApproval::from_session_with_cancellation(
+            policy,
+            false,
+            universe.primary.clone(),
+            universe.approval_facts(&runtime),
+            None,
+            saya_agent::CancellationToken::new(),
+        ),
+    );
+    let inputs = TurnInputs {
+        ai: runtime.resolved.ai.clone(),
+        provider: Box::new(ScriptedWrite {
+            answered_tool_call: AtomicBool::new(false),
+        }),
+        registry: crate::connection::ConnectionRegistry::new(""),
+        failures: Vec::new(),
+    };
+    let output = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "write the file",
+        ApprovalPolicy::Ask,
+        false,
+        false,
+        Vec::new(),
+        &RecordingSink(std::sync::Mutex::new(Vec::new())),
+        saya_agent::CancellationToken::new(),
+        None,
+        Some(decider),
+        None,
+        Some(Arc::clone(&universe)),
+        AgentMode::Build,
+        None,
+        None,
+    )
+    .await;
+    match output {
+        Ok(_) => {}
+        Err(error) => {
+            panic!("the granted workspace_write call must run, never be unsupported: {error:?}")
+        }
+    }
+    assert!(
+        project.join("grant-headless.txt").exists(),
+        "the granted call wrote through the workspace seam"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
+
+/// The closed shape at the process level: the same headless ask turn with
+/// NO grant keeps the family hidden — the model's `workspace_write` call
+/// fails validation as an unknown tool and is fed back as a tool result,
+/// never executed, with the workspace untouched. No grant, no
+/// advertisement, no execution.
+#[tokio::test]
+async fn a_headless_ask_session_without_the_grant_refuses_the_workspace_write_call() {
+    use crate::agent::runtime::run_prompt_with_inputs;
+    use crate::agent::turn_inputs::TurnInputs;
+    use std::sync::Arc;
+
+    struct ScriptedWrite;
+    #[async_trait::async_trait]
+    impl saya_agent::ChatProvider for ScriptedWrite {
+        fn name(&self) -> &str {
+            "scripted-write"
+        }
+        async fn complete(
+            &self,
+            _request: saya_agent::ChatRequest,
+        ) -> Result<saya_agent::ChatResponse, saya_agent::ProviderError> {
+            let mut message = saya_agent::ChatMessage::text("assistant", "");
+            message.tool_calls = vec![saya_agent::ToolCall {
+                id: "call-1".into(),
+                name: "workspace_write".into(),
+                arguments: serde_json::json!({
+                    "path": "grant-headless.txt",
+                    "content": "must not be written\n"
+                }),
+            }];
+            Ok(saya_agent::ChatResponse::new(message))
+        }
+    }
+    struct RecordingSink(std::sync::Mutex<Vec<saya_agent::AgentEvent>>);
+    #[async_trait::async_trait]
+    impl saya_agent::AgentEventSink for RecordingSink {
+        async fn emit(&self, event: saya_agent::AgentEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    let project = worktree("grant-process-closed");
+    let state = temp_dir("grant-process-closed-state");
+    let runtime = session_runtime(None);
+    let universe = Arc::new(compose(&runtime, &project, &state));
+    let policy = saya_agent::SessionPolicy::new(ApprovalPolicy::Ask);
+    universe.bind_grants(policy.grants());
+    let decider: Arc<dyn saya_agent::ApprovalDecider> = Arc::new(
+        crate::prompt_approval::TerminalApproval::from_session_with_cancellation(
+            policy,
+            false,
+            universe.primary.clone(),
+            universe.approval_facts(&runtime),
+            None,
+            saya_agent::CancellationToken::new(),
+        ),
+    );
+    let inputs = TurnInputs {
+        ai: runtime.resolved.ai.clone(),
+        provider: Box::new(ScriptedWrite),
+        registry: crate::connection::ConnectionRegistry::new(""),
+        failures: Vec::new(),
+    };
+    let sink = RecordingSink(std::sync::Mutex::new(Vec::new()));
+    let output = run_prompt_with_inputs(
+        &runtime,
+        inputs,
+        "write the file",
+        ApprovalPolicy::Ask,
+        false,
+        false,
+        Vec::new(),
+        &sink,
+        saya_agent::CancellationToken::new(),
+        None,
+        Some(decider),
+        None,
+        Some(Arc::clone(&universe)),
+        AgentMode::Build,
+        None,
+        None,
+    )
+    .await;
+    // The turn itself completes: an unadvertised call is fed back as a
+    // failed tool result, never executed.
+    output.expect("the closed turn completes; the call was refused, not run");
+    {
+        let events = sink.0.lock().unwrap();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                saya_agent::AgentEvent::ToolCompleted { name, .. }
+                    if name.as_str() == "workspace_write"
+            )),
+            "the refused call was seen and fed back as a tool result: {events:?}"
+        );
+    }
+    assert!(
+        !project.join("grant-headless.txt").exists(),
+        "the workspace was never written"
+    );
+    let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
+}
