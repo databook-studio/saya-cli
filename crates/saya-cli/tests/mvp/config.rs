@@ -565,11 +565,9 @@ fn doctor_task_rejects_unknown_values_with_a_usage_error() {
 // as without the flag, so no test here ever sees a secret value.
 // ---------------------------------------------------------------------------
 
-/// An empty root has no config files: every explained setting is a built-in
-/// default and no line names a config file. The one exception is `ui.theme`:
-/// the loader always materializes a theme choice as a CLI override, so the
-/// real binary attributes it to the command line even with no `--theme`
-/// flag — a provenance wart of the unowned loader, asserted here explicitly.
+/// An empty root has no config files and no flags: every explained setting,
+/// `ui.theme` included, is a built-in default and no line names a config file
+/// or the command line.
 #[test]
 fn config_show_explain_in_an_empty_root_names_the_default_layer() {
     let root = test_root("explain-empty-default");
@@ -578,17 +576,102 @@ fn config_show_explain_in_an_empty_root_names_the_default_layer() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ai.model"), "{stdout}");
     for line in stdout.lines() {
-        let default_or_theme = line.ends_with("← built-in default")
-            || line.starts_with("ui.theme") && line.ends_with("← command line (--theme)");
         assert!(
-            default_or_theme,
+            line.ends_with("← built-in default"),
             "unexpected layer in an empty root: {line}"
         );
         assert!(
-            !line.contains("config file"),
-            "no file layer can win in an empty root: {line}"
+            !line.contains("config file") && !line.contains("command line"),
+            "no file or command-line layer can win in an empty root: {line}"
         );
     }
+    let theme_line = stdout
+        .lines()
+        .find(|line| line.starts_with("ui.theme"))
+        .unwrap_or_else(|| panic!("no ui.theme line: {stdout}"));
+    assert!(
+        theme_line.ends_with("auto  ← built-in default"),
+        "no flag and no config leaves the built-in default theme: {theme_line}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Precedence matrix (a): `[ui] theme = 'dark'` in the user config wins when
+/// no `--theme` flag is passed, and the provenance names the user config
+/// file that supplied it.
+#[test]
+fn config_show_explain_user_config_theme_wins_without_a_flag() {
+    let root = test_root("explain-theme-config-wins");
+    fs::create_dir_all(root.join("user-config/saya")).unwrap();
+    fs::write(
+        root.join("user-config/saya/config.toml"),
+        "[ui]\ntheme = 'dark'\n",
+    )
+    .unwrap();
+    let output = saya_isolated(&root, &["config", "show", "--explain"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let theme_line = stdout
+        .lines()
+        .find(|line| line.starts_with("ui.theme"))
+        .unwrap_or_else(|| panic!("no ui.theme line: {stdout}"));
+    let expected = format!(
+        "{:<38} {}  ← user config file ({})",
+        "ui.theme",
+        "dark",
+        root.join("user-config/saya/config.toml").display()
+    );
+    assert_eq!(theme_line, expected, "{stdout}");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Precedence matrix (b): `--theme auto` is an explicit override, not an
+/// absence marker — it beats the config's theme and names the flag.
+#[test]
+fn config_show_explain_explicit_auto_overrides_the_config_theme() {
+    let root = test_root("explain-theme-auto-override");
+    fs::create_dir_all(root.join("user-config/saya")).unwrap();
+    fs::write(
+        root.join("user-config/saya/config.toml"),
+        "[ui]\ntheme = 'dark'\n",
+    )
+    .unwrap();
+    let output = saya_isolated(&root, &["--theme", "auto", "config", "show", "--explain"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let theme_line = stdout
+        .lines()
+        .find(|line| line.starts_with("ui.theme"))
+        .unwrap_or_else(|| panic!("no ui.theme line: {stdout}"));
+    assert!(
+        theme_line.ends_with("auto  ← command line (--theme)"),
+        "an explicit --theme auto must override the config: {theme_line}"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Precedence matrix (c): `--theme light` overrides the config's theme and
+/// names the flag.
+#[test]
+fn config_show_explain_explicit_light_overrides_the_config_theme() {
+    let root = test_root("explain-theme-light-override");
+    fs::create_dir_all(root.join("user-config/saya")).unwrap();
+    fs::write(
+        root.join("user-config/saya/config.toml"),
+        "[ui]\ntheme = 'dark'\n",
+    )
+    .unwrap();
+    let output = saya_isolated(&root, &["--theme", "light", "config", "show", "--explain"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let theme_line = stdout
+        .lines()
+        .find(|line| line.starts_with("ui.theme"))
+        .unwrap_or_else(|| panic!("no ui.theme line: {stdout}"));
+    assert!(
+        theme_line.ends_with("light  ← command line (--theme)"),
+        "an explicit --theme light must override the config: {theme_line}"
+    );
     let _ = fs::remove_dir_all(root);
 }
 

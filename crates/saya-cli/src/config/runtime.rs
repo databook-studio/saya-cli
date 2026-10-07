@@ -1,5 +1,5 @@
 use super::sources::Paths;
-use crate::cli::GlobalOptions;
+use crate::cli::{GlobalOptions, ThemeArg};
 use saya_config::{CliOverrides, ConnectionsFile, ResolutionInput, resolve};
 use std::{
     collections::BTreeMap,
@@ -159,7 +159,7 @@ pub fn load_with_sources(
             } else {
                 None
             },
-            theme: Some(options.theme.to_choice()),
+            theme: options.theme.map(ThemeArg::to_choice),
             trust_project_config: options.trust_project_config,
         });
     let mut resolved = resolve(input)?;
