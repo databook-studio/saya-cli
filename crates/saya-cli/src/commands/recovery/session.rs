@@ -6,7 +6,7 @@ use super::{
     ChangeItem, ChangesView, diff_change, list_changes, render_changes, render_diff_outcome,
     render_restore, restore_change,
 };
-use crate::interactive::session_recovery::RecoveryHandle;
+use crate::interactive::session::lifecycle::recovery::RecoveryHandle;
 use saya_harness::workspace::Workspace;
 use saya_store::FsSessionStore;
 

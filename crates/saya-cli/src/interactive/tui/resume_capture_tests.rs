@@ -4,7 +4,7 @@
 //! real fixtures: the real `/sql` worker turn seeds the capture
 //! (session_privacy_receipt_tests.rs), the real picker resume runs
 //! `tick_resume`, and the refusal holds the resumed id's lock
-//! (session_runtime_question_tests.rs D4).
+//! (session/runtime/question_tests.rs D4).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,9 +15,9 @@ use saya_store::{FsSessionStore, SessionStore};
 use saya_types::DatabaseProfile;
 
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_resume::block_on;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::lifecycle::resume::block_on;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::SecondSqlDecision;
 use crate::interactive::tui::dispatch::{Dispatch, dispatch};
 use crate::interactive::tui::loop_tick::resume::tick_resume;
@@ -197,181 +197,6 @@ fn wait_for_background_save(store_root: &Path) {
     }
 }
 
-/// (a) PICKER success: after a real `/sql` capture, a successful
-/// `tick_resume` clears BOTH the captured result and the last query, and the
-/// resume message is shown.
-#[test]
-fn the_picker_resume_clears_the_previous_sessions_capture_and_last_query() {
-    let mut fx = Seed::new("success", "cap-live");
-    fx.capture_marker_query();
-    block_on(
-        fx.store
-            .save(SessionState::new("resumed-ok", None, "test-model").redacted()),
-    )
-    .expect("the resumed record saves");
-    fx.app.overlays.pending_resume = Some("resumed-ok".into());
-    tick_resume(
-        &mut fx.app,
-        &fx.store,
-        &mut fx.state,
-        fx.runtime.as_ref(),
-        &mut fx.session,
-    );
-    assert!(
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .any(|block| block.text.contains("Resumed session resumed-ok")),
-        "the picker resume said it resumed, not {:?}",
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .map(|b| b.text.as_str())
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        fx.app.captured.is_none(),
-        "the resumed session inherited the previous session's capture"
-    );
-    assert!(
-        fx.app.last_query.is_none(),
-        "the resumed session inherited the previous session's last query"
-    );
-    let root = fx.root.clone();
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
+include!("resume_capture_tests/picker_resume.rs");
 
-/// (b) PICKER refusal: with the resumed id's lock held (the D4 technique),
-/// the refused resume changes NOTHING — both the real captured result and
-/// the last query survive.
-#[test]
-fn the_refused_picker_resume_keeps_the_previous_sessions_capture_and_last_query() {
-    let mut fx = Seed::new("refusal", "cap-held-live");
-    fx.capture_marker_query();
-    let blocker = SessionRuntime::acquire(
-        &fx.runtime,
-        None,
-        false,
-        None,
-        "resumed-held",
-        ApprovalPolicy::Ask,
-        &fx.root.join("session-dirs"),
-    )
-    .expect("the blocker session acquires");
-    block_on(
-        fx.store
-            .save(SessionState::new("resumed-held", None, "test-model").redacted()),
-    )
-    .expect("the resumed record saves");
-    fx.app.overlays.pending_resume = Some("resumed-held".into());
-    tick_resume(
-        &mut fx.app,
-        &fx.store,
-        &mut fx.state,
-        fx.runtime.as_ref(),
-        &mut fx.session,
-    );
-    assert!(
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .any(|block| block.text.contains("already running")),
-        "the refused resume said why, not {:?}",
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .map(|b| b.text.as_str())
-            .collect::<Vec<_>>()
-    );
-    let capture = fx
-        .app
-        .captured
-        .as_ref()
-        .expect("the refused resume kept the capture");
-    assert_eq!(
-        capture.result.rows[0][0], MARKER,
-        "the kept capture is the real captured result"
-    );
-    assert!(
-        fx.app.last_query.is_some(),
-        "the refused resume kept the last query"
-    );
-    let root = fx.root.clone();
-    drop(blocker);
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// FIX-S1e (a): a resume must not start while a request is running. With a
-/// compaction in flight, `tick_resume` refuses: the session id is unchanged,
-/// the pending id is consumed, the transcript says why, nothing resumed.
-#[test]
-fn a_resume_is_refused_while_a_request_is_running() {
-    let mut fx = Seed::new("busy", "busy-live");
-    block_on(
-        fx.store
-            .save(SessionState::new("resumed-busy", None, "test-model").redacted()),
-    )
-    .expect("the resumed record saves");
-    let before = fx.state.id.clone();
-    let (_tx, rx) = std::sync::mpsc::channel();
-    fx.app.compact_task = Some(rx);
-    fx.app.overlays.pending_resume = Some("resumed-busy".into());
-    tick_resume(
-        &mut fx.app,
-        &fx.store,
-        &mut fx.state,
-        fx.runtime.as_ref(),
-        &mut fx.session,
-    );
-    assert_eq!(fx.state.id, before, "the busy resume changed the session");
-    assert!(
-        fx.app.overlays.pending_resume.is_none(),
-        "the busy resume kept the pending id"
-    );
-    let blocks: Vec<String> = fx
-        .app
-        .transcript
-        .blocks()
-        .iter()
-        .map(|b| b.text.clone())
-        .collect();
-    assert!(
-        blocks.iter().any(|text| text.contains("still running")),
-        "the refused resume said why, not {:?}",
-        blocks
-    );
-    assert!(
-        !blocks.iter().any(|text| text.contains("Resumed session")),
-        "the busy resume resumed the session anyway, not {:?}",
-        blocks
-    );
-    let root = fx.root.clone();
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// FIX-S1e (b): a compaction is part of the one-query-at-a-time resource,
-/// so `admit_second_replay` refuses while one runs instead of starting a
-/// replay beside it (it would clobber the status and capture fields).
-#[test]
-fn a_second_replay_is_refused_while_a_compaction_runs() {
-    let mut fx = Seed::new("replay", "replay-live");
-    let (_tx, rx) = std::sync::mpsc::channel();
-    fx.app.compact_task = Some(rx);
-    assert!(
-        matches!(fx.app.admit_second_replay(), SecondSqlDecision::Reject(_)),
-        "the replay was admitted beside a running compaction"
-    );
-    let root = fx.root.clone();
-    drop(fx);
-    let _ = std::fs::remove_dir_all(&root);
-}
+include!("resume_capture_tests/busy_resume.rs");

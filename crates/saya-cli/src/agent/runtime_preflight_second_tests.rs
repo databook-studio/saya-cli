@@ -1,6 +1,7 @@
 //! Tests 2-3: generous dispatch and scope survival (sibling split).
 
 use super::*;
+use crate::agent::runtime::QuestionScope;
 use std::sync::{Arc, Mutex, mpsc};
 
 pub(super) async fn generous_dispatch() {

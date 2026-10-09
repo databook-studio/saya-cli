@@ -1,8 +1,8 @@
 //! Replays saved session turns into the transcript on resume.
 
-use super::super::session_state::SessionState;
 use super::table;
 use super::transcript::BlockKind;
+use crate::interactive::session::state::SessionState;
 
 /// Builds the transcript blocks that represent a resumed session's turns: each
 /// turn becomes a user block, a compact line per tool it ran, then the assistant
@@ -101,7 +101,7 @@ pub(crate) fn relative_time(delta_ms: u128) -> String {
 mod tests {
     use super::super::transcript::BlockKind;
     use super::history_blocks;
-    use crate::interactive::session_state::SessionState;
+    use crate::interactive::session::state::SessionState;
     use saya_agent::{ToolMetadata, ToolResultShape};
 
     #[test]

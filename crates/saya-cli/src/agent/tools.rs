@@ -9,16 +9,17 @@ mod chart_save_tests;
 #[cfg(test)]
 #[path = "tools/clarification_tool_tests.rs"]
 mod clarification_tool_tests;
-mod contract_tools;
 mod database_tools;
 mod executor;
 mod host_argv;
 #[cfg(test)]
 #[path = "tools/host_argv_tests.rs"]
 mod host_argv_tests;
+mod knowledge;
 mod run_tools;
 mod sql_format;
 mod tool_calls;
+mod workspace;
 
 pub(crate) use database_tools::DatabaseTools;
 // The write bound the tool enforces, which the approval prompt states.
@@ -46,7 +47,7 @@ pub(crate) use tool_calls::{SqlCall, sql_tool_call, tool_call_detail};
 mod tests;
 
 #[cfg(test)]
-#[path = "tools/contract_tools_tests.rs"]
+#[path = "tools/knowledge/tests/mod.rs"]
 mod contract_tools_tests;
 
 #[cfg(test)]
@@ -98,7 +99,7 @@ mod workspace_edit_continuation_tests;
 mod workspace_edit_docs_tests;
 
 #[cfg(test)]
-#[path = "tools/workspace_checkpoint_tests.rs"]
+#[path = "tools/workspace/checkpoint_tests.rs"]
 mod workspace_checkpoint_tests;
 
 #[cfg(test)]

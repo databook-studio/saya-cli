@@ -23,7 +23,7 @@ pub(crate) use super::super::types::App;
 #[cfg(test)]
 pub(crate) use super::tests_support::{idle_app, unused_runtime};
 #[allow(unused_imports)]
-pub(crate) use crate::interactive::session_state::SessionState;
+pub(crate) use crate::interactive::session::state::SessionState;
 #[allow(unused_imports)]
 pub(crate) use saya_agent::{AgentEvent, AgentOutput, CancellationToken, TokenUsage, UsageCall};
 #[allow(unused_imports)]
@@ -65,6 +65,9 @@ mod reset_tests;
 #[cfg(test)]
 #[path = "stop_tests.rs"]
 mod stop_tests;
+#[cfg(test)]
+#[path = "task_sync_tests.rs"]
+mod task_sync_tests;
 #[cfg(test)]
 #[path = "warn_absence_tests.rs"]
 mod warn_absence_tests;

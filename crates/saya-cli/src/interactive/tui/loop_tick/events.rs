@@ -4,7 +4,7 @@ use super::super::keys::handle_key;
 use super::super::transcript::BlockKind;
 use super::super::types::App;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session::runtime::SessionRuntime;
 use ratatui::crossterm::event::{Event, KeyEventKind, MouseEventKind};
 
 /// Drains one ready terminal event. Returns `Err` only from `event::poll`/`read`.
@@ -13,7 +13,7 @@ pub(crate) fn tick_events(
     session: &mut SessionRuntime,
     runtime: &RuntimeConfig,
     launch: &crate::interactive::session_host::HostLaunch,
-    state: &mut crate::interactive::session_state::SessionState,
+    state: &mut crate::interactive::session::state::SessionState,
     trusted_dir: &mut Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::event::{poll, read};
@@ -35,7 +35,7 @@ pub(crate) fn tick_events(
                         Ok(()) => {
                             app.session = session.universe();
                             if let Some(line) =
-                                crate::interactive::session_activation::line_if_bypass(
+                                crate::interactive::session::permissions::activation::line_if_bypass(
                                     state,
                                     runtime,
                                     &session.universe(),

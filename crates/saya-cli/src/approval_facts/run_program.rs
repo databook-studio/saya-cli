@@ -8,6 +8,7 @@
 use serde_json::Value;
 
 use super::{ApprovalFacts, RunnerFacts, body};
+use crate::interactive::session::permissions::activation::SESSION_FORK_FACT;
 use saya_types::is_refused_runner_program;
 
 /// The call's typed argv, as the call states it — one element per argument,
@@ -149,7 +150,7 @@ pub(super) fn facts(
                 crate::approval_text::interpreter_warning(
                     "session",
                     &[program.to_string()],
-                    crate::interactive::session_activation::SESSION_FORK_FACT,
+                    SESSION_FORK_FACT,
                 )
             ));
         }

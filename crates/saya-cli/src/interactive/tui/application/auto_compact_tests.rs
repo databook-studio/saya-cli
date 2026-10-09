@@ -19,6 +19,7 @@ mod poll;
 mod support;
 
 use super::super::super::agent::StreamMsg;
+use crate::interactive::session::continuation::compaction::automatic as auto_compact;
 use saya_agent::{AgentEvent, AgentOutput, ProviderContinuationPhase, TokenUsage};
 use support::{answering_report, app_with_model, output, run_turn_maybe_compacting};
 
@@ -144,8 +145,7 @@ fn a_budget_salvage_stop_still_suppresses_without_being_called_continuation() {
         truncated: true,
         ..output(TokenUsage::new(121_600, 20))
     };
-    let (continued, terminal_stop) =
-        crate::interactive::auto_compact::compaction_gates(Some(&salvage));
+    let (continued, terminal_stop) = auto_compact::compaction_gates(Some(&salvage));
     assert!(!continued, "a budget salvage stop is not a continuation");
     assert!(
         terminal_stop,
@@ -181,15 +181,14 @@ fn exhausted_alone_does_not_mean_continued() {
             events: vec![AgentEvent::provider_continuation(phase, 1, 3)],
             ..output(TokenUsage::new(121_600, 20))
         };
-        let (continued, terminal_stop) =
-            crate::interactive::auto_compact::compaction_gates(Some(&spent));
+        let (continued, terminal_stop) = auto_compact::compaction_gates(Some(&spent));
         assert_eq!(
             continued, expected,
             "{phase:?} must derive continued == {expected}"
         );
         assert!(!terminal_stop, "{phase:?} must not set the salvage gate");
     }
-    let (continued, terminal_stop) = crate::interactive::auto_compact::compaction_gates(None);
+    let (continued, terminal_stop) = auto_compact::compaction_gates(None);
     assert!(
         !continued && !terminal_stop,
         "an error/absent result derives neither gate"

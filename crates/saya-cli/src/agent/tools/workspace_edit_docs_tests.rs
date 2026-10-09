@@ -31,7 +31,7 @@ fn read_repo(relative: &str) -> String {
 /// The `workspace_edit` module doc comment, read as source text: the
 /// failure contract's home, pinned row by row.
 fn workspace_edit_module_source() -> String {
-    read_repo("crates/saya-cli/src/agent/tools/database_tools/workspace_edit.rs")
+    read_repo("crates/saya-cli/src/agent/tools/workspace/edit.rs")
 }
 
 /// Every row of the DESIGN §4 failure contract must appear in the tool's

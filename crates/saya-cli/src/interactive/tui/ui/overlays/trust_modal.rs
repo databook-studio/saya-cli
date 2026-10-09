@@ -6,7 +6,7 @@
 //! there), so the two surfaces cannot drift.
 
 use super::super::theme::{foreground, secondary, warning};
-use crate::interactive::session_trust::TRUST_PROMPT;
+use crate::interactive::session::permissions::trust::TRUST_PROMPT;
 use crate::interactive::tui::types::TrustPrompt;
 use ratatui::{
     Frame,

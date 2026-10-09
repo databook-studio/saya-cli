@@ -1,10 +1,11 @@
 //! Tests for `receive`'s main-loop request shape.
 
-use super::*;
+use super::{ReceiveContext, receive};
+use crate::loop_runner::admission::Admission;
 use crate::{
-    AgentLimits, AnsweringLimits, ChatResponse, ProviderStream, ReasoningEffort, ResponseFormat,
+    AgentLimits, AnsweringLimits, CancellationToken, ChatMessage, ChatProvider, ChatRequest,
+    ChatResponse, ProviderError, ProviderEvent, ProviderStream, ReasoningEffort, ResponseFormat,
 };
-use crate::{ProviderError, ProviderEvent};
 use async_trait::async_trait;
 use futures_util::stream;
 use std::sync::Mutex;

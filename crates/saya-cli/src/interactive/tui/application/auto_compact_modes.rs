@@ -5,7 +5,7 @@ use super::super::super::tests_support::unused_runtime;
 use super::support::{
     answering_report, app_with_model, five_turns, output, run_turn_maybe_compacting, stream_with,
 };
-use crate::interactive::session_compact::plan;
+use crate::interactive::session::continuation::compaction::manual::plan;
 use saya_agent::TokenUsage;
 use std::sync::Arc;
 

@@ -4,8 +4,8 @@
 
 use super::super::outcome::Dispatch;
 use super::apply_query_actions;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::tests_support::unused_runtime;
 use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::transcript::{BlockKind, Transcript};

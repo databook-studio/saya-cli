@@ -16,7 +16,8 @@ use tokio::sync::mpsc::unbounded_channel;
 /// denial byte-identical (no decider wording appended).
 #[tokio::test]
 async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
-    use crate::interactive::{session_definitions, session_deny};
+    use crate::interactive::session::permissions::deny as session_deny;
+    use crate::interactive::session_definitions;
     use saya_agent::{AgentLimits, CancellationToken, run_agent_with_sink};
     use std::sync::{Arc, Mutex};
 

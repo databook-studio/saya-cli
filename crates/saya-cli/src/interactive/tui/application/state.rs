@@ -16,7 +16,7 @@ impl App {
         profiles: Vec<String>,
         runtime: Arc<RuntimeConfig>,
         state_db: SqliteStateStore,
-        session: Arc<crate::interactive::session_universe::SessionUniverse>,
+        session: Arc<crate::interactive::session::universe::SessionUniverse>,
     ) -> Self {
         let mut transcript = Transcript::new();
         transcript.push(

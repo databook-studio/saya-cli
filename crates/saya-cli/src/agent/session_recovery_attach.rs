@@ -5,7 +5,7 @@
 //! the flag off — the default — behaviour is byte-identical to today.
 
 use crate::agent::tools::DatabaseTools;
-use crate::interactive::session_universe::SessionUniverse;
+use crate::interactive::session::universe::SessionUniverse;
 
 /// Attaches the session's recovery recorder when the session has one to
 /// give: a bound workspace and a recovery handle. `None` (the `ask` path)

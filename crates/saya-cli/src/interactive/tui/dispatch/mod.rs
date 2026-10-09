@@ -29,12 +29,12 @@ mod query_source_tests;
 
 pub(crate) use outcome::Dispatch;
 
-use super::super::session_runtime::SessionRuntime;
 use super::transcript::{BlockKind, Transcript};
 use super::types::{CapturedResult, LastQuery};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::render::RenderFormat;
 use crate::slash::{SlashCommand, parse_slash_command};
 use saya_store::FsSessionStore;

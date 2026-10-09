@@ -51,7 +51,7 @@ pub(crate) fn status_line(state: &SessionState) -> String {
     // The task segment names the done count while anything is tracked, and
     // is absent entirely on an empty list — the other conditional segments'
     // shape, so an untracked session reads exactly as before.
-    let tasks = super::session_tasks_view::tasks_summary(&state.task_list)
+    let tasks = crate::interactive::session::tasks::view::tasks_summary(&state.task_list)
         .map(|summary| format!(" {summary}"))
         .unwrap_or_default();
     format!(
@@ -99,7 +99,7 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
         sharing_on: state.allow_data_sharing,
         host_composed: state.host_composed,
         denied_programs: state.denied_programs.clone(),
-        task_summary: super::session_tasks_view::tasks_summary(&state.task_list),
+        task_summary: crate::interactive::session::tasks::view::tasks_summary(&state.task_list),
     }
 }
 

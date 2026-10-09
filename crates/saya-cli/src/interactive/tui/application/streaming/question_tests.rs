@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::agent::question_scope::QuestionScope;
-use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session::runtime::SessionRuntime;
 use crate::interactive::tui::agent;
 use saya_agent::ApprovalPolicy;
 use std::path::PathBuf;

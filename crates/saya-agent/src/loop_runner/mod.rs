@@ -13,6 +13,9 @@ mod output;
 mod preflight;
 mod receive;
 mod receive_stream;
+mod response;
+mod response_tools;
+mod runner;
 mod salvage;
 mod tool_batch;
 mod tool_policy;
@@ -20,6 +23,7 @@ mod tool_protocol;
 mod tool_record;
 mod tool_shape;
 mod tools;
+mod turn;
 mod turn_tools;
 
 pub use clarification_args::{
@@ -28,9 +32,8 @@ pub use clarification_args::{
 };
 
 use crate::{
-    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage,
-    ChatProvider, ProviderContinuationPhase, ProviderError, TokenUsage, ToolDefinition,
-    ToolExecutor,
+    AgentEvent, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
+    TokenUsage, ToolDefinition, ToolExecutor,
 };
 
 use control::AgentRunInvocation;
@@ -84,7 +87,7 @@ pub async fn run_agent_with_sink(
     sink: &dyn AgentEventSink,
     cancellation: CancellationToken,
 ) -> Result<AgentOutput, AgentError> {
-    run_agent_inner(AgentRunInvocation {
+    runner::run_agent_inner(AgentRunInvocation {
         provider,
         tools,
         request,
@@ -106,7 +109,7 @@ pub async fn run_agent_with_control<'a>(
     definitions: Vec<ToolDefinition>,
     control: AgentRunControl<'a>,
 ) -> Result<AgentOutput, AgentError> {
-    run_agent_inner(AgentRunInvocation {
+    runner::run_agent_inner(AgentRunInvocation {
         provider,
         tools,
         request,
@@ -119,431 +122,6 @@ pub async fn run_agent_with_control<'a>(
         request_preflight: control.request_preflight,
     })
     .await
-}
-
-async fn run_agent_inner(invocation: AgentRunInvocation<'_>) -> Result<AgentOutput, AgentError> {
-    if let Some(scope) = invocation.answering.clone() {
-        let mut admission = scope.lock().await?;
-        admission.begin_invocation();
-        run_agent_loop(invocation, &mut admission).await
-    } else {
-        let mut admission = admission::Admission::new(AnsweringLimits::default(), false);
-        run_agent_loop(invocation, &mut admission).await
-    }
-}
-
-async fn run_agent_loop(
-    invocation: AgentRunInvocation<'_>,
-    admission: &mut admission::Admission,
-) -> Result<AgentOutput, AgentError> {
-    let AgentRunInvocation {
-        provider,
-        tools,
-        request,
-        definitions,
-        limits,
-        approval,
-        sink,
-        cancellation,
-        answering,
-        request_preflight,
-    } = invocation;
-    let controlled = answering.is_some();
-    admission.initialize(sink).await;
-    if controlled {
-        admission.check(&cancellation)?;
-    }
-    let (mut messages, mut ordinary_history_pairs, mut protected_prefix_len) =
-        crate::history::build_messages_with_history_count(
-            request.system_prompt.as_deref(),
-            &request.context_blocks,
-            &request.prompt,
-            &request.history,
-            limits.context_byte_budget,
-        )?;
-    let mut events = Vec::new();
-    let mut used_bounded_sql_query = false;
-    let mut tool_metadata = Vec::new();
-    let mut usage = TokenUsage::default();
-    let mut continuation_count = 0;
-    let mut pending_continuation = None;
-    // Calls that failed during this run — SQL statements keyed on the
-    // statement exactly as submitted, other tools on (tool, arguments) — so a
-    // byte-identical re-submission is refused rather than re-executed (loop
-    // invariant for the "do not repeat a failed call" advice the model does
-    // not always obey).
-    let mut failed = failed_statements::FailedStatements::new();
-    // The last statement that completed successfully, so a run that exhausts its
-    // budget without nominating can still surface its best available answer.
-    let mut last_successful_sql: Option<String> = None;
-    let mut designation = designation::State::new();
-    loop {
-        if let Err(error) = admission.check(&cancellation) {
-            if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
-                return Ok(budget_output(
-                    dimension,
-                    &mut events,
-                    sink,
-                    PartialOutput {
-                        usage,
-                        used_bounded_sql_query,
-                        tool_metadata,
-                        answer_sql: designation.sql.clone().or(last_successful_sql),
-                        answer: String::new(),
-                    },
-                )
-                .await);
-            }
-            return Err(error);
-        }
-        if admission.legacy.turn_limit(limits.max_turns) {
-            return salvage::salvage(
-                provider,
-                &request.model,
-                &mut messages,
-                &mut ordinary_history_pairs,
-                &mut protected_prefix_len,
-                &[],
-                limits.context_byte_budget,
-                request_preflight,
-                sink,
-                &cancellation,
-                &mut events,
-                &mut usage,
-                admission,
-                used_bounded_sql_query,
-                tool_metadata,
-                designation.sql.clone().or(last_successful_sql),
-            )
-            .await;
-        }
-        admission.legacy.admit_turn();
-        // A truncation is deterministic — re-sending the identical request fails
-        // identically, so `receive` never retries it. Within budget the loop
-        // instead re-instructs: the partial stays discarded, one user-role note
-        // tells the model to resume compactly, and the turn is spent — the
-        // The shared admission owner has already charged this turn, so `max_turns` keeps binding.
-        let (assistant, turn_usage, reasoning) = match receive::receive(receive::ReceiveContext {
-            provider,
-            model: &request.model,
-            messages: &mut messages,
-            ordinary_history_pairs: &mut ordinary_history_pairs,
-            protected_prefix_len: &mut protected_prefix_len,
-            definitions: &definitions,
-            context_byte_budget: limits.context_byte_budget,
-            request_preflight,
-            continuation: pending_continuation.take(),
-            sink,
-            cancellation: &cancellation,
-            events: &mut events,
-            admission,
-        })
-        .await
-        {
-            Ok(turn) => turn,
-            Err(failure) => {
-                add_usage(&mut usage, failure.usage);
-                let error = if matches!(&failure.error, AgentError::Cancelled) {
-                    admission
-                        .check(&cancellation)
-                        .err()
-                        .unwrap_or(failure.error)
-                } else {
-                    failure.error
-                };
-                if cancellation.reason() == Some(crate::CancellationReason::OwnerFailure) {
-                    return Err(error);
-                }
-                match error {
-                    AgentError::Provider(ProviderError::OutputTruncated { .. })
-                        if limits
-                            .max_continuations
-                            .is_some_and(|max| continuation_count < max) =>
-                    {
-                        continuation_count += 1;
-                        pending_continuation = Some(receive::ContinuationProgress {
-                            index: continuation_count as usize,
-                            limit: limits
-                                .max_continuations
-                                .expect("the continuation guard checked a finite limit")
-                                as usize,
-                        });
-                        messages.push(ChatMessage::text("user", CONTINUATION_NOTE));
-                        continue;
-                    }
-                    error if admission.stopped_dimension(&error, &cancellation).is_some() => {
-                        let dimension = admission
-                            .stopped_dimension(&error, &cancellation)
-                            .expect("guarded budget reason");
-                        return Ok(budget_output(
-                            dimension,
-                            &mut events,
-                            sink,
-                            PartialOutput {
-                                usage,
-                                used_bounded_sql_query,
-                                tool_metadata,
-                                answer_sql: designation.sql.clone().or(last_successful_sql),
-                                answer: String::new(),
-                            },
-                        )
-                        .await);
-                    }
-                    error if designation.recovering() => {
-                        return designation::failed_follow_up(
-                            &designation,
-                            error,
-                            (&mut events, sink),
-                            (usage, used_bounded_sql_query, tool_metadata),
-                        )
-                        .await;
-                    }
-                    AgentError::Provider(ProviderError::OutputTruncated { .. })
-                        if limits
-                            .max_continuations
-                            .is_some_and(|max| max > 0 && continuation_count >= max) =>
-                    {
-                        // The allowance is spent: this truncation is terminal
-                        // here — no budget, cancellation, or designation
-                        // recovery arm matched above to own the stop instead.
-                        // A disabled continuation (`None`/`Some(0)`) never had
-                        // a limit to exhaust and stays silent.
-                        emit(
-                            &mut events,
-                            sink,
-                            AgentEvent::provider_continuation(
-                                ProviderContinuationPhase::Exhausted,
-                                continuation_count,
-                                limits
-                                    .max_continuations
-                                    .expect("the guard checked a finite limit"),
-                            ),
-                        )
-                        .await;
-                        return Err(error);
-                    }
-                    error => return Err(error),
-                }
-            }
-        };
-        // Providers report cumulative counts per response; sum across turns.
-        add_usage(&mut usage, turn_usage);
-        if !assistant.tool_calls.is_empty()
-            && let Err(error) = admission.enforce_tools(&cancellation)
-            && let Some(dimension) = admission.stopped_dimension(&error, &cancellation)
-        {
-            return Ok(budget_output(
-                dimension,
-                &mut events,
-                sink,
-                PartialOutput {
-                    usage,
-                    used_bounded_sql_query,
-                    tool_metadata,
-                    answer_sql: designation.sql.clone().or(last_successful_sql),
-                    answer: assistant.content,
-                },
-            )
-            .await);
-        }
-        let mut response_limits = limits;
-        let result_caps = if !assistant.tool_calls.is_empty() {
-            let result_budget = match preflight::reserve_tool_batch(
-                &request.model,
-                &mut messages,
-                protected_prefix_len,
-                &assistant,
-                &definitions,
-                limits.context_byte_budget,
-                request_preflight,
-            ) {
-                Ok(budget) => budget,
-                Err(preflight::PreflightError::Budget(dimension)) => {
-                    let error = admission.stop_preflight(&cancellation, dimension);
-                    if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
-                        messages.push(assistant.clone());
-                        messages.extend(preflight::non_execution_replies(&assistant));
-                        return Ok(budget_output(
-                            dimension,
-                            &mut events,
-                            sink,
-                            PartialOutput {
-                                usage,
-                                used_bounded_sql_query,
-                                tool_metadata,
-                                answer_sql: designation.sql.clone().or(last_successful_sql),
-                                answer: assistant.content,
-                            },
-                        )
-                        .await);
-                    }
-                    return Err(error);
-                }
-                Err(preflight::PreflightError::Serialization) => {
-                    return Err(AgentError::Limit("request projection serialization failed"));
-                }
-            };
-            response_limits.context_byte_budget =
-                response_limits.context_byte_budget.min(result_budget);
-            tool_batch::turn_result_caps(result_budget, assistant.tool_calls.len())
-        } else {
-            Vec::new()
-        };
-        // Forward the turn's captured chain-of-thought onto the event stream as
-        // one `ReasoningText` event — the provider layer puts it on `ChatResponse.reasoning`
-        // and bound it to `_reasoning` here; the CLI-boundary slice carries it across the crate
-        // boundary so the CLI *can* reach it; whether to display it is the CLI's call.
-        // This is the only way reasoning leaves `saya-agent`: it is NOT pushed
-        // onto `messages` — `assistant` (a `ChatMessage`) is what gets replayed
-        // to the provider as history, and `ChatMessage` has no reasoning field,
-        // so reasoning cannot leak into the next turn's request. `None` (a
-        // provider that reported no reasoning) emits nothing — byte-identical
-        // to today.
-        if let Some(text) = reasoning
-            && !text.is_empty()
-        {
-            emit(&mut events, sink, AgentEvent::reasoning_text(text)).await;
-        }
-        messages.push(assistant.clone());
-        // Designation arm: see `designation` for the bounded prose recovery.
-        match designation::handle(
-            &mut designation,
-            &assistant,
-            &result_caps,
-            (&mut events, sink, &cancellation),
-            &mut messages,
-            (usage, used_bounded_sql_query, &mut tool_metadata),
-        )
-        .await?
-        {
-            designation::Outcome::Done(output) => return Ok(*output),
-            designation::Outcome::Recovering => continue,
-            designation::Outcome::NotDesignated => {}
-        }
-        // The clarification arm (B3c): a `request_clarification` call ends the
-        // turn — the question is surfaced, the tool result is fed, and no
-        // further provider call happens until the user answers. A malformed
-        // ask is fed back as a tool error and the turn continues.
-        match clarification::handle(
-            &assistant,
-            &definitions,
-            &response_limits,
-            &result_caps,
-            approval,
-            tools,
-            &designation,
-            (&mut events, sink, &cancellation),
-            &mut messages,
-            (usage, used_bounded_sql_query, &mut tool_metadata),
-        )
-        .await?
-        {
-            clarification::Outcome::Done(output) => return Ok(*output),
-            // The arm answered this message's calls (errors for malformed
-            // asks, refusals for the siblings): its results are already on
-            // the conversation, and the next turn retries — the ordinary
-            // path must not run the same calls again.
-            clarification::Outcome::Continue => continue,
-            clarification::Outcome::NotCalled => {}
-        }
-        if assistant.tool_calls.is_empty() {
-            if !matches!(
-                cancellation.reason(),
-                Some(crate::CancellationReason::Budget(_))
-            ) {
-                check_cancelled(&cancellation)?;
-            }
-            emit(&mut events, sink, AgentEvent::Complete).await;
-            return Ok(AgentOutput {
-                answer: assistant.content,
-                events,
-                used_bounded_sql_query,
-                tool_metadata,
-                usage,
-                learning_usage: None,
-                truncated: false,
-                answer_sql: designation.sql.clone(),
-            });
-        }
-        // The tool-call ceiling is a whole-run total checked once per turn,
-        // before any of the turn's calls run: if this turn would cross it, the
-        // run stops rather than executing a partial batch.
-        if admission
-            .legacy
-            .tool_limit(limits.max_tool_calls, assistant.tool_calls.len())
-        {
-            return salvage::salvage(
-                provider,
-                &request.model,
-                &mut messages,
-                &mut ordinary_history_pairs,
-                &mut protected_prefix_len,
-                &assistant.tool_calls,
-                limits.context_byte_budget,
-                request_preflight,
-                sink,
-                &cancellation,
-                &mut events,
-                &mut usage,
-                admission,
-                used_bounded_sql_query,
-                tool_metadata,
-                designation.sql.clone().or(last_successful_sql),
-            )
-            .await;
-        }
-        admission.legacy.admit_tools(assistant.tool_calls.len());
-        let partial_answer = assistant.content.clone();
-        let tool_result = turn_tools::run_turn_tools(
-            tools,
-            assistant,
-            &definitions,
-            &result_caps,
-            &response_limits,
-            approval,
-            sink,
-            &cancellation,
-            &mut events,
-            &mut messages,
-            &mut used_bounded_sql_query,
-            &mut tool_metadata,
-            &mut failed,
-            &mut last_successful_sql,
-        )
-        .await;
-        if let Err(error) = tool_result {
-            let error = if matches!(&error, AgentError::Cancelled) {
-                admission.check(&cancellation).err().unwrap_or(error)
-            } else {
-                error
-            };
-            if let Some(dimension) = admission.stopped_dimension(&error, &cancellation) {
-                return Ok(budget_output(
-                    dimension,
-                    &mut events,
-                    sink,
-                    PartialOutput {
-                        usage,
-                        used_bounded_sql_query,
-                        tool_metadata,
-                        answer_sql: designation.sql.clone().or(last_successful_sql),
-                        answer: partial_answer,
-                    },
-                )
-                .await);
-            }
-            return Err(error);
-        }
-        // Intra-loop context budget: the pre-loop trim bounds history, but
-        // assistant turns and tool results accumulate here. Trim every turn —
-        // batch (parallel) and sequential alike — so the byte budget binds
-        // unconditionally, never just on the turns a single call ran.
-        output::trim_to_budget(
-            &mut messages,
-            limits.context_byte_budget,
-            protected_prefix_len,
-        );
-    }
 }
 
 pub(super) struct PartialOutput {
@@ -586,7 +164,8 @@ pub(super) async fn emit(
     sink.emit(event.clone()).await;
     events.push(event);
 }
-fn check_cancelled(token: &CancellationToken) -> Result<(), AgentError> {
+
+pub(super) fn check_cancelled(token: &CancellationToken) -> Result<(), AgentError> {
     if token.is_cancelled() {
         Err(AgentError::Cancelled)
     } else {

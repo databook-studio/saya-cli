@@ -16,8 +16,8 @@ use saya_store::FsSessionStore;
 use saya_types::DatabaseProfile;
 
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::SecondSqlDecision;
 use crate::interactive::tui::dispatch::{Dispatch, dispatch};
 use crate::interactive::tui::loop_tick::resume::tick_resume;

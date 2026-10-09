@@ -5,7 +5,7 @@
 
 use super::super::limits::ENVELOPE_SLACK;
 use super::*;
-use saya_agent::MAX_TOOL_MESSAGE_BYTES;
+use saya_agent::{ContextBlock, MAX_TOOL_MESSAGE_BYTES};
 
 const CONTEXT_CLOSE: &str = "<<<CONTEXT_BLOCK_END>>>";
 

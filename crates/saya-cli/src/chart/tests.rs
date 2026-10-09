@@ -1,0 +1,241 @@
+use super::*;
+use saya_types::QueryResult;
+#[cfg(test)]
+mod chart_gen_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_chart_kind_parse() {
+        assert_eq!(ChartKind::parse("bar"), Some(ChartKind::Bar));
+        assert_eq!(ChartKind::parse("BAR"), Some(ChartKind::Bar));
+        assert_eq!(ChartKind::parse("Line"), Some(ChartKind::Line));
+        assert_eq!(ChartKind::parse("AREA"), Some(ChartKind::Area));
+        assert_eq!(ChartKind::parse("pie"), Some(ChartKind::Pie));
+        assert_eq!(ChartKind::parse("Doughnut"), Some(ChartKind::Doughnut));
+        assert_eq!(ChartKind::parse("scatter"), Some(ChartKind::Scatter));
+        assert_eq!(ChartKind::parse("unknown"), None);
+        assert_eq!(ChartKind::parse("123"), None);
+    }
+
+    #[test]
+    fn test_suggest_spec() {
+        // text + numeric => Bar
+        let text_num_result = QueryResult {
+            columns: vec!["category".to_string(), "count".to_string()],
+            rows: vec![json!(["A", 10]), json!(["B", 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT category, count FROM t".to_string(),
+        };
+        let spec = suggest_spec(&text_num_result);
+        assert_eq!(spec.kind, ChartKind::Bar);
+        assert_eq!(spec.x, Some("category".to_string()));
+        assert_eq!(spec.y, vec!["count".to_string()]);
+        assert_eq!(spec.title, None);
+
+        // two numeric => Scatter
+        let two_num_result = QueryResult {
+            columns: vec!["x_val".to_string(), "y_val".to_string()],
+            rows: vec![json!([1.0, 2.0]), json!([3.0, 4.0])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT x_val, y_val FROM t".to_string(),
+        };
+        let spec2 = suggest_spec(&two_num_result);
+        assert_eq!(spec2.kind, ChartKind::Scatter);
+        assert_eq!(spec2.x, Some("x_val".to_string()));
+        assert_eq!(spec2.y, vec!["y_val".to_string()]);
+        assert_eq!(spec2.title, None);
+    }
+
+    #[test]
+    fn test_render_html_bar_chart() {
+        let result = QueryResult {
+            columns: vec!["rating".to_string(), "films".to_string()],
+            rows: vec![json!(["G", 178]), json!(["R", 195])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT rating, films FROM film".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("rating".to_string()),
+            y: vec!["films".to_string()],
+            title: None,
+        };
+        let html = render_html(&result, &spec).unwrap();
+        assert!(html.contains("\"type\":\"bar\""));
+        assert!(html.contains("178"));
+        assert!(html.contains("195"));
+        assert!(html.contains("\"G\""));
+        assert!(html.contains("\"R\""));
+        assert!(html.contains("Chart.js v4.4.4"));
+
+        let no_num_result = QueryResult {
+            columns: vec!["col1".to_string(), "col2".to_string()],
+            rows: vec![json!(["a", "b"]), json!(["c", "d"])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT col1, col2 FROM t".to_string(),
+        };
+        let err_spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: None,
+            y: Vec::new(),
+            title: None,
+        };
+        assert!(render_html(&no_num_result, &err_spec).is_err());
+    }
+
+    // Postgres NUMERIC/DECIMAL and MySQL DECIMAL decode to JSON *strings*, not
+    // numbers (e.g. SUM(amount) -> "3094.78"). They must still chart.
+    #[test]
+    fn numeric_string_values_are_plotted() {
+        let result = QueryResult {
+            columns: vec!["month".to_string(), "revenue".to_string()],
+            rows: vec![
+                json!(["2022-01", "3094.78"]),
+                json!(["2022-02", "10164.97"]),
+            ],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT month, SUM(amount) AS revenue FROM payment GROUP BY 1"
+                .to_string(),
+        };
+        let spec = suggest_spec(&result);
+        assert_eq!(spec.y, vec!["revenue".to_string()]);
+        let html = render_html(&result, &spec).unwrap();
+        assert!(html.contains("3094.78"), "numeric-string value was dropped");
+        assert!(
+            html.contains("10164.97"),
+            "numeric-string value was dropped"
+        );
+    }
+
+    #[test]
+    fn suggest_spec_detects_numeric_string_columns() {
+        // Two numeric columns encoded as strings should be recognized as numeric
+        // (and so picked as a scatter), not treated as categorical text.
+        let result = QueryResult {
+            columns: vec!["length".to_string(), "avg_rate".to_string()],
+            rows: vec![json!(["46", "2.59"]), json!(["47", "2.70"])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT length, AVG(rate) FROM film GROUP BY 1".to_string(),
+        };
+        assert_eq!(suggest_spec(&result).kind, ChartKind::Scatter);
+    }
+
+    // M0-4: chart HTML is written to a temp file a browser opens, so cell
+    // strings carrying secret-shaped material must not reach it verbatim.
+    #[test]
+    fn chart_html_redacts_secret_shaped_cell_values() {
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "value".to_string()],
+            rows: vec![json!(["api_key=sk-live-SENTINEL", 10]), json!(["safe", 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, value FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["value".to_string()],
+            title: None,
+        };
+        let html = render_html(&result, &spec).unwrap();
+        assert!(
+            html.contains("[redacted]"),
+            "secret-shaped cell value was not redacted"
+        );
+        assert!(
+            !html.contains("sk-live-SENTINEL"),
+            "secret leaked into chart HTML"
+        );
+    }
+
+    #[test]
+    fn chart_html_redacts_secret_shaped_dataset_labels() {
+        let secret_alias = "api_key=sk-live-ALIAS-SENTINEL";
+        let result = QueryResult {
+            columns: vec!["label".to_string(), secret_alias.to_string()],
+            rows: vec![json!(["safe", 10])],
+            row_count: 1,
+            truncated: false,
+            executed_sql: "SELECT label, value AS \"api_key=sk-live-ALIAS-SENTINEL\" FROM t"
+                .to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec![secret_alias.to_string()],
+            title: None,
+        };
+
+        let html = render_html(&result, &spec).unwrap();
+        assert!(html.contains("api_key=[redacted]"));
+        assert!(!html.contains(secret_alias));
+    }
+
+    #[test]
+    fn test_render_html_script_injection_prevention() {
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "val".to_string()],
+            rows: vec![
+                json!(["</script><img src=x onerror=alert(1)>", 10]),
+                json!(["</SCRIPT>", 20]),
+            ],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, val FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["val".to_string()],
+            title: None,
+        };
+        let html = render_html(&result, &spec).unwrap();
+
+        assert!(html.contains("id=\"saya-chart-config\""));
+        assert!(html.contains("type=\"application/json\""));
+        assert!(html.contains("JSON.parse"));
+
+        assert!(!html.contains("</script><img"));
+        assert!(!html.contains("</SCRIPT>"));
+
+        assert!(html.contains("\\u003c/script"));
+        assert!(html.contains("\\u003c/SCRIPT"));
+    }
+
+    #[test]
+    fn script_embedded_config_round_trips_html_sensitive_labels() {
+        let labels = vec![
+            "greater>than & less<than".to_string(),
+            "</script>".to_string(),
+        ];
+        let result = QueryResult {
+            columns: vec!["label".to_string(), "value".to_string()],
+            rows: vec![json!([labels[0], 10]), json!([labels[1], 20])],
+            row_count: 2,
+            truncated: false,
+            executed_sql: "SELECT label, value FROM t".to_string(),
+        };
+        let spec = ChartSpec {
+            kind: ChartKind::Bar,
+            x: Some("label".to_string()),
+            y: vec!["value".to_string()],
+            title: None,
+        };
+
+        let html = render_html(&result, &spec).unwrap();
+        let config_json = html
+            .split_once("<script id=\"saya-chart-config\" type=\"application/json\">")
+            .and_then(|(_, rest)| rest.split_once("</script>"))
+            .map(|(config, _)| config)
+            .expect("chart config script is present");
+        let config: serde_json::Value = serde_json::from_str(config_json).unwrap();
+        assert_eq!(config["data"]["labels"], json!(labels));
+    }
+}

@@ -1,5 +1,5 @@
-use super::{
-    session_commands::SessionAction, session_resume::block_on, session_state::SessionState,
+use crate::interactive::session::{
+    commands::SessionAction, lifecycle::resume::block_on, state::SessionState,
 };
 use crate::render::{RenderFormat, TerminalEvent, render_event};
 use saya_store::{

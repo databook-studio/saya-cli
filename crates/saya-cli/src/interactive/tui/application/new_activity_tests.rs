@@ -4,7 +4,7 @@
 //! edge clears it, and it never reaches `SessionState` or anything the model
 //! replays. Beside `new_activity.rs`, the module that exposes it to the app.
 
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::tests_support::idle_app;
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;

@@ -3,10 +3,12 @@
 //! cap shows the friendly refusal sentence instead of the raw store error.
 
 use super::{poll_session_save, start_session_save};
-use crate::interactive::session_capacity::limit_reached_text;
-use crate::interactive::session_capacity::near_limit_text;
-use crate::interactive::session_capacity_test_support::{state_with_turns, temp_store_root};
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::lifecycle::capacity::limit_reached_text;
+use crate::interactive::session::lifecycle::capacity::near_limit_text;
+use crate::interactive::session::lifecycle::capacity_test_support::{
+    state_with_turns, temp_store_root,
+};
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;
 use crate::interactive::tui::ui_snapshot_tests::empty_app;

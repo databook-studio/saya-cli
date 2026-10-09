@@ -11,6 +11,7 @@
 mod bindings;
 mod connection;
 mod delete;
+mod dispatch;
 mod edit;
 mod export;
 mod fingerprint;
@@ -31,6 +32,7 @@ mod tests;
 use crate::cli::InvestigationCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
+use dispatch::run_investigation_outcome_controlled_in;
 pub use run_outcome::{Replay, RunOutcome};
 use saya_agent::CancellationToken;
 use saya_store::{InvestigationRepository, SqliteStateStore, StoreError};
@@ -44,6 +46,14 @@ pub(super) const EXIT_INVESTIGATION_ERROR: i32 = 2;
 pub(super) const EXIT_STORE_UNAVAILABLE: i32 = 3;
 /// Exit code when the safety layer refuses the SQL — the code `query` uses.
 pub(super) const EXIT_SAFETY: i32 = 4;
+
+/// How one controlled run is driven: the optional cancellation source the
+/// adapter holds, and whether the run is machine-driven (FIX-S6a: it can
+/// never write or complete review authority).
+struct RunControl<'a> {
+    cancellation: Option<&'a CancellationToken>,
+    machine_driven: bool,
+}
 
 /// Runs one investigation subcommand against the on-disk repository for this
 /// invocation (D2 root: the composed runtime's `investigations_root` —
@@ -140,141 +150,6 @@ pub(crate) async fn run_investigation_in(
     )
     .await
     .map(|outcome| outcome.code)
-}
-
-/// How one controlled run is driven: the optional cancellation source the
-/// adapter holds, and whether the run is machine-driven (FIX-S6a: it can
-/// never write or complete review authority).
-struct RunControl<'a> {
-    cancellation: Option<&'a CancellationToken>,
-    machine_driven: bool,
-}
-
-async fn run_investigation_outcome_controlled_in(
-    repo: &InvestigationRepository,
-    command: InvestigationCommand,
-    runtime: &RuntimeConfig,
-    format: RenderFormat,
-    can_prompt: bool,
-    state_db: &SqliteStateStore,
-    control: RunControl<'_>,
-) -> Result<RunOutcome, Box<dyn std::error::Error>> {
-    match command {
-        InvestigationCommand::Save {
-            name,
-            description,
-            sql,
-            file,
-            connection,
-            param_specs,
-        } => save::save(
-            repo,
-            runtime,
-            format,
-            save_input::SaveRequest {
-                name: &name,
-                description: description.as_deref(),
-                sql,
-                file,
-                connection: connection.as_deref(),
-                param_specs: &param_specs,
-            },
-        )
-        .map(RunOutcome::plain),
-        InvestigationCommand::Edit {
-            id,
-            name,
-            description,
-            sql,
-            file,
-            param_specs,
-        } => edit::edit(
-            repo,
-            format,
-            edit::EditRequest {
-                id: &id,
-                name: name.as_deref(),
-                description: description.as_deref(),
-                sql,
-                file,
-                param_specs: &param_specs,
-            },
-        )
-        .map(RunOutcome::plain),
-        InvestigationCommand::List { limit, offset } => {
-            list::list(repo, format, limit, offset).map(RunOutcome::plain)
-        }
-        InvestigationCommand::Show { id } => show::show(repo, format, &id).map(RunOutcome::plain),
-        InvestigationCommand::Delete { id, revision } => {
-            delete::delete(repo, format, &id, revision).map(RunOutcome::plain)
-        }
-        InvestigationCommand::Export {
-            id,
-            path,
-            overwrite,
-        } => export::export(repo, format, &id, &path, overwrite).map(RunOutcome::plain),
-        InvestigationCommand::Import { path } => {
-            import::import(repo, format, &path).map(RunOutcome::plain)
-        }
-        InvestigationCommand::Run {
-            id,
-            connection,
-            revalidate,
-            report,
-            rows,
-            overwrite,
-            params,
-        } => {
-            run::run(
-                repo,
-                runtime,
-                format,
-                can_prompt,
-                state_db,
-                run::RunRequest {
-                    id: &id,
-                    connection: connection.as_deref(),
-                    revalidate,
-                    report: report.as_deref(),
-                    rows,
-                    overwrite,
-                    params,
-                    machine_driven: control.machine_driven,
-                    cancellation: control.cancellation,
-                },
-            )
-            .await
-        }
-    }
-}
-
-impl InvestigationCommand {
-    /// The machine-driven seam (FIX-S6a), used only by the MCP replay
-    /// adapter: the run can never write or complete review authority — an
-    /// unreviewed investigation refuses; a reviewed one never refreshes.
-    pub(crate) async fn run_outcome_machine_driven_with_cancellation(
-        self,
-        repo: &InvestigationRepository,
-        runtime: &RuntimeConfig,
-        format: RenderFormat,
-        can_prompt: bool,
-        state_db: &SqliteStateStore,
-        cancellation: &CancellationToken,
-    ) -> Result<RunOutcome, Box<dyn std::error::Error>> {
-        run_investigation_outcome_controlled_in(
-            repo,
-            self,
-            runtime,
-            format,
-            can_prompt,
-            state_db,
-            RunControl {
-                cancellation: Some(cancellation),
-                machine_driven: true,
-            },
-        )
-        .await
-    }
 }
 
 /// Parses a user-supplied id. A malformed id cannot exist on disk, so it maps

@@ -1,6 +1,6 @@
 use super::super::transcript::BlockKind;
 /// Composed-screen behaviour snapshots (submit-time fold and composer hints), moved byte-identical from the hub.
-/// Plain assertions only — the five `insta` snapshots stay in the hub.
+/// Plain assertions only — the remaining `insta` snapshots stay in the hub.
 use super::support::{empty_app, fixed_status, render_buffer};
 
 // --- Fieldnotes phase 3, packet 3: automatic fold at the live edge. ---------

@@ -2,8 +2,8 @@
 
 use super::super::session_save::queue_session_save;
 use super::super::types::App;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use saya_store::FsSessionStore;
 
 // Advance the spinner while anything is in flight. `is_busy()` covers both an

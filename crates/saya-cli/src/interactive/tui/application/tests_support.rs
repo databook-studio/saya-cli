@@ -54,7 +54,7 @@ pub(crate) fn idle_app() -> App {
         runtime: Arc::new(unused_runtime()),
         state_db: SqliteStateStore::new(PathBuf::new()),
         session: std::sync::Arc::new(
-            crate::interactive::session_universe::SessionUniverse::empty(),
+            crate::interactive::session::universe::SessionUniverse::empty(),
         ),
         should_quit: false,
         pending_trust_answer: None,

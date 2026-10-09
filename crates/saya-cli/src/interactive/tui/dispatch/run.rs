@@ -6,9 +6,10 @@ use super::super::dispatch_runs;
 use super::super::transcript::{BlockKind, Transcript};
 use super::outcome::Dispatch;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_run::{self, RunTail};
-use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::run as session_run;
+use crate::interactive::session::run::RunTail;
+use crate::interactive::session::runtime::SessionRuntime;
 use crate::render::RenderFormat;
 
 #[allow(clippy::too_many_arguments)]
@@ -56,11 +57,12 @@ fn apply_run(
     // are named before the panel opens.
     let (seed_requested, tail) = session_run::separate_seed_flag(&tail);
     let seed = if seed_requested {
-        let seed =
-            crate::interactive::session_grants::run_seed(&session.policy().grants().tokens());
+        let seed = crate::interactive::session::permissions::grants::run_seed(
+            &session.policy().grants().tokens(),
+        );
         transcript.push(
             BlockKind::System,
-            crate::interactive::session_grants::seed_message(&seed),
+            crate::interactive::session::permissions::grants::seed_message(&seed),
         );
         Some(seed)
     } else {

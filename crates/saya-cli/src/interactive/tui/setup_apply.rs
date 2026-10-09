@@ -14,7 +14,7 @@ use super::transcript::BlockKind;
 use super::types::App;
 use crate::cli::GlobalOptions;
 use crate::config::reload::{ReloadInputs, ReloadOutcome, reload_runtime};
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::state::SessionState;
 
 /// Renders the handoff outcome and, for a closed wizard (`Finished(0)`),
 /// applies the same launch-options reload `/reload` runs: the swap

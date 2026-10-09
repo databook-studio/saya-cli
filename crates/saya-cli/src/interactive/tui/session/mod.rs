@@ -2,8 +2,8 @@
 
 use crate::cli::GlobalOptions;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::render::RenderFormat;
 use saya_store::{FsSessionStore, SqliteStateStore};
 

@@ -7,7 +7,7 @@
 use super::super::run_panel::RunPanel;
 use super::super::run_worker::RunJob;
 use super::super::types::App;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::state::SessionState;
 use crate::render::RenderFormat;
 use saya_agent::ApprovalPolicy;
 

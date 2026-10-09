@@ -9,7 +9,8 @@
 //!
 //! Dispatch and shared helpers live here; profile resolution is in
 //! `contracts_profile.rs`, read commands in `contracts_read.rs`, write commands
-//! in `contracts_write.rs`, and view→DTO mapping in `contracts_map.rs`.
+//! in `contracts_write.rs`, view→DTO mapping in `contracts_map.rs`, and the
+//! cached-schema helpers in `schema_cache.rs`.
 
 mod contracts_approve;
 mod contracts_decide;
@@ -20,6 +21,7 @@ mod contracts_profile;
 mod contracts_read;
 mod contracts_remember_schema;
 mod contracts_write;
+mod schema_cache;
 
 // The identity-dropping `RetrievedContract → ContractView` mapping, re-exported
 // `pub(crate)` so the agent contract tools (2b-3a) reuse it instead of carrying
@@ -29,15 +31,18 @@ pub(crate) use contracts_map::queue_item_view;
 // The identity-dropping profile resolution, re-exported `pub(crate)` so the
 // preferences adapter (5c-2) reuses it rather than carrying a second one.
 pub(crate) use contracts_profile::resolve_profile;
+// The cached-schema lookups and the "no schema observed" sentinel, re-exported
+// `pub(crate)` so the read/write commands and the agent contract tools reach
+// them at the same paths as before.
+pub(crate) use schema_cache::{cached_schema, cached_schema_availability, unobserved_fingerprint};
 
 use super::output::failure_message;
 use crate::cli::ContractsCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::ContractOpError;
-use crate::contracts::SchemaAvailability;
 use crate::render::RenderFormat;
-use saya_store::{SchemaStore, SqliteStateStore};
-use saya_types::{ClaimId, FINGERPRINT_VERSION, ProfileIdentity, SchemaFingerprint, SchemaTree};
+use saya_store::SqliteStateStore;
+use saya_types::ClaimId;
 
 /// Exit code for any typed contract-command failure (usage error, op error, or a
 /// write against an unavailable store). Matches the user-error code `config`
@@ -163,61 +168,6 @@ pub(super) fn arg_failure(
     format: RenderFormat,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     failure_message(EXIT_CONTRACT_ERROR, message.to_string(), format)
-}
-
-/// The "no schema observed" fingerprint: current format, all-zero digest. The
-/// headless adapter has no live schema to fingerprint, so it stores a digest
-/// guaranteed never to equal a real schema's — a later live schema reads the
-/// claim as `needs_review` (or `stale` if a referenced column is gone), never as
-/// `current`. Fabricating a real-looking digest would risk a false match.
-///
-/// `pub(crate)` so the agent contract tools (2b-3a) reuse this same sentinel
-/// instead of inventing a second all-zero digest convention.
-pub(crate) fn unobserved_fingerprint() -> SchemaFingerprint {
-    SchemaFingerprint::from_parts(FINGERPRINT_VERSION, &"0".repeat(64))
-        .expect("current format with a 64-hex-zero digest is a valid fingerprint")
-}
-
-/// The cached schema for `identity`, or `None` when nothing is cached. Mirrors
-/// the agent recall path's `SchemaStore::get_schema` lookup, but without the
-/// `.unwrap_or_default()` that collapses "no cache" onto an empty tree: a
-/// missing cache stays `None` so validity reads the honest
-/// `live_schema_unavailable`, while a cached-but-empty tree reads `stale`. A
-/// store read failure degrades to `None` — not a crash on a read path.
-///
-/// Shared by the read commands (`list`/`show`), the write command (`remember`),
-/// and the agent contract tools (`contract_search`), so every adapter that
-/// classifies a claim against the cached schema does it the same way — never a
-/// second lookup convention.
-pub(crate) async fn cached_schema(
-    store: &SqliteStateStore,
-    identity: &ProfileIdentity,
-) -> Option<SchemaTree> {
-    store
-        .get_schema(identity.as_str())
-        .await
-        .ok()
-        .flatten()
-        .map(|cached| cached.schema)
-}
-
-/// The schema known for a profile as a three-state [`SchemaAvailability`]: a
-/// real cache (`Available`, carrying when it was observed), no cache entry yet
-/// (`Missing`), or a store that could not be read (`Unavailable`). The read
-/// commands and the agent contract tools use this — *not* [`cached_schema`] —
-/// so a store error or an undiscovered profile classifies `LiveSchemaUnavailable`
-/// instead of collapsing to an empty tree that would read `Stale` (the P1 bug).
-/// The write path (`remember`/`import`) keeps [`cached_schema`]: it resolves a
-/// fingerprint against whatever the cache holds, which is not a classification.
-pub(crate) async fn cached_schema_availability(
-    store: &SqliteStateStore,
-    identity: &ProfileIdentity,
-) -> SchemaAvailability {
-    match store.get_schema(identity.as_str()).await {
-        Ok(Some(cached)) => SchemaAvailability::available(cached.schema, cached.updated_unix_ms),
-        Ok(None) => SchemaAvailability::Missing,
-        Err(_) => SchemaAvailability::Unavailable,
-    }
 }
 
 /// Parses a claim id, mapping a malformed one to a payload-free typed message

@@ -118,7 +118,7 @@ pub(crate) struct App {
     pub(crate) state_db: SqliteStateStore,
     /// The session's composed tool universe — the executor and definitions
     /// every turn of this session dispatches through.
-    pub(crate) session: Arc<crate::interactive::session_universe::SessionUniverse>,
+    pub(crate) session: Arc<crate::interactive::session::universe::SessionUniverse>,
     pub(crate) should_quit: bool,
     /// The startup trust modal's answer, stashed when the modal closes with
     /// a bound directory and drained exactly once by the event loop (see

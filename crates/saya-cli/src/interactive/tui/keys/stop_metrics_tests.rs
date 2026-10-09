@@ -6,8 +6,8 @@
 
 use super::*;
 use crate::agent::question_scope::QuestionScope;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::agent::messages::{Stream, StreamMsg};
 use crate::interactive::tui::application::tests_support::{idle_app, unused_runtime};
 use crate::local_metrics::{LocalMetrics, LocalPhaseSnapshot, phase_index};

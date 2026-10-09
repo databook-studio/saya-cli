@@ -11,9 +11,9 @@ use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::LastQuery;
 use super::outcome::Dispatch;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::render::RenderFormat;
 use saya_store::FsSessionStore;
 
@@ -67,7 +67,7 @@ pub(super) fn apply_session_action(
             // file text.
             transcript.push(
                 BlockKind::System,
-                crate::interactive::session_context::context_view(runtime, session.root()),
+                crate::interactive::session::context_view::context_view(runtime, session.root()),
             );
         }
         SessionAction::Resume(id) => resume(transcript, state, runtime, store, session, &id),
@@ -78,9 +78,9 @@ pub(super) fn apply_session_action(
             // the storage root. The root is the one the store was built
             // from (`default_session_dir`); a store failure is an Error
             // block, never a silent empty listing.
-            match crate::interactive::session_commands::sessions_list_text(
+            match crate::interactive::session::commands::sessions_list_text(
                 store,
-                &crate::interactive::session_paths::default_session_dir(),
+                &crate::interactive::session::lifecycle::paths::default_session_dir(),
             ) {
                 Ok(text) => transcript.push(BlockKind::System, text),
                 Err(text) => transcript.push(BlockKind::Error, text),
@@ -92,9 +92,9 @@ pub(super) fn apply_session_action(
             // own id is passed as the current one, so the TUI can never
             // delete itself underneath its owner; every refusal lands as
             // an Error block naming what was not deleted.
-            let (ok, message) = crate::interactive::session_commands::sessions_delete_text(
+            let (ok, message) = crate::interactive::session::commands::sessions_delete_text(
                 store,
-                &crate::interactive::session_paths::default_session_dir(),
+                &crate::interactive::session::lifecycle::paths::default_session_dir(),
                 &id,
                 Some(&state.id),
             );
@@ -114,7 +114,7 @@ pub(super) fn apply_session_action(
             // the shared NoWorktree refusal). The words are the headless
             // rendering; a refusal (exit 2) is an Error block, never a
             // silent no-op.
-            let (code, message) = crate::interactive::session_resume::block_on(
+            let (code, message) = crate::interactive::session::lifecycle::resume::block_on(
                 crate::commands::preferences::run_in_session(command, session.root(), state_db),
             );
             transcript.push(
@@ -141,7 +141,7 @@ pub(super) fn apply_session_action(
                 command,
                 session.recovery(),
                 session.universe().workspace().as_deref(),
-                crate::interactive::session_continuation::now_unix_ms(),
+                crate::interactive::session::continuation::now_unix_ms(),
             );
             transcript.push(
                 if ok {

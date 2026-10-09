@@ -17,7 +17,7 @@ use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
 use super::{
-    session_universe::SessionUniverse,
+    session::universe::SessionUniverse,
     turn_summary::{TallyHandle, ToolTally, tally_handle},
 };
 
@@ -76,7 +76,7 @@ pub(crate) async fn run(
     // The agent's task posture, threaded like `approval`: the session's
     // `/mode` state at the composition root.
     agent_mode: AgentMode,
-    prior_tool_outcomes: Option<super::session_continuation::PriorToolOutcomes>,
+    prior_tool_outcomes: Option<crate::interactive::session::continuation::PriorToolOutcomes>,
     // The session's saved continuation record, carried like the live
     // outcome bundle: `Some` only where a session state exists.
     continuation: Option<saya_store::StoredContinuation>,

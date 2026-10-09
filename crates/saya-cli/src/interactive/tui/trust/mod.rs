@@ -24,7 +24,7 @@ pub(crate) use super::transcript::BlockKind;
 pub(crate) use super::types::{App, TrustPrompt};
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use crate::interactive::session_trust;
+pub(crate) use crate::interactive::session::permissions::trust;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use ratatui::crossterm::event::{KeyCode, KeyModifiers};

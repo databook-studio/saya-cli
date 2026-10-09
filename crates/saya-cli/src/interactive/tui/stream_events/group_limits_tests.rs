@@ -115,7 +115,7 @@ fn group_with_a_failure_renders_the_full_pair() {
 /// path both showing no group text.)
 #[test]
 fn expansion_state_is_not_persisted_and_resume_carries_none_of_it() {
-    use crate::interactive::session_state::SessionState;
+    use crate::interactive::session::state::SessionState;
 
     let mut transcript = Transcript::new();
     for event in two_write_calls() {

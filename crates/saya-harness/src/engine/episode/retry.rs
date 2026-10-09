@@ -16,7 +16,8 @@ use saya_types::{Deliverable, RunEvent, RunFailureCode, RunPlan};
 
 use crate::workspace::Workspace;
 
-use super::EngineEventSink;
+use crate::engine::sink::EngineEventSink;
+
 use super::brief;
 use super::{EpisodeDriver, EpisodeError, EpisodeRun};
 

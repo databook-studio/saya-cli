@@ -3,7 +3,7 @@
 use super::super::transcript::BlockKind;
 use super::super::types::App;
 use super::keys::{TrustResolution, trust_key};
-use crate::interactive::session_trust;
+use crate::interactive::session::permissions::trust as session_trust;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 impl App {

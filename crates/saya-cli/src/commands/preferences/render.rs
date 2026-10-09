@@ -5,7 +5,7 @@
 //! retention sentence rides `list` and `add` verbatim.
 
 use super::{PreferenceOutcome, PreferenceRefusal};
-use crate::interactive::session_continuation::now_unix_ms;
+use crate::interactive::session::continuation::now_unix_ms;
 use saya_types::{MAX_PROJECT_PREFERENCES, ProjectPreference};
 
 /// The retention sentence, stated on `list` and `add` outputs.

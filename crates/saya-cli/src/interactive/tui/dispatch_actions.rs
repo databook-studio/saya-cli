@@ -5,9 +5,9 @@ use saya_store::{
 
 use super::transcript::{BlockKind, Transcript};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_resume::{SessionDefaults, block_on, resume_session};
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::lifecycle::resume::{SessionDefaults, block_on, resume_session};
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 
 /// Lists saved sessions (shared with the `/history` command).
 pub(super) fn list_sessions(transcript: &mut Transcript, store: &FsSessionStore) {
@@ -80,11 +80,13 @@ pub(super) fn resume(
                     }
                     // A resumed bypass session re-prints its activation line
                     // — the mode is real again, in its own words.
-                    if let Some(line) = crate::interactive::session_activation::line_if_bypass(
-                        state,
-                        runtime,
-                        &session.universe(),
-                    ) {
+                    if let Some(line) =
+                        crate::interactive::session::permissions::activation::line_if_bypass(
+                            state,
+                            runtime,
+                            &session.universe(),
+                        )
+                    {
                         transcript.push(BlockKind::System, line);
                     }
                 }
@@ -109,7 +111,9 @@ pub(super) fn rotate(
     store: &FsSessionStore,
     session: &mut SessionRuntime,
 ) {
-    use crate::interactive::session_rotate_run::{RotateResult, rotate_session, rotated_message};
+    use crate::interactive::session::lifecycle::rotate_run::{
+        RotateResult, rotate_session, rotated_message,
+    };
     match rotate_session(store, runtime, state, session) {
         RotateResult::Rotated { old, new } => {
             transcript.push(BlockKind::System, rotated_message(&old, &new));
@@ -118,7 +122,7 @@ pub(super) fn rotate(
             }
             // A bypass successor re-prints its activation line: the mode is
             // real again, in its own words.
-            if let Some(line) = crate::interactive::session_activation::line_if_bypass(
+            if let Some(line) = crate::interactive::session::permissions::activation::line_if_bypass(
                 state,
                 runtime,
                 &session.universe(),

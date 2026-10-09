@@ -3,8 +3,8 @@
 use super::super::super::agent::{self};
 use super::super::super::transcript::BlockKind;
 use super::super::super::types::App;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use std::sync::Arc;
 
 impl App {

@@ -6,8 +6,8 @@
 use super::super::transcript::{BlockKind, Transcript};
 use super::outcome::Dispatch;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::runtime::SessionRuntime;
 
 pub(super) fn apply_grant_action(
     action: &mut Option<SessionAction>,
@@ -36,7 +36,7 @@ pub(super) fn apply_grant_action(
             // journalled once by the shared behaviour; a failed
             // journal write changes no grant and is said in the
             // message.
-            match crate::interactive::session_grants::allow(
+            match crate::interactive::session::permissions::grants::allow(
                 &tokens,
                 &session.universe().approval_facts(runtime),
                 session.policy().grants(),
@@ -53,7 +53,7 @@ pub(super) fn apply_grant_action(
             // so the count never reads "nothing runs".
             transcript.push(
                 BlockKind::System,
-                crate::interactive::session_grants::listing(
+                crate::interactive::session::permissions::grants::listing(
                     session.policy().mode(),
                     session.policy().grants(),
                 ),

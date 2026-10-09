@@ -25,29 +25,14 @@
 //! event for bare `Executing`; the steps' `StepStarted` events tell that
 //! story — so they mirror `Executing` to the store only.
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Instant,
-};
-
-use async_trait::async_trait;
-use saya_agent::{
-    AgentEvent, AgentEventSink, AnsweringObservation, BudgetDimension, CancellationReason,
-    CancellationToken,
-};
-use saya_store::RunStore;
-use saya_types::{PauseReason, RunEvent, RunId};
-
-use crate::fetch::DownloadBudget;
-use crate::journal::Journal;
-
-use super::clock::ElapsedClock;
-use super::usage::{AnsweringCountError, StepAnsweringCounts, UsageTotals};
-use super::{state::RunState, transitions::TransitionEvent};
-
 mod accounting;
+mod answering;
+mod control;
+mod diagnostic;
 mod enforcement;
+mod events;
 mod lifecycle;
+mod stop;
 mod types;
 
 /// The wall clock the sink reads. Production passes `Instant::now`; tests
@@ -55,6 +40,22 @@ mod types;
 type Clock = Box<dyn Fn() -> Instant + Send + Sync>;
 
 pub use types::{EngineSinkError, SinkBudgets};
+
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+
+use saya_agent::{AgentEventSink, CancellationToken};
+use saya_store::RunStore;
+use saya_types::RunId;
+
+use crate::fetch::DownloadBudget;
+use crate::journal::Journal;
+
+use super::clock::ElapsedClock;
+use super::state::RunState;
+use super::usage::{StepAnsweringCounts, UsageTotals};
 
 /// The engine's `AgentEventSink`. Shared as `Arc<EngineEventSink>` by whoever
 /// holds both the trait object and the engine-facing surface; all state is
@@ -150,78 +151,11 @@ impl EngineEventSink {
         self
     }
 
-    pub(crate) fn with_answering_counts(self, counts: StepAnsweringCounts) -> Self {
-        *self
-            .answering_counts
-            .lock()
-            .expect("engine sink answering-count lock") = counts;
-        self
-    }
-
-    pub(in crate::engine) fn begin_answering_step(&self, step: usize, tracked: bool) {
-        self.answering_counts
-            .lock()
-            .expect("engine sink answering-count lock")
-            .begin_step(step);
-        *self
-            .count_tracking
-            .lock()
-            .expect("engine sink answering-count tracking lock") = tracked;
-    }
-
-    pub(in crate::engine) fn remaining_answering_grant(
-        &self,
-        step: usize,
-        turns: Option<u64>,
-        tool_calls: Option<u64>,
-    ) -> Result<(Option<u64>, Option<u64>), AnsweringCountError> {
-        self.answering_counts
-            .lock()
-            .expect("engine sink answering-count lock")
-            .remaining(step, turns, tool_calls)
-    }
-
-    pub(crate) async fn settle_failed_request(&self) {
-        let tracked = *self.count_tracking.lock().expect("tracking lock");
-        let pending = self
-            .answering_counts
-            .lock()
-            .expect("counts lock")
-            .is_pending();
-        if tracked && pending {
-            self.observe_answering(AnsweringObservation::ToolBatchObserved { requested: 0 })
-                .await;
-        }
-    }
-
     /// Attaches the production run's shared cancellation owner. Legacy sink
     /// callers without this attachment keep the historical per-tick pause.
     pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
         self.cancellation = Some(cancellation);
         self
-    }
-
-    pub(super) fn request_budget_stop(&self, dimension: BudgetDimension) -> bool {
-        self.cancellation.as_ref().is_some_and(|cancellation| {
-            cancellation.cancel_with_reason(CancellationReason::Budget(dimension));
-            true
-        })
-    }
-
-    pub(in crate::engine) fn has_cancellation(&self) -> bool {
-        self.cancellation.is_some()
-    }
-
-    pub(in crate::engine) fn request_owner_failure(&self) {
-        if let Some(cancellation) = &self.cancellation {
-            cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
-        }
-    }
-
-    pub(in crate::engine) fn cancellation_reason(&self) -> Option<CancellationReason> {
-        self.cancellation
-            .as_ref()
-            .and_then(CancellationToken::reason)
     }
 
     /// Attaches the downstream sink every agent event forwards to.
@@ -240,175 +174,7 @@ impl EngineEventSink {
         *self.usage.lock().expect("engine sink usage lock")
     }
 
-    /// Takes the last failure the sink held — one it had no error channel to
-    /// return through, or a store failure `record` surfaced and also held.
-    /// `None` when nothing failed.
-    pub fn take_diagnostic(&self) -> Option<Arc<EngineSinkError>> {
-        self.diagnostic
-            .lock()
-            .expect("engine sink diagnostic lock")
-            .take()
-    }
-
-    pub(in crate::engine) fn hold_diagnostic(&self, error: EngineSinkError) {
-        self.hold_diagnostic_arc(Arc::new(error));
-    }
-
-    pub(in crate::engine) fn hold_diagnostic_arc(&self, error: Arc<EngineSinkError>) {
-        let mut diagnostic = self.diagnostic.lock().expect("engine sink diagnostic lock");
-        if diagnostic.is_none() {
-            *diagnostic = Some(error);
-        }
-    }
-
     fn set_state(&self, state: RunState) {
         *self.state.lock().expect("engine sink state lock") = state;
-    }
-}
-
-#[async_trait]
-impl AgentEventSink for EngineEventSink {
-    async fn observe_answering(&self, observation: AnsweringObservation) {
-        if !*self
-            .count_tracking
-            .lock()
-            .expect("engine sink answering-count tracking lock")
-        {
-            return;
-        }
-        let mut counts = self
-            .answering_counts
-            .lock()
-            .expect("engine sink answering-count lock");
-        let mut updated = *counts;
-        match updated.observe(observation) {
-            Ok(false) => return,
-            Ok(true) => {}
-            Err(source) => {
-                self.hold_diagnostic(EngineSinkError::AnsweringCount { source });
-                self.request_owner_failure();
-                return;
-            }
-        }
-        let (turns, tool_calls) = match observation {
-            AnsweringObservation::Initialized => (Some(0), Some(0)),
-            AnsweringObservation::RequestAdmitted => (Some(1), None),
-            AnsweringObservation::ToolBatchObserved { requested } => (None, Some(requested)),
-            _ => {
-                self.hold_diagnostic(EngineSinkError::AnsweringCount {
-                    source: AnsweringCountError::InvalidEvidence,
-                });
-                self.request_owner_failure();
-                return;
-            }
-        };
-        let event = RunEvent::Usage {
-            endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
-            tokens: None,
-            turns,
-            tool_calls,
-            cached_input_tokens: None,
-            cache_creation_input_tokens: None,
-        };
-        match self.journal.append(&event) {
-            Ok(()) => *counts = updated,
-            Err(source) => {
-                self.hold_diagnostic(EngineSinkError::Journal { source });
-                self.request_owner_failure();
-            }
-        }
-    }
-
-    /// One event emission is one tick: a successful or failed-attempt usage
-    /// receipt folds into the run's totals and is journaled as the durable
-    /// per-endpoint record, the download wallet's spend is journaled when it
-    /// has grown past the level the record holds, and then the wall-clock
-    /// deadline is checked. Counting precedes the check because the tokens
-    /// the event reports were already spent.
-    async fn emit(&self, event: AgentEvent) {
-        if let AgentEvent::Usage { usage, .. } | AgentEvent::FailedAttemptUsage { usage } = &event {
-            self.usage
-                .lock()
-                .expect("engine sink usage lock")
-                .fold(usage);
-            if let Err(error) = self.journal_usage(usage) {
-                self.hold_diagnostic(error);
-                self.request_owner_failure();
-                return;
-            }
-        }
-        if let Err(error) = self.journal_downloads() {
-            self.hold_diagnostic(error);
-            self.request_owner_failure();
-            return;
-        }
-        let mut clock_error = None;
-        if matches!(
-            &event,
-            AgentEvent::TurnStarted | AgentEvent::ToolRequested { .. }
-        ) && let Err(error) = self.observe_elapsed_clock(true)
-        {
-            clock_error = Some(error);
-        }
-        if let Some(error) = clock_error {
-            self.hold_diagnostic(error);
-            if self.cancellation.is_none()
-                && self.state() == RunState::Executing
-                && let Err(error) = self
-                    .record(TransitionEvent::Pause(PauseReason::WallClockExceeded))
-                    .await
-            {
-                self.hold_diagnostic(error);
-            }
-        }
-        self.observe_stop_before_display();
-        if let Some(stream) = &self.agent_stream {
-            stream.emit(event).await;
-        }
-        self.tick().await;
-    }
-}
-
-impl EngineEventSink {
-    fn observe_stop_before_display(&self) {
-        if self.state() != RunState::Executing {
-            return;
-        }
-        let already_stopped = self.cancellation_reason().is_some();
-        let dimension = if already_stopped {
-            None
-        } else if self.tokens_exhausted() {
-            Some(BudgetDimension::ReportedTokens)
-        } else if self.downloads_exhausted() {
-            Some(BudgetDimension::DownloadBytes)
-        } else {
-            None
-        };
-        if let Some(dimension) = dimension {
-            self.request_budget_stop(dimension);
-        }
-        match self.observe_elapsed_clock(false) {
-            Ok(true) => {
-                if !already_stopped && dimension.is_none() {
-                    self.request_budget_stop(BudgetDimension::ElapsedTime);
-                }
-            }
-            Ok(false) => {
-                if self
-                    .deadline
-                    .is_some_and(|deadline| (self.clock)() >= deadline)
-                    && !already_stopped
-                    && dimension.is_none()
-                {
-                    self.request_budget_stop(BudgetDimension::ElapsedTime);
-                }
-            }
-            Err(error) => {
-                self.hold_diagnostic(error);
-                if !already_stopped && dimension.is_none() {
-                    self.request_owner_failure();
-                }
-            }
-        }
     }
 }

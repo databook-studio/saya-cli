@@ -1,8 +1,8 @@
-use super::super::session_capacity::{limit_reached_text, notice_after_save};
-use super::super::session_resume::block_on;
-use super::super::session_state::SessionState;
 use super::transcript::BlockKind;
 use super::types::{App, SessionSave};
+use crate::interactive::session::lifecycle::capacity::{limit_reached_text, notice_after_save};
+use crate::interactive::session::lifecycle::resume::block_on;
+use crate::interactive::session::state::SessionState;
 use saya_store::{FsSessionStore, SessionStore, StoreError};
 
 /// The user-facing sentence a failed background save renders: a refusal at

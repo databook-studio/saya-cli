@@ -4,17 +4,17 @@
 //! second engine on the same run is refused outright.
 
 mod contract;
+mod counts;
 mod effects;
+mod position;
 pub use contract::{IncompletePolicy, ResumeEffect, ResumeError, ResumeOutcome, ResumeRun};
 
 use std::{path::Path, sync::Arc};
 
-use saya_agent::AnsweringObservation;
-use saya_types::{PauseReason, RunEvent};
+use saya_types::PauseReason;
 
 use crate::{
     engine::{
-        AnsweringCountError,
         clock::ElapsedClock,
         episode::{EpisodeDriver, EpisodeRun},
         sink::{EngineEventSink, SinkBudgets},
@@ -23,10 +23,11 @@ use crate::{
         usage::{StepAnsweringCounts, UsageTotals},
     },
     fetch::DownloadBudget,
-    journal::{Journal, JournalState, StepState, replay},
+    journal::{Journal, StepState, replay},
     lock::RunLock,
 };
 use effects::possible_effects;
+use position::{Position, position};
 
 /// Resumes the run in `run_dir` from its journal. The journal is replayed
 /// into the state the run actually held when its process died, and the run
@@ -160,46 +161,14 @@ pub async fn resume(
         && let Some(budget) = resumed.plan.steps[step].budget.as_ref()
         && (budget.turns.is_some() || budget.tool_calls.is_some())
     {
-        let mut counts = match replayed_counts {
-            Some(Ok(counts)) => counts,
-            Some(Err(source)) => return Err(ResumeError::CountEvidence { step, source }),
-            None => StepAnsweringCounts::default(),
-        };
-        if let Err(source) = counts.remaining(step, budget.turns, budget.tool_calls) {
-            match source {
-                AnsweringCountError::PendingBatch | AnsweringCountError::MissingInitialization
-                    if resumed.incomplete_policy == IncompletePolicy::Retry => {}
-                _ => return Err(ResumeError::CountEvidence { step, source }),
-            }
-            // Retry reconciles the crash's half-written evidence: a pending
-            // request stays charged, its unobserved batch settling to zero —
-            // the operator's accepted risk; missing initialization charged
-            // nothing, so the fresh attempt restarts from fresh counts. The
-            // settlement is journaled, not only counted in memory: the live
-            // settle's closing row is what keeps a second crash after the
-            // resumed attempt's own admission replaying as admit, batch,
-            // admit instead of two admissions in a row, which
-            // `from_journal` rejects under every policy.
-            if source == AnsweringCountError::PendingBatch {
-                journal
-                    .append(&RunEvent::Usage {
-                        endpoint: crate::endpoints::ORCHESTRATOR_ROLE.to_string(),
-                        tokens: None,
-                        turns: None,
-                        tool_calls: Some(0),
-                        cached_input_tokens: None,
-                        cache_creation_input_tokens: None,
-                    })
-                    .map_err(|source| ResumeError::Journal { source })?;
-                let batch = AnsweringObservation::ToolBatchObserved { requested: 0 };
-                counts
-                    .observe(batch)
-                    .map_err(|source| ResumeError::CountEvidence { step, source })?;
-            } else {
-                counts = StepAnsweringCounts::default();
-            }
-            sink = sink.with_answering_counts(counts);
-        }
+        sink = counts::reconcile(
+            &journal,
+            sink,
+            step,
+            budget,
+            replayed_counts,
+            resumed.incomplete_policy,
+        )?;
     }
     let (sink, clock_exhausted) = match elapsed {
         Some(Ok(mut clock)) => {
@@ -267,39 +236,4 @@ pub async fn resume(
         first_step,
         state: sink.state(),
     })
-}
-
-/// Where the journal says the run stood when its process died.
-enum Position {
-    /// No `RunStarted` — the directory holds no run.
-    NoRun,
-    /// Started, never approved: nothing may run without approval.
-    Unapproved,
-    /// The journal's last lifecycle event is terminal.
-    Terminal(RunState),
-    /// Approved, never began — the first step begins fresh.
-    Approved,
-    /// Paused by a recorded reason; resume records the resume.
-    Paused,
-    /// A step was in flight: the process died executing.
-    MidFlight,
-}
-
-fn position(state: &JournalState) -> Position {
-    if !state.started {
-        return Position::NoRun;
-    }
-    if !state.plan_approved {
-        return Position::Unapproved;
-    }
-    match state.last {
-        Some(RunEvent::Completed) => Position::Terminal(RunState::Completed),
-        Some(RunEvent::Failed { .. }) => Position::Terminal(RunState::Failed),
-        Some(RunEvent::Cancelled) => Position::Terminal(RunState::Cancelled),
-        Some(RunEvent::Paused { .. }) => Position::Paused,
-        // A step event with no terminal or pause after it — the process
-        // died mid-flight, and its last step restarts from its beginning.
-        _ if !state.steps.is_empty() => Position::MidFlight,
-        _ => Position::Approved,
-    }
 }

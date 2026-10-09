@@ -42,6 +42,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: bash scripts/check-release-workflow.sh
 
+  # Enforces the 250-line source file cap for the exact index contents.
+  source-file-length:
+    name: Source file length
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: python3 -m unittest discover -s scripts/tests/file_limits -t scripts/tests/file_limits
+      - run: python3 scripts/check_file_limits.py --view index
+
   msrv:
     name: Rust 1.89 MSRV
     runs-on: ubuntu-latest

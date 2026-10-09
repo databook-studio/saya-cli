@@ -5,9 +5,14 @@
 //! shared `run_contracts` dispatcher — no second parsing, privacy decision, or
 //! DTO mapping lives here.
 
+mod decide;
+mod portable;
+
 use super::remember::parse_remember;
 use crate::cli::{ContractsCommand, ForgetReasonArg, ReviewDecisionArg};
 use crate::slash::SlashParseError;
+use decide::parse_decide;
+use portable::parse_portable;
 
 /// Payload-free usage for the merged `/contracts` command. Never echoes the
 /// untrusted tail — a two-token argument is a usage error, not a Show of either
@@ -27,100 +32,10 @@ fn usage_queue() -> String {
     "/queue [limit]".into()
 }
 
-/// Payload-free usage for the spec-D decide commands. One token: a stored
-/// claim-id prefix (the `ki-xxxx` form `contracts list` abbreviates to). Never
-/// echoes the untrusted prefix.
-fn usage_decide() -> String {
-    "/confirm|/reject|/use <claim-id-prefix>".into()
-}
-
 /// Payload-free usage for `/approve-all`. The optional tokens are
 /// `--yes` and a numeric limit; anything else is a usage error.
 fn usage_approve_all() -> String {
     "/approve-all [--yes] [limit]".into()
-}
-
-/// Parses the tail of a `/confirm`, `/reject`, or `/use` command: exactly one
-/// token (the claim-id prefix). The decision is fixed by the command name.
-/// Translates to `ContractsCommand::Decide` with `profile: None` — the TUI
-/// stamps the active profile, the headless path resolves the default, exactly
-/// as `/queue` does. A too-short prefix is not refused here: the resolve step
-/// refuses `c` or empty with a typed message, so parsing stays shape-only.
-fn parse_decide(
-    _name: &str,
-    arg: &str,
-    decision: ReviewDecisionArg,
-) -> Result<Option<ContractsCommand>, SlashParseError> {
-    let tokens: Vec<&str> = arg.split_whitespace().collect();
-    let prefix = tokens
-        .first()
-        .ok_or_else(|| SlashParseError(usage_decide()))?;
-    if tokens.len() != 1 {
-        return Err(SlashParseError(usage_decide()));
-    }
-    Ok(Some(ContractsCommand::Decide {
-        prefix: prefix.to_string(),
-        decision,
-        profile: None,
-    }))
-}
-
-/// Payload-free usage for the portable context operations (B2c). The path is
-/// one token; the flags are fixed forms. Never echoes the untrusted tail on an
-/// error.
-fn usage_portable(operation: &str) -> String {
-    match operation {
-        "export" => "/contracts export <path> [--overwrite]".into(),
-        "import" => "/contracts import <path> [--preview]".into(),
-        _ => "/contracts import-dbt <manifest> [--select <glob>]… [--preview]".into(),
-    }
-}
-
-/// Parses `/contracts export|import|import-dbt …` into the same
-/// `ContractsCommand` the headless parser produces (B2c invariant 5): the
-/// path is one token, and the known flags — `--overwrite`, `--preview`, and
-/// repeatable `--select <glob>` — are the only ones. The slash path always
-/// uses the active profile, matching the other `/contracts` arms.
-fn parse_portable(operation: &str, arg: &str) -> Result<ContractsCommand, SlashParseError> {
-    let usage = || SlashParseError(usage_portable(operation));
-    let mut tokens = arg.split_whitespace();
-    let path = tokens.next().ok_or_else(usage)?.to_string();
-    // A path that starts with `--` is a missing path followed by a flag, the
-    // same refusal the headless parser gives; it is never a filename.
-    if path.starts_with("--") {
-        return Err(usage());
-    }
-    let mut overwrite = false;
-    let mut preview = false;
-    let mut select = Vec::new();
-    while let Some(token) = tokens.next() {
-        match token {
-            "--overwrite" if operation == "export" && !overwrite => overwrite = true,
-            "--preview" if operation != "export" && !preview => preview = true,
-            "--select" if operation == "import-dbt" => {
-                select.push(tokens.next().ok_or_else(usage)?.to_string());
-            }
-            _ => return Err(usage()),
-        }
-    }
-    Ok(match operation {
-        "export" => ContractsCommand::Export {
-            path: path.into(),
-            profile: None,
-            overwrite,
-        },
-        "import" => ContractsCommand::Import {
-            path: path.into(),
-            profile: None,
-            preview,
-        },
-        _ => ContractsCommand::ImportDbt {
-            manifest: path.into(),
-            profile: None,
-            select,
-            preview,
-        },
-    })
 }
 
 /// Translates a slash command name + its argument tail into the matching

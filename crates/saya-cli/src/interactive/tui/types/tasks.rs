@@ -20,6 +20,7 @@ pub(crate) struct CompactOutcome {
     pub(crate) automatic: bool,
     pub(crate) summary: Option<String>,
     pub(crate) compacted_turns: usize,
+    pub(crate) source_identity: Option<[u8; 32]>,
 }
 
 /// A native clipboard helper running in the background alongside an OSC 52 write.

@@ -49,7 +49,7 @@ mod tests {
 
     /// The clause rides the builder verbatim — the sample here is the
     /// macOS clause's bytes; the platform's own clause is pinned in
-    /// `session_activation_tests`
+    /// `interactive::session::permissions::activation::tests::fork_fact`
     /// (`the_fork_fact_says_only_what_the_running_platform_enforces`).
     /// The run's parenthetical — "(where process-fork is granted)" — is a
     /// run's clause and must not ride along with a session subject.

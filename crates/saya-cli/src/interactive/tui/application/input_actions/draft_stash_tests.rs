@@ -76,7 +76,7 @@ fn submitting_clears_the_stash() {
 /// `SessionState`, nothing in anything `record_turn` writes.
 #[test]
 fn the_stash_never_reaches_session_state() {
-    use crate::interactive::session_state::SessionState;
+    use crate::interactive::session::state::SessionState;
     use crate::interactive::tui::keys::handle_key;
     use ratatui::crossterm::event::{KeyCode, KeyModifiers};
     let mut app = idle_app();

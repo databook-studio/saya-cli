@@ -79,7 +79,7 @@ fn reasoning_text_pushes_a_thinking_block_when_thinking_is_on() {
 /// form being fixed by test.
 #[test]
 fn reasoning_shown_on_screen_stays_out_of_the_persisted_session() {
-    use crate::interactive::session_state::SessionState;
+    use crate::interactive::session::state::SessionState;
 
     let reasoning = "the secret chain-of-thought about row values 9f3a";
     let mut transcript = Transcript::default();

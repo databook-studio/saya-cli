@@ -1,0 +1,1 @@
+{"limit":250,"target":150,"review":200,"extensions":[".rs",".py",".sh",".rb"],"exclude_dir_names":["target",".git","node_modules"]}

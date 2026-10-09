@@ -26,7 +26,7 @@ use crate::commands::{
     capture_output_start, capture_output_take, run_investigation as run_investigation_command,
 };
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_resume::block_on;
+use crate::interactive::session::lifecycle::resume::block_on;
 use crate::render::RenderFormat;
 use saya_agent::CancellationToken;
 

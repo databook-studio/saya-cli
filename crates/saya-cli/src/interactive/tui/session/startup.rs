@@ -3,9 +3,9 @@
 use super::super::transcript::BlockKind;
 use super::super::types::{App, TrustPrompt};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_activation;
-use crate::interactive::session_state::SessionState;
-use crate::interactive::session_trust;
+use crate::interactive::session::permissions::activation as session_activation;
+use crate::interactive::session::permissions::trust as session_trust;
+use crate::interactive::session::state::SessionState;
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ pub(crate) fn build_app(
     runtime: &RuntimeConfig,
     state_db: &SqliteStateStore,
     state: &mut SessionState,
-    session: &mut crate::interactive::session_runtime::SessionRuntime,
+    session: &mut crate::interactive::session::runtime::SessionRuntime,
     trusted_echo: Option<&str>,
     trust_pending: bool,
 ) -> App {

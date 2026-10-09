@@ -1,52 +1,25 @@
-pub(crate) mod session_activation;
-// The `/allow` composition refusals: why a scope that parses still gates
-// nothing in this session's composition.
-pub(crate) mod allow_refusal;
-pub(crate) mod auto_compact;
+#[cfg(test)]
+pub(crate) use session::permissions::allow_refusal;
 // The session record's capacity seam: the one near-limit notice and the
 // friendly refusal at the 4 MiB cap, shared by every save surface.
 pub(crate) mod compact_task;
 #[cfg(test)]
 #[path = "compact_task_tui_metrics_tests.rs"]
 mod compact_task_tui_metrics_tests;
-pub(crate) mod session_auto_compact;
-pub(crate) mod session_capacity;
 #[cfg(test)]
-#[path = "session_capacity_test_support.rs"]
-mod session_capacity_test_support;
-mod session_commands;
-pub(crate) mod session_compact;
-#[cfg(test)]
-#[path = "session_compact_bounds_tests.rs"]
+#[path = "session/continuation/compaction/manual_bounds_tests.rs"]
 mod session_compact_bounds_tests;
-pub(crate) mod session_compact_call;
 #[cfg(test)]
-#[path = "session_compact_tests.rs"]
+#[path = "session/continuation/compaction/manual_tests.rs"]
 mod session_compact_tests;
-pub(crate) mod session_context;
 #[cfg(test)]
 #[path = "session_narrative_feed_tests.rs"]
 mod session_narrative_feed_tests;
-// The one key for the session's answering context: both dispatch sites
-// snapshot it around `state.apply` to abandon a stale question scope.
-pub(crate) mod session_context_key;
-pub(crate) mod session_continuation;
-pub(crate) mod session_deny;
+// Transitional continuation path for existing callers until M07.
 #[cfg(test)]
+#[path = "session/permissions/deny_red_tests.rs"]
 mod session_deny_red_tests;
 pub(crate) mod session_host;
-pub(crate) mod session_tasks;
-#[cfg(test)]
-#[path = "session_tasks_plan_tests.rs"]
-mod session_tasks_plan_tests;
-#[cfg(test)]
-#[path = "session_tasks_red_tests.rs"]
-mod session_tasks_red_tests;
-pub(crate) mod session_tasks_render;
-pub(crate) mod session_tasks_view;
-#[cfg(test)]
-#[path = "session_tasks_view_tests.rs"]
-mod session_tasks_view_tests;
 // The session's write-shaped definitions are crate-reachable: the approval
 // tests build the real grantable shapes the frontends are asked about.
 pub(crate) mod session_definitions;
@@ -54,54 +27,39 @@ mod session_emit;
 // The session's digest-guarded file tools, derived from the run surface's
 // definitions so the parameter schemas cannot drift.
 pub(crate) mod session_file_definitions;
-mod session_loop;
-pub(crate) mod session_notes;
-pub(crate) mod session_paths;
 // `/allow` and `/grants`: the session grant store's one behaviour, shared
 // by the headless loop and the TUI dispatch.
 // `/allow` and `/grants`: the session grant store's one behaviour, shared
 // by the headless loop and the TUI dispatch — and the journal-warning
 // wording every journaling site renders.
 #[cfg(test)]
-#[path = "session_approval_surface_tests.rs"]
+#[path = "session/permissions/approval_surface_tests.rs"]
 mod session_approval_surface_tests;
-pub(crate) mod session_grants;
 #[cfg(test)]
+#[path = "session/permissions/grants_tests.rs"]
 mod session_grants_tests;
 // The grant surface: the per-turn grant view the session surfaces bind and
 // the per-family availability decision `definitions` consumes. Its tests
 // ride the module itself (`session_grant_surface_tests.rs`).
-pub(crate) mod session_grant_surface;
 // The remaining composed families' per-family grant availability
 // decisions (scratch, fetch, runner, command) beside the workspace file
 // family's own. Their tests ride the module itself
 // (`session_grant_families_tests.rs`).
-pub(crate) mod session_grant_families;
 pub(crate) mod session_prompt;
 mod session_request;
-mod session_resume;
-pub(crate) use session_resume::adopt_picker_resumed;
-mod session_rotate;
-mod session_rotate_run;
 // The one terminal result a scripted turn reports: its status, exit code,
 // and the honest tool tally.
-mod session_run;
-mod session_runner;
-pub(crate) mod turn_summary;
-// The session's recovery handle (E06b): the checkpoint store, the session
-// id, and the opt-in enable flag the per-turn file tools attach.
+pub(crate) mod session;
 #[cfg(test)]
-#[path = "session_launch_posture_tests.rs"]
+#[path = "session/permissions/launch_posture_tests.rs"]
 mod session_launch_posture_tests;
-pub(crate) mod session_recovery;
-pub(crate) mod session_runtime;
+mod session_runner;
 mod session_schema;
 mod session_sql;
-mod session_state;
-pub(crate) mod session_trust;
 #[cfg(test)]
+#[path = "session/permissions/trust_tests.rs"]
 mod session_trust_tests;
-pub(crate) mod session_universe;
+pub(crate) mod turn_summary;
 // Crate-reachable (M04a): the `saya preferences` subcommand derives its
 // worktree identity through the same `resolve_root` the session binds — one
 // resolution, never a second walk-up.
@@ -110,6 +68,6 @@ pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
 pub(crate) mod tui;
 
-pub use session_commands::SessionAction;
-pub use session_loop::run;
-pub use session_state::{Session, SessionState};
+pub use session::commands::SessionAction;
+pub use session::turn_loop::run;
+pub use session::{Session, SessionState};

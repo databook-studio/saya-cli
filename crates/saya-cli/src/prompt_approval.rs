@@ -1,5 +1,6 @@
 use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
+use crate::interactive::session::permissions::{deny as session_deny, grants as session_grants};
 use crate::prompt_approval_metrics::wait_and_record;
 use saya_agent::{
     ApprovalChoice, ApprovalDecision, ApprovalPolicy, CancellationToken, SessionGrants,
@@ -170,12 +171,8 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
         // the loop then relays this decider's typed refusal (see
         // `refusal_detail` below), and the executor's own deny check stays
         // as the second door for any caller that executes without approving.
-        if crate::interactive::session_deny::denied_call_program(
-            &tool.name,
-            arguments,
-            &self.facts.denied_programs,
-        )
-        .is_some()
+        if session_deny::denied_call_program(&tool.name, arguments, &self.facts.denied_programs)
+            .is_some()
         {
             return false;
         }
@@ -214,7 +211,7 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 // failed journal write changes no consent: it is said on
                 // stderr, the prompt's own channel, and the session carries
                 // on.
-                let (_, warning) = crate::interactive::session_grants::record_prompt_answer(
+                let (_, warning) = session_grants::record_prompt_answer(
                     &self.policy,
                     &choice,
                     self.journal.as_deref(),
@@ -236,11 +233,7 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
         // seam answers the wording: the typed refusal for a denied program,
         // `None` for every denial this decider did not word (mode denials,
         // the user's `n`), where the loop's generic denial stands.
-        crate::interactive::session_deny::denied_call_program(
-            &tool.name,
-            arguments,
-            &self.facts.denied_programs,
-        )
-        .map(|program| crate::interactive::session_deny::denied_refusal(&program))
+        session_deny::denied_call_program(&tool.name, arguments, &self.facts.denied_programs)
+            .map(|program| session_deny::denied_refusal(&program))
     }
 }

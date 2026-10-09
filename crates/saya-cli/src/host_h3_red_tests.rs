@@ -6,7 +6,10 @@
 //! exists; the failing output is pasted verbatim into `REPORT.md` before
 //! any green edit.
 
-use crate::interactive::session_activation::{HOST_LANE_FACT, bypass_line, denied_segment};
+use crate::interactive::session::permissions::activation::{
+    HOST_LANE_FACT, bypass_line, denied_segment,
+};
+use crate::interactive::session::permissions::deny as session_deny;
 
 /// The bypass activation line states the lane when composed: host commands
 /// run unsandboxed — as the user, their network, their filesystem.
@@ -91,7 +94,7 @@ fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
     );
     // A denied name refuses before bypass's auto-allow (the decider-level
     // deny refusal carrying its typed wording to the model).
-    let denied = crate::interactive::session_deny::denied_call_program(
+    let denied = session_deny::denied_call_program(
         "run_command",
         &serde_json::json!({"program": "curl"}),
         &["curl".to_owned()],
@@ -131,7 +134,7 @@ fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
 fn a_denied_name_still_refuses_under_ask_and_bypass() {
     use saya_agent::{ApprovalDecision, ApprovalPolicy, SessionPolicy};
     for mode in [ApprovalPolicy::Ask, ApprovalPolicy::Bypass] {
-        let denied = crate::interactive::session_deny::denied_call_program(
+        let denied = session_deny::denied_call_program(
             "run_command",
             &serde_json::json!({"program": "curl"}),
             &["curl".to_owned()],
@@ -142,16 +145,15 @@ fn a_denied_name_still_refuses_under_ask_and_bypass() {
             "a denied name refuses under {mode:?}"
         );
         let policy = SessionPolicy::new(mode);
-        let gate =
-            crate::interactive::session_deny::SessionDeny::from_names(vec!["curl".to_owned()])
-                .expect("a bare name builds");
+        let gate = session_deny::SessionDeny::from_names(vec!["curl".to_owned()])
+            .expect("a bare name builds");
         assert!(
             gate.contains("curl"),
             "the deny gate fires before {mode:?}'s own decision"
         );
         let _ = policy;
     }
-    let open = crate::interactive::session_deny::denied_call_program(
+    let open = session_deny::denied_call_program(
         "run_command",
         &serde_json::json!({"program": "make"}),
         &["curl".to_owned()],

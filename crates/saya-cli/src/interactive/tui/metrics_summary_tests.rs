@@ -10,8 +10,8 @@ use super::agent::approval::StreamRequest;
 use super::agent::messages::{Stream, StreamMsg};
 use super::application::tests_support::{idle_app, unused_runtime};
 use crate::agent::question_scope::QuestionScope;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::local_metrics::{LocalMetrics, LocalPhaseSnapshot, phase_index};
 use saya_agent::{
     AgentMetric, AgentMetricOutcome, AgentMetricPhase, ApprovalPolicy, CancellationToken,

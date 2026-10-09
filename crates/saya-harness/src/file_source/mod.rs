@@ -13,7 +13,9 @@
 //! autoload off, configuration locked. Stored data is always VARCHAR —
 //! inference only labels the preview.
 
+mod csv_pipeline;
 mod csv_stage;
+mod error;
 mod infer;
 mod parquet_budget;
 mod parquet_decode;
@@ -26,6 +28,7 @@ mod read;
 #[cfg(test)]
 mod tests;
 
+pub use error::StageError;
 pub use infer::InferredType;
 pub use parquet_stage::{ParquetCaps, stage_parquet};
 pub use preview::{Preview, PreviewColumn};
@@ -33,16 +36,11 @@ pub use preview::{Preview, PreviewColumn};
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-
-use thiserror::Error;
-
-use crate::HarnessError;
-use crate::scratch::{CsvError, MAX_CSV_ROWS, parse_csv, sanitize_headers};
 
 use self::read::read_source;
 
@@ -84,67 +82,6 @@ pub struct StagedSource {
     pub format: SourceFormat,
 }
 
-/// Staging refusals. None carry source field values.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum StageError {
-    /// The contained source read refused: symlink, non-regular file, bounds,
-    /// invalid path, or I/O failure.
-    #[error("file source refused: {0}")]
-    Source(#[from] HarnessError),
-    /// The bounded CSV parser refused the source.
-    #[error("CSV source refused: {0}")]
-    Csv(#[from] CsvError),
-    /// A data row's field count differs from the column count. `row` is the
-    /// 1-based data-row index.
-    #[error("CSV data row {row} has {found} fields; expected {expected}")]
-    RaggedRow {
-        row: usize,
-        found: usize,
-        expected: usize,
-    },
-    #[error("CSV file has no rows")]
-    Empty,
-    /// The file stem sanitises to the reserved metadata table's name.
-    #[error("file stem sanitises to the reserved metadata table name {name:?}; staging is refused")]
-    ReservedTableName { name: String },
-    #[error("staging destination unusable: {0}")]
-    Destination(String),
-    /// The staged file's mode could not be restricted to 0600.
-    #[error("staged file could not be restricted to 0600: {path}")]
-    FileMode {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    #[error("staging timed out")]
-    Timeout,
-    #[error("staging failed at the database layer")]
-    Database,
-    /// The Parquet decode hit a DuckDB error outside the typed refusals —
-    /// a corrupt or non-Parquet file, an interrupted decode, an I/O failure.
-    #[error("Parquet staging failed: {0}")]
-    ParquetFailed(String),
-    /// Parquet metadata reports more rows than the decode cap, before any
-    /// row is decoded.
-    #[error("Parquet file has {rows} rows; at most {max} can be staged")]
-    ParquetTooManyRows { rows: u64, max: u64 },
-    /// Parquet metadata reports more columns than the cap.
-    #[error("Parquet file has {columns} columns; at most {max} can be staged")]
-    ParquetTooManyColumns { columns: usize, max: usize },
-    /// The staged decode produced more accounted cell bytes than the
-    /// decoded-byte budget allows.
-    #[error(
-        "Parquet file decodes to {bytes} bytes of cell data; at most {max} bytes can be staged"
-    )]
-    ParquetTooManyDecodedBytes { bytes: u64, max: u64 },
-    /// A Parquet column's type is nested (STRUCT/LIST/MAP/UNION/ARRAY).
-    #[error("Parquet column {column:?} has nested type {kind}; only flat columns can be staged")]
-    ParquetNestedColumn { column: String, kind: String },
-    #[error("Parquet file has no columns")]
-    ParquetNoColumns,
-}
-
 /// Stages one local file into a private DuckDB database file at
 /// `<dest_dir>/source.duckdb` (dir 0700, file 0600), routing by the
 /// `.parquet` extension or PAR1 magic: Parquet through the bounded staging
@@ -160,7 +97,7 @@ pub fn stage_source(
     if parquet_stage::looks_like_parquet(&read) {
         parquet_stage::stage_read(read, dest_dir, ParquetCaps::default())
     } else {
-        stage_csv_read(read, dest_dir, options)
+        csv_pipeline::stage_csv_read(read, dest_dir, options)
     }
 }
 
@@ -174,60 +111,7 @@ pub fn stage_csv(
     options: CsvStageOptions,
 ) -> Result<StagedSource, StageError> {
     let read = read_source(source)?;
-    stage_csv_read(read, dest_dir, options)
-}
-
-/// The CSV pipeline from an already-contained read, shared by `stage_csv`
-/// and the CSV arm of `stage_source`.
-fn stage_csv_read(
-    read: read::SourceRead,
-    dest_dir: &Path,
-    options: CsvStageOptions,
-) -> Result<StagedSource, StageError> {
-    let deadline = Instant::now() + STAGE_TIMEOUT;
-    let delimiter = preview::resolve_delimiter(options.delimiter, &read.bytes);
-    let parsed = parse_csv(&read.bytes, delimiter)?;
-    if parsed.is_empty() {
-        return Err(StageError::Empty);
-    }
-    let (columns, data): (Vec<String>, &[Vec<String>]) = if options.header {
-        (sanitize_headers(&parsed[0]), &parsed[1..])
-    } else {
-        let count = parsed[0].len();
-        (
-            (1..=count).map(|index| format!("column_{index}")).collect(),
-            &parsed[..],
-        )
-    };
-    if data.len() > MAX_CSV_ROWS {
-        return Err(CsvError::TooManyRows { max: MAX_CSV_ROWS }.into());
-    }
-    for (index, row) in data.iter().enumerate() {
-        if row.len() != columns.len() {
-            return Err(StageError::RaggedRow {
-                row: index + 1,
-                found: row.len(),
-                expected: columns.len(),
-            });
-        }
-    }
-    let table = table_name(&read.stem);
-    if table == RESERVED_METADATA_TABLE {
-        return Err(StageError::ReservedTableName { name: table });
-    }
-    prepare_dest_dir(dest_dir)?;
-    csv_stage::write_staged(dest_dir, &table, &columns, data, &read, deadline)?;
-    let preview = preview::build(delimiter, options.header, &columns, data);
-    Ok(StagedSource {
-        db_path: dest_dir.join(STAGED_DB_FILE),
-        table,
-        columns,
-        rows: data.len(),
-        sha256: read.sha256,
-        bytes: read.size,
-        preview,
-        format: SourceFormat::Csv,
-    })
+    csv_pipeline::stage_csv_read(read, dest_dir, options)
 }
 
 /// Ensures the destination directory exists at 0700, is a real directory,

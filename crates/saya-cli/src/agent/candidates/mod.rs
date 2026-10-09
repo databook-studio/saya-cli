@@ -68,7 +68,7 @@ pub(crate) async fn run_with_candidates(
     last_sql: Option<String>,
     // The run's contained session, when a run engine opened one. `None`
     // leaves `workspace_read` denying with a typed error.
-    session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+    session: Option<Arc<crate::interactive::session::universe::SessionUniverse>>,
     // The agent's task posture, threaded like `approval`.
     agent_mode: AgentMode,
     candidates: usize,

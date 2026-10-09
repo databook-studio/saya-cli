@@ -70,7 +70,7 @@ pub use config::doctor_task::{CheckStatus, TaskCheck};
 
 #[cfg(test)]
 mod approval_facts_tests;
-pub use interactive::session_paths::{default_session_dir, resolve_session_dir};
+pub use interactive::session::lifecycle::paths::{default_session_dir, resolve_session_dir};
 pub use interactive::{Session, SessionAction, SessionState};
 pub use profile_identity::profile_identity;
 pub use render::{

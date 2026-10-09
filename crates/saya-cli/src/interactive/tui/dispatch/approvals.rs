@@ -4,8 +4,8 @@
 
 use super::super::transcript::{BlockKind, Transcript};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 
 pub(super) fn report_approvals_set(
     approvals_set: bool,
@@ -16,18 +16,20 @@ pub(super) fn report_approvals_set(
     session: &mut SessionRuntime,
 ) {
     if approvals_set {
-        if let Some(activation) = crate::interactive::session_activation::line_if_bypass(
-            state,
-            runtime,
-            &session.universe(),
-        ) {
+        if let Some(activation) =
+            crate::interactive::session::permissions::activation::line_if_bypass(
+                state,
+                runtime,
+                &session.universe(),
+            )
+        {
             transcript.push(BlockKind::System, activation);
         }
         // `before_mode` arrives as `&String` from the caller; deref once here
         // so the call below takes `&str` without a needless borrow at the
         // original call site.
         let before_mode: &str = before_mode;
-        if crate::interactive::session_activation::bypass_activated_by_command(
+        if crate::interactive::session::permissions::activation::bypass_activated_by_command(
             before_mode,
             &state.approval_mode,
         ) && let Err(error) = session
@@ -36,7 +38,7 @@ pub(super) fn report_approvals_set(
         {
             transcript.push(
                 BlockKind::Error,
-                crate::interactive::session_grants::journal_warning(&error),
+                crate::interactive::session::permissions::grants::journal_warning(&error),
             );
         }
     }

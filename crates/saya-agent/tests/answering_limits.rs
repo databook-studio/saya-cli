@@ -1,140 +1,16 @@
 use async_trait::async_trait;
 use saya_agent::{
-    AgentError, AgentEvent, AgentEventSink, AgentLimits, AgentRequest, AgentRunControl,
-    AllowReadOnlyApproval, AnsweringLimits, AnsweringObservation, BudgetDimension,
-    CancellationReason, CancellationToken, ChatProvider, ChatRequest, LocalStateEffect,
-    ProviderError, ProviderEvent, ProviderStream, TokenUsage, ToolCall, ToolConcurrency,
-    ToolDefinition, ToolEffect, ToolError, ToolExecutionContext, ToolExecutor,
-    run_agent_with_control,
+    AgentError, AgentEvent, AgentLimits, AgentRequest, AgentRunControl, AllowReadOnlyApproval,
+    AnsweringLimits, AnsweringObservation, BudgetDimension, CancellationReason, CancellationToken,
+    ChatProvider, ChatRequest, LocalStateEffect, ProviderError, ProviderEvent, ProviderStream,
+    TokenUsage, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect, ToolError,
+    ToolExecutionContext, ToolExecutor, run_agent_with_control,
 };
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use tokio::sync::oneshot;
-
-type Turn = Vec<Result<ProviderEvent, ProviderError>>;
-
-struct ScriptedProvider {
-    attempts: Mutex<Vec<Turn>>,
-    requests: Arc<Mutex<Vec<ChatRequest>>>,
-}
-
-impl ScriptedProvider {
-    fn new(attempts: Vec<Turn>) -> (Self, Arc<Mutex<Vec<ChatRequest>>>) {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        (
-            Self {
-                attempts: Mutex::new(attempts),
-                requests: requests.clone(),
-            },
-            requests,
-        )
-    }
-}
-
-#[async_trait]
-impl ChatProvider for ScriptedProvider {
-    fn name(&self) -> &str {
-        "scripted-answering-limits"
-    }
-
-    async fn complete(&self, _: ChatRequest) -> Result<saya_agent::ChatResponse, ProviderError> {
-        unreachable!("the agent loop receives through stream")
-    }
-
-    async fn stream(
-        &self,
-        request: ChatRequest,
-        _: CancellationToken,
-    ) -> Result<ProviderStream, ProviderError> {
-        self.requests.lock().unwrap().push(request);
-        let attempt = self.attempts.lock().unwrap().remove(0);
-        Ok(Box::pin(futures_util::stream::iter(attempt)))
-    }
-}
-
-#[derive(Clone, Copy)]
-enum CancelOnObservation {
-    Request,
-    ToolBatch,
-}
-
-struct RecordingSink {
-    events: Mutex<Vec<AgentEvent>>,
-    observations: Mutex<Vec<AnsweringObservation>>,
-    cancellation: CancellationToken,
-    cancel_on: Option<CancelOnObservation>,
-}
-
-impl RecordingSink {
-    fn new(cancellation: CancellationToken) -> Self {
-        Self {
-            events: Mutex::new(Vec::new()),
-            observations: Mutex::new(Vec::new()),
-            cancellation,
-            cancel_on: None,
-        }
-    }
-
-    fn cancelling_on(cancellation: CancellationToken, cancel_on: CancelOnObservation) -> Self {
-        Self {
-            cancel_on: Some(cancel_on),
-            ..Self::new(cancellation)
-        }
-    }
-}
-
-#[async_trait]
-impl AgentEventSink for RecordingSink {
-    async fn emit(&self, event: AgentEvent) {
-        self.events.lock().unwrap().push(event);
-    }
-
-    async fn observe_answering(&self, observation: AnsweringObservation) {
-        self.observations.lock().unwrap().push(observation);
-        let should_cancel = matches!(
-            (self.cancel_on, observation),
-            (
-                Some(CancelOnObservation::Request),
-                AnsweringObservation::RequestAdmitted
-            ) | (
-                Some(CancelOnObservation::ToolBatch),
-                AnsweringObservation::ToolBatchObserved { .. }
-            )
-        );
-        if should_cancel {
-            self.cancellation
-                .cancel_with_reason(CancellationReason::OwnerFailure);
-        }
-    }
-}
-
-#[derive(Default)]
-struct RecordingExecutor {
-    calls: Mutex<Vec<String>>,
-}
-
-#[async_trait]
-impl ToolExecutor for RecordingExecutor {
-    async fn execute(
-        &self,
-        name: &str,
-        _: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
-        self.calls.lock().unwrap().push(name.into());
-        Ok(serde_json::json!({"row_count": 1, "columns": ["n"]}))
-    }
-}
-
-struct DenyApproval;
-
-#[async_trait]
-impl saya_agent::ApprovalDecider for DenyApproval {
-    async fn approve(&self, _: &ToolDefinition, _: &serde_json::Value) -> bool {
-        false
-    }
-}
 
 fn request() -> AgentRequest {
     AgentRequest {
@@ -253,6 +129,11 @@ fn stopped(output: &saya_agent::AgentOutput, dimension: BudgetDimension) -> bool
         matches!(event, AgentEvent::AnsweringBudgetStopped { dimension: seen } if *seen == dimension)
     })
 }
+
+#[path = "answering_limits/harness.rs"]
+mod harness;
+
+pub(crate) use harness::*;
 
 #[path = "answering_limits/request_admission.rs"]
 mod request_admission;

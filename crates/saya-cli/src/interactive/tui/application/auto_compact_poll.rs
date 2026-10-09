@@ -4,9 +4,11 @@ use super::super::super::tests_support::idle_app;
 /// Poll path and one-operation property: worker results apply live; auto and manual agree byte-for-byte.
 /// Moved byte-identical from the hub; no snapshots involved.
 use super::support::five_turns;
-use crate::interactive::auto_compact::{auto_failure_message, auto_success_message};
-use crate::interactive::session_compact::{apply, plan};
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::continuation::compaction::automatic::{
+    auto_failure_message, auto_success_message,
+};
+use crate::interactive::session::continuation::compaction::manual::{apply, plan};
+use crate::interactive::session::state::SessionState;
 
 /// The poll path applies the worker's clone-side result to the live session:
 /// after polling a successful automatic outcome, the live conversation is
@@ -21,7 +23,7 @@ fn polling_an_automatic_success_applies_summary_plus_verbatim_tail() {
     let (tx, rx) = std::sync::mpsc::channel();
     app.compact_task = Some(rx);
     tx.send(CompactOutcome {
-        message: crate::interactive::session_compact::success_message(
+        message: crate::interactive::session::continuation::compaction::manual::success_message(
             planned.compacted_turns,
             summary,
         ),
@@ -30,6 +32,7 @@ fn polling_an_automatic_success_applies_summary_plus_verbatim_tail() {
         automatic: true,
         summary: Some(summary.into()),
         compacted_turns: planned.compacted_turns,
+        source_identity: Some(planned.source_identity),
     })
     .expect("the worker's outcome sends");
     crate::interactive::compact_task::poll(&mut app, &mut state);
@@ -77,6 +80,7 @@ fn polling_an_automatic_failure_sets_the_flag_and_states_the_policy() {
         automatic: true,
         summary: None,
         compacted_turns: 0,
+        source_identity: None,
     })
     .expect("the worker's outcome sends");
     crate::interactive::compact_task::poll(&mut app, &mut state);
@@ -97,6 +101,73 @@ fn polling_an_automatic_failure_sets_the_flag_and_states_the_policy() {
         "the transcript states the origin and the no-retry policy"
     );
 }
+
+/// A manual worker's clone-side success is rejected if the live plan changed
+/// while it ran; the transcript reports that no compaction was applied.
+#[test]
+fn polling_a_manual_success_with_a_stale_plan_reports_failure() {
+    let (mut app, mut state) = five_turns_app();
+    let original_plan = plan(&state.turns, &state.provider_history()).expect("long history plans");
+    let summary = "older turns: q0 q1 q2 discussed orders.";
+    state.record_turn("q5", "a5", false, Vec::new());
+    let live_history = state.provider_history();
+    let success = crate::interactive::session::continuation::compaction::manual::success_message(
+        original_plan.compacted_turns,
+        summary,
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.compact_task = Some(rx);
+    app.request.started = Some(std::time::Instant::now());
+    app.request.activity = Some("compacting".into());
+    tx.send(CompactOutcome {
+        message: success.clone(),
+        failed: false,
+        usage: Some(saya_agent::TokenUsage::new(40, 10)),
+        automatic: false,
+        summary: Some(summary.into()),
+        compacted_turns: original_plan.compacted_turns,
+        source_identity: Some(original_plan.source_identity),
+    })
+    .expect("the worker's outcome sends");
+
+    crate::interactive::compact_task::poll(&mut app, &mut state);
+
+    assert_eq!(
+        state.provider_history(),
+        live_history,
+        "stale work leaves live history untouched"
+    );
+    assert!(
+        state.compaction_summary.is_none(),
+        "stale work stores no summary"
+    );
+    assert!(
+        app.compact_task.is_none(),
+        "the completed worker is cleared"
+    );
+    assert!(app.request.started.is_none() && app.request.activity.is_none());
+    assert_eq!(
+        state.usage.learning.turns, 1,
+        "worker usage remains accounted"
+    );
+    let blocks = app.transcript.blocks();
+    assert!(
+        blocks.iter().any(|block| block.kind
+            == crate::interactive::tui::transcript::BlockKind::Error
+            && block.text
+                == crate::interactive::session::continuation::compaction::manual::failure_message(
+                    "the conversation changed while compacting"
+                )),
+        "stale work reports an unapplied compaction as failure: {blocks:?}"
+    );
+    assert!(
+        !blocks.iter().any(|block| block.text == success),
+        "stale work never announces clone-side success: {blocks:?}"
+    );
+}
+
+#[path = "auto_compact_poll_same_count_tests.rs"]
+mod same_count;
 
 /// The one-operation property, asserted directly: for the same history, the
 /// automatic and manual paths produce byte-identical results — the same
@@ -119,7 +190,10 @@ fn automatic_and_manual_paths_produce_byte_identical_results() {
     apply(&mut manual_state, &manual_plan, summary).expect("manual applies");
     apply(&mut auto_state, &auto_plan, summary).expect("automatic applies");
     let manual_message =
-        crate::interactive::session_compact::success_message(manual_plan.compacted_turns, summary);
+        crate::interactive::session::continuation::compaction::manual::success_message(
+            manual_plan.compacted_turns,
+            summary,
+        );
     // The operations are byte-identical; only the presentation differs, and
     // the automatic presentation is the manual message with its origin.
     assert_eq!(

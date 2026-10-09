@@ -4,10 +4,10 @@ use super::super::session_save::queue_session_save;
 use super::super::transcript::BlockKind;
 use super::super::types::App;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_activation;
-use crate::interactive::session_resume;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::lifecycle::resume as session_resume;
+use crate::interactive::session::permissions::activation as session_activation;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use saya_store::FsSessionStore;
 
 /// A successful resume is a context change: the previous session's ephemeral
@@ -80,7 +80,7 @@ pub(crate) fn tick_resume(
                         .unwrap_or(saya_agent::ApprovalPolicy::Ask),
                 ) {
                     Ok(()) => {
-                        crate::interactive::adopt_picker_resumed(
+                        session_resume::adopt_picker_resumed(
                             state,
                             loaded,
                             runtime.resolved.ai.base_url.as_deref(),

@@ -4,7 +4,7 @@
 //! gap. Mirrors the real fixtures: the real `/sql` worker turn seeds the
 //! capture (session_privacy_receipt_tests.rs), the real typed resume runs
 //! `tick_pending` over the queued line, and the refusal holds the resumed
-//! id's lock (session_runtime_question_tests.rs D4).
+//! id's lock (session/runtime/question_tests.rs D4).
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,9 +15,9 @@ use saya_types::DatabaseProfile;
 
 use crate::cli::GlobalOptions;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_resume::block_on;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::lifecycle::resume::block_on;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::SecondSqlDecision;
 use crate::interactive::tui::capture_agent::CaptureGap;
 use crate::interactive::tui::dispatch::{Dispatch, dispatch};
@@ -236,197 +236,8 @@ fn wait_for_background_save(store_root: &Path) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
-/// (a) TYPED success: after a real `/sql` capture (and a planted gap), a
-/// successful typed `/resume <id>` through the real `tick_pending` clears
-/// the capture, the last query, AND the agent-capture gap.
-#[test]
-fn the_typed_resume_clears_the_previous_sessions_capture_last_query_and_gap() {
-    let mut fx = Seed::new("typed-success", "cap-typed-live");
-    fx.capture_marker_query();
-    fx.app.agent_captures.gap = Some(CaptureGap::Missing);
-    block_on(
-        fx.store
-            .save(SessionState::new("resumed-typed-ok", None, "test-model").redacted()),
-    )
-    .expect("the resumed record saves");
-    fx.drain_pending("/resume resumed-typed-ok");
-    assert!(
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .any(|block| block.text.contains("Resumed session resumed-typed-ok")),
-        "the typed resume said it resumed, not {:?}",
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .map(|b| b.text.as_str())
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        fx.app.captured.is_none(),
-        "the resumed session inherited the previous session's capture"
-    );
-    assert!(
-        fx.app.last_query.is_none(),
-        "the resumed session inherited the previous session's last query"
-    );
-    assert!(
-        fx.app.agent_captures.gap.is_none(),
-        "the resumed session inherited the previous session's capture gap"
-    );
-    let root = fx.root.clone();
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
-/// (b) TYPED refusal: with the resumed id's lock held (the D4 technique),
-/// the refused typed resume changes NOTHING — the capture, the last query,
-/// and the gap all survive for the still-live session.
-#[test]
-fn the_refused_typed_resume_keeps_the_previous_sessions_query_state() {
-    let mut fx = Seed::new("typed-refusal", "cap-typed-held-live");
-    fx.capture_marker_query();
-    fx.app.agent_captures.gap = Some(CaptureGap::Missing);
-    let blocker = SessionRuntime::acquire(
-        &fx.runtime,
-        None,
-        false,
-        None,
-        "resumed-typed-held",
-        ApprovalPolicy::Ask,
-        &fx.root.join("session-dirs"),
-    )
-    .expect("the blocker session acquires");
-    block_on(
-        fx.store
-            .save(SessionState::new("resumed-typed-held", None, "test-model").redacted()),
-    )
-    .expect("the resumed record saves");
-    fx.drain_pending("/resume resumed-typed-held");
-    assert!(
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .any(|block| block.text.contains("already running")),
-        "the refused resume said why, not {:?}",
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .map(|b| b.text.as_str())
-            .collect::<Vec<_>>()
-    );
-    let capture = fx
-        .app
-        .captured
-        .as_ref()
-        .expect("the refused resume kept the capture");
-    assert_eq!(
-        capture.result.rows[0][0], MARKER,
-        "the kept capture is the real captured result"
-    );
-    assert!(
-        fx.app.last_query.is_some(),
-        "the refused resume kept the last query"
-    );
-    assert!(
-        matches!(fx.app.agent_captures.gap, Some(CaptureGap::Missing)),
-        "the refused resume kept the gap"
-    );
-    let root = fx.root.clone();
-    drop(blocker);
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
-/// (c) TYPED success re-derives the header facts from the resumed universe:
-/// the swap installs the loaded state (its runtime-only `host_composed` and
-/// deny list are the serde-skip defaults), while `reacquire` recomposed the
-/// universe — the resumed root binds and the lane composes, so the header
-/// must say what the resumed session will actually run, with the deny list
-/// the new universe carries, never the previous session's stale one.
-#[test]
-fn the_typed_resume_re_derives_the_header_facts_from_the_resumed_universe() {
-    let mut fx = Seed::new("typed-host", "cap-typed-host-live");
-    let project = fx.root.join("resumed-project");
-    std::fs::create_dir_all(&project).expect("the resumed project dir");
-    let mut resumed = SessionState::new("resumed-host-posture", None, "test-model");
-    resumed.workspace_root = Some(project.display().to_string());
-    block_on(fx.store.save(resumed.redacted())).expect("the resumed record saves");
-    // The previous session's launch-derived shape: its header was right for
-    // IT — the swap must re-derive, not carry either value across.
-    fx.state.host_composed = true;
-    fx.state.denied_programs = vec!["curl".to_owned()];
 
-    fx.drain_pending("/resume resumed-host-posture");
-    assert!(
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .any(|block| block.text.contains("Resumed session resumed-host-posture")),
-        "the typed resume said it resumed, not {:?}",
-        fx.app
-            .transcript
-            .blocks()
-            .iter()
-            .map(|b| b.text.as_str())
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        fx.state.host_composed,
-        "the resumed universe composes the lane: the header says host:unsandboxed"
-    );
-    assert_eq!(
-        fx.state.host_composed,
-        fx.session.universe().host_composed(),
-        "the header's lane bit is the resumed universe's fact"
-    );
-    assert!(
-        fx.state.denied_programs.is_empty(),
-        "the previous session's stale deny list does not survive the swap: {:?}",
-        fx.state.denied_programs
-    );
-    assert_eq!(
-        fx.state.denied_programs,
-        fx.session.universe().deny_programs(),
-        "the header's deny list is the resumed universe's fact"
-    );
-    let root = fx.root.clone();
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
-
-/// (d) TYPED success adopts the resumed session's runtime metrics collector:
-/// `App.session_metrics` must be the NEW collector `session.session_metrics()`
-/// now hands out (`reacquire` replaced the runtime). The enable flag is
-/// flipped exactly as local_metrics_tests does; the initial acquire runs
-/// while it is off, so the pre-fix app handle (None) cannot vacuously match.
-#[test]
-fn the_typed_resume_adopts_the_resumed_sessions_metrics_collector() {
-    let mut fx = Seed::new("typed-metrics", "cap-typed-metrics-live");
-    block_on(
-        fx.store
-            .save(SessionState::new("resumed-metrics", None, "test-model").redacted()),
-    )
-    .expect("the resumed record saves");
-    set_enabled(true);
-    fx.drain_pending("/resume resumed-metrics");
-    let adopted = matches!(
-        (&fx.app.session_metrics, &fx.session.session_metrics()),
-        (Some(app_handle), Some(new_handle)) if Arc::ptr_eq(app_handle, new_handle)
-    );
-    set_enabled(false);
-    assert!(
-        adopted,
-        "the app kept the previous session's metrics collector (or lost it)"
-    );
-    let root = fx.root.clone();
-    drop(fx);
-    wait_for_background_save(&root.join("store"));
-    let _ = std::fs::remove_dir_all(&root);
-}
+#[path = "typed_resume_capture_tests/capture_lifecycle.rs"]
+mod capture_lifecycle;
+#[path = "typed_resume_capture_tests/resumed_runtime.rs"]
+mod resumed_runtime;

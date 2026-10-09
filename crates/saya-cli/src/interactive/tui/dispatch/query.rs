@@ -9,10 +9,10 @@ use super::chart::parse_chart_args;
 use super::outcome::Dispatch;
 use super::query_source_guard::{refuse_rerun, rerun_label};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::state::SessionState;
 use crate::slash::{ExportMode, ExportRequest};
-use saya_types::{ExecutionEvidence, ResultScope};
+use saya_types::ResultScope;
 
 /// One entry for every caller: before any re-run entry (`--refresh`/legacy
 /// refresh, `/chart`, bare `/explain`) spawns its task, the source guard
@@ -58,7 +58,7 @@ pub(super) fn apply_query_actions(
             capture_gap,
         ),
         SessionAction::Report(request) => {
-            apply_report(&request, transcript, captured);
+            report::apply_report(&request, transcript, captured);
             Some(Dispatch::Handled)
         }
         SessionAction::Chart(args) => apply_chart(args, transcript, state, last_query),
@@ -69,63 +69,6 @@ pub(super) fn apply_query_actions(
             *action = Some(other);
             None
         }
-    }
-}
-
-/// Writes the Markdown report from the captured result: no query, no task —
-/// the report is the capture, plus provenance from its evidence. Nothing
-/// here queries a database.
-fn apply_report(
-    request: &crate::slash::ReportRequest,
-    transcript: &mut Transcript,
-    captured: &Option<super::super::capture::CapturedResult>,
-) {
-    let Some(capture) = captured else {
-        transcript.push(
-            BlockKind::Error,
-            "No captured result to report. Run the query with /sql first; captures \
-             last only for this session.",
-        );
-        return;
-    };
-    let path = std::path::Path::new(&request.path);
-    match super::super::export::write_report(
-        &capture.result,
-        &capture.evidence,
-        request.rows,
-        path,
-        request.overwrite,
-    ) {
-        Ok(Some(n)) => transcript.push(
-            BlockKind::System,
-            format!(
-                "Wrote report to {} ({n} rows included{})",
-                request.path,
-                scope_note(&capture.evidence)
-            ),
-        ),
-        Ok(None) => transcript.push(
-            BlockKind::System,
-            format!(
-                "Wrote report to {} (rows omitted{})",
-                request.path,
-                scope_note(&capture.evidence)
-            ),
-        ),
-        Err(msg) => transcript.push(BlockKind::Error, msg),
-    }
-}
-
-/// The scope label every report success message carries (D12): a
-/// model-limited capture says what the rows are and that the full result may
-/// be larger.
-fn scope_note(evidence: &ExecutionEvidence) -> String {
-    match &evidence.scope {
-        ResultScope::Full => String::new(),
-        ResultScope::ModelLimited { row_cap } => format!(
-            "; model-limited: the agent saw only the first {row_cap} rows — \
-             the full result may be larger"
-        ),
     }
 }
 
@@ -258,6 +201,9 @@ fn apply_explain(
         super::super::sql_task::Followup::Explain,
     )))
 }
+
+#[path = "query/report.rs"]
+mod report;
 
 #[cfg(test)]
 #[path = "query_capture_tests.rs"]

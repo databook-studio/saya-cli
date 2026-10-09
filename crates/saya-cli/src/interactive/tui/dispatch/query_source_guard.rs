@@ -11,8 +11,8 @@ use super::super::capture::CapturedResult;
 use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::LastQuery;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::state::SessionState;
 use crate::slash::ExportMode;
 use saya_types::ExecutionEvidence;
 

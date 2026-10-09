@@ -7,7 +7,7 @@ use super::super::sql_task;
 use super::super::transcript::BlockKind;
 use super::super::types::App;
 use crate::interactive::compact_task;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::state::SessionState;
 use saya_store::FsSessionStore;
 
 // Poll the run worker (non-blocking): the panel's step list, its

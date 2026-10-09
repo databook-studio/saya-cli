@@ -6,7 +6,7 @@
 //! an errored stream, instead of wedging the session busy forever.
 
 use super::*;
-use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session::runtime::SessionRuntime;
 use saya_agent::ApprovalPolicy;
 use std::path::PathBuf;
 

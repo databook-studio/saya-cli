@@ -2,12 +2,17 @@
 # Configure source-path remapping consistently for Cargo and native cc builds.
 
 configure_saya_release_build_env() {
-  local workspace="$1" cargo_home="${CARGO_HOME:-$HOME/.cargo}" flag
+  local workspace="$1" cargo_home="${CARGO_HOME:-$HOME/.cargo}" target_dir="${CARGO_TARGET_DIR:-target}" flag
+  case "$target_dir" in
+    /*|[A-Za-z]:/*|[A-Za-z]:\\*|\\\\*) ;;
+    *) target_dir="$workspace/$target_dir" ;;
+  esac
   case "${OSTYPE:-}" in
     msys*|cygwin*|win32*)
       command -v cygpath >/dev/null 2>&1 && {
         workspace="$(cygpath -w "$workspace")"
         cargo_home="$(cygpath -w "$cargo_home")"
+        target_dir="$(cygpath -w "$target_dir")"
       }
       ;;
   esac
@@ -42,7 +47,7 @@ configure_saya_release_build_env() {
     msys*|cygwin*|win32*) return ;;
   esac
   local cxx_encoded="${CXXFLAGS:-}"
-  for flag in "-ffile-prefix-map=$workspace=/saya" "-ffile-prefix-map=$cargo_home=/cargo"; do
+  for flag in "-ffile-prefix-map=$target_dir=/saya-target" "-ffile-prefix-map=$workspace=/saya" "-ffile-prefix-map=$cargo_home=/cargo"; do
     printf -v flag '%q' "$flag"
     cxx_encoded+="${cxx_encoded:+ }$flag"
   done

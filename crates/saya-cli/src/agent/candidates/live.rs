@@ -108,7 +108,7 @@ pub(crate) struct LiveAttemptRunner<'a> {
     state_db: Option<SqliteStateStore>,
     decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
     last_sql: Option<String>,
-    session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+    session: Option<Arc<crate::interactive::session::universe::SessionUniverse>>,
     agent_mode: AgentMode,
 }
 
@@ -126,7 +126,7 @@ impl<'a> LiveAttemptRunner<'a> {
         state_db: Option<SqliteStateStore>,
         decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
         last_sql: Option<String>,
-        session: Option<Arc<crate::interactive::session_universe::SessionUniverse>>,
+        session: Option<Arc<crate::interactive::session::universe::SessionUniverse>>,
         agent_mode: AgentMode,
     ) -> Self {
         Self {

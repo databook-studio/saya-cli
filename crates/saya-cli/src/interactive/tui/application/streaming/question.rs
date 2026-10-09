@@ -5,8 +5,8 @@
 
 use super::super::super::agent::messages::Stream;
 use super::super::super::types::App;
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use saya_agent::{AgentEvent, AgentOutput};
 
 impl App {

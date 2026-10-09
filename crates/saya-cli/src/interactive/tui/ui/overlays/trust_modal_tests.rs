@@ -53,7 +53,7 @@ fn trust_app() -> App {
         runtime: unused_runtime(),
         state_db: unused_store(),
         session: std::sync::Arc::new(
-            crate::interactive::session_universe::SessionUniverse::empty(),
+            crate::interactive::session::universe::SessionUniverse::empty(),
         ),
         should_quit: false,
         pending_trust_answer: None,

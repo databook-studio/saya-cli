@@ -18,11 +18,9 @@
 //! The destination path is contained exactly like `workspace_write`: the
 //! final file lands by atomic rename, 0600, never executable.
 
-use std::time::Duration;
-
 use saya_agent::CancellationToken;
 use sha2::Digest;
-use tokio::time::{Instant, timeout_at};
+use tokio::time::Instant;
 
 use super::budget::DownloadBudget;
 use super::download_error::{DownloadError, DownloadOutcome};
@@ -31,37 +29,21 @@ use super::partial;
 use super::policy::{FetchPolicy, refuses_address};
 use super::resume;
 use super::session::{self, Session};
-use super::transport::{FetchRequest, FetchTransport, FetchTransportError, WireResponse};
+use super::transport::{FetchRequest, FetchTransport};
 use crate::workspace::Workspace;
 
-/// One download call: everything the entry point needs, bundled so the
-/// argument list stays under the lint cap and the turn's token rides beside
-/// the bounds it shares.
-pub struct DownloadCall<'a> {
-    /// The policy that judges the URL and every redirect target.
-    pub policy: &'a FetchPolicy,
-    /// The wire the request rides.
-    pub transport: &'a dyn FetchTransport,
-    /// The workspace the download lands in.
-    pub workspace: &'a Workspace,
-    /// The workspace-relative destination.
-    pub destination: &'a str,
-    /// The destination precondition, supplied per call: `None` is
-    /// create-if-absent — an existing destination refuses before any
-    /// network I/O and again at publication; `Some(sha256)` replaces only a
-    /// destination whose current bytes hash to it, judged at the rename. A
-    /// partial's sidecar proves only the partial's own URL, bytes, and
-    /// digest — it never grants replacement authority.
-    pub expected_destination_sha256: Option<&'a str>,
-    /// The URL to download.
-    pub url: &'a str,
-    /// The per-attempt and per-file bounds.
-    pub limits: DownloadLimits,
-    /// The run's shared download wallet.
-    pub budget: &'a DownloadBudget,
-    /// The turn's cancellation token.
-    pub cancellation: &'a CancellationToken,
-}
+/// The call record the entry points receive, with the fields other files
+/// name — `fetch::download::DownloadCall` stays the public shape.
+mod call;
+/// The per-attempt wall clock and cancellation bound for one hop.
+mod deadline;
+/// The 206 range check a resumed download is verified against.
+mod range;
+
+pub use self::call::DownloadCall;
+pub(super) use self::deadline::under_deadline;
+
+use self::range::verify_range;
 
 /// One bounded, resumable download under the turn's cancellation token.
 /// `destination` is a workspace-relative path (contained exactly like
@@ -250,53 +232,4 @@ pub async fn http_download(
         cancellation: &cancellation,
     })
     .await
-}
-
-/// Verifies a 206 against the offset the resume asked for.
-fn verify_range(
-    url: &str,
-    response: &WireResponse,
-    expected: Option<u64>,
-) -> Result<(), DownloadError> {
-    let expected = expected.unwrap_or_default();
-    let mismatch = |served: String| DownloadError::RangeMismatch {
-        url: url.to_owned(),
-        expected,
-        served,
-    };
-    let served = response
-        .content_range
-        .as_deref()
-        .ok_or_else(|| mismatch("(absent)".to_owned()))?;
-    let served_start = served
-        .strip_prefix("bytes ")
-        .and_then(|rest| rest.split('-').next())
-        .and_then(|offset| offset.parse::<u64>().ok());
-    match served_start {
-        Some(start) if start == expected => Ok(()),
-        _ => Err(mismatch(served.to_owned())),
-    }
-}
-
-/// One transport operation cut off at the request deadline or the turn's
-/// token: a transport that never yields is dropped at the bound, and a
-/// cancelled turn stops waiting at once. The deadline future is polled
-/// first; the hop-top and pre-publication checks convert late arrivals.
-pub(super) async fn under_deadline<T>(
-    budget: Duration,
-    deadline: Instant,
-    cancellation: &CancellationToken,
-    future: impl std::future::Future<Output = Result<T, FetchTransportError>> + Send,
-) -> Result<T, DownloadError>
-where
-    T: Send,
-{
-    tokio::select! {
-        biased;
-        result = timeout_at(deadline, future) => match result {
-            Ok(result) => result.map_err(DownloadError::Transport),
-            Err(_) => Err(DownloadError::DeadlineExceeded { budget }),
-        },
-        _ = cancellation.cancelled() => Err(DownloadError::Cancelled),
-    }
 }

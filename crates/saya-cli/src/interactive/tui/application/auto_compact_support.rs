@@ -1,7 +1,7 @@
 use super::super::super::super::agent::{Stream, StreamMsg};
 use super::super::super::super::types::App;
 use super::super::super::tests_support::idle_app;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::state::SessionState;
 use saya_agent::{AgentEvent, AgentOutput, CancellationToken, TokenUsage, UsageCall};
 use tokio::sync::mpsc::unbounded_channel;
 pub(crate) fn app_with_model(model: &str) -> (App, SessionState) {

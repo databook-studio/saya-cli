@@ -7,7 +7,7 @@ use super::{
 };
 use crate::cli::SessionsCommand;
 use crate::commands::output::{failure_message, result};
-use crate::interactive::session_paths::default_session_dir;
+use crate::interactive::session::lifecycle::paths::default_session_dir;
 use crate::render::RenderFormat;
 use saya_store::FsSessionStore;
 
