@@ -123,7 +123,7 @@ grants last for the run (`--resume` does not restore them), so nothing
 carried across sessions confers overwrite authority. Recovery is not
 extended to these artifacts — `/recovery` still covers exactly
 `workspace_write` and `workspace_edit` — and headless grant families
-(`crates/saya-cli/src/interactive/session_grant_families.rs`) make only the
+(`crates/saya-cli/src/interactive/session/permissions/grant_families.rs`) make only the
 covered family available while per-call authority stays in the approval
 engine.
 
@@ -132,18 +132,18 @@ engine.
 | Capability | Surface | Where the shared operation lives |
 | --- | --- | --- |
 | Bounded instruction sources (root `AGENTS.md`, personal `instructions.md`) | every provider request; `/context` | loader `crates/saya-harness/src/instructions.rs`; settings `crates/saya-config/src/instructions.rs` |
-| Projection into requests (labels, budget, cache key) | every provider request | `crates/saya-cli/src/agent/context_sources/mod.rs` |
-| `/context` receipts — names, sizes, digests, never text | `/context` (slash) | `crates/saya-cli/src/interactive/session_context.rs` |
+| Projection into requests (labels, budget, cache key) | every provider request | `crates/saya-cli/src/agent/context/sources.rs` |
+| `/context` receipts — names, sizes, digests, never text | `/context` (slash) | `crates/saya-cli/src/agent/runtime/session_context.rs` |
 | Project preferences | `saya preferences …`, `/preferences …` | contract `crates/saya-types/src/project_preference/mod.rs`; store `crates/saya-store/src/project_preferences/mod.rs`; operations `crates/saya-cli/src/commands/preferences/operations.rs` |
 | Versioned continuation in the session record | `/resume`, saves | contract `crates/saya-types/src/continuation/mod.rs`; persistence `crates/saya-store/src/continuation.rs` |
-| Continuation save/restore, carried at rotation | `/compact`, `/resume`, `/rotate` | `crates/saya-cli/src/interactive/session_continuation.rs` |
-| Deterministic file/check facts from tool activity | saved record | `crates/saya-cli/src/interactive/session_continuation/record.rs` |
-| Session notes | `/notes [set\|clear]` | `crates/saya-cli/src/interactive/session_notes.rs` |
-| Rotation successor + parent link | `/rotate` | `crates/saya-cli/src/interactive/session_rotate.rs`; `crates/saya-store/src/session_lifecycle/successor.rs` |
+| Continuation save/restore, carried at rotation | `/compact`, `/resume`, `/rotate` | `crates/saya-cli/src/interactive/session/continuation/mod.rs` |
+| Deterministic file/check facts from tool activity | saved record | `crates/saya-cli/src/interactive/session/continuation/record.rs` |
+| Session notes | `/notes [set\|clear]` | `crates/saya-cli/src/interactive/session/lifecycle/notes.rs` |
+| Rotation successor + parent link | `/rotate` | `crates/saya-cli/src/interactive/session/lifecycle/session_rotate.rs`; `crates/saya-store/src/session_lifecycle/successor.rs` |
 | Sessions list/delete, tombstones, lock coordination | `saya sessions list\|delete`, `/sessions list\|delete` | store `crates/saya-store/src/session_lifecycle/delete.rs`, `crates/saya-store/src/session_lifecycle/tombstone.rs`; lock `crates/saya-harness/src/session_lifecycle.rs`; CLI `crates/saya-cli/src/commands/saved_sessions/operations.rs` |
 | Capacity report and near-limit warning | every save | `crates/saya-store/src/session_lifecycle.rs` |
-| Digest-guarded create/replace/append, guarded removal | `workspace_write`, `workspace_edit` | harness `crates/saya-harness/src/workspace/guarded_write.rs`, `crates/saya-harness/src/workspace/patch.rs`, `crates/saya-harness/src/workspace/commit_gate.rs`; adapters `crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs`, `crates/saya-cli/src/agent/tools/database_tools/workspace_edit.rs` |
-| Checkpoint capture around direct edits | file tools behind `/recovery on` | `crates/saya-cli/src/agent/tools/database_tools/checkpoint/mod.rs` |
+| Digest-guarded create/replace/append, guarded removal | `workspace_write`, `workspace_edit` | harness `crates/saya-harness/src/workspace/guarded_write.rs`, `crates/saya-harness/src/workspace/patch.rs`, `crates/saya-harness/src/workspace/commit_gate.rs`; adapters `crates/saya-cli/src/agent/tools/workspace/write.rs`, `crates/saya-cli/src/agent/tools/workspace/edit.rs` |
+| Checkpoint capture around direct edits | file tools behind `/recovery on` | `crates/saya-cli/src/agent/tools/workspace/checkpoint/mod.rs` |
 | Before-image storage and admission screening | `<sessions>/<id>/checkpoints/` | `crates/saya-store/src/checkpoints/ops.rs`, `crates/saya-store/src/checkpoints/screen.rs` |
 | Recovery list/diff/restore | `/recovery [on\|off\|list\|diff\|restore]` | `crates/saya-cli/src/commands/recovery/ops.rs` |
 | Turn cancellation through fetch/scratch tools | Esc/Ctrl-C in a turn | harness `crates/saya-harness/src/fetch/adapter.rs`, `crates/saya-harness/src/fetch/download.rs`, `crates/saya-harness/src/scratch/tools.rs`, `crates/saya-harness/src/scratch/import.rs`, `crates/saya-harness/src/scratch/execute.rs`; forwarding `crates/saya-cli/src/agent/tools/run_tools.rs` |
@@ -173,7 +173,7 @@ engine.
 | Checkpoint file image | 8388608 B | `MAX_CHECKPOINT_FILE_BYTES` in `crates/saya-types/src/edit_checkpoint/mod.rs` |
 | Checkpoint session quota | 67108864 B | `MAX_CHECKPOINT_SESSION_BYTES` in `crates/saya-types/src/edit_checkpoint/mod.rs` |
 | Checkpoints per session | 128 | `MAX_CHECKPOINTS_PER_SESSION` in `crates/saya-types/src/edit_checkpoint/mod.rs` |
-| Refreshed file facts per request | 16 | `MAX_REFRESHED_FILES`, private, in `crates/saya-cli/src/interactive/session_continuation/record_block.rs` |
+| Refreshed file facts per request | 16 | `MAX_REFRESHED_FILES`, private, in `crates/saya-cli/src/interactive/session/continuation/record_block.rs` |
 | Recovery-list digest refreshes | 32 | `REFRESH_BOUND`, private, in `crates/saya-cli/src/commands/recovery/ops.rs` |
 | Diff input | 65536 B | `DIFF_MAX_BYTES`, private, in `crates/saya-cli/src/commands/recovery/line_diff.rs` |
 | Diff lines | 2000 | `DIFF_MAX_LINES`, private, in `crates/saya-cli/src/commands/recovery/line_diff.rs` |
@@ -181,16 +181,21 @@ engine.
 | Diff output lines | 200 | `DIFF_MAX_OUTPUT_LINES`, private, in `crates/saya-cli/src/commands/recovery/hunks.rs` |
 | Tool tally entries | 8 | `UNFINISHED_ENTRIES`, private, in `crates/saya-cli/src/interactive/turn_summary.rs` |
 | Tool tally entry chars | 120 | `ENTRY_CHARS`, private, in `crates/saya-cli/src/interactive/turn_summary.rs` |
-| Tool write/edit content | 65536 B | `WORKSPACE_WRITE_MAX_BYTES`, private, in `crates/saya-cli/src/agent/tools/database_tools/workspace_write.rs` |
+| Tool write/edit content | 65536 B | `WORKSPACE_WRITE_MAX_BYTES`, private, in `crates/saya-cli/src/agent/tools/workspace/write.rs` |
 | Patch replacement block | 65536 B | `PATCH_REPLACEMENT_MAX_BYTES` in `crates/saya-harness/src/workspace/patch.rs` |
 | Workspace I/O ceiling | 8388608 B | `MAX_IO_BYTES` in `crates/saya-harness/src/workspace/contain.rs` |
 
 Constants marked private cannot be imported by another crate's test; each is
-guarded by `saya-cli`'s own unit tests (`turn_summary_tests.rs`,
-`recovery/ops_tests.rs`, `session_continuation/record_block_tests.rs`,
-`recovery/diff_tests.rs`, `workspace_write_tests.rs`), and the `pub`
-constants are pinned against this table in each owning crate's
-`tests/adr_bounds.rs`.
+guarded by `saya-cli`'s own unit tests
+(`crates/saya-cli/src/interactive/turn_summary_tests.rs`,
+`crates/saya-cli/src/commands/recovery/ops_tests.rs`,
+`crates/saya-cli/src/interactive/session/continuation/record_block_tests.rs`,
+`crates/saya-cli/src/commands/recovery/diff_tests.rs`,
+`crates/saya-cli/src/agent/tools/workspace_write_tests.rs`), and the `pub`
+constants are pinned against this table in
+`crates/saya-types/tests/adr_bounds.rs`,
+`crates/saya-store/tests/adr_bounds.rs`, and
+`crates/saya-harness/tests/adr_bounds.rs`.
 
 ## Data and privacy promises
 
@@ -291,8 +296,12 @@ The containment, guarded-write, and checkpoint machinery is anchored unix
 code: no-follow opens with post-open identity checks, `0600` files in
 `0700` directories, atomic private-temp renames, and no-follow removals.
 It is verified where the acceptance suites ran — macOS, locally, across
-`tests/turn_file_coding`, `mixed_task`, `journey`, `instruction_examples`,
-`reload_repl`, and the `tui_pty_smoke` setup/reload tests. Windows builds a
+`crates/saya-cli/tests/turn_file_coding`,
+`crates/saya-cli/tests/mixed_task.rs`,
+`crates/saya-cli/tests/journey.rs`,
+`crates/saya-cli/tests/instruction_examples.rs`,
+`crates/saya-cli/tests/reload_repl.rs`, and the
+`crates/saya-cli/tests/tui_pty_smoke.rs` setup/reload tests. Windows builds a
 non-unix by-path guarded-write fallback that compiles in CI but was not
 exercised by these acceptance tests; its behaviour is not claimed beyond
 "it compiles".
@@ -337,8 +346,11 @@ The claims above are exercised by the real-binary acceptance suites in
 (the full project journey), `instruction_examples` (the copy-ready
 instruction files and the `/context` sample), `reload_repl` (reload
 between turns), and `tui_pty_smoke` (the `/setup` handoff and reload
-tests). The bounds table is pinned by `docs_claims.rs` and each owning
-crate's `tests/adr_bounds.rs`; store-side lifecycle, continuation,
+tests). The bounds table is pinned by
+`crates/saya-cli/tests/docs_claims.rs`,
+`crates/saya-types/tests/adr_bounds.rs`,
+`crates/saya-store/tests/adr_bounds.rs`, and
+`crates/saya-harness/tests/adr_bounds.rs`; store-side lifecycle, continuation,
 checkpoint, and screening behaviour is pinned in `crates/saya-store/tests/`
 (`session_lifecycle.rs`, `sessions.rs`, `checkpoints.rs`,
 `project_preferences.rs`).
