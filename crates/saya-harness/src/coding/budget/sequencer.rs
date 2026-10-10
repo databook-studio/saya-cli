@@ -19,12 +19,16 @@ use tokio::sync::Mutex;
 /// cancellation latches do not block, because a cancelled job still needs
 /// its final control events.
 ///
-/// Scope: appends go through the store's public generic control-event
-/// append, which accepts only `StateChanged` and `ResultReported` kinds —
-/// producers of other event kinds (approvals, checkouts) still need their
-/// own owner-side wiring, and adopters needing multi-event transactions
-/// (the R13b approval consume) need their own owner step, because one call
-/// here consumes exactly one sequence.
+/// Scope: control events go through the store's public generic control-event
+/// append, which accepts only `StateChanged` and `ResultReported` kinds;
+/// checkout events now route here under the same ledger mutex, through
+/// [`JobEventSequencer::append_checkout_intent`] and
+/// [`JobEventSequencer::append_checkout_outcome`] into the store's
+/// `record_checkout_create_intent` and `record_checkout_operation_outcome`.
+/// Producers of other event kinds (approvals) still need their own
+/// owner-side wiring, and adopters needing multi-event transactions (the
+/// R13b approval consume) need their own owner step, because one call here
+/// consumes exactly one sequence.
 #[derive(Clone)]
 pub struct JobEventSequencer {
     pub(super) inner: Arc<Mutex<State>>,
@@ -62,12 +66,56 @@ pub enum SequencerError {
     Store(u64, StoreError),
 }
 
+/// Which store append one routed sequencer call drains through.
+enum Route {
+    /// The store's generic control-event append.
+    Control,
+    /// The store's checkout create-intent append.
+    CheckoutIntent,
+    /// The store's checkout operation-outcome append.
+    CheckoutOutcome,
+}
+
 impl JobEventSequencer {
     /// Allocates the next exact sequence, hands it to `build` to fill into
     /// the event, appends through the store's exact-next-sequence API, and
     /// advances the shared counter only after the store accepts.
     pub async fn append_event(
         &self,
+        build: impl FnOnce(u64) -> CodingEventV1,
+    ) -> Result<AppendedEvent, SequencerError> {
+        self.append_routed(Route::Control, build).await
+    }
+
+    /// The checkout owner step's create-intent append: the owner-side wiring
+    /// this struct's docs previously said was missing. The closure must fill
+    /// a `CheckoutCreateIntent` event at the allocated sequence; the store
+    /// accepts it only through `record_checkout_create_intent`.
+    pub async fn append_checkout_intent(
+        &self,
+        build: impl FnOnce(u64) -> CodingEventV1,
+    ) -> Result<AppendedEvent, SequencerError> {
+        self.append_routed(Route::CheckoutIntent, build).await
+    }
+
+    /// The checkout owner step's operation-outcome append, mirroring
+    /// [`JobEventSequencer::append_checkout_intent`] for a
+    /// `CheckoutOperationOutcome` event through the store's
+    /// `record_checkout_operation_outcome`.
+    pub async fn append_checkout_outcome(
+        &self,
+        build: impl FnOnce(u64) -> CodingEventV1,
+    ) -> Result<AppendedEvent, SequencerError> {
+        self.append_routed(Route::CheckoutOutcome, build).await
+    }
+
+    /// The single append point behind every route: one exact sequence
+    /// allocation under the ledger mutex, the same pre-checks, and the same
+    /// store-result handling, so control and checkout events drain one
+    /// contiguous counter.
+    async fn append_routed(
+        &self,
+        route: Route,
         build: impl FnOnce(u64) -> CodingEventV1,
     ) -> Result<AppendedEvent, SequencerError> {
         let mut state = self.inner.lock().await;
@@ -85,7 +133,12 @@ impl JobEventSequencer {
         if event.sequence() != allocated {
             return Err(SequencerError::SequenceMismatch);
         }
-        match state.store.append_coding_event(event).await {
+        let append = match route {
+            Route::Control => state.store.append_coding_event(event).await,
+            Route::CheckoutIntent => state.store.record_checkout_create_intent(event).await,
+            Route::CheckoutOutcome => state.store.record_checkout_operation_outcome(event).await,
+        };
+        match append {
             Ok(CodingEventAppend::Appended(actual)) if actual == allocated => {
                 let Some(next) = state.sequence.checked_add(1) else {
                     state.owner_failure();
