@@ -1,13 +1,13 @@
 use super::*;
-use saya_store::{NewCodingChild, NewCodingJob};
-use saya_types::{
-    AgentId, BudgetCharge, BudgetDimension, BudgetEffectState, BudgetObservation,
-    BudgetObservationValue, BudgetReservationV1, BudgetSettlementV1, CodingEventKind,
-    CodingEventV1, InvocationId, JobId, JobState, RepositoryId, SnapshotId,
-};
+use fixture::{CodingSeed, assert_coding_seed_survives, create_completed_checkout};
+use saya_types::{ManagedCheckoutId, ManagedCheckoutLifecycle};
 use std::num::NonZeroU64;
 
+#[path = "checkout_upgrade/fixture.rs"]
+mod fixture;
+
 pub(super) async fn drop_step13_tables(pool: &SqlitePool) {
+    drop_step14_table(pool).await;
     sqlx::query("DROP TABLE coding_checkout_operations")
         .execute(pool)
         .await
@@ -18,94 +18,18 @@ pub(super) async fn drop_step13_tables(pool: &SqlitePool) {
         .unwrap();
 }
 
+pub(super) async fn drop_step14_table(pool: &SqlitePool) {
+    sqlx::query("DROP TABLE coding_approval_requests")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn upgrade_from_twelve_preserves_jobs_children_events_and_budget_records() {
-    let root = temp_root("upgrade-v12-checkouts");
-    let db = root.join("state.sqlite3");
-    let store = SqliteStateStore::new(&db);
-    let job_id = JobId::parse("job-v12-checkout").unwrap();
-    store
-        .create_coding_job(NewCodingJob {
-            job_id: job_id.clone(),
-            repository_id: RepositoryId::parse("repository-v12-checkout").unwrap(),
-            snapshot_id: SnapshotId::parse("snapshot-v12-checkout").unwrap(),
-        })
-        .await
-        .unwrap();
-    let child = store
-        .create_coding_child(NewCodingChild {
-            job_id: job_id.clone(),
-            agent_id: AgentId::parse("agent-v12-checkout").unwrap(),
-            current_invocation_id: InvocationId::parse("invocation-v12-checkout").unwrap(),
-        })
-        .await
-        .unwrap();
-    let running = CodingEventV1::new(
-        NonZeroU64::new(1).unwrap(),
-        job_id.clone(),
-        None,
-        None,
-        CodingEventKind::StateChanged {
-            state: JobState::Running,
-        },
-    )
-    .unwrap();
-    store.append_coding_event(running.clone()).await.unwrap();
-    let reservation = BudgetReservationV1::new(
-        job_id.clone(),
-        NonZeroU64::new(2).unwrap(),
-        Some(child.agent_id.clone()),
-        Some(child.current_invocation_id.clone()),
-        vec![
-            BudgetCharge::new(
-                BudgetDimension::ChildSlots,
-                None,
-                None,
-                NonZeroU64::new(1).unwrap(),
-            )
-            .unwrap(),
-        ],
-    )
-    .unwrap();
-    let reserved = CodingEventV1::new(
-        NonZeroU64::new(2).unwrap(),
-        job_id.clone(),
-        Some(child.agent_id.clone()),
-        Some(child.current_invocation_id.clone()),
-        CodingEventKind::BudgetReserved {
-            reservation: Box::new(reservation.clone()),
-        },
-    )
-    .unwrap();
-    store.reserve_coding_budget(reserved.clone()).await.unwrap();
-    let settlement = BudgetSettlementV1::new(
-        job_id.clone(),
-        NonZeroU64::new(2).unwrap(),
-        NonZeroU64::new(3).unwrap(),
-        BudgetEffectState::Settled,
-        vec![
-            BudgetObservation::new(
-                BudgetDimension::ChildSlots,
-                None,
-                None,
-                BudgetObservationValue::Measured(1),
-            )
-            .unwrap(),
-        ],
-    )
-    .unwrap();
-    let settled = CodingEventV1::new(
-        NonZeroU64::new(3).unwrap(),
-        job_id.clone(),
-        None,
-        None,
-        CodingEventKind::BudgetSettled {
-            settlement: Box::new(settlement.clone()),
-        },
-    )
-    .unwrap();
-    store.settle_coding_budget(settled.clone()).await.unwrap();
-    store.close().await;
+    let seed = CodingSeed::new("upgrade-v12-checkouts").await;
+    let db = seed.database.clone();
+    seed.store.close().await;
 
     let raw = create_pool(&db).await;
     drop_step13_tables(&raw).await;
@@ -114,43 +38,68 @@ async fn upgrade_from_twelve_preserves_jobs_children_events_and_budget_records()
         .await
         .unwrap();
     raw.close().await;
+    assert_eq!(user_version(&db).await, 12);
 
     let upgraded = SqliteStateStore::new(&db);
-    assert_eq!(
-        upgraded
-            .get_coding_job(&job_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .state,
-        JobState::Running,
-    );
-    assert_eq!(
-        upgraded
-            .list_coding_children(&job_id, None, 1)
-            .await
-            .unwrap()
-            .items,
-        vec![child],
-    );
-    assert_eq!(
-        upgraded
-            .list_coding_events(&job_id, None, 10)
-            .await
-            .unwrap()
-            .events,
-        vec![running, reserved, settled],
-    );
-    let budget = upgraded
-        .get_coding_budget_reservation(&job_id, NonZeroU64::new(2).unwrap())
+    assert_coding_seed_survives(&upgraded, &seed, &seed.events).await;
+    upgraded.close().await;
+    assert_eq!(user_version(&db).await, 14);
+    assert!(table_exists(&db, "coding_managed_checkouts").await);
+    assert!(table_exists(&db, "coding_checkout_operations").await);
+    assert!(table_exists(&db, "coding_approval_requests").await);
+    let _ = fs::remove_dir_all(seed.root);
+}
+
+#[tokio::test]
+async fn upgrade_from_thirteen_preserves_completed_checkout_ownership_and_operation() {
+    let mut seed = CodingSeed::new("upgrade-v13-checkout-data").await;
+    let (ownership, completed_operation, create_event, outcome_event) =
+        create_completed_checkout(&mut seed).await;
+    let mut expected_events = seed.events.clone();
+    expected_events.extend([create_event, outcome_event]);
+    let db = seed.database.clone();
+    seed.store.close().await;
+
+    let raw = create_pool(&db).await;
+    drop_step14_table(&raw).await;
+    sqlx::query("PRAGMA user_version = 13")
+        .execute(&raw)
+        .await
+        .unwrap();
+    raw.close().await;
+    assert_eq!(user_version(&db).await, 13);
+
+    let upgraded = SqliteStateStore::new(&db);
+    assert_coding_seed_survives(&upgraded, &seed, &expected_events).await;
+    let checkout_id = ManagedCheckoutId::parse("checkout-v13-preserved").unwrap();
+    let checkout = upgraded
+        .get_managed_checkout(&seed.job_id, &checkout_id)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(budget.reservation, reservation);
-    assert_eq!(budget.settlement, Some(settlement));
+    assert_eq!(checkout.ownership, ownership);
+    assert_eq!(
+        checkout.ownership.managed_path().as_str(),
+        "/tmp/saya-r13b-preserved-checkout"
+    );
+    assert_eq!(checkout.current_lifecycle, ManagedCheckoutLifecycle::Active);
+    assert_eq!(checkout.latest_operation, completed_operation);
+    assert_eq!(
+        upgraded
+            .get_checkout_operation(&seed.job_id, &checkout_id, NonZeroU64::new(4).unwrap(),)
+            .await
+            .unwrap(),
+        Some(completed_operation.clone())
+    );
+    assert_eq!(
+        upgraded
+            .list_checkout_operations(&seed.job_id, &checkout_id, None, 10)
+            .await
+            .unwrap()
+            .items,
+        vec![completed_operation]
+    );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 13);
-    assert!(table_exists(&db, "coding_managed_checkouts").await);
-    assert!(table_exists(&db, "coding_checkout_operations").await);
-    let _ = fs::remove_dir_all(root);
+    assert_eq!(user_version(&db).await, 14);
+    let _ = fs::remove_dir_all(seed.root);
 }

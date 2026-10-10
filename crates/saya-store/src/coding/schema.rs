@@ -72,3 +72,15 @@ pub(crate) async fn step13(connection: &mut PoolConnection<Sqlite>) -> Result<()
         .map_err(|_| StoreError::Unavailable)?;
     Ok(())
 }
+
+pub(crate) async fn step14(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE coding_approval_requests(job_id TEXT NOT NULL, request_sequence INTEGER NOT NULL CHECK(request_sequence > 0), closed_by_sequence INTEGER CHECK(closed_by_sequence > 0), PRIMARY KEY(job_id, request_sequence), FOREIGN KEY(job_id, request_sequence) REFERENCES coding_events(job_id, sequence) ON DELETE RESTRICT, FOREIGN KEY(job_id, closed_by_sequence) REFERENCES coding_events(job_id, sequence) ON DELETE RESTRICT)")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 14")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}

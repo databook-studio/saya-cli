@@ -28,7 +28,9 @@ mod state_contracts;
 
 pub use checkpoints::{CheckpointStoreError, NewCheckpoint, RecoveryReport, ScreenRefusal};
 pub use coding::{
-    CheckoutOperationPage, CodingBudgetReservationPage, CodingBudgetReservationRecord,
+    CheckoutOperationPage, CodingApprovalClosure, CodingApprovalConsumptionAppend,
+    CodingApprovalConsumptionContext, CodingApprovalConsumptionReceipt, CodingApprovalRequestPage,
+    CodingApprovalRequestRecord, CodingBudgetReservationPage, CodingBudgetReservationRecord,
     CodingChildPage, CodingChildRecord, CodingEventAppend, CodingEventPage, CodingJobRecord,
     MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB, MAX_CHECKOUT_RECORDS_PER_JOB,
     MAX_CODING_EVENT_PAGE_SIZE, ManagedCheckoutPage, ManagedCheckoutRecord, NewCodingChild,
