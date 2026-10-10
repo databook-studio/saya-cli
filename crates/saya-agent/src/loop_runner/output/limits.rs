@@ -164,6 +164,8 @@ pub enum AgentError {
     InvalidHistory,
     #[error("effect admission denied")]
     EffectAdmissionDenied,
+    #[error("provider does not expose physical transport accounting")]
+    UnsupportedPhysicalCoverage,
     #[error(transparent)]
     EffectOwnerFailure(#[from] EffectOwnerFailure),
     #[error("request cancelled")]

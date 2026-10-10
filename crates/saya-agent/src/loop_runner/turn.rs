@@ -15,6 +15,12 @@ pub(super) async fn run(
     // instead re-instructs: the partial stays discarded, one user-role note
     // tells the model to resume compactly, and the turn is spent — the
     // The shared admission owner has already charged this turn, so `max_turns` keeps binding.
+    let continuation = state.pending_continuation.take();
+    let call_kind = if continuation.is_some() {
+        crate::EffectCallKind::Continuation
+    } else {
+        crate::EffectCallKind::Answer
+    };
     let (assistant, turn_usage, reasoning) = match receive::receive(receive::ReceiveContext {
         provider: state.provider,
         model: &state.request.model,
@@ -24,12 +30,14 @@ pub(super) async fn run(
         definitions: &state.definitions,
         context_byte_budget: state.limits.context_byte_budget,
         request_preflight: state.request_preflight,
-        continuation: state.pending_continuation.take(),
+        continuation,
         sink: state.sink,
         cancellation: &state.cancellation,
         events: &mut state.events,
         admission,
         effect_admission: state.effect_admission,
+        require_physical_effect_admission: state.require_physical_effect_admission,
+        call_kind,
     })
     .await
     {
@@ -46,7 +54,9 @@ pub(super) async fn run(
             };
             if matches!(
                 &error,
-                AgentError::EffectAdmissionDenied | AgentError::EffectOwnerFailure(_)
+                AgentError::EffectAdmissionDenied
+                    | AgentError::EffectOwnerFailure(_)
+                    | AgentError::UnsupportedPhysicalCoverage
             ) {
                 return Err(error);
             }

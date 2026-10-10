@@ -1,12 +1,11 @@
+mod consume;
+
 use super::{attempt, attempt_metrics::AttemptTiming, emit};
-use crate::protocol::tool_collection::admit_tool_calls;
 use crate::{
     AgentEvent, AgentEventSink, AgentMetric, AgentMetricCount, AgentMetricOutcome,
-    AgentMetricUseful, CancellationToken, ChatMessage, ChatProvider, ChatRequest, ProviderError,
-    ProviderEvent, ProviderRecoveryReason, TokenUsage,
+    CancellationToken, ChatProvider, ChatRequest, ControlledProviderError, PhysicalAttemptControl,
+    ProviderError, TokenUsage,
 };
-use futures_util::StreamExt;
-use std::time::Instant;
 
 pub(super) async fn stream_attempt(
     provider: &dyn ChatProvider,
@@ -15,6 +14,7 @@ pub(super) async fn stream_attempt(
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
     retry: bool,
+    physical_attempts: Option<&mut PhysicalAttemptControl<'_>>,
 ) -> attempt::AttemptOutcome {
     let mut timing = AttemptTiming::new();
     let outcome = if retry {
@@ -23,10 +23,28 @@ pub(super) async fn stream_attempt(
         if cancellation.is_cancelled() {
             failed(attempt::AttemptError::Cancelled, None)
         } else {
-            stream_attempt_inner(provider, request, sink, cancellation, events, &mut timing).await
+            stream_attempt_inner(
+                provider,
+                request,
+                sink,
+                cancellation,
+                events,
+                &mut timing,
+                physical_attempts,
+            )
+            .await
         }
     } else {
-        stream_attempt_inner(provider, request, sink, cancellation, events, &mut timing).await
+        stream_attempt_inner(
+            provider,
+            request,
+            sink,
+            cancellation,
+            events,
+            &mut timing,
+            physical_attempts,
+        )
+        .await
     };
     timing.publish(sink, &outcome).await;
     outcome
@@ -39,6 +57,7 @@ async fn stream_attempt_inner(
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
     timing: &mut AttemptTiming,
+    mut physical_attempts: Option<&mut PhysicalAttemptControl<'_>>,
 ) -> attempt::AttemptOutcome {
     emit(events, sink, AgentEvent::turn_started()).await;
     if cancellation.is_cancelled() {
@@ -47,172 +66,77 @@ async fn stream_attempt_inner(
     let provider_request = request.clone();
     let provider_cancellation = cancellation.clone();
     let establishment_start = timing.begin_establishment();
-    let establishment = tokio::select! {
-        _ = cancellation.cancelled() => {
-            timing.finish_establishment(establishment_start, AgentMetricOutcome::Cancelled);
-            return failed(attempt::AttemptError::Cancelled, None);
-        },
-        result = provider.stream(provider_request, provider_cancellation) => result,
+    let establishment = if let Some(control) = physical_attempts.as_deref_mut() {
+        provider
+            .stream_with_physical_attempts(provider_request, provider_cancellation, control)
+            .await
+            .map_err(controlled_failure)
+    } else {
+        tokio::select! {
+            _ = cancellation.cancelled() => {
+                timing.finish_establishment(establishment_start, AgentMetricOutcome::Cancelled);
+                return failed(attempt::AttemptError::Cancelled, None);
+            }
+            result = provider.stream(provider_request, provider_cancellation) => {
+                result.map_err(establishment_failure)
+            }
+        }
     };
-    let mut stream = match establishment {
+    let stream = match establishment {
         Ok(stream) => {
             timing.finish_establishment(establishment_start, AgentMetricOutcome::Succeeded);
             stream
         }
         Err(error) => {
-            let phase_outcome = if matches!(&error, ProviderError::Cancelled) {
+            let phase_outcome = if matches!(&error, attempt::AttemptError::Cancelled) {
                 AgentMetricOutcome::Cancelled
             } else {
                 AgentMetricOutcome::Failed
             };
             timing.finish_establishment(establishment_start, phase_outcome);
-            return failed(establishment_failure(error), None);
+            if let Some(control) = physical_attempts.as_deref_mut()
+                && let Err(owner_error) = control
+                    .settle_pending_response(crate::EffectOutcome::Unknown, None)
+                    .await
+            {
+                return failed(controlled_failure(owner_error), None);
+            }
+            return failed(error, None);
         }
     };
-    let (mut content, mut calls, mut complete, mut usage, mut reasoning) =
-        (String::new(), Vec::new(), false, None, None);
-    let mut useful_text_seen = false;
-    let mut tool_call_bytes = 0usize;
-    let mut items = crate::protocol::stream_item_limit::StreamItemCount::default();
-    loop {
-        let read_started = Instant::now();
-        let next = tokio::select! {
-            _ = cancellation.cancelled() => {
-                timing.add_read_elapsed(read_started.elapsed());
-                return failed(attempt::AttemptError::Cancelled, usage);
+    let outcome = consume::consume_stream(stream, sink, cancellation, events, timing).await;
+    if let Some(control) = physical_attempts {
+        let (outcome, usage) = match &outcome {
+            attempt::AttemptOutcome::Success { usage, .. } => {
+                (crate::EffectOutcome::Succeeded, *usage)
             }
-            next = stream.next() => next,
-        };
-        timing.add_read_elapsed(read_started.elapsed());
-        let Some(event) = next else { break };
-        let event = match event {
-            Ok(event) => {
-                timing.first_event(AgentMetricOutcome::Succeeded);
-                event
-            }
-            Err(error) => {
-                timing.first_event(AgentMetricOutcome::Failed);
-                let usage = match &error {
-                    ProviderError::StreamItemLimit {
-                        usage: Some(reported),
-                    } => Some(**reported),
-                    _ => usage,
-                };
-                return failed(provider_failure(error), usage);
+            attempt::AttemptOutcome::Failed { usage, .. } => {
+                (crate::EffectOutcome::Unknown, *usage)
             }
         };
-        if let ProviderEvent::Usage(counts) = &event {
-            usage = Some(*counts);
-        }
-        if let Err(error) = items.admit(usage) {
-            return failed(provider_failure(error), usage);
-        }
-        match event {
-            ProviderEvent::TextDelta(text) => {
-                if !useful_text_seen && !text.trim().is_empty() {
-                    useful_text_seen = true;
-                    sink.metric(AgentMetric::Useful(AgentMetricUseful::NonWhitespaceText))
-                        .await;
-                    if cancellation.is_cancelled() {
-                        return failed(attempt::AttemptError::Cancelled, usage);
-                    }
-                }
-                if content.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
-                    return failed(byte_limit_error(), usage);
-                }
-                content.push_str(&text);
-                if !text.is_empty() {
-                    emit(events, sink, AgentEvent::assistant_text(text)).await;
-                }
-            }
-            ProviderEvent::ReasoningDelta(text) => {
-                let accumulated = reasoning.get_or_insert_with(String::new);
-                if accumulated.len().saturating_add(text.len()) > crate::MAX_STREAM_BYTES {
-                    return failed(byte_limit_error(), usage);
-                }
-                accumulated.push_str(&text);
-            }
-            ProviderEvent::ToolCalls(value) => {
-                if let Err(error) = admit_tool_calls(
-                    &mut calls,
-                    &mut tool_call_bytes,
-                    value,
-                    crate::MAX_STREAM_BYTES,
-                ) {
-                    return failed(provider_failure(error), usage);
-                }
-            }
-            ProviderEvent::Usage(counts) => usage = Some(counts),
-            ProviderEvent::Done => complete = true,
+        if let Err(error) = control.settle_pending_response(outcome, usage).await {
+            return failed(controlled_failure(error), usage);
         }
     }
-    if !complete {
-        return failed(
-            retryable(
-                ProviderError::InvalidResponse,
-                ProviderRecoveryReason::StreamEnded,
-            ),
-            usage,
-        );
-    }
-    if content.trim().is_empty() && calls.is_empty() {
-        return failed(
-            terminal(
-                ProviderError::InvalidResponse,
-                ProviderRecoveryReason::EmptyResponse,
-            ),
-            usage,
-        );
-    }
-    attempt::AttemptOutcome::Success {
-        message: ChatMessage {
-            role: "assistant".into(),
-            content,
-            tool_calls: calls,
-            tool_call_id: None,
-        },
-        usage,
-        reasoning,
-    }
+    outcome
 }
 
-fn byte_limit_error() -> attempt::AttemptError {
-    retryable(
-        ProviderError::Request("provider stream exceeded size limit".into()),
-        ProviderRecoveryReason::StreamByteLimit,
-    )
-}
-
-fn provider_failure(error: ProviderError) -> attempt::AttemptError {
+fn controlled_failure(error: ControlledProviderError) -> attempt::AttemptError {
     match error {
-        error @ ProviderError::OutputTruncated { .. } => {
-            terminal(error, ProviderRecoveryReason::OutputTruncated)
+        ControlledProviderError::Provider(error) => establishment_failure(error),
+        ControlledProviderError::UnsupportedCoverage | ControlledProviderError::AttemptLimit => {
+            attempt::AttemptError::UnsupportedPhysicalCoverage
         }
-        ProviderError::ToolCollectionLimit => terminal(
-            ProviderError::ToolCollectionLimit,
-            ProviderRecoveryReason::ToolCollectionLimit,
-        ),
-        error @ ProviderError::StreamItemLimit { .. } => {
-            terminal(error, ProviderRecoveryReason::StreamItemLimit)
-        }
-        ProviderError::Cancelled => attempt::AttemptError::Cancelled,
-        error => retryable(error, ProviderRecoveryReason::ProviderFailure),
+        ControlledProviderError::AdmissionDenied => attempt::AttemptError::AdmissionDenied,
+        ControlledProviderError::OwnerFailure(error) => attempt::AttemptError::OwnerFailure(error),
     }
 }
 
 fn establishment_failure(error: ProviderError) -> attempt::AttemptError {
-    match provider_failure(error) {
-        attempt::AttemptError::Retryable { error, reason } => terminal(error, reason),
+    match consume::provider_failure(error) {
+        attempt::AttemptError::Retryable { error, reason } => consume::terminal(error, reason),
         error => error,
     }
-}
-
-fn retryable(error: ProviderError, reason: ProviderRecoveryReason) -> attempt::AttemptError {
-    attempt::AttemptError::Retryable { error, reason }
-}
-
-fn terminal(error: ProviderError, reason: ProviderRecoveryReason) -> attempt::AttemptError {
-    attempt::AttemptError::Terminal { error, reason }
 }
 
 fn failed(error: attempt::AttemptError, usage: Option<TokenUsage>) -> attempt::AttemptOutcome {

@@ -38,6 +38,8 @@ pub(super) async fn execute(
                     .sql
                     .clone()
                     .or(state.last_successful_sql.clone()),
+                state.effect_admission,
+                state.require_physical_effect_admission,
             )
             .await?,
         ));

@@ -99,6 +99,7 @@ pub async fn run_agent_with_sink(
         answering: None,
         request_preflight: None,
         effect_admission: None,
+        require_physical_effect_admission: false,
     })
     .await
 }
@@ -122,6 +123,7 @@ pub async fn run_agent_with_control<'a>(
         answering: Some(control.answering_scope),
         request_preflight: control.request_preflight,
         effect_admission: control.effect_admission,
+        require_physical_effect_admission: control.require_physical_effect_admission,
     })
     .await
 }

@@ -1,7 +1,7 @@
 use super::super::{admission::Admission, preflight::RequestPreflightConfig};
 use crate::{
     AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, EffectAdmission,
-    ToolDefinition,
+    EffectCallKind, ToolDefinition,
 };
 
 #[derive(Clone, Copy)]
@@ -28,4 +28,6 @@ pub(in crate::loop_runner) struct ReceiveContext<'a> {
     pub(in crate::loop_runner) events: &'a mut Vec<AgentEvent>,
     pub(in crate::loop_runner) admission: &'a mut Admission,
     pub(in crate::loop_runner) effect_admission: Option<&'a dyn EffectAdmission>,
+    pub(in crate::loop_runner) require_physical_effect_admission: bool,
+    pub(in crate::loop_runner) call_kind: EffectCallKind,
 }
