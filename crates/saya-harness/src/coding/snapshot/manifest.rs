@@ -164,6 +164,10 @@ pub enum SnapshotError {
     BlobSizeMismatch,
     #[error("the blob bytes do not match the repository's object id")]
     BlobDigestMismatch,
+    #[error("the materialization target is not an empty private directory")]
+    MaterializeTargetInvalid,
+    #[error("materialization failed and the target could not be fully cleaned: discard the target")]
+    MaterializeCleanupFailed,
 }
 
 /// A redacted wrapper around an [`std::io::Error`] for capture failures: the
