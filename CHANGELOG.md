@@ -224,8 +224,7 @@ target (its `profile` argument, else the saved binding's profile — a binding
 saved against an unlisted profile refuses without naming it). Bounds: requests
 ≤ 1 MiB, ≤ 4 calls in flight, 30 s per call, responses ≤ 16 MiB; write SQL is
 refused by the same read-only gate, and a stale review is reported, never
-revalidated, from the wire. Client setup snippets for opencode, codex, and
-Claude Code are in
+revalidated, from the wire. Generic host setup guidance is in
 [commands](docs/commands.md#mcp-saya-mcp-serve).
 
 **Reopened work: the investigation picker and `edit`.** `/investigations` in
@@ -1275,14 +1274,10 @@ longer trusted for security-critical settings.
 
 ### Repository note
 
-Two internal skill files — `.claude/skills/saya-run/SKILL.md` and
-`.claude/skills/saya-smoke/SKILL.md` — shipped in the `v0.1.0` initial public
-release and were removed in `0.3.0`. They are absent from every current tree,
-but a deleted file stays retrievable from git history, so they can still be
-read from a clone. Both describe how to launch the CLI and smoke-test the REPL
-locally; neither contains credentials or infrastructure detail. The exposure is
-recorded and accepted rather than repaired, since removing it would mean
-rewriting published release history. See
+Two internal operator guides for launching the CLI and smoke-testing the REPL
+shipped in the `v0.1.0` initial public release and were removed in `0.3.0`.
+Their historical contents remain available in git history. Neither contains
+credentials or infrastructure detail. See
 [RELEASING.md](RELEASING.md#internal-only-paths-must-not-reach-a-public-ref).
 
 ### Changed — read this before upgrading

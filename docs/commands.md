@@ -970,40 +970,17 @@ saya mcp serve --allow-data-sharing   # rows may leave the machine
 Add saya to the host's MCP configuration, with `--profile` values to fix the
 allowlist (and `--allow-data-sharing` only when rows may leave the machine):
 
-**opencode** — an `mcp` block in `opencode.json`:
+**Generic host setup** — add a local MCP server in your host’s configuration.
+Use the executable and arguments below, adapting their field names to the host:
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "saya": {
-      "type": "local",
-      "command": ["saya", "mcp", "serve", "--profile", "analytics"]
-    }
-  }
-}
+```text
+command: saya
+arguments: mcp serve --profile analytics
+transport: stdio
 ```
 
-**codex** — in `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.saya]
-command = "saya"
-args = ["mcp", "serve", "--profile", "analytics"]
-```
-
-or as one-off CLI overrides:
-
-```bash
-codex -c mcp_servers.saya.command='"saya"' \
-      -c 'mcp_servers.saya.args=["mcp","serve","--profile","analytics"]'
-```
-
-**Claude Code**:
-
-```bash
-claude mcp add saya -- saya mcp serve --profile analytics
-```
+The `--profile` values fix the server’s startup allowlist. Add
+`--allow-data-sharing` only when row-returning tools are permitted.
 
 `/export [--snapshot|--refresh] [--overwrite] <path>` writes rows to a
 `.csv` or `.json` file (chosen by extension):

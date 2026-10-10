@@ -1,5 +1,5 @@
-//! Phase 5c-1 — preferences store: scope, isolation, replace, unset, migration,
-//! and the admission gate. See `.claude/specs/spec-5c1-preferences-store.md`.
+//! Preferences store: scope, isolation, replace, unset, migration, and the
+//! admission gate.
 //!
 //! A preference is *not a claim*: no object, no fingerprint, no drift, no
 //! lifecycle, no evidence. These tests cover the store half of the slice —

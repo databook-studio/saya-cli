@@ -231,7 +231,7 @@ scripts — arbitrary code fetched from the network. The prefix bounds the
 *string the model typed*, not the *behaviour approved*; the gap between
 them is the entire risk. And argv-level matching is defeatable by the
 program's own flag grammar (`git -c`, hooks, `--exec-path`, subcommand
-re-routing) — the same argument that rejected opencode's `git *` prefix
+re-routing) — the same argument that rejected broad `git *` prefix
 patterns: "prefix matching over an adversarial space… silent scope creep
 inside a granted pattern" (`UNIFY.md:665-672`). The repo already refuses
 tokens whose words would lie (`scopes.rs:203-229` — "a token that approved

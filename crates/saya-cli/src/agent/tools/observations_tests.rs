@@ -2,8 +2,7 @@
 //!
 //! These drive `DatabaseTools` through the `ToolExecutor` surface with an
 //! `ObservationLog` attached, then `drain` the log and assert exactly what an
-//! observation may carry — and what it must not. See
-//! `.claude/specs/spec-3b2-observation-collector.md` §5.
+//! observation may carry — and what it must not.
 
 use super::*;
 use async_trait::async_trait;

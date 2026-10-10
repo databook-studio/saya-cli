@@ -1,7 +1,6 @@
 //! Deterministic object and column extraction from a parsed SQL statement.
 //!
-//! See `.claude/specs/spec-3b1-sql-object-extraction.md`. The output is names
-//! only — no SQL is persisted or returned — which is the property that lets a
+//! The output is names only — no SQL is persisted or returned — which lets a
 //! caller store the result as an observation.
 
 use saya_types::SqlDialect;

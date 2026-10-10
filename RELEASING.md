@@ -156,9 +156,9 @@ resumes from the first unpublished crate. No re-tag is needed.
 
 ## Internal-only paths must not reach a public ref
 
-Agent instructions (`AGENTS.md`, `CLAUDE.md`), editor rules (`.cursor/`),
-`.claude/`, and `docs/standards/` are kept out of the distribution. They are
-gitignored, but that only helps for files that were never committed.
+Workspace guidance, editor configuration, and internal standards are kept out
+of the distribution. These paths are gitignored, but that only helps for files
+that were never committed.
 
 **Deleting a committed file does not unpublish it.** Once a commit that added
 it is reachable from a public ref, `git show <commit>:<path>` returns the

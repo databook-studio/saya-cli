@@ -177,9 +177,9 @@ saya query --sql "SELECT count(*) FROM orders"
 - **Automate from scripts.** Piped input and non-interactive commands support
   text, JSON, or NDJSON output with documented exit codes.
 - **Serve saya to other tools.** `saya mcp serve` speaks the Model Context
-  Protocol over stdio, so an MCP host (opencode, codex, Claude Code, the
-  Inspector) can discover schemas, read confirmed contracts, and — only when
-  you explicitly allow data sharing — run bounded read-only queries. The
+  Protocol over stdio, so any MCP host can discover schemas, read confirmed
+  contracts, and — only when you explicitly allow data sharing — run bounded
+  read-only queries. The
   profile allowlist is fixed at startup; rows leave the machine only by
   your choice. → [commands](docs/commands.md#mcp-saya-mcp-serve)
 - 🏃 **Long-running runs** — `saya run "<goal>"` asks the model for a plan,

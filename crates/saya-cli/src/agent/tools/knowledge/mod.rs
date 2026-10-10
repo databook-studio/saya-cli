@@ -4,8 +4,7 @@
 //! their own. The opaque profile identity never appears in a tool result — the
 //! model sees the profile *name*. Bounds are the 2b-1 defaults; a truncated
 //! result says so. Only recallable claims are returned. Store failure degrades
-//! to an empty result with a diagnostic, never a tool error. See
-//!.claude/specs/spec-2b3a-agent-contract-tools.md §2.
+//! to an empty result with a diagnostic, never a tool error.
 
 mod definitions;
 mod mapping;

@@ -4,7 +4,7 @@
 //! recall, validity, conflict detection, and the review wrappers. They are
 //! in-crate (not under `tests/`) because the surface is `pub(crate)` — the
 //! operations layer returns typed data for saya-cli's own adapters, not for
-//! external consumers. See the spec at.claude/specs/spec-2b1-contract-operations.md.
+//! external consumers.
 
 use super::{
     ContractOpError, ContractSchemaState, RecallBounds, RecallDiagnostics, RecallMode,
@@ -67,7 +67,7 @@ include!("tests/diagnostics.rs");
 // `review_queue` is the opposite view from recall: recall answers "what is
 // true about this question", the queue answers "what is waiting for me". It
 // lists candidates only, ordered most-evidence-first then oldest then by claim
-// id, so a reviewer works a stable list. See .claude/specs/spec-3d-review-queue.md.
+// id, so a reviewer works a stable list.
 
 use super::review_queue;
 

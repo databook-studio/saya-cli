@@ -2,9 +2,8 @@
 //! look like credential files, and which look like database-export
 //! artifacts. Case-insensitive; the path splits on both `/` and `\`.
 //! Deliberately narrower than the release-packaging denylist: checkpoints
-//! cover a user's ordinary source edits, so tool directories (`.git`,
-//! `.cargo`, `.claude`, `.codex`, `.cursor`) and their configs are
-//! legitimate edit targets and are NOT refused here.
+//! cover a user's ordinary source edits, so tooling and configuration
+//! directories are legitimate edit targets and are NOT refused here.
 
 const CREDENTIAL_DIRS: [&str; 6] = [".aws", ".ssh", ".gnupg", ".kube", ".docker", ".saya"];
 

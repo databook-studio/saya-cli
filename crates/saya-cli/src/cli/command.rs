@@ -170,7 +170,7 @@ pub enum Command {
     /// scripts use `saya config init` or `saya demo`.
     Setup,
     /// Serve the Model Context Protocol over stdio (ADR 0008): a client
-    /// (Claude Code, the MCP Inspector, any MCP host) speaks newline-delimited
+    /// (the MCP Inspector or any MCP host) speaks newline-delimited
     /// JSON-RPC on this process's stdin/stdout — protocol frames only, logs on
     /// stderr, exit on stdin EOF. The toolset is bounded to the startup
     /// allowlist: the `--profile` values, else the configured default profile;

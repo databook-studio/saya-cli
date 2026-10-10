@@ -6,7 +6,6 @@
 //! references, row count and truncation, and **nothing else**. No SQL, no
 //! result values, no error strings: a connector error message can contain a
 //! value from the query, which is why the outcome is an enum and not a message.
-//! See `.claude/specs/spec-3b2-observation-collector.md`.
 
 use saya_types::ProfileIdentity;
 use std::sync::Mutex;

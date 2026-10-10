@@ -1,7 +1,6 @@
 //! Headless `saya contracts` commands: drives the command adapter directly
 //! (constructs `ContractsCommand` values and calls `run_contracts`), never
-//! shelling out to a built binary. Covers the spec at
-//! `.claude/specs/spec-2b2c-contract-commands.md`.
+//! shelling out to a built binary.
 //!
 //! Output is captured through the thread-local seam in `output::emit` so the
 //! tests can assert on rendered text/JSON/NDJSON without touching the process
