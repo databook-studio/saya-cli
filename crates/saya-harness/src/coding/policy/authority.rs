@@ -77,7 +77,9 @@ pub struct ChildAuthorityRequest {
 }
 
 /// The immutable, already-narrowed policy a future child factory receives.
-#[derive(Debug)]
+///
+/// Cloning copies an already-narrowed immutable view; it can never widen authority (the fields are private to the policy module).
+#[derive(Debug, Clone)]
 pub struct ChildAuthorityView {
     pub(super) job_id: JobId,
     pub(super) agent_id: AgentId,
