@@ -32,3 +32,4 @@ pub mod coordinator {
 
 pub mod git;
 pub mod snapshot;
+pub mod worktree;

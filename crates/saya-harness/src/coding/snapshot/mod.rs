@@ -45,3 +45,10 @@ mod materialize_types;
 
 pub use materialize::materialize_snapshot;
 pub use materialize_types::{MaterializedEntry, MaterializedSnapshot};
+
+// W05c2 reset: return an interrupted Creating target to
+// `.git`-pointer-only.
+mod materialize_reset;
+
+pub(crate) use materialize_reset::privatize_materialization_target;
+pub(crate) use materialize_reset::reset_materialization_target;
