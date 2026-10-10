@@ -7,6 +7,7 @@ mod budget_records;
 mod budgets;
 mod checkout_event;
 mod checkout_operations;
+mod checkout_plan;
 mod checkout_reads;
 mod checkouts;
 mod events;
@@ -23,6 +24,7 @@ pub use approval_records::{
 pub use approvals::CodingApprovalConsumptionContext;
 pub use budget_records::{CodingBudgetReservationPage, CodingBudgetReservationRecord};
 pub use checkout_operations::MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB;
+pub use checkout_plan::{CheckoutPlanAppend, MAX_CHECKOUT_PLAN_BYTES, StoredCheckoutPlan};
 pub use checkout_reads::CheckoutOperationPage;
 pub use checkouts::{MAX_CHECKOUT_RECORDS_PER_JOB, ManagedCheckoutPage, ManagedCheckoutRecord};
 pub use events::{CodingEventAppend, MAX_CODING_EVENT_PAGE_SIZE};

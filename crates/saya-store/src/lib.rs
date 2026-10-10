@@ -28,13 +28,14 @@ mod state_contracts;
 
 pub use checkpoints::{CheckpointStoreError, NewCheckpoint, RecoveryReport, ScreenRefusal};
 pub use coding::{
-    CheckoutOperationPage, CodingApprovalClosure, CodingApprovalConsumptionAppend,
-    CodingApprovalConsumptionContext, CodingApprovalConsumptionReceipt, CodingApprovalRequestPage,
-    CodingApprovalRequestRecord, CodingBudgetPolicyAppend, CodingBudgetReservationPage,
-    CodingBudgetReservationRecord, CodingChildPage, CodingChildRecord, CodingEventAppend,
-    CodingEventPage, CodingJobRecord, MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB,
-    MAX_CHECKOUT_RECORDS_PER_JOB, MAX_CODING_EVENT_PAGE_SIZE, ManagedCheckoutPage,
-    ManagedCheckoutRecord, NewCodingChild, NewCodingJob, StoredBudgetPolicy,
+    CheckoutOperationPage, CheckoutPlanAppend, CodingApprovalClosure,
+    CodingApprovalConsumptionAppend, CodingApprovalConsumptionContext,
+    CodingApprovalConsumptionReceipt, CodingApprovalRequestPage, CodingApprovalRequestRecord,
+    CodingBudgetPolicyAppend, CodingBudgetReservationPage, CodingBudgetReservationRecord,
+    CodingChildPage, CodingChildRecord, CodingEventAppend, CodingEventPage, CodingJobRecord,
+    MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB, MAX_CHECKOUT_PLAN_BYTES, MAX_CHECKOUT_RECORDS_PER_JOB,
+    MAX_CODING_EVENT_PAGE_SIZE, ManagedCheckoutPage, ManagedCheckoutRecord, NewCodingChild,
+    NewCodingJob, StoredBudgetPolicy, StoredCheckoutPlan,
 };
 pub use continuation::StoredContinuation;
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
