@@ -1,8 +1,8 @@
-use super::{admission::StoredPermit, reservations::append_reservation};
+use super::admission::StoredPermit;
 use saya_agent::{
     CancellationReason, CancellationToken, EffectAdmissionError, EffectOwnerFailure, EffectPermit,
 };
-use saya_store::SqliteStateStore;
+use saya_store::{CodingBudgetPolicyAppend, SqliteStateStore, StoreError};
 use saya_types::{AgentId, BudgetDimension, InvocationId, JobId};
 use std::{
     collections::HashMap,
@@ -42,6 +42,14 @@ pub enum BudgetLedgerError {
     NotFreshRunning,
     #[error("store or event history failed validation")]
     Store,
+    #[error("stored budget policy does not match the proposed limits")]
+    PolicyMismatch,
+    #[error("no budget policy is recorded for this job")]
+    PolicyMissing,
+    #[error("durable budget history exceeds the bounded resume scan")]
+    ResumeHistoryTooLong,
+    #[error("durable budget history failed validation")]
+    ResumeRecordCorrupt,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,6 +132,12 @@ pub(super) struct LocalCounts {
 }
 
 impl JobBudgetLedger {
+    /// Builds a fresh owner. The supplied limits are converted to the job's
+    /// durable policy identity with a checked deadline conversion and
+    /// recorded before the fresh-job guards; an already-recorded policy
+    /// must match exactly or construction is refused with the recorded row
+    /// untouched. A sub-millisecond-only or overflowing deadline, or any
+    /// zero limit, is refused as invalid limits.
     pub async fn new(
         store: SqliteStateStore,
         job: JobId,
@@ -140,6 +154,14 @@ impl JobBudgetLedger {
             || limits.deadline.is_zero()
         {
             return Err(BudgetLedgerError::InvalidLimits);
+        }
+        let policy = super::fresh::proposed_policy(&limits)?;
+        match store.record_coding_budget_policy(&job, &policy).await {
+            Ok(
+                CodingBudgetPolicyAppend::Recorded | CodingBudgetPolicyAppend::AlreadyPresentSame,
+            ) => {}
+            Err(StoreError::PolicyConflict) => return Err(BudgetLedgerError::PolicyMismatch),
+            Err(_) => return Err(BudgetLedgerError::Store),
         }
         let started = Instant::now();
         let sequence = super::fresh::initial_sequence(&store, &job).await?;
@@ -164,6 +186,23 @@ impl JobBudgetLedger {
             })),
             cancellation,
         })
+    }
+
+    /// Rebuilds a resumed owner from durable history. The proposed limits
+    /// only authenticate the recorded policy — the resumed ceilings come
+    /// from the stored policy, never from this process's configuration —
+    /// and the counts, unknown counters, consumed slot charges, and next
+    /// event sequence are folded from the durable records. The deadline
+    /// length is policy-authenticated, but elapsed time is NOT durably
+    /// recorded: the resumed owner restarts its deadline clock and does
+    /// not claim elapsed continuity. A job with history but no recorded
+    /// policy is never adopted.
+    pub async fn resume(
+        store: SqliteStateStore,
+        job: JobId,
+        limits: CountLimits,
+    ) -> Result<Self, BudgetLedgerError> {
+        super::resume::resume_ledger(store, job, limits).await
     }
 
     pub fn root_view(&self) -> super::RootBudgetView {
@@ -222,40 +261,6 @@ impl State {
             .cancel_with_reason(CancellationReason::Budget(
                 saya_agent::BudgetDimension::ElapsedTime,
             ));
-    }
-
-    pub(super) async fn reserve(
-        &mut self,
-        charges: Vec<(BudgetDimension, u64)>,
-        agent: Option<AgentId>,
-        invocation: Option<InvocationId>,
-    ) -> Result<NonZeroU64, EffectAdmissionError> {
-        if self.snapshot.poisoned || self.reservations >= MAX_RESERVATIONS {
-            return Err(EffectAdmissionError::Denied);
-        }
-        if self.cancellation.is_cancelled() {
-            return Err(EffectAdmissionError::Denied);
-        }
-        if self.deadline_expired() {
-            self.latch_deadline_expiry();
-            return Err(EffectAdmissionError::Denied);
-        }
-        if self.permits.len() >= super::ledger::MAX_LIVE_PERMITS
-            || self
-                .reservations
-                .checked_add(1)
-                .is_none_or(|next| next > MAX_RESERVATIONS)
-        {
-            return Err(EffectAdmissionError::Denied);
-        }
-        let sequence = NonZeroU64::new(self.sequence).ok_or_else(|| self.owner_failure())?;
-        append_reservation(self, sequence, charges, agent, invocation).await?;
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .ok_or_else(|| self.owner_failure())?;
-        self.reservations += 1;
-        Ok(sequence)
     }
 
     pub(super) async fn admit_one(

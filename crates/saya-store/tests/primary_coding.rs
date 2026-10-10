@@ -10,6 +10,8 @@ mod r02_replay;
 mod r03b;
 #[path = "primary_coding/r03b_extra.rs"]
 mod r03b_extra;
+#[path = "primary_coding/r03b_extra2.rs"]
+mod r03b_extra2;
 #[path = "primary_coding/r13a.rs"]
 mod r13a;
 #[path = "primary_coding/r13a_admission.rs"]

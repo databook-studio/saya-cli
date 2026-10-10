@@ -213,6 +213,16 @@ impl Fixture {
         self.store.close().await;
         let _ = fs::remove_dir_all(self.root);
     }
+
+    /// Closes the fixture's store handle but keeps the directory, so a
+    /// test can reopen the same database as a restarted process.
+    pub async fn close_store(&self) {
+        self.store.close().await;
+    }
+
+    pub fn reopen(&self) -> SqliteStateStore {
+        SqliteStateStore::new(&self.root.join("state.sqlite3"))
+    }
 }
 
 pub(super) fn limits(

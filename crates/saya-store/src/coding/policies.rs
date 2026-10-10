@@ -31,7 +31,10 @@ impl SqliteStateStore {
     /// be Running. On an existing row a digest match is the resume proof
     /// (`AlreadyPresentSame`); a mismatch is a typed `PolicyConflict` refusal
     /// that leaves the original row untouched. Insert-once: there is no
-    /// update or delete path.
+    /// update or delete path. The first insert is refused with
+    /// [`StoreError::Conflict`] when the Running job already has budget
+    /// reservations: history without an authenticated policy is never
+    /// adopted.
     pub async fn record_coding_budget_policy(
         &self,
         job_id: &JobId,
@@ -48,7 +51,31 @@ impl SqliteStateStore {
             .await
             .map_err(|_| StoreError::Unavailable)?;
         let outcome = match require_running_job(&mut transaction, job_id).await {
-            Ok(()) => insert_policy(&mut transaction, job_id, &digest, &json).await,
+            Ok(()) => {
+                let existing_row: Option<sqlx::sqlite::SqliteRow> = sqlx::query(
+                    "SELECT policy_sha256, policy_json FROM coding_budget_policies WHERE job_id=?",
+                )
+                .bind(job_id.as_str())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(|_| StoreError::Unavailable)?;
+                if existing_row.is_some() {
+                    insert_policy(&mut transaction, job_id, &digest, &json).await
+                } else {
+                    let reservations: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM coding_budget_reservations WHERE job_id=?",
+                    )
+                    .bind(job_id.as_str())
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(|_| StoreError::Unavailable)?;
+                    if reservations > 0 {
+                        Err(StoreError::Conflict)
+                    } else {
+                        insert_policy(&mut transaction, job_id, &digest, &json).await
+                    }
+                }
+            }
             Err(error) => Err(error),
         };
         finish(transaction, outcome).await
