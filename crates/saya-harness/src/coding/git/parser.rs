@@ -5,15 +5,37 @@ use std::{collections::HashSet, ffi::OsString, path::PathBuf};
 use super::repository::GitInventoryError;
 
 pub(super) const MAX_INVENTORY_PATHS: usize = 20_000;
+/// Pre-selection allowance for snapshot input paths; the selected-file count
+/// of 20,000 is enforced by the snapshot manifest.
+pub(super) const MAX_SNAPSHOT_INPUT_PATHS: usize = 25_000;
 const MAX_INVENTORY_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Default)]
 pub(super) struct InventoryBudget {
     output_bytes: usize,
+    path_limit: usize,
     paths: HashSet<Vec<u8>>,
 }
 
+impl Default for InventoryBudget {
+    fn default() -> Self {
+        Self {
+            output_bytes: 0,
+            path_limit: MAX_INVENTORY_PATHS,
+            paths: HashSet::new(),
+        }
+    }
+}
+
 impl InventoryBudget {
+    /// Start a budget whose distinct-path ceiling is `limit` instead of the
+    /// inventory bound, for callers with their own pre-selection allowance.
+    pub(super) fn with_path_limit(limit: usize) -> Self {
+        Self {
+            path_limit: limit,
+            ..Self::default()
+        }
+    }
+
     pub(super) fn add_output(&mut self, bytes: &[u8]) -> Result<(), GitInventoryError> {
         self.output_bytes = self
             .output_bytes
@@ -25,7 +47,7 @@ impl InventoryBudget {
 
     pub(super) fn add_path(&mut self, bytes: &[u8]) -> Result<(), GitInventoryError> {
         self.paths.insert(bytes.to_vec());
-        if self.paths.len() > MAX_INVENTORY_PATHS {
+        if self.paths.len() > self.path_limit {
             return Err(GitInventoryError::TooLarge);
         }
         Ok(())

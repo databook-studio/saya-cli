@@ -8,15 +8,15 @@ use crate::workspace::{Workspace, anchored};
 use saya_agent::CancellationToken;
 
 use super::{
-    inventory_deadline::InventoryDeadline, inventory_types::GitPathStatus,
-    parser::MAX_INVENTORY_PATHS, repository::GitInventoryError,
+    index_parser::GitIndexEntry, inventory_deadline::InventoryDeadline,
+    inventory_types::GitPathStatus, parser::MAX_INVENTORY_PATHS, repository::GitInventoryError,
 };
 
 #[cfg(unix)]
 pub(super) fn reject_nested_repositories(
     root: &Path,
     statuses: &[GitPathStatus],
-    indexed_paths: &[PathBuf],
+    indexed_paths: &[GitIndexEntry],
     deadline: InventoryDeadline,
     cancellation: &CancellationToken,
 ) -> Result<(), GitInventoryError> {
@@ -36,7 +36,7 @@ pub(super) fn reject_nested_repositories(
     }
     for path in indexed_paths {
         check(deadline, cancellation)?;
-        add_ancestors(path, false, &mut directories, deadline, cancellation)?;
+        add_ancestors(&path.path, false, &mut directories, deadline, cancellation)?;
     }
     if directories.len() > MAX_INVENTORY_PATHS {
         return Err(GitInventoryError::TooLarge);
@@ -110,7 +110,7 @@ fn add_ancestors(
 pub(super) fn reject_nested_repositories(
     _root: &Path,
     _statuses: &[GitPathStatus],
-    _indexed_paths: &[PathBuf],
+    _indexed_paths: &[GitIndexEntry],
     _deadline: InventoryDeadline,
     _cancellation: &CancellationToken,
 ) -> Result<(), GitInventoryError> {

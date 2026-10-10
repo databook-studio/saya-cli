@@ -15,6 +15,10 @@ impl InventoryDeadline {
         Self(Instant::now() + INVENTORY_OPERATION_TIMEOUT)
     }
 
+    pub(super) fn until(deadline: Instant) -> Self {
+        Self(deadline)
+    }
+
     pub(super) fn at(self) -> Instant {
         self.0
     }

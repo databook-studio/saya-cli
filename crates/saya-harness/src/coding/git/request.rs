@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 use saya_types::{GitObjectId, ManagedCheckoutPath};
 
-use super::command::GitOperation;
+use super::command::{GitError, GitOperation};
 
 const MAX_GIT_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_GIT_STDERR_BYTES: usize = 1024 * 1024;
@@ -18,6 +18,10 @@ pub(super) enum GitRequest<'a> {
     LocalConfig,
     VerifyCommit(&'a GitObjectId),
     VerifyCommits(&'a [GitObjectId]),
+    CheckFilterAttributes {
+        source: Option<&'a GitObjectId>,
+        paths: &'a [String],
+    },
     IndexEntries,
     IndexStageEntries,
     TreeEntries(&'a GitObjectId),
@@ -104,6 +108,9 @@ impl GitRequest<'_> {
             ],
             Self::VerifyCommit(_) => vec!["cat-file", "-e"],
             Self::VerifyCommits(_) => vec!["cat-file", "--batch-check=%(objectname) %(objecttype)"],
+            Self::CheckFilterAttributes { .. } => {
+                vec!["check-attr", "-z", "--stdin", "filter"]
+            }
             Self::TreeEntries(_) => vec!["ls-tree", "--full-tree", "-r", "-l", "-z"],
             Self::ReadBlob(_) => vec!["cat-file", "blob"],
             Self::AddWorktree { .. } => vec!["worktree", "add", "--detach", "--"],
@@ -115,6 +122,11 @@ impl GitRequest<'_> {
                 arguments.push(format!("{}^{{commit}}", object.as_str()).into());
             }
             Self::VerifyCommits(_) => {}
+            Self::CheckFilterAttributes { source, .. } => {
+                if let Some(source) = source {
+                    arguments.insert(1, format!("--source={}", source.as_str()).into());
+                }
+            }
             Self::TreeEntries(object) | Self::ReadBlob(object) => {
                 arguments.push(object.as_str().into());
             }
@@ -128,16 +140,41 @@ impl GitRequest<'_> {
         arguments
     }
 
-    pub(super) fn stdin_bytes(self) -> Option<Vec<u8>> {
-        let Self::VerifyCommits(objects) = self else {
-            return None;
-        };
-        let capacity = objects.iter().map(|object| object.as_str().len() + 1).sum();
-        let mut input = Vec::with_capacity(capacity);
-        for object in objects {
-            input.extend_from_slice(object.as_str().as_bytes());
-            input.push(b'\n');
+    pub(super) fn stdin_bytes(self) -> Result<Option<Vec<u8>>, GitError> {
+        const MAX_GIT_STDIN_BYTES: usize = 8 * 1024 * 1024;
+        match self {
+            Self::VerifyCommits(objects) => {
+                let capacity = objects.iter().try_fold(0usize, |total, object| {
+                    total
+                        .checked_add(object.as_str().len() + 1)
+                        .filter(|size| *size <= MAX_GIT_STDIN_BYTES)
+                        .ok_or(GitError::OutputLimitExceeded)
+                })?;
+                let mut input = Vec::with_capacity(capacity);
+                for object in objects {
+                    input.extend_from_slice(object.as_str().as_bytes());
+                    input.push(b'\n');
+                }
+                Ok(Some(input))
+            }
+            Self::CheckFilterAttributes { paths, .. } => {
+                let capacity = paths.iter().try_fold(0usize, |total, path| {
+                    if path.is_empty() || path.as_bytes().contains(&0) {
+                        return Err(GitError::MalformedOutput);
+                    }
+                    total
+                        .checked_add(path.len() + 1)
+                        .filter(|size| *size <= MAX_GIT_STDIN_BYTES)
+                        .ok_or(GitError::OutputLimitExceeded)
+                })?;
+                let mut input = Vec::with_capacity(capacity);
+                for path in paths {
+                    input.extend_from_slice(path.as_bytes());
+                    input.push(0);
+                }
+                Ok(Some(input))
+            }
+            _ => Ok(None),
         }
-        Some(input)
     }
 }

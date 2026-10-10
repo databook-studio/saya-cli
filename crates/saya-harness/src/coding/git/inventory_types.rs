@@ -49,6 +49,10 @@ pub struct GitPathStatus {
     pub(super) original_path: Option<PathBuf>,
     pub(super) staged: bool,
     pub(super) unstaged: bool,
+    pub(super) staged_added: bool,
+    pub(super) unstaged_added: bool,
+    pub(super) staged_deleted: bool,
+    pub(super) unstaged_deleted: bool,
     pub(super) untracked: bool,
     pub(super) untracked_directory: bool,
     pub(super) ignored: bool,
@@ -72,6 +76,22 @@ impl GitPathStatus {
         self.unstaged
     }
 
+    pub fn staged_added(&self) -> bool {
+        self.staged_added
+    }
+
+    pub fn unstaged_added(&self) -> bool {
+        self.unstaged_added
+    }
+
+    pub fn staged_deleted(&self) -> bool {
+        self.staged_deleted
+    }
+
+    pub fn unstaged_deleted(&self) -> bool {
+        self.unstaged_deleted
+    }
+
     pub fn untracked(&self) -> bool {
         self.untracked
     }
@@ -93,6 +113,10 @@ impl fmt::Debug for GitPathStatus {
             .field("has_original_path", &self.original_path.is_some())
             .field("staged", &self.staged)
             .field("unstaged", &self.unstaged)
+            .field("staged_added", &self.staged_added)
+            .field("unstaged_added", &self.unstaged_added)
+            .field("staged_deleted", &self.staged_deleted)
+            .field("unstaged_deleted", &self.unstaged_deleted)
             .field("untracked", &self.untracked)
             .field("untracked_directory", &self.untracked_directory)
             .field("ignored", &self.ignored)

@@ -8,11 +8,18 @@ use super::{
     repository::GitInventoryError,
 };
 
+pub(super) struct GitIndexEntry {
+    pub(super) path: PathBuf,
+    pub(super) mode: u32,
+    pub(super) object_id: GitObjectId,
+    pub(super) stage: u8,
+}
+
 pub(super) fn validate_index_entries(
     bytes: &[u8],
     format: GitObjectFormat,
     budget: &mut InventoryBudget,
-) -> Result<Vec<PathBuf>, GitInventoryError> {
+) -> Result<Vec<GitIndexEntry>, GitInventoryError> {
     if bytes.is_empty() {
         return Ok(Vec::new());
     }
@@ -67,7 +74,16 @@ pub(super) fn validate_index_entries(
         let path = &record[tab + 1..];
         let _ = repository_path(path)?;
         budget.add_path(path)?;
-        paths.push(path_from_git_bytes(path)?);
+        paths.push(GitIndexEntry {
+            path: path_from_git_bytes(path)?,
+            mode: u32::from_str_radix(
+                std::str::from_utf8(mode).map_err(|_| GitInventoryError::MalformedOutput)?,
+                8,
+            )
+            .map_err(|_| GitInventoryError::MalformedOutput)?,
+            object_id: object,
+            stage,
+        });
         if !stages.insert((path.to_vec(), stage)) {
             return Err(GitInventoryError::MalformedOutput);
         }
