@@ -22,10 +22,11 @@ use tokio::sync::Mutex;
 /// Scope: control events go through the store's public generic control-event
 /// append, which accepts only `StateChanged` and `ResultReported` kinds;
 /// checkout events now route here under the same ledger mutex, through
-/// [`JobEventSequencer::append_checkout_intent`] and
+/// [`JobEventSequencer::append_checkout_intent`],
+/// [`JobEventSequencer::append_checkout_operation_intent`], and
 /// [`JobEventSequencer::append_checkout_outcome`] into the store's
-/// `record_checkout_create_intent` and `record_checkout_operation_outcome`.
-/// Producers of other event kinds (approvals) still need their own
+/// `record_checkout_create_intent`, `record_checkout_operation_intent`, and
+/// `record_checkout_operation_outcome`. Producers of other event kinds (approvals) still need their own
 /// owner-side wiring, and adopters needing multi-event transactions (the
 /// R13b approval consume) need their own owner step, because one call here
 /// consumes exactly one sequence.
@@ -72,6 +73,8 @@ enum Route {
     Control,
     /// The store's checkout create-intent append.
     CheckoutIntent,
+    /// The store's checkout operation-intent append.
+    CheckoutOperationIntent,
     /// The store's checkout operation-outcome append.
     CheckoutOutcome,
 }
@@ -96,6 +99,18 @@ impl JobEventSequencer {
         build: impl FnOnce(u64) -> CodingEventV1,
     ) -> Result<AppendedEvent, SequencerError> {
         self.append_routed(Route::CheckoutIntent, build).await
+    }
+
+    /// The checkout owner step's operation-intent append, mirroring
+    /// [`JobEventSequencer::append_checkout_intent`] for a
+    /// `CheckoutOperationIntent` event through the store's
+    /// `record_checkout_operation_intent`.
+    pub async fn append_checkout_operation_intent(
+        &self,
+        build: impl FnOnce(u64) -> CodingEventV1,
+    ) -> Result<AppendedEvent, SequencerError> {
+        self.append_routed(Route::CheckoutOperationIntent, build)
+            .await
     }
 
     /// The checkout owner step's operation-outcome append, mirroring
@@ -136,6 +151,9 @@ impl JobEventSequencer {
         let append = match route {
             Route::Control => state.store.append_coding_event(event).await,
             Route::CheckoutIntent => state.store.record_checkout_create_intent(event).await,
+            Route::CheckoutOperationIntent => {
+                state.store.record_checkout_operation_intent(event).await
+            }
             Route::CheckoutOutcome => state.store.record_checkout_operation_outcome(event).await,
         };
         match append {

@@ -7,6 +7,8 @@ mod apply;
 mod apply_support;
 #[path = "w08/candidate.rs"]
 mod candidate;
+#[path = "w08/integrate.rs"]
+mod integrate;
 #[path = "w08/support.rs"]
 mod support_active;
 
