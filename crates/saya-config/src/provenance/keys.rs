@@ -25,6 +25,27 @@ const USER_FACING_DIAGNOSTICS: &[(&str, &str)] = &[
     ("max_rows", "run.max_rows"),
     ("max_iterations", "run.max_iterations"),
     ("candidates", "run.candidates"),
+    ("coding_enabled", "coding.enabled"),
+    ("coding_max_children", "coding.max_children"),
+    (
+        "coding_max_concurrent_model_requests",
+        "coding.max_concurrent_model_requests",
+    ),
+    (
+        "coding_max_concurrent_commands",
+        "coding.max_concurrent_commands",
+    ),
+    (
+        "coding_max_logical_model_requests",
+        "coding.max_logical_model_requests",
+    ),
+    (
+        "coding_max_physical_transport_attempts",
+        "coding.max_physical_transport_attempts",
+    ),
+    ("coding_max_tool_calls", "coding.max_tool_calls"),
+    ("coding_max_known_tokens", "coding.max_known_tokens"),
+    ("coding_max_elapsed_seconds", "coding.max_elapsed_seconds"),
     ("query_timeout_seconds", "run.query_timeout_seconds"),
     ("jobs_wall_clock_seconds", "jobs.wall_clock_seconds"),
     ("jobs_tokens_per_endpoint", "jobs.tokens_per_endpoint"),
