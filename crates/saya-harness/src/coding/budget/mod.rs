@@ -5,6 +5,7 @@ mod admission;
 mod capacity;
 mod children;
 mod commands;
+mod estimates;
 mod fresh;
 mod ledger;
 mod reservations;

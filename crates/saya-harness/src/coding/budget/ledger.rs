@@ -80,6 +80,14 @@ pub struct BudgetSnapshot {
     pub measured_tool_calls: u64,
     pub reported_input_tokens: Option<u64>,
     pub reported_output_tokens: Option<u64>,
+    /// Display-only estimated usage totals accumulated from incomplete
+    /// physical-attempt usage reports; never enforced, never a refund, and
+    /// never a measured value. Resume (restart) does not reconstruct
+    /// estimates: they are not durable. None when no incomplete usage was
+    /// reported.
+    pub estimated_input_tokens: Option<u64>,
+    /// Output-token counterpart of [`Self::estimated_input_tokens`].
+    pub estimated_output_tokens: Option<u64>,
     pub usage_coverage: UsageCoverage,
     pub poisoned: bool,
 }
