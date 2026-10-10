@@ -28,6 +28,8 @@ mod budget_upgrade;
 mod checkout_upgrade;
 #[path = "migration/current_schema.rs"]
 mod current_schema;
+#[path = "migration/policy_upgrade.rs"]
+mod policy_upgrade;
 #[path = "migration/safety.rs"]
 mod safety;
 #[path = "migration/upgrade_paths.rs"]
