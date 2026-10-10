@@ -1,3 +1,4 @@
+mod capture_reader;
 mod facts;
 mod manifest;
 mod policy;
@@ -5,8 +6,9 @@ mod select;
 mod select_support;
 mod types;
 
+pub use capture_reader::{CapturedFile, read_working_file};
 pub use facts::{SnapshotChange, SnapshotStatusFact};
-pub use manifest::{SnapshotError, SnapshotManifest};
+pub use manifest::{RedactedIoError, SnapshotError, SnapshotManifest};
 pub use policy::SnapshotOmissionPolicy;
 pub use types::{
     MAX_SNAPSHOT_FILE_BYTES, MAX_SNAPSHOT_FILES, MAX_SNAPSHOT_MANIFEST_BYTES,
