@@ -7,6 +7,7 @@ mod children;
 mod fresh;
 mod ledger;
 mod reservations;
+mod sequencer;
 mod settlement;
 mod snapshot;
 mod tools;
@@ -15,4 +16,5 @@ pub use ledger::{
     BudgetLedgerError, BudgetSnapshot, ChildCountLimits, ChildSession, CountLimits,
     JobBudgetLedger, UsageCoverage,
 };
+pub use sequencer::{AppendedEvent, JobEventSequencer, SequencerError};
 pub use views::{ChildBudgetView, RootBudgetView};

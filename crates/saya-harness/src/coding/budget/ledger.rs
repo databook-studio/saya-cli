@@ -179,6 +179,14 @@ impl JobBudgetLedger {
             invocation,
         }
     }
+
+    /// The shared per-job event sequencer: a cheap clone-able view over the
+    /// same state and serialization point the reservations use.
+    pub fn sequencer(&self) -> super::sequencer::JobEventSequencer {
+        super::sequencer::JobEventSequencer {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 pub struct ChildSession {
