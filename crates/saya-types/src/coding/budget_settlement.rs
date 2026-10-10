@@ -18,7 +18,7 @@ pub enum BudgetEffectState {
 }
 
 /// Observed usage for one earlier reservation. The store checks that the
-/// observation keys match and do not exceed the charge amounts.
+/// observation keys match their reservation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BudgetSettlementV1 {
     version: u32,

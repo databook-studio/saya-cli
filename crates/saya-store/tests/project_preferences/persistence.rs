@@ -63,11 +63,11 @@ async fn the_typed_preference_store_is_unaffected() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A fresh database reaches `user_version = 11` with the project-preferences
+/// A fresh database reaches `user_version = 12` with the project-preferences
 /// table in place.
 #[tokio::test]
-async fn fresh_database_reaches_version_eleven_with_the_project_table() {
-    let root = temp_root("fresh-v10");
+async fn fresh_database_reaches_version_twelve_with_the_project_table() {
+    let root = temp_root("fresh-v11");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     assert!(
@@ -78,7 +78,7 @@ async fn fresh_database_reaches_version_eleven_with_the_project_table() {
             .is_empty()
     );
     store.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(
         table_exists(&db, "project_preferences").await,
         "missing project_preferences"
@@ -87,7 +87,7 @@ async fn fresh_database_reaches_version_eleven_with_the_project_table() {
 }
 
 /// A database rewound to `user_version = 8` with the project table dropped is
-/// upgraded again: the table is recreated at version 11 and other data — here
+/// upgraded again: the table is recreated at version 12 and other data — here
 /// a typed preference — survives the ride.
 #[tokio::test]
 async fn rewind_to_version_eight_recreates_the_project_table() {
@@ -105,6 +105,10 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
 
     let pool = read_pool(&db).await;
     sqlx::query("DROP TABLE IF EXISTS project_preferences")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE coding_budget_reservations")
         .execute(&pool)
         .await
         .unwrap();
@@ -136,7 +140,7 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
             .is_empty()
     );
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(table_exists(&db, "project_preferences").await);
     let survivor = SqliteStateStore::new(&db);
     let typed = survivor
