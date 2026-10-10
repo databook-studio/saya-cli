@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "protected/coding.rs"]
+mod coding;
+
 /// The values of security-critical settings captured after the user layer
 /// merges. Project layers may not change them: a repository's
 /// `.saya/config.toml` is untrusted input, and these settings decide
@@ -43,6 +46,7 @@ use super::*;
 /// approval voids a security contract, and it would be void against bytes
 /// the staging config chose.
 pub(crate) struct ProtectedSettings {
+    coding: crate::CodingFile,
     ai_base_url: Option<String>,
     ai_api_key: Option<SecretRef>,
     ai_allow_data_sharing: Option<bool>,
@@ -79,6 +83,7 @@ struct ProtectedEndpoint {
 
 pub(crate) fn snapshot_protected(file: &ConfigFile) -> ProtectedSettings {
     ProtectedSettings {
+        coding: coding::snapshot(file),
         ai_base_url: file.ai.base_url.clone(),
         ai_api_key: file.ai.api_key.clone(),
         ai_allow_data_sharing: file.ai.allow_data_sharing,
@@ -123,6 +128,9 @@ pub(crate) fn snapshot_protected(file: &ConfigFile) -> ProtectedSettings {
 /// the dotted names the project layer tried (and failed) to override.
 pub(crate) fn revert_untrusted(file: &mut ConfigFile, before: &ProtectedSettings) -> Vec<String> {
     let mut ignored = Vec::new();
+    if coding::revert(file, &before.coding) {
+        ignored.push("coding".into());
+    }
     if file.ai.base_url != before.ai_base_url {
         file.ai.base_url = before.ai_base_url.clone();
         ignored.push("ai.base_url".into());

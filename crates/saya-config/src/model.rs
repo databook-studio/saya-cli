@@ -10,6 +10,8 @@ use crate::{
 
 #[path = "model/ai.rs"]
 mod ai;
+#[path = "model/coding.rs"]
+mod coding;
 #[path = "model/config.rs"]
 mod config;
 #[path = "model/jobs.rs"]
@@ -18,6 +20,7 @@ mod jobs;
 mod presentation;
 
 pub use ai::{AiFile, EndpointFile};
+pub use coding::CodingFile;
 pub use config::{ConfigFile, ConnectionsFile};
 pub use jobs::RunFile;
 pub use jobs::{

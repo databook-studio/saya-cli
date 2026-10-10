@@ -54,6 +54,20 @@ pub(crate) const USER_FACING: &[&str] = &[
     "session_commands.deny",
 ];
 
+/// Coding defaults use the same value-free provenance fill as other resolved
+/// settings.
+const CODING: &[&str] = &[
+    "coding.enabled",
+    "coding.max_children",
+    "coding.max_concurrent_model_requests",
+    "coding.max_concurrent_commands",
+    "coding.max_logical_model_requests",
+    "coding.max_physical_transport_attempts",
+    "coding.max_tool_calls",
+    "coding.max_known_tokens",
+    "coding.max_elapsed_seconds",
+];
+
 /// After resolution, every user-facing key with no recorded origin is a
 /// built-in default: `resolve` applied it without any layer stating it.
 /// Endpoint fields are keyed exactly as `revert_untrusted` names them, so
@@ -79,5 +93,17 @@ pub(crate) fn apply_user_facing_defaults(
                 .entry(format!("ai.endpoints[{name:?}].{field}"))
                 .or_insert_with(default);
         }
+    }
+}
+
+pub(crate) fn apply_coding_defaults(provenance: &mut SettingProvenance) {
+    for key in CODING {
+        provenance
+            .0
+            .entry((*key).to_owned())
+            .or_insert(SettingOrigin {
+                source: SettingSource::Default,
+                reference: None,
+            });
     }
 }

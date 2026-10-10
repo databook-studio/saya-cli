@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
-use crate::{AiProvider, ColorChoice, ConfigFile, ConnectionsFile, ThemeChoice};
+use crate::{AiProvider, CodingFile, ColorChoice, ConfigFile, ConnectionsFile, ThemeChoice};
 
 /// Command-line values which have the highest configuration precedence.
 #[derive(Debug, Clone, Default)]
 pub struct CliOverrides {
+    /// Explicit coding overrides preserve normal precedence and provenance.
+    pub coding: CodingFile,
     pub profile: Option<String>,
     pub provider: Option<AiProvider>,
     pub model: Option<String>,

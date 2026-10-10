@@ -12,7 +12,7 @@ mod source;
 pub use keys::user_facing_keys;
 pub use source::{SettingOrigin, SettingProvenance, SettingSource};
 
-pub(crate) use defaults::apply_user_facing_defaults;
+pub(crate) use defaults::{apply_coding_defaults, apply_user_facing_defaults};
 pub(crate) use recorder::{Recorder, record_endpoint_fields};
 
 #[cfg(test)]

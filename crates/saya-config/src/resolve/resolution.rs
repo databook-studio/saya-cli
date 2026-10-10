@@ -103,6 +103,7 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let profile = overlay_database_environment(profile, &input.env_file, &input.process_env)?;
     let memory = crate::memory::resolve(&file.memory)?;
     let instructions = crate::instructions::resolve(&file.instructions)?;
+    let coding = crate::coding::resolve(&file.coding)?;
     let investigation_budgets = crate::investigation_budget::resolve(&file.ai)?;
     let context_byte_budget = file
         .ai
@@ -149,10 +150,12 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
     let endpoints = resolve_endpoints(&file.ai, &ai)?;
     let mut provenance = recorder.finish();
     apply_user_facing_defaults(&mut provenance, &endpoints);
+    apply_coding_defaults(&mut provenance);
     Ok(ResolvedConfig {
         profile_name: selected,
         profile,
         ai,
+        coding,
         investigation_budgets,
         max_rows: file.run.max_rows.unwrap_or(1000),
         read_only: file.run.read_only.unwrap_or(true),

@@ -1,6 +1,14 @@
 use super::*;
 
 pub(crate) fn apply_cli(file: &mut ConfigFile, cli: &CliOverrides, recorder: &mut Recorder) {
+    crate::coding::merge(&mut file.coding, &cli.coding, recorder, |field| {
+        SettingSource::Cli {
+            flag: match field {
+                "enabled" => "--coding".into(),
+                _ => format!("--coding-{}", field.replace('_', "-")),
+            },
+        }
+    });
     if cli.provider.is_some() {
         file.ai.provider = cli.provider;
         recorder.record(

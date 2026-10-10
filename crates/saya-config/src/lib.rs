@@ -1,5 +1,6 @@
 //! Configuration contracts and resolution for SAYA CLI.
 
+mod coding;
 mod context_window;
 mod diagnostics;
 mod endpoints;
@@ -19,6 +20,7 @@ mod resolve;
 mod secret;
 mod values;
 
+pub use coding::ResolvedCoding;
 pub use context_window::context_window_tokens;
 pub use diagnostics::{EndpointDiagnostics, RedactedDiagnostics, ResolvedDiagnostics};
 pub use endpoints::{MAX_ENDPOINT_STRING_CHARS, ORCHESTRATOR_ROLE, ResolvedEndpoint};
@@ -37,8 +39,8 @@ pub use jobs::{
 };
 pub use memory::ResolvedMemory;
 pub use model::{
-    ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile, JobsFile,
-    SessionCommandsFile,
+    CodingFile, ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile,
+    JobsFile, SessionCommandsFile,
 };
 pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
