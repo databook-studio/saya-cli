@@ -1,6 +1,6 @@
 use crate::{
     AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatMessage, ChatProvider,
-    TokenUsage, ToolDefinition, ToolExecutor,
+    EffectAdmission, TokenUsage, ToolDefinition, ToolExecutor,
 };
 
 use super::{
@@ -36,6 +36,7 @@ async fn run_agent_loop(
         cancellation,
         answering,
         request_preflight,
+        effect_admission,
     } = invocation;
     let controlled = answering.is_some();
     admission.initialize(sink).await;
@@ -60,6 +61,7 @@ async fn run_agent_loop(
         sink,
         cancellation,
         request_preflight,
+        effect_admission,
         messages,
         ordinary_history_pairs,
         protected_prefix_len,
@@ -136,6 +138,7 @@ pub(super) struct RunState<'a> {
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: CancellationToken,
     pub(super) request_preflight: Option<super::RequestPreflightConfig>,
+    pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
     pub(super) messages: Vec<ChatMessage>,
     pub(super) ordinary_history_pairs: usize,
     pub(super) protected_prefix_len: usize,

@@ -73,6 +73,7 @@ pub(super) async fn salvage(
         cancellation,
         events,
         admission,
+        effect_admission: None,
     })
     .await;
     let (assistant, turn_usage) = match salvage_call {

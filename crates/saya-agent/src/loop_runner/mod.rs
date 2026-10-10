@@ -98,6 +98,7 @@ pub async fn run_agent_with_sink(
         cancellation,
         answering: None,
         request_preflight: None,
+        effect_admission: None,
     })
     .await
 }
@@ -120,6 +121,7 @@ pub async fn run_agent_with_control<'a>(
         cancellation: control.cancellation,
         answering: Some(control.answering_scope),
         request_preflight: control.request_preflight,
+        effect_admission: control.effect_admission,
     })
     .await
 }

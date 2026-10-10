@@ -3,6 +3,8 @@ use crate::{
     CancellationReason, CancellationToken, TokenUsage,
 };
 
+pub(super) mod coding;
+
 pub(super) struct Admission {
     pub(super) limits: AnsweringLimits,
     pub(super) requests: u64,

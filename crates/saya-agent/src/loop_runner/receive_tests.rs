@@ -67,6 +67,7 @@ async fn main_loop_request_does_not_set_json_mode() {
         cancellation: &cancellation,
         events: &mut events,
         admission: &mut admission,
+        effect_admission: None,
     })
     .await
     .expect("receive succeeds");
