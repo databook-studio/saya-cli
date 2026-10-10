@@ -31,5 +31,6 @@ pub mod coordinator {
 }
 
 pub mod git;
+pub mod integration;
 pub mod snapshot;
 pub mod worktree;
