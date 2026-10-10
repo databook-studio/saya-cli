@@ -53,15 +53,13 @@ def is_eligible(path: str, policy) -> bool:
     excluded = set(policy.exclude_dir_names)
     if PurePosixPath(path).suffix.casefold() not in extensions:
         return False
-    source_roots = {"src", "tests", "benches", "examples", "scripts"}
-    source_owned = bool(parts and parts[0] in source_roots) or (
-        len(parts) > 2 and parts[0] == "crates" and parts[2] in source_roots
-    )
-    for part in parts:
-        if part in excluded and not (
-            source_owned and part in {"target", "node_modules"}
-        ):
-            return False
+    if ".git" in excluded and ".git" in parts:
+        return False
+    output_dirs = excluded - {".git"}
+    if parts and parts[0] in output_dirs:
+        return False
+    if len(parts) > 2 and parts[0] == "crates" and parts[2] in output_dirs:
+        return False
     return True
 
 

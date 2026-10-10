@@ -51,9 +51,13 @@ class EnumerateViewTests(unittest.TestCase):
             "src/target/mod.rs", "pub mod target;"
         )
 
-    def test_source_owned_target_and_node_modules_paths_are_counted(self):
+    def test_nested_target_and_node_modules_paths_are_counted(self):
         module = "\n".join(f"def item_{line}(): pass" for line in range(252)) + "\n"
-        paths = ("scripts/target/fixture.py", "src/node_modules/fixture.py")
+        paths = (
+            "scripts/target/fixture.py",
+            "src/node_modules/fixture.py",
+            "tools/target/fixture.py",
+        )
         for path in paths:
             self.repo.write(path, module.encode())
         self.repo.commit_all("source-owned directories")
@@ -93,6 +97,7 @@ class EnumerateViewTests(unittest.TestCase):
         self.repo.write_lines("target/debug/gen.rs", 251)
         self.repo.write_lines("node_modules/package/index.py", 251)
         self.repo.write_lines("crates/saya/target/debug/gen.rs", 251)
+        self.repo.write_lines("crates/saya/node_modules/package/index.py", 251)
         self.repo.commit_all("base")
         for view in ("index", "worktree", "rev:HEAD"):
             self.assertEqual(self.counts(view), {})
@@ -135,11 +140,13 @@ class IsEligibleTests(unittest.TestCase):
         for path in ("docs/x.md", "data/x.json", "Cargo.toml", "Makefile"):
             self.assertFalse(is_eligible(path, self.policy), path)
 
-    def test_excluded_dir_names_are_not_eligible(self):
+    def test_output_locations_are_excluded_and_other_nested_paths_count(self):
+        self.assertFalse(is_eligible(".git/config.py", self.policy))
         self.assertFalse(is_eligible("target/debug/lib.rs", self.policy))
         self.assertFalse(is_eligible("node_modules/package/index.py", self.policy))
-        self.assertFalse(is_eligible("a/target/b.rs", self.policy))
+        self.assertTrue(is_eligible("a/target/b.rs", self.policy))
         self.assertFalse(is_eligible("crates/saya/target/b.rs", self.policy))
+        self.assertFalse(is_eligible("crates/saya/node_modules/index.py", self.policy))
         self.assertTrue(is_eligible("src/node_modules/thing.py", self.policy))
 
     def test_directory_name_prefixes_do_not_exclude(self):
