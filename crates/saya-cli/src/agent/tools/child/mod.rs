@@ -6,8 +6,10 @@ mod executor;
 mod tests;
 #[cfg(test)]
 mod tests_edit;
+#[cfg(test)]
+mod tests_runner;
 
-pub(crate) use executor::{ChildTools, child_toolset};
+pub(crate) use executor::{ChildTools, child_toolset, child_toolset_with_runner};
 
 use std::path::Path;
 use std::sync::Arc;
@@ -64,4 +66,6 @@ pub(crate) enum ChildToolsError {
     Workspace,
     #[error("the child authority does not match the verified checkout")]
     CheckoutMismatch,
+    #[error("the child authority does not admit the runner")]
+    RunnerNotAdmitted,
 }
