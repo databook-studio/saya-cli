@@ -1,9 +1,6 @@
 use std::num::NonZeroU64;
 
-use saya_types::{
-    CheckoutOperationState, CheckoutOperationV1, JobId, ManagedCheckoutId,
-    ManagedCheckoutLifecycle, RepositoryMutationAction,
-};
+use saya_types::{CheckoutOperationV1, JobId, ManagedCheckoutId};
 use sqlx::{Row, Sqlite, Transaction};
 
 use super::{
@@ -11,6 +8,10 @@ use super::{
     checkouts::{ManagedCheckoutPage, ManagedCheckoutRecord, validate_limit},
 };
 use crate::{SqliteStateStore, StoreError};
+
+/// The cap on checkout operation intents per job that `record_checkout_create_intent` enforces.
+pub const MAX_CHECKOUT_OPERATIONS_PER_JOB: u64 =
+    super::checkout_operations::MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB as u64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckoutOperationPage {
@@ -149,6 +150,36 @@ impl SqliteStateStore {
             .map_err(|_| StoreError::Unavailable)?;
         Ok(CheckoutOperationPage { items, next_cursor })
     }
+
+    /// The job that owns `checkout_id`, if any (at most one: ids are unique across jobs).
+    pub async fn managed_checkout_owner(
+        &self,
+        checkout_id: &ManagedCheckoutId,
+    ) -> Result<Option<JobId>, StoreError> {
+        let pool = self.pool().await?;
+        let owner: Option<String> = sqlx::query_scalar(
+            "SELECT job_id FROM coding_managed_checkouts WHERE checkout_id=? LIMIT 1",
+        )
+        .bind(checkout_id.as_str())
+        .fetch_optional(pool)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+        owner
+            .map(|value| JobId::parse(&value).map_err(|_| StoreError::Invalid))
+            .transpose()
+    }
+
+    /// The number of checkout operation intents recorded for the job.
+    pub async fn count_checkout_operations(&self, job_id: &JobId) -> Result<u64, StoreError> {
+        let pool = self.pool().await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM coding_checkout_operations WHERE job_id=?")
+                .bind(job_id.as_str())
+                .fetch_one(pool)
+                .await
+                .map_err(|_| StoreError::Unavailable)?;
+        u64::try_from(count).map_err(|_| StoreError::Invalid)
+    }
 }
 
 pub(crate) async fn managed_checkout_in_tx(
@@ -191,41 +222,10 @@ pub(crate) async fn managed_checkout_in_tx(
     if latest_operation.managed_checkout_id() != checkout_id {
         return Err(StoreError::Invalid);
     }
-    let current_lifecycle = lifecycle(latest_operation.action(), latest_operation.state());
+    let current_lifecycle = super::lifecycle(latest_operation.action(), latest_operation.state());
     Ok(Some(ManagedCheckoutRecord {
         ownership,
         current_lifecycle,
         latest_operation,
     }))
-}
-
-pub(crate) fn lifecycle(
-    action: RepositoryMutationAction,
-    state: CheckoutOperationState,
-) -> ManagedCheckoutLifecycle {
-    match (action, state) {
-        (RepositoryMutationAction::CreateCheckout, CheckoutOperationState::Intent) => {
-            ManagedCheckoutLifecycle::Creating
-        }
-        (RepositoryMutationAction::CreateCheckout, CheckoutOperationState::Completed) => {
-            ManagedCheckoutLifecycle::Active
-        }
-        (RepositoryMutationAction::CreateCheckout, CheckoutOperationState::Failed) => {
-            ManagedCheckoutLifecycle::Failed
-        }
-        (RepositoryMutationAction::RemoveCheckout, CheckoutOperationState::Intent) => {
-            ManagedCheckoutLifecycle::Removing
-        }
-        (RepositoryMutationAction::RemoveCheckout, CheckoutOperationState::Completed) => {
-            ManagedCheckoutLifecycle::Removed
-        }
-        (RepositoryMutationAction::RemoveCheckout, CheckoutOperationState::Failed) => {
-            ManagedCheckoutLifecycle::Retained
-        }
-        (_, CheckoutOperationState::Uncertain) => ManagedCheckoutLifecycle::Uncertain,
-        (RepositoryMutationAction::IntegrateCandidate | RepositoryMutationAction::ApplyBack, _) => {
-            ManagedCheckoutLifecycle::Retained
-        }
-        _ => ManagedCheckoutLifecycle::Uncertain,
-    }
 }

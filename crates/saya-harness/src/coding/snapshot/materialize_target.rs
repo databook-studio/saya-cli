@@ -29,7 +29,7 @@ use crate::workspace::{
     fd::{DirStream, open_dir_at, stat_at},
 };
 
-const MAX_ROOT_ENTRIES: usize = 4096;
+pub(super) const MAX_ROOT_ENTRIES: usize = 4096;
 
 pub(super) struct TargetWriter<'a> {
     workspace: &'a Workspace,

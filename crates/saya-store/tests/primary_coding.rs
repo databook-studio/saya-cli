@@ -1,3 +1,5 @@
+#[path = "primary_coding/checkout_ownership.rs"]
+mod checkout_ownership;
 #[path = "primary_coding/checkout_plan.rs"]
 mod checkout_plan;
 #[path = "primary_coding/checkout_plan_edges.rs"]

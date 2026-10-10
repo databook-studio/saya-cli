@@ -143,6 +143,19 @@ async fn validate_create(
     if exists {
         return Err(StoreError::Conflict);
     }
+    // The managed path derives from the checkout id alone, so an id already
+    // owned by ANOTHER job must never be claimed twice.
+    let elsewhere: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM coding_managed_checkouts WHERE checkout_id=? AND job_id!=?)",
+    )
+    .bind(checkout.managed_checkout_id().as_str())
+    .bind(event.job_id().as_str())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|_| StoreError::Unavailable)?;
+    if elsewhere {
+        return Err(StoreError::Conflict);
+    }
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM coding_managed_checkouts WHERE job_id=?")
             .bind(event.job_id().as_str())

@@ -6,7 +6,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs, io,
     os::{
         fd::{AsRawFd, RawFd},
@@ -37,49 +37,93 @@ const STAGING_PREFIX: &str = ".staging-";
 /// Removes the staging directory named under the artifacts root: bounded
 /// walk, symlinks unlinked rather than followed, best-effort throughout.
 pub(super) fn remove_tree_bounded(parent: &fs::File, name: &OsStr) -> io::Result<()> {
+    remove_tree_with_limits(parent, name, MAX_REMOVAL_ENTRIES, MAX_REMOVAL_DEPTH)
+}
+
+/// The same bounded walk under caller-supplied limits: `max_entries`
+/// bounds each directory listing and `max_depth` bounds the recursion, so
+/// a reset caller can cover a snapshot-sized tree without relaxing the
+/// staging bounds above.
+pub(super) fn remove_tree_with_limits(
+    parent: &fs::File,
+    name: &OsStr,
+    max_entries: usize,
+    max_depth: usize,
+) -> io::Result<()> {
     let stat = stat_at(parent.as_raw_fd(), name)?;
     if stat.is_symlink() || !stat.is_dir() {
         // A link or stray named like staging goes by name, never opened.
         return unlink_at(parent.as_raw_fd(), name);
     }
     let dir = fs::File::from(open_dir_at(parent.as_raw_fd(), name)?);
-    remove_contents(&dir, MAX_REMOVAL_DEPTH)?;
+    remove_contents(&dir, max_entries, max_depth)?;
     remove_dir_at(parent.as_raw_fd(), name)
 }
 
-fn remove_contents(dir: &fs::File, depth: usize) -> io::Result<()> {
+/// One directory level, in three phases. Phase 1 lists the directory
+/// completely before anything is removed: removing entries while reading
+/// the same readdir stream is unspecified by POSIX and can skip entries,
+/// which would make the final removal of the directory itself fail.
+/// Phase 2 removes every collected entry. Phase 3 re-lists the directory
+/// once and requires it to be empty, so the caller's removal of the
+/// directory itself never races with leftovers.
+fn remove_contents(dir: &fs::File, max_entries: usize, depth: usize) -> io::Result<()> {
     if depth == 0 {
         return Ok(());
     }
-    let mut stream = DirStream::open_at(dir.as_raw_fd(), OsStr::new("."))?;
-    for _ in 0..MAX_REMOVAL_ENTRIES {
-        let Some((name, kind)) = stream.next()? else {
-            return Ok(());
-        };
-        match kind {
-            libc::DT_DIR => {
-                let child = fs::File::from(open_dir_at(dir.as_raw_fd(), &name)?);
-                remove_contents(&child, depth - 1)?;
-                remove_dir_at(dir.as_raw_fd(), &name)?;
-            }
-            libc::DT_UNKNOWN => match stat_at(dir.as_raw_fd(), &name) {
-                Ok(stat) if stat.is_dir() => {
-                    let child = fs::File::from(open_dir_at(dir.as_raw_fd(), &name)?);
-                    remove_contents(&child, depth - 1)?;
-                    remove_dir_at(dir.as_raw_fd(), &name)?;
-                }
-                // Links and strays go by name; an unreadable entry stays.
-                _ => {
-                    let _ = unlink_at(dir.as_raw_fd(), &name);
-                }
-            },
+    let entries = list_entries(dir, max_entries)?;
+    for (name, is_dir) in entries {
+        if !is_dir {
             // Files, links, and anything non-directory: unlink by name.
-            _ => {
-                let _ = unlink_at(dir.as_raw_fd(), &name);
-            }
+            let _ = unlink_at(dir.as_raw_fd(), &name);
+            continue;
         }
+        let child = fs::File::from(open_dir_at(dir.as_raw_fd(), &name)?);
+        remove_contents(&child, max_entries, depth - 1)?;
+        remove_dir_at(dir.as_raw_fd(), &name)?;
+    }
+    require_empty(dir)
+}
+
+/// Phase 1: the complete listing, bounded. Exceeding `max_entries`
+/// without reaching the end of the stream is the same ENOTEMPTY error the
+/// old over-bound removal produced when the caller's unlinkat then failed.
+fn list_entries(dir: &fs::File, max_entries: usize) -> io::Result<Vec<(OsString, bool)>> {
+    let mut stream = DirStream::open_at(dir.as_raw_fd(), OsStr::new("."))?;
+    let mut entries = Vec::new();
+    while let Some((name, kind)) = stream.next()? {
+        if entries.len() == max_entries {
+            return Err(not_empty_error());
+        }
+        let is_dir = match kind {
+            libc::DT_DIR => true,
+            // Links and strays go by name; an unreadable entry stays.
+            libc::DT_UNKNOWN => match stat_at(dir.as_raw_fd(), &name) {
+                Ok(stat) => stat.is_dir(),
+                Err(_) => false,
+            },
+            _ => false,
+        };
+        entries.push((name, is_dir));
+    }
+    Ok(entries)
+}
+
+/// Phase 3: one fresh listing; anything left means the removal did not
+/// complete and the directory stays as garbage, exactly as the caller's
+/// failing unlinkat would have left it.
+fn require_empty(dir: &fs::File) -> io::Result<()> {
+    let mut stream = DirStream::open_at(dir.as_raw_fd(), OsStr::new("."))?;
+    if stream.next()?.is_some() {
+        return Err(not_empty_error());
     }
     Ok(())
+}
+
+/// The raw OS error a directory removal reports when it is not empty —
+/// kind `DirectoryNotEmpty` — the file's existing error convention.
+fn not_empty_error() -> io::Error {
+    io::Error::from_raw_os_error(libc::ENOTEMPTY)
 }
 
 /// The sweep: removes `.staging-*` siblings whose trailing nanoseconds are
