@@ -20,7 +20,8 @@ pub enum ApprovalNetworkScheme {
     Https,
 }
 
-/// A credential-free host-only network destination.
+/// A credential-free host-only network destination. HTTP and HTTPS use their
+/// default effective ports (80 and 443); the runtime must reject other effective ports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ApprovalNetworkDestination {
     scheme: ApprovalNetworkScheme,
@@ -38,7 +39,13 @@ impl ApprovalNetworkDestination {
         }
         let host = match IpAddr::from_str(&host) {
             Ok(address) => address.to_string(),
-            Err(_) => validate_dns_host(&host)?,
+            Err(_) => {
+                let dns_host = validate_dns_host(&host)?;
+                if has_ambiguous_numeric_dns_form(&dns_host) {
+                    return Err(ApprovalScopeError::InvalidDestination);
+                }
+                dns_host
+            }
         };
         Ok(Self { scheme, host })
     }
@@ -354,6 +361,16 @@ fn validate_dns_host(host: &str) -> Result<String, ApprovalScopeError> {
         return Err(ApprovalScopeError::InvalidDestination);
     }
     Ok(host)
+}
+
+fn has_ambiguous_numeric_dns_form(host: &str) -> bool {
+    let Some(final_label) = host.rsplit('.').next() else {
+        return false;
+    };
+    final_label.bytes().all(|byte| byte.is_ascii_digit())
+        || final_label
+            .strip_prefix("0x")
+            .is_some_and(|suffix| suffix.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]

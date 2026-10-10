@@ -124,6 +124,17 @@ fn request_rejects_expiry_unknown_versions_grants_and_invalid_resources() {
     grant["session_grant"] = json!(true);
     assert_eq!(parse(grant), Err(ApprovalRequestError::Malformed));
 
+    let mut scope_grant: Value = serde_json::from_str(PENDING).unwrap();
+    scope_grant["scope"]["grant"] = json!(true);
+    assert_eq!(parse(scope_grant), Err(ApprovalRequestError::Malformed));
+
+    let mut destination_grant: Value = serde_json::from_str(PENDING).unwrap();
+    destination_grant["scope"] = json!({"operation":"network_access","destination":{"scheme":"https","host":"db.example.test","grant":true}});
+    assert_eq!(
+        parse(destination_grant),
+        Err(ApprovalRequestError::Malformed)
+    );
+
     let mut zero_sequence: Value = serde_json::from_str(PENDING).unwrap();
     zero_sequence["request_sequence"] = json!(0);
     assert_eq!(parse(zero_sequence), Err(ApprovalRequestError::Malformed));
@@ -134,6 +145,7 @@ fn request_rejects_expiry_unknown_versions_grants_and_invalid_resources() {
         "a\\b",
         "a//b",
         "a/./b",
+        ".",
         "C:relative",
         "bad\npath",
     ] {
@@ -156,6 +168,13 @@ fn request_rejects_expiry_unknown_versions_grants_and_invalid_resources() {
     );
     assert!(
         ApprovalScope::memory_write(RepositoryId::parse("repo-1").unwrap(), "bad/key").is_err()
+    );
+    let mut invalid_memory_key: Value = serde_json::from_str(PENDING).unwrap();
+    invalid_memory_key["scope"] =
+        json!({"operation":"memory_write","repository_id":"repo-1","memory_key":"bad/key"});
+    assert_eq!(
+        parse(invalid_memory_key),
+        Err(ApprovalRequestError::Malformed)
     );
 
     for host in [
@@ -187,6 +206,20 @@ fn request_rejects_expiry_unknown_versions_grants_and_invalid_resources() {
         parse(unsupported_scheme),
         Err(ApprovalRequestError::Malformed)
     );
+    for host in [
+        "127.1",
+        "2130706433",
+        "0177.0.0.1",
+        "0x7f000001",
+        "0x7f.0.0.1",
+        "0x",
+        "0X7F000001",
+    ] {
+        let mut ambiguous_host: Value = serde_json::from_str(PENDING).unwrap();
+        ambiguous_host["scope"] =
+            json!({"operation":"network_access","destination":{"scheme":"https","host":host}});
+        assert_eq!(parse(ambiguous_host), Err(ApprovalRequestError::Malformed));
+    }
     assert!(
         ApprovalScope::process_execution(
             ManagedCheckoutId::parse("checkout-1").unwrap(),
@@ -199,6 +232,14 @@ fn request_rejects_expiry_unknown_versions_grants_and_invalid_resources() {
     let mut unsafe_command = serde_json::from_str::<Value>(PENDING).unwrap();
     unsafe_command["scope"] = json!({"operation":"process_execution","managed_checkout_id":"checkout-1","command_reference":"../run","argv_sha256":SHA_B,"cwd":"."});
     assert_eq!(parse(unsafe_command), Err(ApprovalRequestError::Malformed));
+
+    let mut escaping_cwd: Value = serde_json::from_str(PENDING).unwrap();
+    escaping_cwd["scope"] = json!({"operation":"process_execution","managed_checkout_id":"checkout-1","command_reference":"cargo-test","argv_sha256":SHA_B,"cwd":"../escape"});
+    assert_eq!(parse(escaping_cwd), Err(ApprovalRequestError::Malformed));
+
+    let mut root_cwd: Value = serde_json::from_str(PENDING).unwrap();
+    root_cwd["scope"] = json!({"operation":"process_execution","managed_checkout_id":"checkout-1","command_reference":"cargo-test","argv_sha256":SHA_B,"cwd":"."});
+    assert!(parse(root_cwd).is_ok());
 
     let mut mismatched_operation: Value = serde_json::from_str(PENDING).unwrap();
     mismatched_operation["scope"]["operation"] = json!("process_execution");
