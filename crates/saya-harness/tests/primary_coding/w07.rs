@@ -4,6 +4,8 @@
 mod delta;
 #[path = "w07/delta_edges.rs"]
 mod delta_edges;
+#[path = "w07/delta_output.rs"]
+mod delta_output;
 #[path = "w07/paths.rs"]
 mod paths;
 #[path = "w07/receipt.rs"]

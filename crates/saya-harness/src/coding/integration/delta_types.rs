@@ -119,6 +119,8 @@ pub enum DeltaError {
     TooLarge,
     #[error("the verified snapshot does not match the checkout")]
     SnapshotMismatch,
+    #[error("the checkout's output root exceeds its bound")]
+    OutputRootTooLarge,
     #[error("the checkout could not be read")]
     Io,
 }
