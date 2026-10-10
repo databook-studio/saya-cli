@@ -2,6 +2,7 @@
 
 mod candidate;
 mod delta;
+mod delta_output;
 mod delta_types;
 mod delta_walk;
 mod paths;

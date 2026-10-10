@@ -33,7 +33,8 @@ use std::{
 /// no-follow, so a swapped symlink is refused instead of followed; sizes and
 /// the executable bit come from the opened file; bounds count bytes actually
 /// read. Descent is depth-first, so only the ancestor directory streams are
-/// open.
+/// open. The root-level `.saya` directory is an authorized output root that
+/// is bounded and counted but never classified or digested.
 #[cfg(unix)]
 pub(super) fn walk_checkout(
     root: &Path,
@@ -69,6 +70,18 @@ pub(super) fn walk_checkout(
                 continue;
             }
             return Err(DeltaError::NestedRepository);
+        }
+        if is_root && name == super::delta_output::OUTPUT_ROOT_NAME {
+            let st = stat_at(dir_fd, OsStr::new(&name)).map_err(|_| DeltaError::Io)?;
+            if st.is_dir() {
+                super::delta_output::scan_output_root(
+                    dir_fd,
+                    OsStr::new(&name),
+                    cancellation,
+                    deadline,
+                )?;
+                continue;
+            }
         }
         let relative = if is_root {
             name.clone()
