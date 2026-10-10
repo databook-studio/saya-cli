@@ -63,11 +63,11 @@ async fn the_typed_preference_store_is_unaffected() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A fresh database reaches `user_version = 9` with the project-preferences
+/// A fresh database reaches `user_version = 10` with the project-preferences
 /// table in place.
 #[tokio::test]
-async fn fresh_database_reaches_version_nine_with_the_project_table() {
-    let root = temp_root("fresh-v9");
+async fn fresh_database_reaches_version_ten_with_the_project_table() {
+    let root = temp_root("fresh-v10");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);
     assert!(
@@ -78,7 +78,7 @@ async fn fresh_database_reaches_version_nine_with_the_project_table() {
             .is_empty()
     );
     store.close().await;
-    assert_eq!(user_version(&db).await, 9);
+    assert_eq!(user_version(&db).await, 10);
     assert!(
         table_exists(&db, "project_preferences").await,
         "missing project_preferences"
@@ -87,7 +87,7 @@ async fn fresh_database_reaches_version_nine_with_the_project_table() {
 }
 
 /// A database rewound to `user_version = 8` with the project table dropped is
-/// upgraded again: the table is recreated at version 9 and other data — here
+/// upgraded again: the table is recreated at version 10 and other data — here
 /// a typed preference — survives the ride.
 #[tokio::test]
 async fn rewind_to_version_eight_recreates_the_project_table() {
@@ -124,7 +124,7 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
             .is_empty()
     );
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 9);
+    assert_eq!(user_version(&db).await, 10);
     assert!(table_exists(&db, "project_preferences").await);
     let survivor = SqliteStateStore::new(&db);
     let typed = survivor
