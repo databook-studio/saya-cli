@@ -1,6 +1,8 @@
-use super::super::{check_cancelled, emit, failed_statements, failure_key, output, tools};
+use super::super::{
+    admission::coding, check_cancelled, emit, failed_statements, failure_key, output, tools,
+};
 use super::state::{TurnOutputs, TurnState};
-use crate::{AgentError, AgentEvent, ChatMessage};
+use crate::{AgentError, AgentEvent, ChatMessage, EffectOutcome};
 
 pub(super) async fn run_batch(
     state: &TurnState<'_>,
@@ -13,6 +15,7 @@ pub(super) async fn run_batch(
         result_caps,
         sink,
         cancellation,
+        effect_admission,
         ..
     } = *state;
     let TurnOutputs {
@@ -30,6 +33,22 @@ pub(super) async fn run_batch(
     let failed = &mut **failed;
     let last_successful_sql = &mut **last_successful_sql;
     check_cancelled(cancellation)?;
+    let permits = if let Some(owner) = effect_admission {
+        let effects = assistant
+            .tool_calls
+            .iter()
+            .map(|call| {
+                definitions
+                    .iter()
+                    .find(|definition| definition.name == call.name)
+                    .expect("the batch precondition validated the call")
+                    .effect
+            })
+            .collect::<Vec<_>>();
+        coding::admit_tool_batch(Some(owner), &effects, cancellation).await?
+    } else {
+        None
+    };
     for call in &assistant.tool_calls {
         // The batch precondition validated every call against the
         // definitions, so the declared effect is at hand for the event —
@@ -62,6 +81,27 @@ pub(super) async fn run_batch(
         sink,
     )
     .await;
+    if effect_admission.is_some() {
+        let outcomes = results
+            .iter()
+            .map(|completed| {
+                if !completed.executed {
+                    EffectOutcome::NotStarted
+                } else if completed.succeeded {
+                    EffectOutcome::Succeeded
+                } else {
+                    EffectOutcome::Unknown
+                }
+            })
+            .collect::<Vec<_>>();
+        coding::settle_tool_batch(
+            effect_admission,
+            permits.as_deref(),
+            &outcomes,
+            cancellation,
+        )
+        .await?;
+    }
     for (call, completed) in assistant.tool_calls.iter().zip(results) {
         failed_statements::record_outcome(
             failed,

@@ -4,7 +4,7 @@
 use super::super::failed_statements;
 use crate::{
     AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken, ChatMessage,
-    ToolDefinition, ToolExecutor,
+    EffectAdmission, ToolDefinition, ToolExecutor,
 };
 
 pub(super) struct TurnState<'a> {
@@ -15,6 +15,7 @@ pub(super) struct TurnState<'a> {
     pub(super) approval: &'a dyn ApprovalDecider,
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: &'a CancellationToken,
+    pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
 }
 
 pub(super) struct TurnOutputs<'a> {

@@ -1,5 +1,6 @@
 use super::super::{
-    check_cancelled, emit, failed_statements, failure_key, output, tool_policy, tools,
+    admission::coding, check_cancelled, emit, failed_statements, failure_key, output, tool_policy,
+    tools,
 };
 use super::state::{TurnOutputs, TurnState};
 use crate::{AgentError, AgentEvent, AgentMetric, AgentMetricUseful, ToolCall};
@@ -17,6 +18,7 @@ pub(super) async fn run_serial_call(
         approval,
         sink,
         cancellation,
+        effect_admission,
         ..
     } = *state;
     let TurnOutputs {
@@ -136,6 +138,11 @@ pub(super) async fn run_serial_call(
         tool_policy::resolve_approval(definition, &call.arguments, approval).await;
     let decision = tool_policy::execution_decision(definition, limits, approval_state);
     let executed = matches!(decision, tool_policy::ExecutionDecision::Allow);
+    let permit = if executed {
+        coding::admit_tool(effect_admission, definition.effect, cancellation).await?
+    } else {
+        None
+    };
     // Capture the serialized arguments before `execute` moves
     // `call.arguments` — the persisted record carries what the model sent
     // (the statement for a SQL tool), and the value-free result shape is
@@ -143,7 +150,7 @@ pub(super) async fn run_serial_call(
     // either; `result_shape_of` reads only `row_count` and `columns`.
     let arguments_json = serde_json::to_string(&call.arguments).unwrap_or_default();
     let (result, summary, succeeded) = if executed {
-        check_cancelled(cancellation)?;
+        coding::check_tool_dispatch(effect_admission, permit, cancellation).await?;
         // Indicates a database-row-producing query tool ran.
         if definition.effect.database_data {
             *used_bounded_sql_query = true;
@@ -186,6 +193,9 @@ pub(super) async fn run_serial_call(
             false,
         )
     };
+    if executed {
+        coding::settle_tool_result(effect_admission, permit, succeeded, cancellation).await?;
+    }
     if executed && succeeded {
         sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
             .await;

@@ -7,6 +7,7 @@ mod approval;
 mod budget;
 mod builders;
 mod chat;
+mod coding_admission;
 mod context;
 mod error;
 mod event;
@@ -33,6 +34,10 @@ pub use budget::{AnsweringObservation, BudgetDimension};
 pub use chat::{
     AgentRequest, ChatMessage, ChatRequest, ChatResponse, ContextBlock, ReasoningEffort,
     ResponseFormat, ToolCall, ToolMetadata, ToolResultShape,
+};
+pub use coding_admission::{
+    EffectAdmission, EffectAdmissionError, EffectOutcome, EffectOwnerFailure, EffectPermit,
+    EffectSettlement,
 };
 pub use context::{CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, context_utilisation_percent};
 pub use error::{ProviderError, ToolError};

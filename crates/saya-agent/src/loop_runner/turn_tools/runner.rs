@@ -3,7 +3,7 @@ use super::state::{TurnOutputs, TurnState};
 use super::{batch, serial};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentLimits, ApprovalDecider, CancellationToken,
-    ChatMessage, ToolConcurrency, ToolDefinition, ToolExecutor,
+    ChatMessage, EffectAdmission, ToolConcurrency, ToolDefinition, ToolExecutor,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -16,6 +16,7 @@ pub(in crate::loop_runner) async fn run_turn_tools(
     approval: &dyn ApprovalDecider,
     sink: &dyn AgentEventSink,
     cancellation: &CancellationToken,
+    effect_admission: Option<&dyn EffectAdmission>,
     events: &mut Vec<AgentEvent>,
     messages: &mut Vec<ChatMessage>,
     used_bounded_sql_query: &mut bool,
@@ -31,6 +32,7 @@ pub(in crate::loop_runner) async fn run_turn_tools(
         approval,
         sink,
         cancellation,
+        effect_admission,
     };
     let mut outputs = TurnOutputs {
         events,

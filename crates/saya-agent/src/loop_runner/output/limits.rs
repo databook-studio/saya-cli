@@ -1,4 +1,4 @@
-use crate::{AgentEvent, ProviderError, ToolMetadata};
+use crate::{AgentEvent, EffectOwnerFailure, ProviderError, ToolMetadata};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -162,6 +162,10 @@ pub enum AgentError {
     InvalidToolCall,
     #[error("conversation history is invalid")]
     InvalidHistory,
+    #[error("effect admission denied")]
+    EffectAdmissionDenied,
+    #[error(transparent)]
+    EffectOwnerFailure(#[from] EffectOwnerFailure),
     #[error("request cancelled")]
     Cancelled,
 }
