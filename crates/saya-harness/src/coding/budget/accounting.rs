@@ -1,3 +1,4 @@
+use super::estimates::add_estimate;
 use super::ledger::State;
 use saya_agent::{EffectAdmissionError, EffectOutcome, EffectOwnerFailure};
 use saya_types::{BudgetDimension, BudgetEffectState, BudgetObservation, BudgetObservationValue};
@@ -59,6 +60,11 @@ pub(super) fn add_usage(
     outcome: EffectOutcome,
     complete: bool,
 ) {
+    if !complete {
+        add_estimate(state, usage);
+        update_usage_coverage(state, outcome, true, false);
+        return;
+    }
     let input = state
         .snapshot
         .reported_input_tokens
