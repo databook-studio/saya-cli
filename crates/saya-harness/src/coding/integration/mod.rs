@@ -10,9 +10,12 @@ mod delta_output;
 mod delta_types;
 mod delta_walk;
 mod evidence;
+mod index;
 mod integrate;
 mod integrate_events;
 mod paths;
+mod preflight;
+mod preflight_fs;
 mod receipt;
 
 pub use apply::{
@@ -26,10 +29,15 @@ pub use conflicts_types::{RetainedConflict, RetainedDeltaInput, RetainedPair};
 pub use delta::compute_delta;
 pub use delta_types::{CheckoutDelta, DEFAULT_DELTA_DEADLINE, DeltaError, DeltaKind, PathDelta};
 pub use evidence::{EvidenceBinding, EvidenceError};
+pub use index::{PlanError, PlanIndex, PlanIndexEntry, PlanStatusFact};
 pub use integrate::{IntegrateError, IntegrateInput, IntegratedCandidate, integrate_candidate};
 pub use paths::{
     AssignedPaths, AssignedPathsError, MAX_ASSIGNED_PATH_BYTES, MAX_ASSIGNED_PATHS,
     MAX_ASSIGNED_PATHS_TOTAL_BYTES, casefold_collision,
+};
+pub use preflight::{
+    ApplyBackPreflight, Collision, CollisionKind, PreflightBounds, PreflightError, PreflightInput,
+    preflight_apply_back,
 };
 pub use receipt::{
     ChangeReceipt, ChangeScope, ReceiptChange, ReceiptOutcome, RejectionReason, evaluate_receipt,
