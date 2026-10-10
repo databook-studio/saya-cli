@@ -202,7 +202,8 @@ async fn resume_unknown_or_unsettled_keeps_charged_and_slots_consumed() {
     assert_eq!(snapshot.logical_requests, 2);
     assert_eq!(snapshot.transport_attempts, 1);
     assert_eq!(snapshot.unknown_transport_attempts, 1);
-    assert_eq!(snapshot.unknown_logical_requests, 0);
+    // unsettled model reservations are unknown after a restart (R04b)
+    assert_eq!(snapshot.unknown_logical_requests, 2);
     assert_eq!(snapshot.unknown_tool_calls, 0);
     assert_eq!(snapshot.model_slots_active, 2);
     assert_eq!(snapshot.child_slots_active, 1);

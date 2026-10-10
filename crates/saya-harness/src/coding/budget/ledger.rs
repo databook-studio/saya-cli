@@ -78,6 +78,8 @@ pub struct BudgetSnapshot {
     pub unknown_transport_attempts: u64,
     pub unknown_tool_calls: u64,
     pub measured_tool_calls: u64,
+    /// Reservations with no settlement found when this owner resumed: interrupted effects whose usage is unknown.
+    pub unsettled_reservations: u64,
     pub reported_input_tokens: Option<u64>,
     pub reported_output_tokens: Option<u64>,
     /// Display-only estimated usage totals accumulated from incomplete
