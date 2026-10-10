@@ -79,6 +79,7 @@ pub(super) fn reopen_created_private_dir(
     } else {
         Err(SnapshotError::CaptureIo {
             description: format!("keep a created {context} under its name"),
+            source: None,
         })
     }
 }
@@ -105,6 +106,7 @@ pub(super) fn verify_named_identity(
     } else {
         Err(SnapshotError::CaptureIo {
             description: format!("keep {context} under its own name"),
+            source: None,
         })
     }
 }
@@ -122,6 +124,7 @@ pub(super) fn privatize_dir(dir: &fs::File, context: &'static str) -> Result<(),
     if metadata.mode() & 0o777 != 0o700 || !owned_private(&metadata) {
         return Err(SnapshotError::CaptureIo {
             description: format!("keep a created {context} private"),
+            source: None,
         });
     }
     Ok(())

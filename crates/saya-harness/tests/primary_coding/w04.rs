@@ -6,3 +6,5 @@ mod destination_commit;
 mod destination_rootlock;
 #[path = "w04/fixtures.rs"]
 mod fixtures;
+#[path = "w04/reader.rs"]
+mod reader;

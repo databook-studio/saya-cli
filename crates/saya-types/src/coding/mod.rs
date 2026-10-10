@@ -3,6 +3,7 @@
 mod approval_scope;
 mod approvals;
 mod budget;
+mod budget_policy;
 mod budget_settlement;
 mod budget_values;
 mod check_receipts;
@@ -27,6 +28,7 @@ pub use approvals::{
     MAX_APPROVAL_REQUEST_BYTES,
 };
 pub use budget::{BUDGET_RESERVATION_VERSION, BudgetError, BudgetReservationV1};
+pub use budget_policy::{BUDGET_POLICY_VERSION, BudgetLimitPolicyV1, BudgetPolicyError};
 pub use budget_settlement::{BUDGET_SETTLEMENT_VERSION, BudgetEffectState, BudgetSettlementV1};
 pub use budget_values::{
     BudgetCharge, BudgetDimension, BudgetObservation, BudgetObservationValue,

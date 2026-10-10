@@ -1,16 +1,23 @@
-//! Bounded metadata discovery for repository and user skills.
+//! Bounded metadata discovery and body loading for repository and user
+//! skills.
 //!
 //! Discovery returns descriptive context only. A skill listing grants no
-//! command, filesystem, network, or model authority.
+//! command, filesystem, network, or model authority. The body loader
+//! reopens one indexed skill under the same containment and returns inert
+//! text: the text never grants authority either.
 
 #[cfg(unix)]
 mod frontmatter;
 #[cfg(unix)]
 mod header;
 mod index;
+mod load;
+mod load_error;
 mod metadata;
 
 pub use index::discover_skills;
+pub use load::{MAX_SKILL_BODY_BYTES, SkillBody, load_skill_body};
+pub use load_error::SkillLoadError;
 pub use metadata::{SkillEntry, SkillIndex, SkillIndexError, SkillOrigin, SkillRoot};
 
 /// Maximum configured roots: one user root and one project root.

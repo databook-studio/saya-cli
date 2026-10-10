@@ -34,6 +34,7 @@ pub(super) fn write_object(staged: &mut StagedSnapshot, bytes: &[u8]) -> Result<
     sink.write_all(bytes)
         .map_err(|error| SnapshotError::CaptureIo {
             description: format!("write staged object: {error}"),
+            source: None,
         })?;
     sink.finish(&digest(bytes))
 }

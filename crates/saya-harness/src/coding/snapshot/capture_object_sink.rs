@@ -79,6 +79,7 @@ impl<'a> ObjectSink<'a> {
         }
         let file = self.file.take().ok_or_else(|| SnapshotError::CaptureIo {
             description: "finish a staged object once".to_string(),
+            source: None,
         })?;
         if let Err(error) = file.sync_all() {
             drop(file);

@@ -133,6 +133,7 @@ impl StagedSnapshot {
         }
         Err(SnapshotError::CaptureIo {
             description: "name a unique staged object temp".to_string(),
+            source: None,
         })
     }
 

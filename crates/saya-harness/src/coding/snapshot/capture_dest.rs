@@ -197,6 +197,7 @@ impl SnapshotArtifacts {
         }
         Err(SnapshotError::CaptureIo {
             description: "name a unique staging directory".to_string(),
+            source: None,
         })
     }
 
@@ -257,5 +258,8 @@ pub(crate) fn capture_io(context: &'static str, error: &io::Error) -> SnapshotEr
     if let Some(code) = error.raw_os_error() {
         description.push_str(&format!(", os error {code}"));
     }
-    SnapshotError::CaptureIo { description }
+    SnapshotError::CaptureIo {
+        description,
+        source: None,
+    }
 }

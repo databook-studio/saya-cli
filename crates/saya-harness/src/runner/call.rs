@@ -1,9 +1,18 @@
 use saya_types::is_refused_runner_program;
 
+use super::CommandProcessState;
 use super::RunProgram;
 use super::refuse::{INTERPRETER_REFUSAL, validate_call, validate_interpreter_call};
 use super::spawn;
+use super::stdin::StdinDelivery;
+use super::stdin_channel::StdinInputPipe;
 use super::{ProgramOutcome, RunnerError};
+use tokio::sync::watch;
+
+pub(crate) struct CommandRunOutcome {
+    pub(crate) outcome: ProgramOutcome,
+    pub(crate) stdin: Option<StdinDelivery>,
+}
 
 impl RunProgram {
     /// Runs one validated call and returns the child's report. The door a
@@ -18,7 +27,54 @@ impl RunProgram {
         argv: &[String],
         timeout_seconds: Option<u64>,
     ) -> Result<ProgramOutcome, RunnerError> {
-        let call = if is_refused_runner_program(program)
+        let call = self.validated_call(program, argv, timeout_seconds)?;
+        spawn::run(
+            &self.spawn,
+            call,
+            // A run_program child pins nothing: its environment is the
+            // declared credentials and nothing else. The nested re-entry
+            // (`nested_saya`) is the caller that pins run paths.
+            &[],
+            &self.credentials,
+            self.resolver.as_ref(),
+            &self.cancellation,
+        )
+        .await
+    }
+
+    pub(crate) async fn run_command(
+        &self,
+        program: &str,
+        argv: &[String],
+        timeout_seconds: Option<u64>,
+        input: Option<StdinInputPipe>,
+        process_state: watch::Sender<CommandProcessState>,
+    ) -> Result<CommandRunOutcome, RunnerError> {
+        let call = self.validated_call(program, argv, timeout_seconds)?;
+        let result = spawn::run_command(
+            &self.spawn,
+            call,
+            &[],
+            &self.credentials,
+            self.resolver.as_ref(),
+            &self.cancellation,
+            input,
+            process_state,
+        )
+        .await?;
+        Ok(CommandRunOutcome {
+            outcome: result.outcome,
+            stdin: result.stdin,
+        })
+    }
+
+    fn validated_call(
+        &self,
+        program: &str,
+        argv: &[String],
+        timeout_seconds: Option<u64>,
+    ) -> Result<super::refuse::ValidatedCall, RunnerError> {
+        if is_refused_runner_program(program)
             && self
                 .interpreters
                 .as_ref()
@@ -33,7 +89,7 @@ impl RunProgram {
                 timeout_seconds,
                 program,
                 argv,
-            )?
+            )
         } else {
             match &self.runner {
                 Some(allowed) => validate_call(
@@ -43,7 +99,7 @@ impl RunProgram {
                     timeout_seconds,
                     program,
                     argv,
-                )?,
+                ),
                 None => {
                     // The step holds no runner scope: a refused name keeps
                     // the runner's byte-identical refusal, everything else is
@@ -61,18 +117,6 @@ impl RunProgram {
                     });
                 }
             }
-        };
-        spawn::run(
-            &self.spawn,
-            call,
-            // A run_program child pins nothing: its environment is the
-            // declared credentials and nothing else. The nested re-entry
-            // (`nested_saya`) is the caller that pins run paths.
-            &[],
-            &self.credentials,
-            self.resolver.as_ref(),
-            &self.cancellation,
-        )
-        .await
+        }
     }
 }

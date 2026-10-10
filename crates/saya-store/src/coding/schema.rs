@@ -84,3 +84,15 @@ pub(crate) async fn step14(connection: &mut PoolConnection<Sqlite>) -> Result<()
         .map_err(|_| StoreError::Unavailable)?;
     Ok(())
 }
+
+pub(crate) async fn step15(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE coding_budget_policies(job_id TEXT PRIMARY KEY REFERENCES coding_jobs(job_id) ON DELETE RESTRICT, policy_sha256 TEXT NOT NULL, policy_json TEXT NOT NULL CHECK(length(CAST(policy_json AS BLOB)) <= 65536))")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 15")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}

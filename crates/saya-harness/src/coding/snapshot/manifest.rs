@@ -1,4 +1,4 @@
-use std::{fmt, io::Write};
+use std::{error::Error, fmt, io::Write};
 
 use saya_types::{GitObjectId, RepositoryId, Sha256Digest, SnapshotId};
 use serde::Serialize;
@@ -124,8 +124,6 @@ pub enum SnapshotError {
     ArtifactPathInvalid,
     #[error("a snapshot with this id already exists in the artifacts root")]
     SnapshotExists,
-    #[error("snapshot artifact capture failed: {description}")]
-    CaptureIo { description: String },
     #[error(
         "the snapshot artifacts root is not a private directory or is unsupported on this platform"
     )]
@@ -134,6 +132,70 @@ pub enum SnapshotError {
     ManifestDigestMismatch,
     #[error("staged object bytes do not match their declared digest")]
     ObjectDigestMismatch,
+    #[error("the snapshot source no longer matches the planned identity")]
+    SourceIdentityChanged,
+    #[error("the planned snapshot source is gone")]
+    SourceDisappeared,
+    #[error("a symlink appeared at the snapshot source path; capture refuses without following")]
+    SourceSymlink,
+    #[error("the snapshot source is not a regular file")]
+    SourceNotRegularFile,
+    #[error("the snapshot entry is not a working-tree source")]
+    SourceNotWorkingTree,
+    #[error("snapshot capture io failed: {description}")]
+    CaptureIo {
+        description: String,
+        #[source]
+        source: Option<RedactedIoError>,
+    },
+}
+
+/// A redacted wrapper around an [`std::io::Error`] for capture failures: the
+/// kind and raw os code stay available, but the error's own message is never
+/// rendered — a caller sink's error text may carry a path or captured bytes.
+/// Debug prints only the kind and raw os code, Display is bounded and
+/// path-free, and [`Error::source`] is always `None`.
+pub struct RedactedIoError {
+    error: std::io::Error,
+}
+
+impl RedactedIoError {
+    /// Wraps `error` for redacted reporting.
+    pub fn new(error: std::io::Error) -> Self {
+        Self { error }
+    }
+
+    /// The wrapped error's [`std::io::ErrorKind`].
+    pub fn kind(&self) -> std::io::ErrorKind {
+        self.error.kind()
+    }
+}
+
+impl fmt::Debug for RedactedIoError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RedactedIoError")
+            .field("kind", &self.error.kind())
+            .field("raw_os_error", &self.error.raw_os_error())
+            .finish()
+    }
+}
+
+impl fmt::Display for RedactedIoError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = self.error.kind();
+        match self.error.raw_os_error() {
+            Some(code) => write!(formatter, "io error kind {kind} (os code {code})"),
+            None => write!(formatter, "io error kind {kind}"),
+        }
+    }
+}
+
+impl Error for RedactedIoError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        // The wrapped message is caller-supplied text and is never surfaced.
+        None
+    }
 }
 
 pub(crate) fn manifest_bytes(body: &SnapshotManifestBody) -> Result<Vec<u8>, SnapshotError> {

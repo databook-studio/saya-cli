@@ -6,7 +6,7 @@ use tokio::sync::Semaphore;
 
 use crate::runner::RunProgram;
 
-use super::CommandSession;
+use super::{CommandSession, input::CommandInput};
 
 pub const MAX_COMMAND_CONCURRENCY: usize = 2;
 
@@ -37,6 +37,30 @@ impl CommandOwner {
         argv: Vec<String>,
         timeout_seconds: NonZeroU64,
     ) -> Result<CommandSession, CommandStartError> {
+        self.start_inner(runner, program, argv, timeout_seconds, false)
+    }
+
+    /// Starts a runner with a bounded post-spawn stdin queue and explicit EOF.
+    /// This adds input control only; the caller-created RunProgram still
+    /// supplies the allowlist, credentials, timeout default, and proven spawn.
+    pub fn start_with_stdin(
+        &self,
+        runner: RunProgram,
+        program: String,
+        argv: Vec<String>,
+        timeout_seconds: NonZeroU64,
+    ) -> Result<CommandSession, CommandStartError> {
+        self.start_inner(runner, program, argv, timeout_seconds, true)
+    }
+
+    fn start_inner(
+        &self,
+        runner: RunProgram,
+        program: String,
+        argv: Vec<String>,
+        timeout_seconds: NonZeroU64,
+        stdin_enabled: bool,
+    ) -> Result<CommandSession, CommandStartError> {
         if self.cancellation.is_cancelled() {
             return Err(CommandStartError::OwnerStopped);
         }
@@ -46,6 +70,7 @@ impl CommandOwner {
         if self.cancellation.is_cancelled() {
             return Err(CommandStartError::OwnerStopped);
         }
+        let input = stdin_enabled.then(|| CommandInput::channel(self.cancellation.clone()));
         Ok(CommandSession::spawn(
             runner,
             program,
@@ -53,6 +78,7 @@ impl CommandOwner {
             timeout_seconds,
             self.cancellation.clone(),
             permit,
+            input,
         ))
     }
 
