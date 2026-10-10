@@ -167,6 +167,20 @@ fn cstring(name: &OsStr) -> io::Result<CString> {
     CString::new(name.as_bytes()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
 }
 
+/// Opens one stored stream file read-only for the cursor reader: the
+/// nonce directory by root fd, the stream file no-follow beneath it — a
+/// pre-placed symlink fails as a typed error, never followed. The caller
+/// verifies the opened descriptor is a regular file before use.
+pub(super) fn open_read_file(dir: &Path, stream: OutputStream) -> io::Result<fs::File> {
+    let dir_fd = open_root_fd(dir.as_os_str())?;
+    open_file_at(
+        dir_fd.as_raw_fd(),
+        OsStr::new(stream.file_name()),
+        libc::O_RDONLY | libc::O_NONBLOCK,
+        0,
+    )
+}
+
 /// Removes the nonce directory a failed preparation created: the stream
 /// files are unlinked through a no-follow open of the nonce directory,
 /// then the directory with `AT_REMOVEDIR` — all relative to the retained

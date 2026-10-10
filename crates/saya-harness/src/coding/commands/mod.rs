@@ -1,3 +1,4 @@
+mod cursor;
 mod input;
 mod lifecycle;
 mod output;
@@ -9,6 +10,7 @@ mod output_writer;
 mod process_state;
 mod session;
 
+pub use cursor::{CommandOutputCursor, CommandOutputRead};
 pub use input::{
     CommandInputError, MAX_COMMAND_INPUT_BYTES, MAX_COMMAND_INPUT_CHUNK_BYTES,
     MAX_COMMAND_INPUT_QUEUE_CHUNKS, StdinQueueReceipt,

@@ -199,6 +199,16 @@ impl CommandOutputStore {
         }
     }
 
+    /// One stream's sink, for the cursor reader's finish-state query and
+    /// running counters. Crate-private: exposes no file handles or paths.
+    #[cfg(unix)]
+    pub(super) fn sink(&self, stream: OutputStream) -> &Arc<StoreSink> {
+        match stream {
+            OutputStream::Stdout => &self.streams[0],
+            OutputStream::Stderr => &self.streams[1],
+        }
+    }
+
     /// The typed store accounting once both streams finished; `None` earlier.
     /// Cross-stream totals saturate at `u64::MAX` rather than wrap, matching
     /// the writer and sink accumulation policy.
