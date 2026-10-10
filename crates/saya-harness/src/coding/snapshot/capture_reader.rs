@@ -23,7 +23,7 @@ use super::{
 
 #[cfg(unix)]
 #[path = "capture_reader_error.rs"]
-mod reader_error;
+pub(super) mod reader_error;
 
 /// The streaming chunk size for read-and-hash.
 #[cfg(unix)]
@@ -37,6 +37,12 @@ pub struct CapturedFile {
 }
 
 impl CapturedFile {
+    /// Builds a captured-file record from a finished streaming digest and
+    /// its verified byte count.
+    pub(super) fn new(sha256: Sha256Digest, bytes: u64) -> Self {
+        Self { sha256, bytes }
+    }
+
     /// The lowercase SHA-256 of the captured bytes.
     pub fn sha256(&self) -> &Sha256Digest {
         &self.sha256

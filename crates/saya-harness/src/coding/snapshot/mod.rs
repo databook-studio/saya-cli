@@ -1,3 +1,4 @@
+mod capture_blob;
 mod capture_reader;
 mod facts;
 mod manifest;
@@ -6,6 +7,7 @@ mod select;
 mod select_support;
 mod types;
 
+pub use capture_blob::capture_head_blob;
 pub use capture_reader::{CapturedFile, read_working_file};
 pub use facts::{SnapshotChange, SnapshotStatusFact};
 pub use manifest::{RedactedIoError, SnapshotError, SnapshotManifest};

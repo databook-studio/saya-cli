@@ -40,7 +40,10 @@ pub(super) fn source_io(stage: &'static str, error: std::io::Error) -> SnapshotE
 /// name plus the io error kind, truncated to the cap. The original error
 /// rides as the redacted cause for programmatic consumers; the Display shows
 /// only the bounded description.
-pub(super) fn capture_io(stage: &'static str, source: std::io::Error) -> SnapshotError {
+pub(in crate::coding::snapshot) fn capture_io(
+    stage: &'static str,
+    source: std::io::Error,
+) -> SnapshotError {
     const MAX_DESCRIPTION_CHARS: usize = 128;
     let description: String = format!("{stage}: {}", source.kind())
         .chars()

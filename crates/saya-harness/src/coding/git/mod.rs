@@ -13,6 +13,7 @@ mod repository;
 mod repository_check;
 mod request;
 mod service;
+mod snapshot_blob;
 mod snapshot_input;
 mod snapshot_tree_parser;
 mod status_fields;
