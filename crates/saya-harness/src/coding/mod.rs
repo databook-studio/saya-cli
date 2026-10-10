@@ -13,6 +13,8 @@ pub mod child {
     };
 }
 
+pub mod commands;
+
 pub mod coordinator {
     mod api;
     mod event_projection;
