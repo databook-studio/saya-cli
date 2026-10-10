@@ -1,5 +1,10 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
+//! The materialization target contract: an empty private directory, or —
+//! for `git worktree add --no-checkout` — exactly one entry, a regular
+//! `.git` pointer file. The writer never creates, modifies, or rolls back
+//! `.git`; rollback removes only the entries this run created.
+
 use std::{
     collections::HashMap,
     ffi::{CString, OsStr},
@@ -21,7 +26,7 @@ use super::{
 };
 use crate::workspace::{
     Workspace,
-    fd::{DirStream, open_dir_at},
+    fd::{DirStream, open_dir_at, stat_at},
 };
 
 const MAX_ROOT_ENTRIES: usize = 4096;
@@ -62,6 +67,10 @@ impl<'a> TargetWriter<'a> {
     ) -> Result<fs::File, SnapshotError> {
         let path = path.as_str();
         let components: Vec<&str> = path.split('/').collect();
+        // Defence in depth: SnapshotPath::parse already refuses `.git` components.
+        if components[0].eq_ignore_ascii_case(".git") {
+            return Err(SnapshotError::UnsafePath);
+        }
         for depth in 0..components.len() - 1 {
             let prefix = components[..=depth].join("/");
             self.require_created_dir(&prefix)?;
@@ -146,6 +155,8 @@ impl<'a> TargetWriter<'a> {
         Ok(())
     }
 
+    /// Removes only the entries this run created, so a pre-existing `.git`
+    /// pointer file survives.
     pub(super) fn rollback(&mut self) -> Result<(), SnapshotError> {
         let mut failures = 0usize;
         for path in self.created_files.iter().rev() {
@@ -203,6 +214,8 @@ impl<'a> TargetWriter<'a> {
     }
 }
 
+/// Refuses every shape except empty, or exactly one regular-file `.git`
+/// entry — git's own `--no-checkout` worktree pointer, never content.
 fn ensure_empty(root: &fs::File) -> Result<(), SnapshotError> {
     let mut stream = DirStream::open_at(root.as_raw_fd(), OsStr::new("."))
         .map_err(|error| capture_io("list materialization target", &error))?;
@@ -213,6 +226,13 @@ fn ensure_empty(root: &fs::File) -> Result<(), SnapshotError> {
         match next? {
             None => return Ok(()),
             Some((name, _)) if name.as_bytes() == b"." || name.as_bytes() == b".." => continue,
+            Some((name, _)) if name.as_bytes() == b".git" => {
+                let final_stat = stat_at(root.as_raw_fd(), &name)
+                    .map_err(|_| SnapshotError::MaterializeTargetInvalid)?;
+                if !final_stat.is_file() {
+                    return Err(SnapshotError::MaterializeTargetInvalid);
+                }
+            }
             Some(_) => return Err(SnapshotError::MaterializeTargetInvalid),
         }
     }

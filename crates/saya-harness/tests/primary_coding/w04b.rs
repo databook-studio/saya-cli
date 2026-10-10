@@ -7,6 +7,8 @@
 mod materialize;
 #[path = "w04b/materialize_cleanup.rs"]
 mod materialize_cleanup;
+#[path = "w04b/materialize_gitfile.rs"]
+mod materialize_gitfile;
 #[path = "w04b/materialize_refusals.rs"]
 mod materialize_refusals;
 #[allow(dead_code)]
