@@ -9,6 +9,7 @@ use saya_types::{AgentId, BudgetDimension, InvocationId};
 #[derive(Clone, Copy)]
 pub(super) enum Settlement {
     Child(EffectOutcome),
+    Command(EffectOutcome),
 }
 
 pub(super) async fn finish(
@@ -25,6 +26,14 @@ pub(super) async fn finish(
                 state,
                 permit.get(),
                 vec![observation(BudgetDimension::ChildSlots, outcome, 1)],
+            )
+            .await?;
+        }
+        (PermitKind::Command, Settlement::Command(outcome)) => {
+            settle_one(
+                state,
+                permit.get(),
+                vec![observation(BudgetDimension::CommandSlots, outcome, 1)],
             )
             .await?;
         }

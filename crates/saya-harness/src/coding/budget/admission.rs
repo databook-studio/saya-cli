@@ -32,6 +32,7 @@ pub(super) enum PermitKind {
         group: NonZeroU64,
     },
     Child,
+    Command,
 }
 
 impl StoredPermit {
@@ -60,6 +61,7 @@ pub(super) async fn admit_one(
 ) -> Result<EffectPermit, EffectAdmissionError> {
     let charges = match dimension {
         BudgetDimension::ChildSlots => vec![(dimension, amount)],
+        BudgetDimension::CommandSlots => vec![(dimension, amount)],
         _ => return Err(EffectAdmissionError::Denied),
     };
     check_base(state, 1)?;
@@ -74,7 +76,10 @@ pub(super) async fn admit_one(
         id,
         StoredPermit {
             reservation: sequence,
-            kind: PermitKind::Child,
+            kind: match dimension {
+                BudgetDimension::CommandSlots => PermitKind::Command,
+                _ => PermitKind::Child,
+            },
             agent,
             invocation,
         },

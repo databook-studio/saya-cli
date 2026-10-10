@@ -16,6 +16,10 @@ use tokio::sync::Mutex;
 pub const MAX_LIVE_PERMITS: usize = 1_024;
 pub const MAX_RESERVATIONS: u64 = 10_000;
 
+/// Harness-side operational ceiling on concurrently active command slots;
+/// outside the authenticated budget policy, like `MAX_LIVE_PERMITS`.
+pub const MAX_COMMAND_SLOTS: u64 = 2;
+
 #[derive(Debug, Clone, Copy)]
 /// Finite job-wide admission ceilings for logical requests, actual sends,
 /// tools, active model/child slots, and elapsed time.
@@ -68,6 +72,7 @@ pub struct BudgetSnapshot {
     pub tool_calls: u64,
     pub model_slots_active: u64,
     pub child_slots_active: u64,
+    pub command_slots_active: u64,
     pub tool_permits_pending: u64,
     pub unknown_logical_requests: u64,
     pub unknown_transport_attempts: u64,
@@ -122,6 +127,7 @@ pub(super) struct Counts {
     pub(super) tools: u64,
     pub(super) model_slots: u64,
     pub(super) child_slots: u64,
+    pub(super) command_slots: u64,
 }
 
 #[derive(Default)]

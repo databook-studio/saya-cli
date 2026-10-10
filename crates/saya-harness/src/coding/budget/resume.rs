@@ -138,7 +138,12 @@ fn fold_record(
             BudgetDimension::ChildSlots if !released => {
                 add(&mut folded.counts.child_slots, amount)?
             }
-            BudgetDimension::ModelRequestSlots | BudgetDimension::ChildSlots => {}
+            BudgetDimension::CommandSlots if !released => {
+                add(&mut folded.counts.command_slots, amount)?
+            }
+            BudgetDimension::ModelRequestSlots
+            | BudgetDimension::ChildSlots
+            | BudgetDimension::CommandSlots => {}
             _ => return Err(BudgetLedgerError::ResumeRecordCorrupt),
         }
     }
@@ -159,6 +164,7 @@ fn fold_record(
                         folded.usage_ever_unknown = true;
                     }
                     BudgetDimension::ToolCalls => add(&mut folded.unknown_tool_calls, amount)?,
+                    // D5 residual: an Uncertain slot settlement is unresumable; R04 reconciles.
                     _ => return Err(BudgetLedgerError::ResumeRecordCorrupt),
                 }
             }
@@ -240,6 +246,7 @@ fn resumed_snapshot(folded: &Folded) -> BudgetSnapshot {
         tool_calls: folded.counts.tools,
         model_slots_active: folded.counts.model_slots,
         child_slots_active: folded.counts.child_slots,
+        command_slots_active: folded.counts.command_slots,
         unknown_logical_requests: folded.unknown_logical_requests,
         unknown_transport_attempts: folded.unknown_transport_attempts,
         unknown_tool_calls: folded.unknown_tool_calls,

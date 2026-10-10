@@ -4,6 +4,7 @@ mod accounting;
 mod admission;
 mod capacity;
 mod children;
+mod commands;
 mod fresh;
 mod ledger;
 mod reservations;
@@ -13,6 +14,7 @@ mod settlement;
 mod snapshot;
 mod tools;
 mod views;
+pub use commands::CommandPermit;
 pub use ledger::{
     BudgetLedgerError, BudgetSnapshot, ChildCountLimits, ChildSession, CountLimits,
     JobBudgetLedger, UsageCoverage,
