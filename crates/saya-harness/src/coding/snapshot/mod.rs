@@ -26,6 +26,7 @@ mod capture_dest;
 mod capture_dest_gc;
 mod capture_dest_private;
 mod capture_lock;
+mod capture_manifest_read;
 mod capture_object_sink;
 mod capture_publish;
 mod capture_staging;

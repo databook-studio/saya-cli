@@ -14,5 +14,11 @@ mod destination_commit;
 mod destination_rootlock;
 #[path = "w04/fixtures.rs"]
 mod fixtures;
+#[path = "w04/read.rs"]
+mod read;
+#[path = "w04/read_corrupt.rs"]
+mod read_corrupt;
+#[path = "w04/read_source.rs"]
+mod read_source;
 #[path = "w04/reader.rs"]
 mod reader;
