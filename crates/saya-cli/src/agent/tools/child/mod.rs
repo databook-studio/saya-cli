@@ -2,14 +2,18 @@
 #![allow(dead_code)] // consumed by R05b2
 
 mod executor;
+mod factory;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
+mod tests_factory;
+#[cfg(test)]
 mod tests_runner;
 
 pub(crate) use executor::{ChildTools, child_toolset, child_toolset_with_runner};
+pub(crate) use factory::CliChildFactory;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -68,4 +72,6 @@ pub(crate) enum ChildToolsError {
     CheckoutMismatch,
     #[error("the child authority does not admit the runner")]
     RunnerNotAdmitted,
+    #[error("no proven confinement carries the child's command scope")]
+    ConfinementMissing,
 }
