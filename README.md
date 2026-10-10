@@ -46,8 +46,8 @@ Schema browsing and `/sql` need no AI provider; to ask questions in plain
 language, configure one (see below). With `--reset` it rebuilds the
 fixture from scratch. For the whole journey — demo, setup, a trap question,
 save, export, import on a second machine, and a stale-review refusal —
-scripted end to end with its recorded output, see
-[docs/walkthrough.md](docs/walkthrough.md).
+[`scripts/walkthrough.sh`](scripts/walkthrough.sh) runs and prints the
+command-line journey.
 
 ## Connect your own database
 

@@ -161,7 +161,7 @@ PostgreSQL, MySQL, SQLite, DuckDB, and BigQuery bind natively; Snowflake binds
 with keypair auth only; ClickHouse refuses parameterised SQL (fixed SQL still
 works). `investigation edit --param-spec` replaces the declaration list (a new
 revision, so the next run needs `--revalidate`), and `/investigation run <id>
---param …` works in the TUI. → [ADR 0005](docs/adr-0005-typed-query-parameters.md)
+--param …` works in the TUI.
 
 **Portable context: export, import, and dbt.** Confirmed context now travels:
 
@@ -185,7 +185,7 @@ v10–v12 (≤ 32 MiB, ≤ 5,000 selected nodes) and maps exactly three things �
 node descriptions, column descriptions, and the `relationships` generic test
 (stored as join rules) — with nothing executed. The slash forms
 (`/contracts export|import|import-dbt`) run the same operations against the
-active profile. → [ADR 0006](docs/adr-0006-portable-context-and-dbt.md)
+active profile.
 
 **Clarification instead of assuming.** When a question's material definition
 is ambiguous and confirmed context does not resolve it, the agent may ask one
@@ -227,7 +227,6 @@ refused by the same read-only gate, and a stale review is reported, never
 revalidated, from the wire. Client setup snippets for opencode, codex, and
 Claude Code are in
 [commands](docs/commands.md#mcp-saya-mcp-serve).
-→ [ADR 0008](docs/adr-0008-mcp-server.md)
 
 **Reopened work: the investigation picker and `edit`.** `/investigations` in
 the TUI opens a searchable picker over the saved investigations (filter as
@@ -254,8 +253,8 @@ list — leaving the review binding on the old revision, so the next run needs
   knowledge, scoped to the canonical worktree: 64 preferences, 1 KiB of text
   each, 16 KiB sent per request, secret-shaped text refused, never
   model-created, never a permission.
-- **Copy-ready instruction examples** verified against the binary live in
-  [docs/instruction-examples/](docs/instruction-examples/README.md).
+- The copy-ready instruction examples are verified against the binary; see
+  [`crates/saya-cli/tests/fixtures/instruction-examples/README.md`](crates/saya-cli/tests/fixtures/instruction-examples/README.md).
 
 **Sessions & continuity**
 
@@ -406,7 +405,7 @@ list — leaving the review binding on the old revision, so the next run needs
   families, and the rest — not just `read_*`. Matched per identifier part,
   so schema-qualified or re-quoted spellings cannot bypass. This is what
   lets a staged file snapshot promise it is the only data the session can
-  see ([ADR 0007](docs/adr-0007-file-sources.md)).
+  see.
 - **`/export` no longer overwrites an existing file silently.** It used to
   clobber the destination on every call; it now refuses an existing
   destination unless `--overwrite` is passed, refuses directory and symlink

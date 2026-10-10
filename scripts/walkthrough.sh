@@ -19,7 +19,7 @@
 # SAYA_INVESTIGATIONS_DIR, so the export/import leg really crosses between
 # two environments. Every command is printed before its output, every exit
 # code is checked against the expected one, and any unexpected result exits
-# non-zero. docs/walkthrough.md embeds the recorded output of this script.
+# non-zero. The script prints the complete recorded CLI journey.
 
 set -u -o pipefail
 

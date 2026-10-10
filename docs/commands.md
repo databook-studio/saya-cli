@@ -11,7 +11,7 @@ commands `/sessions`, `/preferences`, `/notes`, `/recovery`, `/rotate`,
 into requests: names, sizes, truncation and redaction counts, never their
 text, plus why any source was skipped (symlink, not a regular file, too
 large, not UTF-8, unreadable) or omitted for budget, and the effective
-settings. These files carry project guidance, never permissions. Copy-ready instruction files verified against the binary: [instruction-examples/README.md](instruction-examples/README.md).
+settings. These files carry project guidance, never permissions. The [copy-ready instruction examples](../crates/saya-cli/tests/fixtures/instruction-examples/README.md) are verified against the binary.
 
 Examples:
 
@@ -393,7 +393,7 @@ network activity); ClickHouse refuses parameterised SQL — fixed
 (parameter-free) SQL works unchanged. `investigation edit --param-spec`
 replaces the whole declaration list (a new revision, so the next run needs
 `--revalidate`), and `/investigation run <id> --param name=value` works in
-the TUI. → [ADR 0005](adr-0005-typed-query-parameters.md)
+the TUI.
 
 The review is bound to the definition's revision, the target profile's
 identity, and the schema fingerprint of the referenced tables. When any of
@@ -890,8 +890,6 @@ saya open --cleanup all               # or a SHA-256 prefix naming exactly one
   ambiguous; foreign files survive). Cleanup is manual — nothing expires
   automatically.
 
-→ [ADR 0007](adr-0007-file-sources.md)
-
 ## MCP: `saya mcp serve`
 
 `saya mcp serve` exposes saya's read-only capabilities to MCP hosts over
@@ -1006,9 +1004,6 @@ codex -c mcp_servers.saya.command='"saya"' \
 ```bash
 claude mcp add saya -- saya mcp serve --profile analytics
 ```
-
-→ [ADR 0008](adr-0008-mcp-server.md) records the design and the client
-validation.
 
 `/export [--snapshot|--refresh] [--overwrite] <path>` writes rows to a
 `.csv` or `.json` file (chosen by extension):

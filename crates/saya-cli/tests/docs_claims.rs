@@ -8,17 +8,10 @@
 //!   with the expected numbers built from the config constants;
 //! - the 1 KiB preference text bound is asserted through behaviour (the
 //!   64-item cap is already covered by `saya-types/tests/project_preference.rs`);
-//! - ADR 0009 exists, names each documented command, cites only files that
-//!   exist, and states the bounds whose constants are private to `saya-cli`
-//!   (each of those is guarded behaviourally by an existing unit test; see
-//!   the constants' own modules). The bounds whose constants are `pub` are
-//!   pinned in each owning crate's `tests/adr_bounds.rs`.
 //!
 //! No model and no TTY: every run is a slash command or a preferences
 //! subcommand, and the provider env points at a dead address.
 
-#[path = "docs_claims/adr.rs"]
-mod adr;
 #[path = "docs_claims/context_limits.rs"]
 mod context_limits;
 #[path = "docs_claims/help.rs"]

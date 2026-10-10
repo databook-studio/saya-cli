@@ -187,9 +187,6 @@ defaults to the active profile; pass it to target another one.
   reported rather than guessed. Relationships file as keyed join rules — the
   cardinality a document carries is dropped, nothing in the store keeps it.
 
-→ [ADR 0006](adr-0006-portable-context-and-dbt.md) records why imports always
-land Pending and what the dbt path deliberately does not map.
-
 ## What SAYA stores, and what it never stores
 
 Stored: the object's qualified name, the profile identity, the slot, a typed value, who said it

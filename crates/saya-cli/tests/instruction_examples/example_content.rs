@@ -36,24 +36,6 @@ fn each_example_loads_and_context_reports_it_without_its_body() {
 /// below the 32 KiB project cap so a user's own additions still fit.
 #[test]
 fn each_example_is_far_below_the_project_cap() {
-    let canonical_docs =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/instruction-examples");
-    for (filename, fixture) in [
-        ("README.md", README),
-        ("fix-failing-test.md", FIX_FAILING_TEST),
-        ("review-sql-query.md", REVIEW_SQL_QUERY),
-        ("review-dbt-model.md", REVIEW_DBT_MODEL),
-    ] {
-        let canonical = canonical_docs.join(filename);
-        if canonical.is_file() {
-            assert_eq!(
-                std::fs::read(&canonical).unwrap().as_slice(),
-                fixture.as_bytes(),
-                "packaged fixture {filename} must match its canonical workspace doc"
-            );
-        }
-    }
-
     for body in EXAMPLES {
         assert!(
             body.len() < 8 * 1024,
