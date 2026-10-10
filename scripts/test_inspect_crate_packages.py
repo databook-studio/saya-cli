@@ -28,7 +28,7 @@ CRATES = [
     "saya-harness",
     "saya-cli",
 ]
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 STUB_CARGO_VERSION = "cargo 9.9.9 (inspect-test-stub)"
 
 CARGO_STUB = """#!/usr/bin/env bash
