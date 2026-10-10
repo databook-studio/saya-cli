@@ -93,7 +93,7 @@ async fn finish(
     }
 }
 
-async fn admit_reservation(
+pub(super) async fn admit_reservation(
     transaction: &mut Transaction<'_, Sqlite>,
     reservation: &BudgetReservationV1,
 ) -> Result<(), StoreError> {

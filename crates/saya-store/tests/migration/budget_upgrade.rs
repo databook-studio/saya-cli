@@ -79,7 +79,7 @@ async fn upgrade_from_eleven_preserves_coding_events_and_child_metadata() {
         vec![running]
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 13);
+    assert_eq!(user_version(&db).await, 14);
     assert!(table_exists(&db, "coding_budget_reservations").await);
     let _ = fs::remove_dir_all(root);
 }

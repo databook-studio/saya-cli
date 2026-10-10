@@ -1,5 +1,8 @@
 //! Durable, payload-free metadata for native coding jobs.
 
+mod approval_consumption;
+mod approval_records;
+mod approvals;
 mod budget_records;
 mod budgets;
 mod checkout_event;
@@ -12,6 +15,11 @@ mod records;
 mod replay;
 pub(crate) mod schema;
 
+pub use approval_consumption::{CodingApprovalConsumptionAppend, CodingApprovalConsumptionReceipt};
+pub use approval_records::{
+    CodingApprovalClosure, CodingApprovalRequestPage, CodingApprovalRequestRecord,
+};
+pub use approvals::CodingApprovalConsumptionContext;
 pub use budget_records::{CodingBudgetReservationPage, CodingBudgetReservationRecord};
 pub use checkout_operations::MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB;
 pub use checkout_reads::CheckoutOperationPage;
