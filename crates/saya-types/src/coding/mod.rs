@@ -1,12 +1,22 @@
 //! Shared identity and lifecycle contracts for native coding jobs.
 
+mod budget;
+mod budget_settlement;
+mod budget_values;
 mod check_receipts;
+mod control_wire;
 mod digest;
 mod events;
 mod ids;
 mod jobs;
 mod receipts;
 
+pub use budget::{BUDGET_RESERVATION_VERSION, BudgetError, BudgetReservationV1};
+pub use budget_settlement::{BUDGET_SETTLEMENT_VERSION, BudgetEffectState, BudgetSettlementV1};
+pub use budget_values::{
+    BudgetCharge, BudgetDimension, BudgetObservation, BudgetObservationValue,
+    MAX_BUDGET_ENDPOINT_BYTES, MAX_BUDGET_ENTRIES,
+};
 pub use check_receipts::{
     CHECK_RECEIPT_VERSION, CheckReceiptV1, CodingCheckOutcome, MAX_CHECK_RECEIPT_BYTES,
 };
