@@ -20,3 +20,5 @@ mod w06b;
 mod w07;
 #[path = "primary_coding/w08.rs"]
 mod w08;
+#[path = "primary_coding/w09.rs"]
+mod w09;
