@@ -6,6 +6,8 @@ mod delta;
 mod delta_edges;
 #[path = "w07/paths.rs"]
 mod paths;
+#[path = "w07/receipt.rs"]
+mod receipt;
 
 #[allow(dead_code)]
 #[path = "w05/create_support.rs"]
