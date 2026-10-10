@@ -18,8 +18,9 @@ use crate::runner::{
     CommandProcessState, ProgramOutcome, RunProgram, stdin_channel::StdinInputPipe,
 };
 
+use super::cursor::{CommandOutputCursor, CommandOutputRead};
 use super::input::{CommandInput, CommandInputError, StdinQueueReceipt};
-use super::output::{CommandOutputStatus, CommandOutputStore};
+use super::output::{CommandOutputError, CommandOutputStatus, CommandOutputStore};
 #[path = "session_errors.rs"]
 mod errors;
 pub use errors::CommandSessionError;
@@ -144,9 +145,25 @@ impl CommandSession {
     /// The nonce-named directory holding this session's stored command
     /// output, when the session was started with an output store. The
     /// per-stream files inside are named by `OutputStream::file_name`;
-    /// bounded reads belong to `CommandSession::read_output` (C02b).
+    /// bounded reads are `CommandSession::read_output`.
     pub fn output_dir(&self) -> Option<PathBuf> {
         self.output.as_ref().map(|store| store.dir().to_path_buf())
+    }
+
+    /// Serves at most `max_bytes` stored bytes from `cursor` — the bounded
+    /// redacted output read (C02b). A session started without an output
+    /// store is typed `Unavailable`; the store read path reports the rest
+    /// (closed store, invalid cursor, oversized read, store failure) itself.
+    pub fn read_output(
+        &self,
+        cursor: CommandOutputCursor,
+        max_bytes: usize,
+    ) -> Result<CommandOutputRead, CommandOutputError> {
+        let store = self
+            .output
+            .as_ref()
+            .ok_or(CommandOutputError::Unavailable)?;
+        store.read(cursor, max_bytes)
     }
 
     /// The typed output-store accounting once the run's outcome is settled and

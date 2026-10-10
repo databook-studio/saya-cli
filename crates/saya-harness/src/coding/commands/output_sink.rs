@@ -153,6 +153,20 @@ impl StoreSink {
         }
     }
 
+    /// The raw total the cursor reader reports while the stream still
+    /// writes, straight from the atomic.
+    #[cfg(unix)]
+    pub(super) fn running_raw_total_bytes(&self) -> u64 {
+        self.raw_total_bytes.load(Ordering::Acquire)
+    }
+
+    /// The channel-rejected drops the cursor reader reports while the
+    /// stream still writes, straight from the atomic.
+    #[cfg(unix)]
+    pub(super) fn running_dropped_bytes(&self) -> u64 {
+        self.dropped_bytes.load(Ordering::Acquire)
+    }
+
     /// Shared finalisation: takes the single writer slot once, joins the
     /// writer unboundedly or within the bound, and records the typed
     /// result. Drop accounting is summed here: `dropped_bytes` is the
