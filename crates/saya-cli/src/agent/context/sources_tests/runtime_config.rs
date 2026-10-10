@@ -73,6 +73,7 @@ fn wiring_ai(context_byte_budget: usize) -> ResolvedAi {
 fn wiring_runtime(context_byte_budget: usize) -> RuntimeConfig {
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: ResolvedInstructions {
                 project_enabled: true,
                 personal_enabled: false,

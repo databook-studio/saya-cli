@@ -90,6 +90,7 @@ fn record_ai(context_byte_budget: usize, allow_data_sharing: bool) -> ResolvedAi
 fn record_runtime(context_byte_budget: usize, allow_data_sharing: bool) -> RuntimeConfig {
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: saya_config::ResolvedInstructions {
                 project_enabled: true,
                 personal_enabled: false,
