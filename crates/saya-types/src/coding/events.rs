@@ -3,24 +3,14 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{AgentId, CodingResultOutcome, InvocationId, JobId, JobState, Sha256Digest};
+use super::event_kinds::WireCodingEventKind;
+use super::event_validation::validate_event;
+use super::{AgentId, InvocationId, JobId};
+
+pub use super::event_kinds::{ApprovalDisposition, CodingEventKind};
 
 pub const CODING_EVENT_VERSION: u32 = 1;
 pub const MAX_CODING_EVENT_BYTES: usize = 64 * 1024;
-
-/// A typed coding event payload. State transition policy remains with storage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-#[non_exhaustive]
-pub enum CodingEventKind {
-    StateChanged {
-        state: JobState,
-    },
-    ResultReported {
-        source_sha256: Sha256Digest,
-        outcome: CodingResultOutcome,
-    },
-}
 
 /// One strictly versioned event. Sequence allocation and durable ordering
 /// belong to saya-store.
@@ -49,14 +39,23 @@ impl CodingEventV1 {
         if (invocation_id.is_some() && agent_id.is_none()) || result_without_child {
             return Err(CodingEventError::InvalidIdentity);
         }
-        Ok(Self {
+        validate_event(
+            sequence,
+            &job_id,
+            agent_id.as_ref(),
+            invocation_id.as_ref(),
+            &event,
+        )?;
+        let value = Self {
             version: CODING_EVENT_VERSION,
             sequence,
             job_id,
             agent_id,
             invocation_id,
             event,
-        })
+        };
+        value.check_size()?;
+        Ok(value)
     }
 
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, CodingEventError> {
@@ -73,28 +72,29 @@ impl CodingEventV1 {
         if raw.version != CODING_EVENT_VERSION {
             return Err(CodingEventError::UnsupportedVersion(raw.version));
         }
-        let event = match raw.event {
-            WireCodingEventKind::StateChanged { state } => CodingEventKind::StateChanged { state },
-            WireCodingEventKind::ResultReported {
-                source_sha256,
-                outcome,
-            } => CodingEventKind::ResultReported {
-                source_sha256: Sha256Digest::parse(&source_sha256)
-                    .map_err(|_| CodingEventError::InvalidDigest)?,
-                outcome,
-            },
-        };
         Self::new(
             raw.sequence,
             raw.job_id,
             raw.agent_id,
             raw.invocation_id,
-            event,
+            raw.event.into_public()?,
         )
     }
 
     pub fn to_json_bytes(&self) -> Result<Vec<u8>, CodingEventError> {
-        serde_json::to_vec(self).map_err(|_| CodingEventError::Malformed)
+        let bytes = serde_json::to_vec(self).map_err(|_| CodingEventError::Malformed)?;
+        if bytes.len() > MAX_CODING_EVENT_BYTES {
+            return Err(CodingEventError::Oversize(bytes.len()));
+        }
+        Ok(bytes)
+    }
+
+    fn check_size(&self) -> Result<(), CodingEventError> {
+        let bytes = serde_json::to_vec(self).map_err(|_| CodingEventError::Malformed)?;
+        if bytes.len() > MAX_CODING_EVENT_BYTES {
+            return Err(CodingEventError::Oversize(bytes.len()));
+        }
+        Ok(())
     }
 
     pub fn sequence(&self) -> NonZeroU64 {
@@ -136,18 +136,6 @@ struct WireCodingEvent {
     event: WireCodingEventKind,
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum WireCodingEventKind {
-    StateChanged {
-        state: JobState,
-    },
-    ResultReported {
-        source_sha256: String,
-        outcome: CodingResultOutcome,
-    },
-}
-
 /// Why a coding event could not be constructed or decoded.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
@@ -162,4 +150,6 @@ pub enum CodingEventError {
     InvalidIdentity,
     #[error("coding event source digest is not valid lowercase SHA-256")]
     InvalidDigest,
+    #[error("coding event outer identity or sequence does not match its control record")]
+    InvalidEventLink,
 }

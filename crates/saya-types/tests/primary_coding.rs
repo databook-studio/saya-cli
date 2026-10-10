@@ -16,3 +16,9 @@ mod a06_budget_wire;
 mod a06_checkouts;
 #[path = "primary_coding/a06_checkouts_values.rs"]
 mod a06_checkouts_values;
+#[path = "primary_coding/a06d_event_links.rs"]
+mod a06d_event_links;
+#[path = "primary_coding/a06d_events.rs"]
+mod a06d_events;
+#[path = "primary_coding/a06d_limits.rs"]
+mod a06d_limits;

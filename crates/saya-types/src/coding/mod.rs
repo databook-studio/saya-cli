@@ -11,6 +11,8 @@ mod checkout_values;
 mod checkouts;
 mod control_wire;
 mod digest;
+mod event_kinds;
+mod event_validation;
 mod events;
 mod ids;
 mod jobs;
@@ -18,7 +20,7 @@ mod receipts;
 
 pub use approval_scope::{
     ApprovalNetworkDestination, ApprovalNetworkScheme, ApprovalScope, ApprovalScopeError,
-    RepositoryMutationAction,
+    RepositoryMutationAction, WorkspacePath,
 };
 pub use approvals::{
     APPROVAL_REQUEST_VERSION, ApprovalRequestContext, ApprovalRequestError, ApprovalRequestV1,
@@ -46,7 +48,8 @@ pub use checkouts::{
 };
 pub use digest::{DigestError, Sha256Digest};
 pub use events::{
-    CODING_EVENT_VERSION, CodingEventError, CodingEventKind, CodingEventV1, MAX_CODING_EVENT_BYTES,
+    ApprovalDisposition, CODING_EVENT_VERSION, CodingEventError, CodingEventKind, CodingEventV1,
+    MAX_CODING_EVENT_BYTES,
 };
 pub use ids::{AgentId, InvocationId, JobId, ManagedCheckoutId, RepositoryId, SnapshotId};
 pub use jobs::{JobState, JobStateTransitionError};
