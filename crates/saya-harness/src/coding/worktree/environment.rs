@@ -9,7 +9,9 @@
 //! is the only place a confined child's environment is ever built: there is
 //! no constructor, parameter or accessor that adds a variable or a
 //! credential, so the child's secret surface is empty by construction, not
-//! by discipline.
+//! by discipline. [`ChildEnvironment::variables`] is the single source of
+//! those six variables; [`ChildEnvironment::apply`] is the only place the
+//! environment is applied to a command.
 //!
 //! `HOME`, `TMPDIR` and `XDG_CONFIG_HOME` point at private `0700`
 //! directories under `<checkout>/.saya` — the single sandbox root the
@@ -122,21 +124,36 @@ impl ChildEnvironment {
         ChildNetworkPolicy::NoEgress
     }
 
+    /// The six variables a confined child command may see, in the order
+    /// [`ChildEnvironment::apply`] sets them: `PATH` (the program
+    /// directory), `HOME`, `TMPDIR` and `XDG_CONFIG_HOME` (inside the
+    /// checkout's private `.saya` tree) and `LC_ALL`, `LANG` pinned to `C`.
+    /// This is the only source of the six variables; every path that hands
+    /// the environment to a command goes through here.
+    pub(crate) fn variables(&self) -> [(&'static str, std::path::PathBuf); 6] {
+        [
+            ("PATH", self.program_dir.clone()),
+            ("HOME", self.home.clone()),
+            ("TMPDIR", self.tmpdir.clone()),
+            ("XDG_CONFIG_HOME", self.home.clone()),
+            ("LC_ALL", PathBuf::from("C")),
+            ("LANG", PathBuf::from("C")),
+        ]
+    }
+
     /// Applies the child environment to `command`.
     ///
     /// Every inherited variable is cleared first, then exactly the six
-    /// allowlisted variables are set: `PATH` is the program directory,
-    /// `HOME`, `TMPDIR` and `XDG_CONFIG_HOME` point inside the checkout's
-    /// private `.saya` tree, and `LC_ALL` and `LANG` are pinned to `C` for
-    /// deterministic child output. Nothing else is set.
+    /// allowlisted variables from [`ChildEnvironment::variables`] are set —
+    /// the program directory as `PATH`, private directories inside the
+    /// checkout's `.saya` tree as `HOME`, `TMPDIR` and `XDG_CONFIG_HOME`,
+    /// and `LC_ALL` and `LANG` pinned to `C` for deterministic child
+    /// output. Nothing else is set.
     pub fn apply(&self, command: &mut std::process::Command) {
         command.env_clear();
-        command.env("PATH", &self.program_dir);
-        command.env("HOME", &self.home);
-        command.env("TMPDIR", &self.tmpdir);
-        command.env("XDG_CONFIG_HOME", &self.home);
-        command.env("LC_ALL", "C");
-        command.env("LANG", "C");
+        for (name, value) in self.variables() {
+            command.env(name, value);
+        }
     }
 }
 

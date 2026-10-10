@@ -4,6 +4,8 @@ mod a04;
 mod r05a;
 #[path = "primary_coding/r05a_boundaries.rs"]
 mod r05a_boundaries;
+#[path = "primary_coding/r05b2.rs"]
+mod r05b2;
 #[path = "primary_coding/w01.rs"]
 mod w01;
 #[path = "primary_coding/w04b.rs"]

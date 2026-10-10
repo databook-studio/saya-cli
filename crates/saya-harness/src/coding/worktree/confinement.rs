@@ -16,15 +16,22 @@
 //! only the child environment's six variables (`HOME`, `LANG`, `LC_ALL`,
 //! `PATH`, `TMPDIR`, `XDG_CONFIG_HOME`); the harness process's environment is
 //! never inherited, so no provider, database, cloud, SSH or proxy secret can
-//! reach the child.
+//! reach the child. The confinement hands out capability only in
+//! already-confined form: [`ConfinedCheckout::platform_support`] states the
+//! trusted host support the proof establishes, and
+//! [`ConfinedCheckout::runner_tool`] gives the child run_program tool with
+//! that same environment pinned at spawn.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use saya_types::ManagedCheckoutId;
+use saya_types::{InterpreterScope, ManagedCheckoutId, RunnerScope};
 
+use crate::coding::policy::{CommandCheckoutProfile, PlatformSupport};
 use crate::coding::worktree::{ChildEnvironment, ChildEnvironmentError, VerifiedCheckout};
 use crate::runner::sandbox::{RunSandbox, RunnerSpawn, SandboxError, SandboxProvision};
+use crate::runner::{RunProgram, SharedCredentialSource};
 
 /// A spawn configuration proven for exactly one verified managed checkout.
 ///
@@ -61,6 +68,53 @@ impl ConfinedCheckout {
         let mut command = self.spawn.command(program);
         self.environment.apply(&mut command);
         command
+    }
+
+    /// The trusted host support this proven confinement establishes:
+    /// commands under an isolated private checkout, edits confined to
+    /// exactly that checkout, no network, no database reads. The presence of
+    /// a [`ConfinedCheckout`] is itself the proof — `confine_checkout`
+    /// refuses everything not proven (single root, empty network) — so this
+    /// only states what the evidence already establishes.
+    pub fn platform_support(&self) -> PlatformSupport {
+        PlatformSupport {
+            workspace_edits: true,
+            command_profile: Some(CommandCheckoutProfile::IsolatedPrivateCheckout),
+            network_fetch: false,
+            database_reads: false,
+        }
+    }
+
+    /// The child run_program tool over this confinement: the proven spawn,
+    /// the caller-narrowed scopes, and the confinement's child environment
+    /// handed out in already-confined form. The environment's variables are
+    /// pinned after the spawn's `env_clear` and before credentials, so the
+    /// child's whole environment is exactly those six variables and its
+    /// credentials stay empty — `with_credentials` is never called here.
+    ///
+    /// `record_dir` MUST be a trusted directory outside the confined
+    /// checkout (the composition root's private run-record directory): the
+    /// host writes outcome records there, so a directory inside the checkout
+    /// would let a child redirect host writes with a symlink and would show
+    /// up as an unassigned change at receipt time; it is never defaulted
+    /// into the checkout.
+    pub fn runner_tool(
+        &self,
+        runner: Option<RunnerScope>,
+        interpreters: Option<InterpreterScope>,
+        default_timeout: Duration,
+        resolver: SharedCredentialSource,
+        record_dir: PathBuf,
+    ) -> RunProgram {
+        RunProgram::for_step(
+            self.spawn.clone(),
+            runner,
+            interpreters,
+            default_timeout,
+            resolver,
+        )
+        .with_pinned_env(self.environment.variables().to_vec())
+        .with_record_dir(record_dir)
     }
 }
 
