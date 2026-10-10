@@ -74,6 +74,9 @@ pub struct RunProgram {
     /// for none — every refused name keeps the runner's byte-identical
     /// refusal.
     interpreters: Option<InterpreterScope>,
+    /// Environment pairs pinned onto every child: set after the spawn's
+    /// `env_clear` and before the credentials.
+    pinned_env: Vec<(&'static str, PathBuf)>,
     credentials: Vec<Credential>,
     resolver: SharedCredentialSource,
     default_timeout: Duration,
@@ -109,6 +112,7 @@ impl RunProgram {
             spawn,
             runner,
             interpreters,
+            pinned_env: Vec::new(),
             credentials: Vec::new(),
             resolver,
             default_timeout,
@@ -120,6 +124,14 @@ impl RunProgram {
     /// only what is on this list can ever reach a child's environment.
     pub fn with_credentials(mut self, credentials: Vec<Credential>) -> Self {
         self.credentials = credentials;
+        self
+    }
+
+    /// Pins environment pairs onto every child: the pairs are set after the
+    /// spawn's `env_clear` and before credentials — a confined child's whole
+    /// environment; credentials stay empty for children.
+    pub(crate) fn with_pinned_env(mut self, pairs: Vec<(&'static str, PathBuf)>) -> Self {
+        self.pinned_env = pairs;
         self
     }
 

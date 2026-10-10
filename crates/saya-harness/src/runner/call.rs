@@ -32,10 +32,10 @@ impl RunProgram {
         spawn::run(
             &self.spawn,
             call,
-            // A run_program child pins nothing: its environment is the
-            // declared credentials and nothing else. The nested re-entry
-            // (`nested_saya`) is the caller that pins run paths.
-            &[],
+            // A run_program child pins nothing unless the confinement handed
+            // it its child environment. The nested re-entry (`nested_saya`)
+            // is the caller that pins run paths.
+            &self.pinned_env,
             &self.credentials,
             self.resolver.as_ref(),
             &self.cancellation,
@@ -56,7 +56,7 @@ impl RunProgram {
         let result = spawn::run_command(
             &self.spawn,
             call,
-            &[],
+            &self.pinned_env,
             &self.credentials,
             self.resolver.as_ref(),
             &self.cancellation,
