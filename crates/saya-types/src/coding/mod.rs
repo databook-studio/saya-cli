@@ -6,6 +6,9 @@ mod budget;
 mod budget_settlement;
 mod budget_values;
 mod check_receipts;
+mod checkout_operation;
+mod checkout_values;
+mod checkouts;
 mod control_wire;
 mod digest;
 mod events;
@@ -29,6 +32,17 @@ pub use budget_values::{
 };
 pub use check_receipts::{
     CHECK_RECEIPT_VERSION, CheckReceiptV1, CodingCheckOutcome, MAX_CHECK_RECEIPT_BYTES,
+};
+pub use checkout_operation::{
+    CHECKOUT_OPERATION_VERSION, CheckoutOperationState, CheckoutOperationV1,
+};
+pub use checkout_values::{
+    CheckoutValueError, GitObjectId, MAX_MANAGED_CHECKOUT_PATH_BYTES, ManagedCheckoutLifecycle,
+    ManagedCheckoutPath,
+};
+pub use checkouts::{
+    CheckoutDtoError, MANAGED_CHECKOUT_RECORD_VERSION, MAX_CHECKOUT_RECORD_BYTES,
+    ManagedCheckoutRecordData, ManagedCheckoutRecordV1,
 };
 pub use digest::{DigestError, Sha256Digest};
 pub use events::{
