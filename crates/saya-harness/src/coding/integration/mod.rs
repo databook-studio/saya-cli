@@ -1,11 +1,13 @@
 //! Integration receipts: shared assigned-path contracts and the actual checkout delta.
 
+mod candidate;
 mod delta;
 mod delta_types;
 mod delta_walk;
 mod paths;
 mod receipt;
 
+pub use candidate::{CandidateError, CandidateIdentity, candidate_source_digest};
 pub use delta::compute_delta;
 pub use delta_types::{CheckoutDelta, DEFAULT_DELTA_DEADLINE, DeltaError, DeltaKind, PathDelta};
 pub use paths::{
