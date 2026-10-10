@@ -19,8 +19,12 @@ mod schema;
 mod session_tasks;
 
 pub use coding::{
-    AgentId, CodingIdError, InvocationId, JobId, JobState, JobStateTransitionError,
-    ManagedCheckoutId, RepositoryId, SnapshotId,
+    AgentId, CHECK_RECEIPT_VERSION, CODING_EVENT_VERSION, CheckReceiptV1, CodingCheckOutcome,
+    CodingEventError, CodingEventKind, CodingEventV1, CodingIdError, CodingResultOutcome,
+    DigestError, InvocationId, JobId, JobState, JobStateTransitionError, MAX_CHECK_RECEIPT_BYTES,
+    MAX_CODING_EVENT_BYTES, MAX_RECEIPT_PATH_BYTES, MAX_RECEIPT_PATH_SET_BYTES, MAX_RECEIPT_PATHS,
+    MAX_RECEIPT_REFERENCE_BYTES, MAX_RESULT_RECEIPT_BYTES, ManagedCheckoutId,
+    RESULT_RECEIPT_VERSION, ReceiptError, RepositoryId, ResultReceiptV1, Sha256Digest, SnapshotId,
 };
 pub use context_doc::{
     CONTEXT_FORMAT, CONTEXT_FORMAT_VERSION, ContextDocumentV1, ContextError, ContextItem,
