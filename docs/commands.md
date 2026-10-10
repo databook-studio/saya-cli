@@ -979,6 +979,11 @@ arguments: mcp serve --profile analytics
 transport: stdio
 ```
 
+For host-specific setup, consult the official MCP configuration references for
+[OpenCode](https://docs.opencode.ai/docs/mcp-servers/),
+[Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), and
+[Claude Code](https://code.claude.com/docs/en/mcp).
+
 The `--profile` values fix the server’s startup allowlist. Add
 `--allow-data-sharing` only when row-returning tools are permitted.
 
