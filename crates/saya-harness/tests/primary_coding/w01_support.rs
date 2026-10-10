@@ -29,7 +29,7 @@ impl TempRoot {
         fs::create_dir(&root).expect("temporary root is new");
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
             .expect("temporary root is private");
-        Self(root)
+        Self(fs::canonicalize(root).expect("temporary root resolves canonically"))
     }
 
     pub fn path(&self) -> &Path {

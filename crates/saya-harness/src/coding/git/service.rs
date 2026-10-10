@@ -6,6 +6,7 @@ use std::{
 use saya_agent::CancellationToken;
 use saya_types::{ManagedCheckoutId, ManagedCheckoutPath};
 use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::Instant;
 
 use super::{
     command::{GitError, GitOperation, GitRepository, require_success},
@@ -73,9 +74,29 @@ impl GitService {
     }
 
     async fn read_version(&self, cancellation: &CancellationToken) -> Result<String, GitError> {
-        let output = self
-            .run_request(&self.environment.root, GitRequest::Version, cancellation)
-            .await?;
+        self.read_version_with_deadline(cancellation, None).await
+    }
+
+    async fn read_version_with_deadline(
+        &self,
+        cancellation: &CancellationToken,
+        deadline: Option<Instant>,
+    ) -> Result<String, GitError> {
+        let output = match deadline {
+            Some(deadline) => {
+                self.run_request_until(
+                    &self.environment.root,
+                    GitRequest::Version,
+                    cancellation,
+                    deadline,
+                )
+                .await?
+            }
+            None => {
+                self.run_request(&self.environment.root, GitRequest::Version, cancellation)
+                    .await?
+            }
+        };
         let output = require_success(output, GitOperation::Read)
             .map_err(|_| GitError::UnsupportedGitVersion)?;
         let version = repository_check::single_line(&output.stdout)?;
@@ -102,6 +123,16 @@ impl GitService {
         self.read_version(cancellation).await.map(|_| ())
     }
 
+    pub(super) async fn ensure_supported_until(
+        &self,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<(), GitError> {
+        self.read_version_with_deadline(cancellation, Some(deadline))
+            .await
+            .map(|_| ())
+    }
+
     pub(super) async fn operation_guard(&self) -> MutexGuard<'_, ()> {
         self.operation_lock.lock().await
     }
@@ -113,5 +144,22 @@ impl GitService {
         cancellation: &CancellationToken,
     ) -> Result<GitOutput, GitError> {
         process::execute(&self.environment, current_dir, request, cancellation).await
+    }
+
+    pub(super) async fn run_request_until(
+        &self,
+        current_dir: &Path,
+        request: GitRequest<'_>,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<GitOutput, GitError> {
+        process::execute_until(
+            &self.environment,
+            current_dir,
+            request,
+            cancellation,
+            deadline,
+        )
+        .await
     }
 }

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use saya_agent::CancellationToken;
 use saya_types::GitObjectId;
+use tokio::time::Instant;
 
 use super::{
     command::{
@@ -19,6 +20,16 @@ pub(super) async fn inspect(
     allow_managed: bool,
     cancellation: &CancellationToken,
 ) -> Result<GitRepository, GitError> {
+    inspect_until(service, path, allow_managed, cancellation, None).await
+}
+
+async fn inspect_until(
+    service: &GitService,
+    path: &Path,
+    allow_managed: bool,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<GitRepository, GitError> {
     let input = std::fs::canonicalize(path).map_err(|_| GitError::NotRepository)?;
     if !std::fs::metadata(&input)
         .map_err(|_| GitError::NotRepository)?
@@ -29,20 +40,34 @@ pub(super) async fn inspect(
     if !allow_managed && paths_overlap(&input, &service.environment.root) {
         return Err(GitError::NotRepository);
     }
-    let bare = run(service, &input, GitRequest::IsBare, cancellation).await?;
+    let bare = run(service, &input, GitRequest::IsBare, cancellation, deadline).await?;
     match single_line(&bare.stdout)?.as_str() {
         "true" => return Err(GitError::BareRepository),
         "false" => {}
         _ => return Err(GitError::MalformedOutput),
     }
-    let root = run(service, &input, GitRequest::RepositoryRoot, cancellation).await?;
+    let root = run(
+        service,
+        &input,
+        GitRequest::RepositoryRoot,
+        cancellation,
+        deadline,
+    )
+    .await?;
     let root = canonical_line_path(&root.stdout)?;
     if !input.starts_with(&root)
         || (!allow_managed && paths_overlap(&root, &service.environment.root))
     {
         return Err(GitError::NotRepository);
     }
-    let common_dir = run(service, &root, GitRequest::CommonDir, cancellation).await?;
+    let common_dir = run(
+        service,
+        &root,
+        GitRequest::CommonDir,
+        cancellation,
+        deadline,
+    )
+    .await?;
     let common_dir = PathBuf::from(single_line(&common_dir.stdout)?);
     let common_dir = if common_dir.is_absolute() {
         common_dir
@@ -57,13 +82,27 @@ pub(super) async fn inspect(
     {
         return Err(GitError::NotRepository);
     }
-    let object_format = run(service, &root, GitRequest::ObjectFormat, cancellation).await?;
+    let object_format = run(
+        service,
+        &root,
+        GitRequest::ObjectFormat,
+        cancellation,
+        deadline,
+    )
+    .await?;
     let object_format = match single_line(&object_format.stdout)?.as_str() {
         "sha1" => GitObjectFormat::Sha1,
         "sha256" => GitObjectFormat::Sha256,
         _ => return Err(GitError::UnsupportedObjectFormat),
     };
-    let config = run(service, &root, GitRequest::LocalConfig, cancellation).await?;
+    let config = run(
+        service,
+        &root,
+        GitRequest::LocalConfig,
+        cancellation,
+        deadline,
+    )
+    .await?;
     validate_local_config(&config.stdout)?;
     Ok(GitRepository {
         root,
@@ -77,11 +116,43 @@ pub(super) async fn verify(
     repository: &GitRepository,
     cancellation: &CancellationToken,
 ) -> Result<(), GitError> {
-    let current = inspect(service, repository.root(), false, cancellation).await?;
+    verify_with_deadline(service, repository, cancellation, None).await
+}
+
+pub(super) async fn verify_with_deadline(
+    service: &GitService,
+    repository: &GitRepository,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<(), GitError> {
+    let current = inspect_until(service, repository.root(), false, cancellation, deadline).await?;
     if &current != repository {
         return Err(GitError::RepositoryChanged);
     }
     Ok(())
+}
+
+async fn run(
+    service: &GitService,
+    current_dir: &Path,
+    request: GitRequest<'_>,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<super::process::GitOutput, GitError> {
+    let operation = request.operation();
+    let output = match deadline {
+        Some(deadline) => {
+            service
+                .run_request_until(current_dir, request, cancellation, deadline)
+                .await?
+        }
+        None => {
+            service
+                .run_request(current_dir, request, cancellation)
+                .await?
+        }
+    };
+    require_success(output, operation)
 }
 
 fn validate_local_config(bytes: &[u8]) -> Result<(), GitError> {
