@@ -34,6 +34,7 @@ fn temp_dir(label: &str) -> PathBuf {
 fn session_runtime() -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: Default::default(),
             profile_name: None,
             profile: None,

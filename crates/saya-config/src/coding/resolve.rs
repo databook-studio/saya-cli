@@ -21,23 +21,42 @@ pub struct ResolvedCoding {
     pub max_elapsed_seconds: u64,
 }
 
+impl Default for ResolvedCoding {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_children: MAX_CHILDREN,
+            max_concurrent_model_requests: MAX_CONCURRENT_MODEL_REQUESTS,
+            max_concurrent_commands: MAX_CONCURRENT_COMMANDS,
+            max_logical_model_requests: MAX_LOGICAL_MODEL_REQUESTS,
+            max_physical_transport_attempts: MAX_PHYSICAL_TRANSPORT_ATTEMPTS,
+            max_tool_calls: MAX_TOOL_CALLS,
+            max_known_tokens: MAX_KNOWN_TOKENS,
+            max_elapsed_seconds: MAX_ELAPSED_SECONDS,
+        }
+    }
+}
+
 pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> {
-    let max_children = file.max_children.unwrap_or(MAX_CHILDREN);
+    let defaults = ResolvedCoding::default();
+    let max_children = file.max_children.unwrap_or(defaults.max_children);
     let max_concurrent_model_requests = file
         .max_concurrent_model_requests
-        .unwrap_or(MAX_CONCURRENT_MODEL_REQUESTS);
+        .unwrap_or(defaults.max_concurrent_model_requests);
     let max_concurrent_commands = file
         .max_concurrent_commands
-        .unwrap_or(MAX_CONCURRENT_COMMANDS);
+        .unwrap_or(defaults.max_concurrent_commands);
     let max_logical_model_requests = file
         .max_logical_model_requests
-        .unwrap_or(MAX_LOGICAL_MODEL_REQUESTS);
+        .unwrap_or(defaults.max_logical_model_requests);
     let max_physical_transport_attempts = file
         .max_physical_transport_attempts
-        .unwrap_or(MAX_PHYSICAL_TRANSPORT_ATTEMPTS);
-    let max_tool_calls = file.max_tool_calls.unwrap_or(MAX_TOOL_CALLS);
-    let max_known_tokens = file.max_known_tokens.unwrap_or(MAX_KNOWN_TOKENS);
-    let max_elapsed_seconds = file.max_elapsed_seconds.unwrap_or(MAX_ELAPSED_SECONDS);
+        .unwrap_or(defaults.max_physical_transport_attempts);
+    let max_tool_calls = file.max_tool_calls.unwrap_or(defaults.max_tool_calls);
+    let max_known_tokens = file.max_known_tokens.unwrap_or(defaults.max_known_tokens);
+    let max_elapsed_seconds = file
+        .max_elapsed_seconds
+        .unwrap_or(defaults.max_elapsed_seconds);
 
     require(max_children, "coding.max_children", MAX_CHILDREN)?;
     require(
@@ -81,7 +100,7 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
     )?;
 
     Ok(ResolvedCoding {
-        enabled: file.enabled.unwrap_or(false),
+        enabled: file.enabled.unwrap_or(defaults.enabled),
         max_children,
         max_concurrent_model_requests,
         max_concurrent_commands,

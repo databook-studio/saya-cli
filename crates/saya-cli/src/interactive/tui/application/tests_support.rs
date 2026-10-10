@@ -90,6 +90,7 @@ pub(crate) fn unused_runtime() -> RuntimeConfig {
     };
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: Default::default(),
             profile_name: None,
             profile: None,

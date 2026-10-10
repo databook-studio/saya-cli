@@ -17,6 +17,7 @@ mod setup_turn_tests {
     fn handoff_runtime() -> RuntimeConfig {
         RuntimeConfig {
             resolved: ResolvedConfig {
+                coding: Default::default(),
                 provenance: Default::default(),
                 instructions: Default::default(),
                 profile_name: None,

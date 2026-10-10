@@ -125,6 +125,7 @@ pub(super) fn project_dir(root: &std::path::Path) -> String {
 fn test_runtime(deny: &[&str]) -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: Default::default(),
             profile_name: None,
             profile: None,

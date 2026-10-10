@@ -55,6 +55,7 @@ fn sqlite_runtime(db: &Path, max_rows: usize) -> RuntimeConfig {
     );
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: Default::default(),
             profile_name: Some("analytics".to_string()),
             profile: None,

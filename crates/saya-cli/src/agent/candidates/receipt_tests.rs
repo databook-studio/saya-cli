@@ -149,6 +149,7 @@ async fn runtime_with_sqlite(root: &Path, base_url: String) -> RuntimeConfig {
     };
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: Default::default(),
             profile_name: Some("analytics".into()),
             profile: Some(profile.clone()),

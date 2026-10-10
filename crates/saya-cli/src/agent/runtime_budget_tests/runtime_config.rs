@@ -24,6 +24,7 @@ fn test_ai(context_byte_budget: usize) -> ResolvedAi {
 fn test_runtime(context_byte_budget: usize) -> RuntimeConfig {
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: Default::default(),
             profile_name: None,
             profile: None,

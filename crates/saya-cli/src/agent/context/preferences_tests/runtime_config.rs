@@ -80,6 +80,7 @@ fn ai_for(context_byte_budget: usize, privacy_gate_closed: bool) -> ResolvedAi {
 fn runtime_config(context_byte_budget: usize, privacy_gate_closed: bool) -> RuntimeConfig {
     RuntimeConfig {
         resolved: ResolvedConfig {
+            coding: Default::default(),
             instructions: saya_config::ResolvedInstructions {
                 project_enabled: true,
                 personal_enabled: false,
