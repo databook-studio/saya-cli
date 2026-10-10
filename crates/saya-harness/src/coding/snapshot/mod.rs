@@ -16,3 +16,19 @@ pub use types::{
     SnapshotIndexEntry, SnapshotOmissionFact, SnapshotOmissionReason, SnapshotPath,
     SnapshotSelection, SnapshotSourceIdentity,
 };
+
+// W04a capture destination: staging, completion, garbage.
+mod capture_complete;
+mod capture_dest;
+mod capture_dest_gc;
+mod capture_dest_private;
+mod capture_lock;
+mod capture_object_sink;
+mod capture_publish;
+mod capture_staging;
+mod capture_types;
+
+pub use capture_dest::SnapshotArtifacts;
+pub use capture_object_sink::ObjectSink;
+pub use capture_staging::StagedSnapshot;
+pub use capture_types::{CapturedEntry, CapturedSnapshot};

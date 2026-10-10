@@ -120,6 +120,18 @@ pub enum SnapshotError {
     TooLarge,
     #[error("snapshot manifest serialization failed")]
     Serialization,
+    #[error("snapshot artifact id is not a safe path component")]
+    ArtifactPathInvalid,
+    #[error("a snapshot with this id already exists in the artifacts root")]
+    SnapshotExists,
+    #[error(
+        "the snapshot artifacts root is not a private directory or is unsupported on this platform"
+    )]
+    ArtifactRootRefused,
+    #[error("snapshot manifest bytes do not match their declared digest")]
+    ManifestDigestMismatch,
+    #[error("staged object bytes do not match their declared digest")]
+    ObjectDigestMismatch,
     #[error("the snapshot source no longer matches the planned identity")]
     SourceIdentityChanged,
     #[error("the planned snapshot source is gone")]
@@ -200,6 +212,22 @@ pub(crate) fn manifest_bytes(body: &SnapshotManifestBody) -> Result<Vec<u8>, Sna
 
 pub(crate) fn digest(bytes: &[u8]) -> Result<Sha256Digest, SnapshotError> {
     let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").map_err(|_| SnapshotError::Serialization)?;
+    }
+    Sha256Digest::parse(&hex).map_err(|_| SnapshotError::Serialization)
+}
+
+/// Lowers a streaming SHA-256 over written bytes to the typed digest, with
+/// the same hex encoding as [`digest`]. Consumes the hasher, because
+/// `finalize` takes it by value. Used by the object sink to verify its own
+/// content identity at `finish`; the sink itself exists only on the
+/// supported targets, so this helper is gated to them as well.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn digest_from_hasher(hasher: Sha256) -> Result<Sha256Digest, SnapshotError> {
+    let digest = hasher.finalize();
     let mut hex = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write as _;

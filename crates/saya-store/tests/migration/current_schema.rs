@@ -7,7 +7,7 @@ async fn fresh_database_reaches_latest_version() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     // Step 6 dropped the legacy `contract_*` tables; a fresh database has none.
     assert_eq!(contract_tables(&db).await.len(), 0);
     assert!(
@@ -29,6 +29,7 @@ async fn fresh_database_reaches_latest_version() {
     assert!(table_exists(&db, "coding_managed_checkouts").await);
     assert!(table_exists(&db, "coding_checkout_operations").await);
     assert!(table_exists(&db, "coding_approval_requests").await);
+    assert!(table_exists(&db, "coding_budget_policies").await);
     let _ = fs::remove_dir_all(root);
 }
 
@@ -39,10 +40,10 @@ async fn migration_is_idempotent() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     let _ = fs::remove_dir_all(root);
 }

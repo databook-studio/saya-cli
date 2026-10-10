@@ -6,6 +6,10 @@ mod r01;
 mod r02;
 #[path = "primary_coding/r02_replay.rs"]
 mod r02_replay;
+#[path = "primary_coding/r03b.rs"]
+mod r03b;
+#[path = "primary_coding/r03b_extra.rs"]
+mod r03b_extra;
 #[path = "primary_coding/r13a.rs"]
 mod r13a;
 #[path = "primary_coding/r13a_admission.rs"]

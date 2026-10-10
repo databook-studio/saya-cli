@@ -63,7 +63,7 @@ async fn the_typed_preference_store_is_unaffected() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A fresh database reaches `user_version = 14` with the project-preferences
+/// A fresh database reaches `user_version = 15` with the project-preferences
 /// table in place.
 #[tokio::test]
 async fn fresh_database_reaches_version_fourteen_with_the_project_table() {
@@ -78,7 +78,7 @@ async fn fresh_database_reaches_version_fourteen_with_the_project_table() {
             .is_empty()
     );
     store.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     assert!(
         table_exists(&db, "project_preferences").await,
         "missing project_preferences"
@@ -105,6 +105,10 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
 
     let pool = read_pool(&db).await;
     sqlx::query("DROP TABLE IF EXISTS project_preferences")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE coding_budget_policies")
         .execute(&pool)
         .await
         .unwrap();
@@ -152,7 +156,7 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
             .is_empty()
     );
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     assert!(table_exists(&db, "project_preferences").await);
     let survivor = SqliteStateStore::new(&db);
     let typed = survivor
