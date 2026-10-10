@@ -2,6 +2,10 @@
 mod blob;
 #[path = "w04/blob_sha256.rs"]
 mod blob_sha256;
+#[path = "w04/capture.rs"]
+mod capture;
+#[path = "w04/capture_drift.rs"]
+mod capture_drift;
 #[path = "w04/destination.rs"]
 mod destination;
 #[path = "w04/destination_commit.rs"]

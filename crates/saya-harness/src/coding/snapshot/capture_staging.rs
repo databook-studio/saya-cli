@@ -140,9 +140,11 @@ impl StagedSnapshot {
     /// Verifies the manifest bytes against their declared digest, writes
     /// `manifest.json`, then last the `COMPLETE` record carrying that
     /// digest, fsyncs the files and directories, and atomically renames the
-    /// staging directory to `<root>/<id>` with a no-replace rename. A
-    /// collision refuses with `SnapshotExists` and removes the staging. On
-    /// any earlier refusal the staging is removed by drop.
+    /// staging directory to `<root>/<id>` with a no-replace rename. Errors
+    /// before the rename leave only removable staging, removed by drop;
+    /// `SnapshotExists` refuses without replacing an existing directory;
+    /// `PublishedButNotDurable` means the directory was already published
+    /// under the id but a post-rename durability sync failed.
     pub fn commit(
         self,
         manifest_bytes: &[u8],
@@ -222,14 +224,16 @@ impl StagedSnapshot {
             OsStr::new(super::capture_lock::LOCK_NAME),
         );
         // Durability: `Ok` is returned only after the renamed directory and
-        // the root entry are synced. An fsync failure returns a typed error
-        // even though the snapshot may already exist under the id.
+        // the root entry are synced. A failure here returns
+        // `PublishedButNotDurable`: the directory is already published under
+        // the id, so this is not a pre-publish io error and the caller must
+        // not treat the snapshot as absent or retry the capture.
         self.staging_dir
             .sync_all()
-            .map_err(|error| capture_io("sync published snapshot", &error))?;
+            .map_err(|_| SnapshotError::PublishedButNotDurable)?;
         self.root_dir
             .sync_all()
-            .map_err(|error| capture_io("sync artifacts root", &error))?;
+            .map_err(|_| SnapshotError::PublishedButNotDurable)?;
         Ok(())
     }
 
