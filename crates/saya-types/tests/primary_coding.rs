@@ -10,3 +10,7 @@ mod a06_approvals_network;
 mod a06_budget;
 #[path = "primary_coding/a06_budget_wire.rs"]
 mod a06_budget_wire;
+#[path = "primary_coding/a06_checkouts.rs"]
+mod a06_checkouts;
+#[path = "primary_coding/a06_checkouts_values.rs"]
+mod a06_checkouts_values;
