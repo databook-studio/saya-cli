@@ -1,5 +1,7 @@
 //! Shared identity and lifecycle contracts for native coding jobs.
 
+mod approval_scope;
+mod approvals;
 mod budget;
 mod budget_settlement;
 mod budget_values;
@@ -11,6 +13,14 @@ mod ids;
 mod jobs;
 mod receipts;
 
+pub use approval_scope::{
+    ApprovalNetworkDestination, ApprovalNetworkScheme, ApprovalScope, ApprovalScopeError,
+    RepositoryMutationAction,
+};
+pub use approvals::{
+    APPROVAL_REQUEST_VERSION, ApprovalRequestContext, ApprovalRequestError, ApprovalRequestV1,
+    MAX_APPROVAL_REQUEST_BYTES,
+};
 pub use budget::{BUDGET_RESERVATION_VERSION, BudgetError, BudgetReservationV1};
 pub use budget_settlement::{BUDGET_SETTLEMENT_VERSION, BudgetEffectState, BudgetSettlementV1};
 pub use budget_values::{
