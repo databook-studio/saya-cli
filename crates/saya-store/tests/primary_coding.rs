@@ -1,3 +1,7 @@
+#[path = "primary_coding/checkout_plan.rs"]
+mod checkout_plan;
+#[path = "primary_coding/checkout_plan_edges.rs"]
+mod checkout_plan_edges;
 #[path = "primary_coding/pagination_privacy.rs"]
 mod pagination_privacy;
 #[path = "primary_coding/r01.rs"]
