@@ -1,4 +1,8 @@
+use crate::ProviderError;
 use std::time::Duration;
+
+const MAX_RETRY_DELAYS: usize = 3;
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// The default backoff schedule slept between retryable provider failures, in
 /// order: the one definition behind both the HTTP establishment path
@@ -68,6 +72,20 @@ impl ProviderSettings {
     pub fn with_max_output_tokens(mut self, max_output_tokens: u32) -> Self {
         self.max_output_tokens = max_output_tokens;
         self
+    }
+
+    pub(super) fn validate_retries(&self) -> Result<(), ProviderError> {
+        if self.retry_delays.len() > MAX_RETRY_DELAYS
+            || self
+                .retry_delays
+                .iter()
+                .any(|delay| *delay > MAX_RETRY_DELAY)
+        {
+            return Err(ProviderError::Configuration(
+                "provider retry schedule exceeds its bound".into(),
+            ));
+        }
+        Ok(())
     }
 }
 

@@ -76,6 +76,7 @@ pub struct AgentRunControl<'a> {
     pub(super) cancellation: CancellationToken,
     pub(super) request_preflight: Option<RequestPreflightConfig>,
     pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
+    pub(super) require_physical_effect_admission: bool,
 }
 
 impl<'a> AgentRunControl<'a> {
@@ -94,6 +95,7 @@ impl<'a> AgentRunControl<'a> {
             cancellation,
             request_preflight: None,
             effect_admission: None,
+            require_physical_effect_admission: false,
         }
     }
 
@@ -116,10 +118,20 @@ impl<'a> AgentRunControl<'a> {
         self
     }
 
-    /// Adds the owner that reserves logical provider requests and executable tools.
+    /// Adds the owner that reserves logical provider requests and executable
+    /// tools. Provider retries remain uncounted unless the strict builder is used.
     #[must_use]
     pub fn with_effect_admission(mut self, owner: &'a dyn EffectAdmission) -> Self {
         self.effect_admission = Some(owner);
+        self
+    }
+
+    /// Requires the provider to admit each actual transport send before it
+    /// reaches the configured endpoint. Unsupported providers fail closed.
+    #[must_use]
+    pub fn with_physical_effect_admission(mut self, owner: &'a dyn EffectAdmission) -> Self {
+        self.effect_admission = Some(owner);
+        self.require_physical_effect_admission = true;
         self
     }
 }
@@ -136,4 +148,5 @@ pub(super) struct AgentRunInvocation<'a> {
     pub(super) answering: Option<AnsweringScope>,
     pub(super) request_preflight: Option<RequestPreflightConfig>,
     pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
+    pub(super) require_physical_effect_admission: bool,
 }

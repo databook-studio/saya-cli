@@ -26,6 +26,8 @@ pub(in crate::loop_runner) async fn receive(
         events,
         admission,
         effect_admission,
+        require_physical_effect_admission,
+        call_kind,
     } = context;
     let mut recovered_usage = TokenUsage::default();
     if let Err(error) = admission.check(cancellation) {
@@ -100,12 +102,32 @@ pub(in crate::loop_runner) async fn receive(
             });
         }
     };
+    let mut physical_attempts = super::physical::control(
+        require_physical_effect_admission,
+        effect_admission,
+        permit,
+        call_kind,
+        cancellation,
+    )
+    .map_err(|error| attempt::ReceiveFailure {
+        error,
+        usage: recovered_usage,
+    })?;
     let mut reported_usage = effect_admission.map(|_| None);
     let mut usage_complete = true;
     let mut response_received = false;
     let receive_result = async {
         loop {
-            match stream_attempt(provider, &request, sink, cancellation, events, retries > 0).await
+            match stream_attempt(
+                provider,
+                &request,
+                sink,
+                cancellation,
+                events,
+                retries > 0,
+                physical_attempts.as_mut(),
+            )
+            .await
             {
                 attempt::AttemptOutcome::Success {
                     message,
@@ -160,6 +182,15 @@ pub(in crate::loop_runner) async fn receive(
                     break Ok((message, recovered_usage, reasoning));
                 }
                 attempt::AttemptOutcome::Failed { error, usage } => {
+                    let error = match error.into_control_failure() {
+                        Ok(error) => error,
+                        Err(error) => {
+                            break Err(attempt::ReceiveFailure {
+                                error,
+                                usage: recovered_usage,
+                            });
+                        }
+                    };
                     if let Some(usage) = usage
                         && let Some(reported_usage) = reported_usage.as_mut()
                     {
@@ -204,15 +235,11 @@ pub(in crate::loop_runner) async fn receive(
         }
     }
     .await;
-    let outcome = if response_received {
-        crate::EffectOutcome::Succeeded
-    } else {
-        crate::EffectOutcome::Unknown
-    };
-    if let Err(error) = coding::settle_model_request(
+    if let Err(error) = super::physical::settle_request(
         effect_admission,
         permit,
-        outcome,
+        response_received,
+        &physical_attempts,
         reported_usage.flatten(),
         usage_complete,
         cancellation,

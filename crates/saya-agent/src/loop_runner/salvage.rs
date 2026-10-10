@@ -49,6 +49,8 @@ pub(super) async fn salvage(
     // The SQL to carry on the output: the run's designation when the model
     // made one, else the last statement that completed successfully.
     designated_or_best_sql: Option<String>,
+    effect_admission: Option<&dyn crate::EffectAdmission>,
+    require_physical_effect_admission: bool,
 ) -> Result<AgentOutput, AgentError> {
     for call in pending {
         let (message, _) = tools::tool_message(
@@ -73,7 +75,9 @@ pub(super) async fn salvage(
         cancellation,
         events,
         admission,
-        effect_admission: None,
+        effect_admission,
+        require_physical_effect_admission,
+        call_kind: crate::EffectCallKind::Salvage,
     })
     .await;
     let (assistant, turn_usage) = match salvage_call {

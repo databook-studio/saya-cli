@@ -25,13 +25,14 @@ pub use protocol::contracts::{
     AgentEvent, AgentMode, AgentModeParseError, AgentRequest, AllowReadOnlyApproval,
     AnsweringObservation, ApprovalChoice, ApprovalDecider, ApprovalDecision, BudgetDimension,
     CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, ChatMessage, ChatRequest, ChatResponse,
-    ContextBlock, EffectAdmission, EffectAdmissionError, EffectOutcome, EffectOwnerFailure,
-    EffectPermit, EffectSettlement, KnowledgeOutcome, LearningSkipReason, LocalStateEffect,
-    OverrideFindingDto, ProposedClaimDto, ProviderContinuationPhase, ProviderError,
-    ProviderRecoveryPhase, ProviderRecoveryReason, ReasoningEffort, ResponseFormat, SessionGrants,
-    SessionPolicy, SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolConcurrency,
-    ToolDefinition, ToolEffect, ToolError, ToolExecutionContext, ToolExecutor, ToolMetadata,
-    ToolResultShape, UsageCall, context_utilisation_percent, read_only_permits,
+    ContextBlock, EffectAdmission, EffectAdmissionError, EffectCallKind, EffectOutcome,
+    EffectOwnerFailure, EffectPermit, EffectSettlement, KnowledgeOutcome, LearningSkipReason,
+    LocalStateEffect, OverrideFindingDto, PhysicalAttempt, ProposedClaimDto,
+    ProviderContinuationPhase, ProviderError, ProviderRecoveryPhase, ProviderRecoveryReason,
+    ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy, SuppliedClaimDto,
+    SuppliedContractDto, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect, ToolError,
+    ToolExecutionContext, ToolExecutor, ToolMetadata, ToolResultShape, UsageCall,
+    context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::metrics::{
@@ -40,8 +41,8 @@ pub use protocol::metrics::{
 };
 pub use protocol::stream_item_limit::MAX_STREAM_EVENTS;
 pub use protocol::streaming::{
-    CancellationReason, CancellationToken, ChatProvider, MAX_STREAM_BYTES,
-    MAX_TOOL_CALLS_PER_RESPONSE, ProviderEvent, ProviderStream, TokenUsage,
+    CancellationReason, CancellationToken, ChatProvider, ControlledProviderError, MAX_STREAM_BYTES,
+    MAX_TOOL_CALLS_PER_RESPONSE, PhysicalAttemptControl, ProviderEvent, ProviderStream, TokenUsage,
 };
 pub use providers::{
     AnthropicProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderSettings,

@@ -8,6 +8,7 @@ mod budget;
 mod builders;
 mod chat;
 mod coding_admission;
+mod coding_usage;
 mod context;
 mod error;
 mod event;
@@ -39,6 +40,7 @@ pub use coding_admission::{
     EffectAdmission, EffectAdmissionError, EffectOutcome, EffectOwnerFailure, EffectPermit,
     EffectSettlement,
 };
+pub use coding_usage::{EffectCallKind, PhysicalAttempt};
 pub use context::{CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, context_utilisation_percent};
 pub use error::{ProviderError, ToolError};
 pub use event::{AgentEvent, ProviderContinuationPhase};

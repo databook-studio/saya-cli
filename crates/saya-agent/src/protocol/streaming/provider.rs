@@ -1,4 +1,5 @@
 use super::super::tool_collection::admit_tool_calls;
+use super::physical_attempt::{ControlledProviderError, PhysicalAttemptControl};
 use super::{CancellationToken, MAX_STREAM_BYTES, ProviderEvent, ProviderStream};
 use crate::{ChatMessage, ChatRequest, ChatResponse, ProviderError};
 use async_trait::async_trait;
@@ -42,6 +43,18 @@ pub trait ChatProvider: Send + Sync {
         Ok(Box::pin(futures_util::stream::iter(
             events.into_iter().map(Ok),
         )))
+    }
+    /// Streams a response only when the provider exposes every physical send.
+    /// Implementations admit before each send, observe cancellation, and settle
+    /// successful responses after body use. The default refuses before calling
+    /// legacy methods.
+    async fn stream_with_physical_attempts(
+        &self,
+        _request: ChatRequest,
+        _cancellation: CancellationToken,
+        _attempts: &mut PhysicalAttemptControl<'_>,
+    ) -> Result<ProviderStream, ControlledProviderError> {
+        Err(ControlledProviderError::UnsupportedCoverage)
     }
     async fn collect(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let mut stream = self.stream(request, CancellationToken::new()).await?;

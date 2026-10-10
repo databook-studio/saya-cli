@@ -37,6 +37,7 @@ async fn run_agent_loop(
         answering,
         request_preflight,
         effect_admission,
+        require_physical_effect_admission,
     } = invocation;
     let controlled = answering.is_some();
     admission.initialize(sink).await;
@@ -62,6 +63,7 @@ async fn run_agent_loop(
         cancellation,
         request_preflight,
         effect_admission,
+        require_physical_effect_admission,
         messages,
         ordinary_history_pairs,
         protected_prefix_len,
@@ -119,6 +121,8 @@ async fn run_agent_loop(
                 state.used_bounded_sql_query,
                 state.tool_metadata,
                 state.designation.sql.clone().or(state.last_successful_sql),
+                state.effect_admission,
+                state.require_physical_effect_admission,
             )
             .await;
         }
@@ -139,6 +143,7 @@ pub(super) struct RunState<'a> {
     pub(super) cancellation: CancellationToken,
     pub(super) request_preflight: Option<super::RequestPreflightConfig>,
     pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
+    pub(super) require_physical_effect_admission: bool,
     pub(super) messages: Vec<ChatMessage>,
     pub(super) ordinary_history_pairs: usize,
     pub(super) protected_prefix_len: usize,

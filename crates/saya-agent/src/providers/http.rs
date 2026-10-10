@@ -1,4 +1,7 @@
-use crate::{CancellationToken, ProviderError};
+use crate::{
+    CancellationToken, ControlledProviderError, EffectOutcome, PhysicalAttemptControl,
+    ProviderError,
+};
 use futures_util::StreamExt;
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
@@ -32,15 +35,70 @@ enum AttemptError {
 }
 
 pub(super) async fn send_stream(
-    mut build: impl FnMut() -> RequestBuilder,
+    build: impl FnMut() -> RequestBuilder,
     delays: &[Duration],
     cancellation: &CancellationToken,
     endpoint: &str,
     establishment_timeout: Duration,
 ) -> Result<Response, ProviderError> {
+    send_stream_inner(
+        build,
+        delays,
+        cancellation,
+        endpoint,
+        establishment_timeout,
+        None,
+    )
+    .await
+    .map_err(provider_error)
+}
+
+pub(super) async fn send_stream_controlled(
+    build: impl FnMut() -> RequestBuilder,
+    delays: &[Duration],
+    cancellation: &CancellationToken,
+    endpoint: &str,
+    establishment_timeout: Duration,
+    attempts: &mut PhysicalAttemptControl<'_>,
+) -> Result<Response, ControlledProviderError> {
+    send_stream_inner(
+        build,
+        delays,
+        cancellation,
+        endpoint,
+        establishment_timeout,
+        Some(attempts),
+    )
+    .await
+}
+
+async fn send_stream_inner(
+    mut build: impl FnMut() -> RequestBuilder,
+    delays: &[Duration],
+    cancellation: &CancellationToken,
+    endpoint: &str,
+    establishment_timeout: Duration,
+    mut attempts: Option<&mut PhysicalAttemptControl<'_>>,
+) -> Result<Response, ControlledProviderError> {
     for attempt in 0..=delays.len() {
+        if let Some(control) = attempts.as_deref_mut() {
+            control.admit_before_send().await?;
+            if cancellation.is_cancelled() {
+                control
+                    .settle_active(EffectOutcome::NotStarted, None, false)
+                    .await?;
+                return Err(ProviderError::Cancelled.into());
+            }
+            control.dispatch_started()?;
+        }
         let response = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
+            biased;
+            _ = cancellation.cancelled() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control.settle_active(EffectOutcome::Unknown, None, false).await?;
+                }
+                return Err(ProviderError::Cancelled.into());
+            }
             response = tokio::time::timeout(establishment_timeout, build().send()) => match response {
                 Ok(Ok(response)) => Ok(response),
                 Ok(Err(_)) => Err(AttemptError::Network),
@@ -48,36 +106,69 @@ pub(super) async fn send_stream(
             },
         };
         match response {
-            Ok(response) if response.status().is_success() => return Ok(response),
+            Ok(response) if response.status().is_success() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control.hold_successful_response()?;
+                }
+                return Ok(response);
+            }
             Ok(response) if retryable(response.status()) && attempt < delays.len() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
                 let delay = parse_retry_after(response.headers())
                     .unwrap_or_else(|| jitter(delays[attempt]))
                     .min(MAX_BACKOFF);
                 wait(delay, cancellation).await?;
             }
             Ok(response) => {
-                return Err(ProviderError::Request(describe(response.status())));
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
+                return Err(ProviderError::Request(describe(response.status())).into());
             }
             Err(error) if attempt < delays.len() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
                 let delay = jitter(delays[attempt]).min(MAX_BACKOFF);
                 wait(delay, cancellation).await?;
                 let _ = error;
             }
             Err(error) => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
                 if matches!(error, AttemptError::Timeout) {
                     return Err(ProviderError::Request(format!(
                         "provider request timed out while establishing a connection to {endpoint}"
-                    )));
+                    ))
+                    .into());
                 }
                 return Err(ProviderError::Request(format!(
                     "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
-                )));
+                )).into());
             }
         }
     }
     Err(ProviderError::Request(format!(
         "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
-    )))
+    )).into())
+}
+
+pub(super) fn provider_error(error: ControlledProviderError) -> ProviderError {
+    match error {
+        ControlledProviderError::Provider(error) => error,
+        _ => ProviderError::Request("controlled provider call failed".into()),
+    }
 }
 
 async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), ProviderError> {
