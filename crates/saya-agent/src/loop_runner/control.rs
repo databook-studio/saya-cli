@@ -1,7 +1,7 @@
 use super::{AgentLimits, admission::Admission, preflight::RequestPreflightConfig};
 use crate::{
     AgentError, AgentEventSink, AgentRequest, ApprovalDecider, CancellationToken, ChatProvider,
-    ToolDefinition, ToolExecutor,
+    EffectAdmission, ToolDefinition, ToolExecutor,
 };
 use std::{fmt, sync::Arc};
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -75,6 +75,7 @@ pub struct AgentRunControl<'a> {
     pub(super) sink: &'a dyn AgentEventSink,
     pub(super) cancellation: CancellationToken,
     pub(super) request_preflight: Option<RequestPreflightConfig>,
+    pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
 }
 
 impl<'a> AgentRunControl<'a> {
@@ -92,6 +93,7 @@ impl<'a> AgentRunControl<'a> {
             sink,
             cancellation,
             request_preflight: None,
+            effect_admission: None,
         }
     }
 
@@ -113,6 +115,13 @@ impl<'a> AgentRunControl<'a> {
         self.request_preflight = Some(config);
         self
     }
+
+    /// Adds the owner that reserves logical provider requests and executable tools.
+    #[must_use]
+    pub fn with_effect_admission(mut self, owner: &'a dyn EffectAdmission) -> Self {
+        self.effect_admission = Some(owner);
+        self
+    }
 }
 
 pub(super) struct AgentRunInvocation<'a> {
@@ -126,4 +135,5 @@ pub(super) struct AgentRunInvocation<'a> {
     pub(super) cancellation: CancellationToken,
     pub(super) answering: Option<AnsweringScope>,
     pub(super) request_preflight: Option<RequestPreflightConfig>,
+    pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
 }

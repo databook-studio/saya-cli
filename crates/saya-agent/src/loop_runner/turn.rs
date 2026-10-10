@@ -29,6 +29,7 @@ pub(super) async fn run(
         cancellation: &state.cancellation,
         events: &mut state.events,
         admission,
+        effect_admission: state.effect_admission,
     })
     .await
     {
@@ -43,6 +44,12 @@ pub(super) async fn run(
             } else {
                 failure.error
             };
+            if matches!(
+                &error,
+                AgentError::EffectAdmissionDenied | AgentError::EffectOwnerFailure(_)
+            ) {
+                return Err(error);
+            }
             if state.cancellation.reason() == Some(crate::CancellationReason::OwnerFailure) {
                 return Err(error);
             }

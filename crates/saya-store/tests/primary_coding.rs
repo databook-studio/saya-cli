@@ -6,3 +6,17 @@ mod r01;
 mod r02;
 #[path = "primary_coding/r02_replay.rs"]
 mod r02_replay;
+#[path = "primary_coding/r13a.rs"]
+mod r13a;
+#[path = "primary_coding/r13a_admission.rs"]
+mod r13a_admission;
+#[path = "primary_coding/r13a_caps.rs"]
+mod r13a_caps;
+#[path = "primary_coding/r13a_integrity.rs"]
+mod r13a_integrity;
+#[path = "primary_coding/r13a_policy.rs"]
+mod r13a_policy;
+#[path = "primary_coding/r13a_pricing.rs"]
+mod r13a_pricing;
+#[path = "primary_coding/r13a_values.rs"]
+mod r13a_values;

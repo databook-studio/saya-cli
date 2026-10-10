@@ -25,12 +25,13 @@ pub use protocol::contracts::{
     AgentEvent, AgentMode, AgentModeParseError, AgentRequest, AllowReadOnlyApproval,
     AnsweringObservation, ApprovalChoice, ApprovalDecider, ApprovalDecision, BudgetDimension,
     CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, ChatMessage, ChatRequest, ChatResponse,
-    ContextBlock, KnowledgeOutcome, LearningSkipReason, LocalStateEffect, OverrideFindingDto,
-    ProposedClaimDto, ProviderContinuationPhase, ProviderError, ProviderRecoveryPhase,
-    ProviderRecoveryReason, ReasoningEffort, ResponseFormat, SessionGrants, SessionPolicy,
-    SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolConcurrency, ToolDefinition, ToolEffect,
-    ToolError, ToolExecutionContext, ToolExecutor, ToolMetadata, ToolResultShape, UsageCall,
-    context_utilisation_percent, read_only_permits,
+    ContextBlock, EffectAdmission, EffectAdmissionError, EffectOutcome, EffectOwnerFailure,
+    EffectPermit, EffectSettlement, KnowledgeOutcome, LearningSkipReason, LocalStateEffect,
+    OverrideFindingDto, ProposedClaimDto, ProviderContinuationPhase, ProviderError,
+    ProviderRecoveryPhase, ProviderRecoveryReason, ReasoningEffort, ResponseFormat, SessionGrants,
+    SessionPolicy, SuppliedClaimDto, SuppliedContractDto, ToolCall, ToolConcurrency,
+    ToolDefinition, ToolEffect, ToolError, ToolExecutionContext, ToolExecutor, ToolMetadata,
+    ToolResultShape, UsageCall, context_utilisation_percent, read_only_permits,
 };
 pub use protocol::event_sink::{AgentEventSink, NoopEventSink};
 pub use protocol::metrics::{

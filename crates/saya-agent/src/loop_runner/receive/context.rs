@@ -1,6 +1,7 @@
 use super::super::{admission::Admission, preflight::RequestPreflightConfig};
 use crate::{
-    AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, ToolDefinition,
+    AgentEvent, AgentEventSink, CancellationToken, ChatMessage, ChatProvider, EffectAdmission,
+    ToolDefinition,
 };
 
 #[derive(Clone, Copy)]
@@ -26,4 +27,5 @@ pub(in crate::loop_runner) struct ReceiveContext<'a> {
     pub(in crate::loop_runner) cancellation: &'a CancellationToken,
     pub(in crate::loop_runner) events: &'a mut Vec<AgentEvent>,
     pub(in crate::loop_runner) admission: &'a mut Admission,
+    pub(in crate::loop_runner) effect_admission: Option<&'a dyn EffectAdmission>,
 }
