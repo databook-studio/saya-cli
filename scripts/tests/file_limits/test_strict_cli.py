@@ -14,6 +14,9 @@ class StrictCliTests(unittest.TestCase):
     def setUp(self):
         self.repo = fixtures.TempRepo()
         self.addCleanup(self.repo.destroy)
+        self.repo.write_policy(
+            dict(fixtures.STANDARD_POLICY, limit=250, target=150, review=200)
+        )
 
     def run_cli(self, *args):
         return fixtures.run_checker(self.repo.path, *args)
@@ -89,11 +92,23 @@ class StrictCliTests(unittest.TestCase):
         document = json.loads(proc.stdout)
         self.assertEqual(
             set(document),
-            {"mode", "view", "limit", "files_checked", "violations", "errors"},
+            {
+                "mode",
+                "view",
+                "limit",
+                "target",
+                "review",
+                "files_checked",
+                "violations",
+                "review_candidates",
+                "errors",
+            },
         )
         self.assertEqual(document["mode"], "strict")
         self.assertEqual(document["view"], "worktree")
         self.assertEqual(document["limit"], 250)
+        self.assertEqual(document["target"], 150)
+        self.assertEqual(document["review"], 200)
         self.assertEqual(document["files_checked"], 2)
         self.assertEqual(document["errors"], [])
         self.assertEqual(len(document["violations"]), 1)
@@ -102,6 +117,43 @@ class StrictCliTests(unittest.TestCase):
         self.assertEqual(entry["path"], "src/lib.rs")
         self.assertEqual(entry["lines"], 252)
         self.assertEqual(entry["excess"], entry["lines"] - entry["limit"])
+        self.assertEqual(
+            document["review_candidates"], [{"path": "src/lib.rs", "lines": 252}]
+        )
+
+    def test_production_policy_passes_400_and_fails_401(self):
+        self.repo.write_policy()
+        self.repo.write_lines("src/lib.rs", 400)
+        at_limit = self.run_cli("--view", "worktree")
+        self.assertEqual(at_limit.returncode, 0, at_limit.stderr)
+        self.assertIn("hard limit 400", at_limit.stdout)
+        self.assertIn("review candidate: src/lib.rs: 400 lines", at_limit.stdout)
+
+        self.repo.write_lines("src/lib.rs", 401)
+        over_limit = self.run_cli("--view", "worktree")
+        self.assertEqual(over_limit.returncode, 1, over_limit.stderr)
+        self.assertIn("src/lib.rs: 401 lines, limit 400, excess 1", over_limit.stdout)
+        self.assertIn("review candidate: src/lib.rs: 401 lines", over_limit.stdout)
+
+    def test_production_policy_reports_review_candidate_from_300(self):
+        self.repo.write_policy()
+        self.repo.write_lines("src/below.rs", 299)
+        self.repo.write_lines("src/review.rs", 300)
+        proc = self.run_cli("--view", "worktree", "--json")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        document = json.loads(proc.stdout)
+        self.assertEqual(document["target"], 250)
+        self.assertEqual(document["review"], 300)
+        self.assertEqual(
+            document["review_candidates"], [{"path": "src/review.rs", "lines": 300}]
+        )
+        self.assertEqual(document["violations"], [])
+
+    def test_invalid_threshold_order_is_a_config_error(self):
+        self.repo.write_policy(dict(fixtures.STANDARD_POLICY, target=301))
+        proc = self.run_cli()
+        self.assertEqual(proc.returncode, 3)
+        self.assertIn("target <= review <= limit", proc.stderr)
 
     def test_251_line_file_under_tests_fails(self):
         self.repo.write_lines("tests/helper.rs", 251)

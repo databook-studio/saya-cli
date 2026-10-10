@@ -37,11 +37,15 @@ def run_strict(*, repo, view, config, as_json, stdout, stderr) -> int:
         return 3
     sources, errors = enumerate_view(repo, view, policy)
     violations = []
+    review_candidates = []
     for path, data in sources:
         lines = count_physical_lines(data)
+        if lines >= policy.review:
+            review_candidates.append({"path": path, "lines": lines})
         if lines > policy.limit:
             violations.append(violation_entry(path, lines, policy.limit))
     violations.sort(key=lambda entry: (-entry["lines"], entry["path"]))
+    review_candidates.sort(key=lambda entry: (-entry["lines"], entry["path"]))
     if as_json:
         _emit(
             stdout,
@@ -49,16 +53,22 @@ def run_strict(*, repo, view, config, as_json, stdout, stderr) -> int:
                 mode="strict",
                 view=view,
                 limit=policy.limit,
+                target=policy.target,
+                review=policy.review,
                 files_checked=len(sources),
                 violations=violations,
+                review_candidates=review_candidates,
                 errors=errors,
             ),
         )
     else:
         text, err_text = render_text(
             limit=policy.limit,
+            target=policy.target,
+            review=policy.review,
             files_checked=len(sources),
             violations=violations,
+            review_candidates=review_candidates,
             errors=errors,
         )
         _emit(stdout, text)

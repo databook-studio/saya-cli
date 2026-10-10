@@ -29,8 +29,10 @@ cargo audit --deny warnings                 # when dependencies changed
 - **No secrets in the tree** — never commit secrets, `.env` files, session
   directories, private keys, or raw database results. Use redacted fixtures and
   secret *references*.
-- **Contracts in their crate; presentation only in `saya-cli`.** New production
-  `.rs` files stay ≤ 150 lines (soft) and must not exceed 250.
+- **Source file length.** Keep maintained Rust, Python, shell, and Ruby source,
+  tests, and test support near 250 physical lines. Files at 300 lines or more
+  require full-body review recorded against the exact source digest before
+  integration. No maintained source file may exceed 400 lines.
 - **Conventional commits**; document new flags/config and note alpha limitations
   in user-facing changes. Do not add Tauri, React, licensing, or desktop app
   state.

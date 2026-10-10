@@ -71,10 +71,18 @@ def load_policy(path) -> Policy:
         raise PolicyError(f"policy file {origin} is missing keys: {', '.join(missing)}")
     if unknown:
         raise PolicyError(f"policy file {origin} has unknown keys: {', '.join(unknown)}")
+    limit = _positive_int(data, "limit", origin)
+    target = _positive_int(data, "target", origin)
+    review = _positive_int(data, "review", origin)
+    if not target <= review <= limit:
+        raise PolicyError(
+            f"{origin}: policy thresholds must satisfy target <= review <= limit,"
+            f" got {target}, {review}, {limit}"
+        )
     return Policy(
-        limit=_positive_int(data, "limit", origin),
-        target=_positive_int(data, "target", origin),
-        review=_positive_int(data, "review", origin),
+        limit=limit,
+        target=target,
+        review=review,
         extensions=_extensions(data, origin),
         exclude_dir_names=_string_list(data, "exclude_dir_names", origin),
     )
