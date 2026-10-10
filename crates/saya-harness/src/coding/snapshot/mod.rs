@@ -1,3 +1,4 @@
+mod capture;
 mod capture_blob;
 mod capture_reader;
 mod facts;

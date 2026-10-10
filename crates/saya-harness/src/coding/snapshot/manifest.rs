@@ -124,6 +124,12 @@ pub enum SnapshotError {
     ArtifactPathInvalid,
     #[error("a snapshot with this id already exists in the artifacts root")]
     SnapshotExists,
+    /// The snapshot directory was published under its id, but a durability
+    /// sync failed afterwards. The id is occupied and may already look
+    /// complete; it must not be silently retried or reused, and its
+    /// durability is unverified.
+    #[error("the snapshot was published under its id but its durability sync failed afterwards")]
+    PublishedButNotDurable,
     #[error(
         "the snapshot artifacts root is not a private directory or is unsupported on this platform"
     )]
