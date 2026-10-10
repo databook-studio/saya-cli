@@ -1,0 +1,4 @@
+interface:
+  display_name: "Saya Coding"
+  short_description: "Plan, implement, test, and review Saya code changes"
+  default_prompt: "Use $saya-coding to implement or review a change in this Saya repository."
