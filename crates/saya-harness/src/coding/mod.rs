@@ -1,6 +1,7 @@
 //! Native coding coordination contracts.
 
 pub mod policy;
+pub mod skills;
 
 pub mod child {
     mod factory;
