@@ -8,6 +8,8 @@ mod create_edges;
 mod create_retry;
 #[path = "w05/create_support.rs"]
 mod create_support;
+#[path = "w05/ownership.rs"]
+mod ownership;
 #[allow(dead_code)]
 #[path = "w02_support.rs"]
 mod support;
