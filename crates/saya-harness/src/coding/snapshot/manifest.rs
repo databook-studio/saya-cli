@@ -148,6 +148,12 @@ pub enum SnapshotError {
         #[source]
         source: Option<RedactedIoError>,
     },
+    #[error("the snapshot entry is not a committed Git blob source")]
+    SourceNotGitBlob,
+    #[error("the captured blob bytes do not match the planned declared size")]
+    BlobSizeMismatch,
+    #[error("the blob bytes do not match the repository's object id")]
+    BlobDigestMismatch,
 }
 
 /// A redacted wrapper around an [`std::io::Error`] for capture failures: the

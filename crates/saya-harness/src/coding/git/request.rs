@@ -3,9 +3,15 @@ use std::ffi::OsString;
 use saya_types::{GitObjectId, ManagedCheckoutPath};
 
 use super::command::{GitError, GitOperation};
+use crate::coding::snapshot::MAX_SNAPSHOT_FILE_BYTES;
 
 const MAX_GIT_STDOUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_GIT_STDERR_BYTES: usize = 1024 * 1024;
+
+const SNAPSHOT_BLOB_STDOUT_BYTES: usize = match MAX_SNAPSHOT_FILE_BYTES.checked_add(1024) {
+    Some(total) => total as usize,
+    None => panic!("snapshot blob stdout limit overflows"),
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum GitRequest<'a> {
@@ -26,6 +32,7 @@ pub(super) enum GitRequest<'a> {
     IndexStageEntries,
     TreeEntries(&'a GitObjectId),
     ReadBlob(&'a GitObjectId),
+    SnapshotBlob(&'a GitObjectId),
     Head,
     Branch,
     UnstagedNames,
@@ -56,6 +63,7 @@ impl GitRequest<'_> {
             Self::Version => (4096, 64 * 1024),
             Self::LocalConfig | Self::ReadBlob(_) => (1024 * 1024, 64 * 1024),
             Self::AddWorktree { .. } | Self::RemoveWorktree { .. } => (1024 * 1024, 1024 * 1024),
+            Self::SnapshotBlob(_) => (SNAPSHOT_BLOB_STDOUT_BYTES, 64 * 1024),
             _ => (MAX_GIT_STDOUT_BYTES, MAX_GIT_STDERR_BYTES),
         }
     }
@@ -113,6 +121,7 @@ impl GitRequest<'_> {
             }
             Self::TreeEntries(_) => vec!["ls-tree", "--full-tree", "-r", "-l", "-z"],
             Self::ReadBlob(_) => vec!["cat-file", "blob"],
+            Self::SnapshotBlob(_) => vec!["cat-file", "blob"],
             Self::AddWorktree { .. } => vec!["worktree", "add", "--detach", "--"],
             Self::RemoveWorktree { .. } => vec!["worktree", "remove", "--"],
         };
@@ -127,7 +136,7 @@ impl GitRequest<'_> {
                     arguments.insert(1, format!("--source={}", source.as_str()).into());
                 }
             }
-            Self::TreeEntries(object) | Self::ReadBlob(object) => {
+            Self::TreeEntries(object) | Self::ReadBlob(object) | Self::SnapshotBlob(object) => {
                 arguments.push(object.as_str().into());
             }
             Self::AddWorktree { path, base } => {

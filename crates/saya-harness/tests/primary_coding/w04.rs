@@ -1,3 +1,7 @@
+#[path = "w04/blob.rs"]
+mod blob;
+#[path = "w04/blob_sha256.rs"]
+mod blob_sha256;
 #[path = "w04/destination.rs"]
 mod destination;
 #[path = "w04/destination_commit.rs"]
