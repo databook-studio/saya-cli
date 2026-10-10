@@ -104,4 +104,27 @@ impl DatabaseTools {
             context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
         }
     }
+
+    /// A tool set for one child: the workspace tools bound to the child's
+    /// checkout root and nothing else; no connection can be selected.
+    #[allow(dead_code)] // consumed by R05b2
+    pub(in crate::agent::tools) fn for_child_checkout(workspace: Arc<Workspace>) -> Self {
+        Self {
+            registry: ConnectionRegistry::new("none"),
+            max_rows: 0,
+            allow_query_data: false,
+            state_db: None,
+            max_concurrent_fan_out_queries: Self::MAX_CONCURRENT_FAN_OUT_QUERIES,
+            fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
+            observations: None,
+            metrics: None,
+            supplied_objects: Vec::new(),
+            recall_receipt: None,
+            override_log: None,
+            workspace: Some(workspace),
+            capture_hook: None,
+            checkpoints: None,
+            context_byte_budget: saya_agent::AgentLimits::default().context_byte_budget,
+        }
+    }
 }
