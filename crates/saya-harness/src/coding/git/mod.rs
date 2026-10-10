@@ -13,6 +13,8 @@ mod repository;
 mod repository_check;
 mod request;
 mod service;
+mod snapshot_input;
+mod snapshot_tree_parser;
 mod status_fields;
 mod status_parser;
 mod validation;
@@ -25,3 +27,4 @@ pub use command::{
 pub use inventory_types::{GitPathStatus, GitRepositoryInventory, GitWorktreeInventory};
 pub use repository::{GitBranchState, GitHeadState, GitInventoryError, GitRepositoryIdentity};
 pub use service::GitService;
+pub(crate) use snapshot_input::{GitSnapshotInputs, SnapshotIndexInput, SnapshotTreeInput};

@@ -4,7 +4,7 @@ use saya_agent::CancellationToken;
 
 use super::{
     command::{GitError, GitRepository, require_success},
-    index_parser::{reject_sparse_index, validate_index_entries},
+    index_parser::{GitIndexEntry, reject_sparse_index, validate_index_entries},
     inventory_deadline::InventoryDeadline,
     inventory_types::GitRepositoryInventory,
     metadata_scan::reject_nested_repositories,
@@ -27,18 +27,28 @@ impl GitService {
         cancellation: &CancellationToken,
     ) -> Result<GitRepositoryInventory, GitInventoryError> {
         let deadline = InventoryDeadline::start();
-        let _guard = tokio::select! {
-            biased;
-            _ = cancellation.cancelled() => {
-                return Err(GitInventoryError::Git(GitError::Cancelled));
-            }
-            result = tokio::time::timeout_at(deadline.at(), self.operation_guard()) => {
-                match result {
-                    Ok(guard) => guard,
-                    Err(_) => return Err(GitInventoryError::Git(GitError::TimedOut)),
-                }
-            }
-        };
+        let _guard = self
+            .operation_guard_until(cancellation, deadline.at())
+            .await
+            .map_err(GitInventoryError::Git)?;
+        let result = self
+            .inventory_locked(
+                repository,
+                cancellation,
+                deadline,
+                InventoryBudget::default(),
+            )
+            .await?;
+        Ok(result.inventory)
+    }
+
+    pub(super) async fn inventory_locked(
+        &self,
+        repository: &GitRepository,
+        cancellation: &CancellationToken,
+        deadline: InventoryDeadline,
+        mut budget: InventoryBudget,
+    ) -> Result<InventoryRead, GitInventoryError> {
         deadline.check()?;
         super::repository_check::verify_with_deadline(
             self,
@@ -52,7 +62,6 @@ impl GitService {
         self.ensure_supported_until(cancellation, deadline.at())
             .await
             .map_err(GitInventoryError::Git)?;
-        let mut budget = InventoryBudget::default();
 
         let git_dir = read_line(
             self,
@@ -181,7 +190,7 @@ impl GitService {
             .map_err(GitInventoryError::Git)?;
         budget.add_output(&stage_output.stdout)?;
         deadline.check()?;
-        let indexed_paths = validate_index_entries(
+        let indexed_entries = validate_index_entries(
             &stage_output.stdout,
             repository.object_format(),
             &mut budget,
@@ -205,7 +214,7 @@ impl GitService {
         reject_nested_repositories(
             repository.root(),
             &status.paths,
-            &indexed_paths,
+            &indexed_entries,
             deadline,
             cancellation,
         )?;
@@ -242,12 +251,22 @@ impl GitService {
         }
         deadline.check()?;
 
-        Ok(GitRepositoryInventory {
-            identity,
-            head,
-            branch,
-            paths: status.paths,
-            worktrees,
+        Ok(InventoryRead {
+            inventory: GitRepositoryInventory {
+                identity,
+                head,
+                branch,
+                paths: status.paths,
+                worktrees,
+            },
+            indexed_entries,
+            budget,
         })
     }
+}
+
+pub(super) struct InventoryRead {
+    pub(super) inventory: GitRepositoryInventory,
+    pub(super) indexed_entries: Vec<GitIndexEntry>,
+    pub(super) budget: InventoryBudget,
 }

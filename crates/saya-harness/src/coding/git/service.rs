@@ -137,6 +137,20 @@ impl GitService {
         self.operation_lock.lock().await
     }
 
+    pub(super) async fn operation_guard_until(
+        &self,
+        cancellation: &CancellationToken,
+        deadline: Instant,
+    ) -> Result<MutexGuard<'_, ()>, GitError> {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(GitError::Cancelled),
+            result = tokio::time::timeout_at(deadline, self.operation_guard()) => {
+                result.map_err(|_| GitError::TimedOut)
+            }
+        }
+    }
+
     pub(super) async fn run_request(
         &self,
         current_dir: &Path,

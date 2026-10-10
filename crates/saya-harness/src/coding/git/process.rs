@@ -60,7 +60,7 @@ async fn execute_inner(
 ) -> Result<GitOutput, GitError> {
     let operation = request.operation();
     let (stdout_limit, stderr_limit) = request.output_limits();
-    let input = request.stdin_bytes();
+    let input = request.stdin_bytes()?;
     let mut command = Command::new(&environment.executable);
     environment.apply(&mut command);
     command
