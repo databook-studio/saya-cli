@@ -103,6 +103,8 @@ pub enum GitError {
     Wait(#[source] io::Error),
     #[error("Git output could not be captured")]
     CaptureUnavailable,
+    #[error("bounded Git request input could not be written")]
+    InputUnavailable(#[source] io::Error),
     #[error("installed Git lacks the required no-lazy-fetch support")]
     UnsupportedGitVersion,
     #[error("Git did not report a valid version")]
