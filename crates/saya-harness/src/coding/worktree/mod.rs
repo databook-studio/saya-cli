@@ -87,5 +87,8 @@ mod create_events;
 
 mod create_preflight;
 
+mod ownership;
+
 pub use create::{CreateCheckoutInput, CreatedCheckout, create_managed_checkout};
 pub use create_error::CreateCheckoutError;
+pub use ownership::{OwnershipError, OwnershipInput, VerifiedCheckout, verify_owned_checkout};
