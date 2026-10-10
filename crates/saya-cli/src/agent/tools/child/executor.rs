@@ -5,6 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use saya_agent::{ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::policy::ChildAuthorityView;
+use saya_harness::runner::RunProgram;
 use saya_types::{ManagedCheckoutId, WorkspacePath};
 
 use super::super::DatabaseTools;
@@ -13,11 +14,14 @@ use super::{ChildToolsError, TrustedCheckoutPair};
 
 /// A tool set bound to one child's verified managed checkout: the workspace
 /// tools for the child root plus the narrowed authority that admits writes.
+/// Process tools exist only when the composition root supplies an
+/// already-confined runner AND the view's scope admits the program.
 pub(crate) struct ChildTools {
     tools: DatabaseTools,
     view: ChildAuthorityView,
     checkout_id: ManagedCheckoutId,
     permit_writes: bool,
+    runner: Option<Arc<RunProgram>>,
 }
 
 /// Builds the definitions and the executor for one child from one view: the
@@ -42,13 +46,37 @@ pub(crate) fn child_toolset(
             view: view.clone(),
             checkout_id: pair.checkout_id().clone(),
             permit_writes: permit,
+            runner: None,
         },
     ))
 }
 
+/// Builds the workspace half with [`child_toolset`] and, when the view's
+/// scope admits process work at all, adds the composition root's
+/// already-confined runner: its definition is appended and the executor
+/// routes `run_program` to it after admission. Refused when the view grants
+/// neither a runner nor an interpreter scope, so the tool is never surfaced
+/// without admission behind it.
+pub(crate) fn child_toolset_with_runner(
+    view: &ChildAuthorityView,
+    pair: &TrustedCheckoutPair,
+    runner: Arc<RunProgram>,
+) -> Result<(Vec<ToolDefinition>, ChildTools), ChildToolsError> {
+    let (mut definitions, mut tools) = child_toolset(view, pair)?;
+    if !(view.capabilities().runner.is_some() || view.capabilities().interpreter.is_some()) {
+        return Err(ChildToolsError::RunnerNotAdmitted);
+    }
+    definitions.push(runner.definition());
+    tools.runner = Some(runner);
+    Ok((definitions, tools))
+}
+
 /// Admission happens immediately before the existing anchored mutation; the
-/// checkout id never comes from model arguments; data (SQL), process, scratch
-/// and memory tools are absent: unknown names are unsupported.
+/// checkout id never comes from model arguments; data (SQL), scratch and
+/// memory tools are absent: unknown names are unsupported. Process tools
+/// exist only when the composition root supplies an already-confined runner
+/// AND the view's scope admits the program: `run_program` routes to that
+/// runner after admission, and `run_command` is never routed.
 #[async_trait]
 impl ToolExecutor for ChildTools {
     async fn execute(
@@ -77,6 +105,24 @@ impl ToolExecutor for ChildTools {
                     })?;
             }
             "workspace_read" | "workspace_list" | "glob" | "grep" => {}
+            "run_program" => {
+                let Some(runner) = self.runner.as_ref() else {
+                    return Err(ToolError::UnsupportedTool);
+                };
+                let program = arguments
+                    .get("program")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| ToolError::Runner("the program is not a string".into()))?;
+                let admitted = if saya_types::is_refused_runner_program(program) {
+                    self.view.admit_interpreter_program(program)
+                } else {
+                    self.view.admit_runner_program(program)
+                };
+                admitted.map_err(|_| {
+                    ToolError::Runner("the child authority does not admit this program".into())
+                })?;
+                return runner.execute(name, arguments).await;
+            }
             _ => return Err(ToolError::UnsupportedTool),
         }
         workspace::execute_tool(&self.tools, name, &arguments).await
