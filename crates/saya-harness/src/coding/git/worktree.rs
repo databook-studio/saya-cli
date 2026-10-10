@@ -18,6 +18,52 @@ impl GitService {
         checkout_id: &ManagedCheckoutId,
         cancellation: &CancellationToken,
     ) -> Result<ManagedWorktree, GitError> {
+        self.add_worktree_inner(repository, base_commit, checkout_id, cancellation, false)
+            .await
+    }
+
+    pub async fn add_worktree_no_checkout(
+        &self,
+        repository: &GitRepository,
+        base_commit: &GitObjectId,
+        checkout_id: &ManagedCheckoutId,
+        cancellation: &CancellationToken,
+    ) -> Result<ManagedWorktree, GitError> {
+        self.add_worktree_inner(repository, base_commit, checkout_id, cancellation, true)
+            .await
+    }
+
+    pub async fn adopt_worktree(
+        &self,
+        repository: &GitRepository,
+        base_commit: &GitObjectId,
+        checkout_id: &ManagedCheckoutId,
+        cancellation: &CancellationToken,
+    ) -> Result<ManagedWorktree, GitError> {
+        let _guard = self.operation_guard().await;
+        self.ensure_supported(cancellation).await?;
+        repository_check::verify(self, repository, cancellation).await?;
+        let managed_path = self.managed_path(checkout_id)?;
+        let path = Path::new(managed_path.as_str());
+        self.verify_created_worktree(repository, path, base_commit, cancellation)
+            .await?;
+        Ok(ManagedWorktree {
+            service_root: self.environment.root.clone(),
+            repository: repository.clone(),
+            checkout_id: checkout_id.clone(),
+            path: managed_path,
+            base_commit: base_commit.clone(),
+        })
+    }
+
+    async fn add_worktree_inner(
+        &self,
+        repository: &GitRepository,
+        base_commit: &GitObjectId,
+        checkout_id: &ManagedCheckoutId,
+        cancellation: &CancellationToken,
+        no_checkout: bool,
+    ) -> Result<ManagedWorktree, GitError> {
         let _guard = self.operation_guard().await;
         self.ensure_supported(cancellation).await?;
         repository_check::verify(self, repository, cancellation).await?;
@@ -52,20 +98,42 @@ impl GitService {
         {
             return Err(GitError::ManagedPathOutsideState);
         }
+        let request = if no_checkout {
+            GitRequest::AddWorktreeNoCheckout {
+                path: &managed_path,
+                base: base_commit,
+            }
+        } else {
+            GitRequest::AddWorktree {
+                path: &managed_path,
+                base: base_commit,
+            }
+        };
         let created = self
-            .run_request(
-                &repository.root,
-                GitRequest::AddWorktree {
-                    path: &managed_path,
-                    base: base_commit,
-                },
-                cancellation,
-            )
+            .run_request(&repository.root, request, cancellation)
             .await
             .and_then(|output| require_success(output, GitOperation::Materialize))
             .map_err(|source| unknown(GitOperation::Materialize, source))?;
         drop(created);
 
+        self.verify_created_worktree(repository, path, base_commit, cancellation)
+            .await?;
+        Ok(ManagedWorktree {
+            service_root: self.environment.root.clone(),
+            repository: repository.clone(),
+            checkout_id: checkout_id.clone(),
+            path: managed_path,
+            base_commit: base_commit.clone(),
+        })
+    }
+
+    async fn verify_created_worktree(
+        &self,
+        repository: &GitRepository,
+        path: &Path,
+        base_commit: &GitObjectId,
+        cancellation: &CancellationToken,
+    ) -> Result<(), GitError> {
         let identity = repository_check::inspect(self, path, true, cancellation)
             .await
             .map_err(|source| unknown(GitOperation::Materialize, source))?;
@@ -91,13 +159,7 @@ impl GitService {
                 GitError::RepositoryChanged,
             ));
         }
-        Ok(ManagedWorktree {
-            service_root: self.environment.root.clone(),
-            repository: repository.clone(),
-            checkout_id: checkout_id.clone(),
-            path: managed_path,
-            base_commit: base_commit.clone(),
-        })
+        Ok(())
     }
 
     pub async fn remove_worktree(

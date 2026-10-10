@@ -44,6 +44,10 @@ pub(super) enum GitRequest<'a> {
         path: &'a ManagedCheckoutPath,
         base: &'a GitObjectId,
     },
+    AddWorktreeNoCheckout {
+        path: &'a ManagedCheckoutPath,
+        base: &'a GitObjectId,
+    },
     RemoveWorktree {
         path: &'a ManagedCheckoutPath,
     },
@@ -52,7 +56,9 @@ pub(super) enum GitRequest<'a> {
 impl GitRequest<'_> {
     pub(super) fn operation(self) -> GitOperation {
         match self {
-            Self::AddWorktree { .. } => GitOperation::Materialize,
+            Self::AddWorktree { .. } | Self::AddWorktreeNoCheckout { .. } => {
+                GitOperation::Materialize
+            }
             Self::RemoveWorktree { .. } => GitOperation::Remove,
             _ => GitOperation::Read,
         }
@@ -62,7 +68,9 @@ impl GitRequest<'_> {
         match self {
             Self::Version => (4096, 64 * 1024),
             Self::LocalConfig | Self::ReadBlob(_) => (1024 * 1024, 64 * 1024),
-            Self::AddWorktree { .. } | Self::RemoveWorktree { .. } => (1024 * 1024, 1024 * 1024),
+            Self::AddWorktree { .. }
+            | Self::AddWorktreeNoCheckout { .. }
+            | Self::RemoveWorktree { .. } => (1024 * 1024, 1024 * 1024),
             Self::SnapshotBlob(_) => (SNAPSHOT_BLOB_STDOUT_BYTES, 64 * 1024),
             _ => (MAX_GIT_STDOUT_BYTES, MAX_GIT_STDERR_BYTES),
         }
@@ -123,6 +131,9 @@ impl GitRequest<'_> {
             Self::ReadBlob(_) => vec!["cat-file", "blob"],
             Self::SnapshotBlob(_) => vec!["cat-file", "blob"],
             Self::AddWorktree { .. } => vec!["worktree", "add", "--detach", "--"],
+            Self::AddWorktreeNoCheckout { .. } => {
+                vec!["worktree", "add", "--detach", "--no-checkout", "--"]
+            }
             Self::RemoveWorktree { .. } => vec!["worktree", "remove", "--"],
         };
         let mut arguments: Vec<OsString> = strings.into_iter().map(OsString::from).collect();
@@ -139,7 +150,7 @@ impl GitRequest<'_> {
             Self::TreeEntries(object) | Self::ReadBlob(object) | Self::SnapshotBlob(object) => {
                 arguments.push(object.as_str().into());
             }
-            Self::AddWorktree { path, base } => {
+            Self::AddWorktree { path, base } | Self::AddWorktreeNoCheckout { path, base } => {
                 arguments.push(path.as_str().into());
                 arguments.push(base.as_str().into());
             }
