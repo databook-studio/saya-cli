@@ -3,8 +3,7 @@ use saya_agent::{
     AgentMetricPhase, AgentMetricUseful,
 };
 
-use super::api::ChildMetric;
-use super::api::ChildProgress;
+use super::events::{ChildMetric, ChildProgress};
 
 pub(super) fn progress(event: AgentEvent) -> Result<Option<ChildProgress>, ()> {
     Ok(Some(match event {

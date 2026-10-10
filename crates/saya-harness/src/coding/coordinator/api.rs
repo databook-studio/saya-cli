@@ -1,192 +1,19 @@
+use super::events::{ChildEventSender, ChildEventSink};
 use saya_agent::{
-    AgentError, AgentEvent, AgentEventSink, AgentMetric, AgentRunControl, AnsweringObservation,
-    BudgetDimension, CancellationReason, CancellationToken, ProviderContinuationPhase,
-    ProviderRecoveryPhase, ProviderRecoveryReason, TokenUsage, ToolEffect, UsageCall,
-    run_agent_with_control,
+    AgentError, AgentRunControl, CancellationReason, CancellationToken, EffectAdmission,
+    EffectAdmissionError, EffectOutcome, run_agent_with_control,
 };
-use saya_types::{AgentId, InvocationId, JobId};
-use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use thiserror::Error;
-use tokio::sync::mpsc;
 
-use super::super::child::{ChildComponents, ChildExecutionSpec, ChildFactory, ChildFactoryError};
+use super::super::{
+    budget::{ChildCountLimits, JobBudgetLedger},
+    child::{ChildComponents, ChildExecutionSpec, ChildFactory, ChildFactoryError},
+};
 
-pub const MAX_CHILD_EVENT_QUEUE_CAPACITY: usize = 32;
-pub const MAX_CHILD_EVENT_BYTES: usize = 8 * 1024;
-
-/// One content-free progress fact from the agent loop.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "progress", rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum ChildProgress {
-    AnsweringBudgetStopped {
-        dimension: BudgetDimension,
-    },
-    AnswerTextAvailable,
-    TurnReset,
-    TurnStarted,
-    ProviderRecovery {
-        phase: ProviderRecoveryPhase,
-        reason: ProviderRecoveryReason,
-        attempt: u8,
-        limit: u8,
-    },
-    ProviderContinuation {
-        phase: ProviderContinuationPhase,
-        index: u32,
-        limit: u32,
-    },
-    ToolRequested {
-        effect: Option<ToolEffect>,
-    },
-    ToolCompleted,
-    ToolDenied,
-    KnowledgeSupplied {
-        dropped_by_bounds: u64,
-    },
-    KnowledgeProposed,
-    KnowledgeLearningStarted,
-    KnowledgeOverridden {
-        finding_count: u64,
-    },
-    KnowledgeLearningSkipped,
-    KnowledgeLearningDisabled {
-        misses: u32,
-    },
-    ClarificationNeeded,
-    Complete,
-    Usage {
-        call: UsageCall,
-        usage: TokenUsage,
-    },
-    FailedAttemptUsage {
-        usage: TokenUsage,
-    },
-    AnswerDesignated,
-    ConsensusDecided {
-        attempts: u64,
-        voted: u64,
-        votes: u64,
-        margin: u64,
-        tied: bool,
-        probe_broke_tie: bool,
-    },
-}
-
-/// Finite projection of the agent's source-owned local metrics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "metric", rename_all = "snake_case")]
-pub enum ChildMetric {
-    Phase {
-        phase: &'static str,
-        elapsed_ns: u64,
-        outcome: &'static str,
-    },
-    Count {
-        name: &'static str,
-    },
-    Useful {
-        name: &'static str,
-    },
-    UsageCoverage {
-        attempt_outcome: &'static str,
-        reported: bool,
-    },
-}
-
-/// Bounded in-memory progress/usage projection, not a durable or complete trace.
-/// Identity always comes from the narrowed spec.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ChildEvent {
-    job_id: JobId,
-    agent_id: AgentId,
-    invocation_id: InvocationId,
-    kind: ChildEventKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-#[non_exhaustive]
-/// A safe finite progress, source-owned observation, or numeric metric payload.
-pub enum ChildEventKind {
-    Progress { progress: ChildProgress },
-    Observation { observation: AnsweringObservation },
-    Metric { metric: ChildMetric },
-}
-
-impl ChildEvent {
-    pub fn job_id(&self) -> &JobId {
-        &self.job_id
-    }
-
-    pub fn agent_id(&self) -> &AgentId {
-        &self.agent_id
-    }
-
-    pub fn invocation_id(&self) -> &InvocationId {
-        &self.invocation_id
-    }
-
-    pub fn kind(&self) -> &ChildEventKind {
-        &self.kind
-    }
-
-    pub fn to_json_bytes(&self) -> Result<Vec<u8>, ChildEventChannelError> {
-        let bytes = serde_json::to_vec(self).map_err(|_| ChildEventChannelError::Malformed)?;
-        if bytes.len() > MAX_CHILD_EVENT_BYTES {
-            return Err(ChildEventChannelError::Oversize);
-        }
-        Ok(bytes)
-    }
-}
-
-pub struct ChildEventSender {
-    sender: mpsc::Sender<ChildEvent>,
-    job_id: JobId,
-    agent_id: AgentId,
-    invocation_id: InvocationId,
-}
-
-pub struct ChildEventReceiver {
-    receiver: mpsc::Receiver<ChildEvent>,
-}
-
-impl ChildEventReceiver {
-    pub async fn recv(&mut self) -> Option<ChildEvent> {
-        self.receiver.recv().await
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.receiver.capacity()
-    }
-}
-
-pub fn child_event_channel(spec: &ChildExecutionSpec) -> (ChildEventSender, ChildEventReceiver) {
-    let authority = spec.authority();
-    let (sender, receiver) = mpsc::channel(MAX_CHILD_EVENT_QUEUE_CAPACITY);
-    (
-        ChildEventSender {
-            sender,
-            job_id: authority.job_id().clone(),
-            agent_id: authority.agent_id().clone(),
-            invocation_id: authority.invocation_id().clone(),
-        },
-        ChildEventReceiver { receiver },
-    )
-}
-
-/// Why a bounded child event could not be encoded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[non_exhaustive]
-pub enum ChildEventChannelError {
-    #[error("child event could not be encoded")]
-    Malformed,
-    #[error("child event exceeds the 8 KiB message bound")]
-    Oversize,
-}
-
-/// Why the one child invocation did not produce its ordinary result.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ChildRunError {
@@ -196,6 +23,8 @@ pub enum ChildRunError {
     ChannelIdentityMismatch,
     #[error("child progress owner failed")]
     OwnerFailure,
+    #[error("shared child or effect budget denied admission")]
+    BudgetDenied,
     #[error("child invocation was cancelled: {reason:?}")]
     Cancelled { reason: CancellationReason },
     #[error(transparent)]
@@ -208,6 +37,101 @@ pub async fn run_child(
     factory: &dyn ChildFactory,
     events: ChildEventSender,
     cancellation: CancellationToken,
+) -> Result<saya_agent::AgentOutput, ChildRunError> {
+    run_child_inner(spec, factory, events, cancellation, None).await
+}
+pub async fn run_child_budgeted(
+    spec: ChildExecutionSpec,
+    factory: &dyn ChildFactory,
+    events: ChildEventSender,
+    cancellation: CancellationToken,
+    ledger: &JobBudgetLedger,
+) -> Result<saya_agent::AgentOutput, ChildRunError> {
+    let (job_id, agent_id, invocation_id) = {
+        let authority = spec.authority();
+        (
+            authority.job_id().clone(),
+            authority.agent_id().clone(),
+            authority.invocation_id().clone(),
+        )
+    };
+    if job_id != ledger.job_id().await
+        || events.job_id != job_id
+        || events.agent_id != agent_id
+        || events.invocation_id != invocation_id
+    {
+        return Err(ChildRunError::ChannelIdentityMismatch);
+    }
+    let limits = spec.answering_limits();
+    let logical_requests = limits.max_requests.ok_or(ChildRunError::BudgetDenied)?;
+    let tool_calls = limits.max_tool_calls.ok_or(ChildRunError::BudgetDenied)?;
+    let session = ledger
+        .begin_child(
+            &agent_id,
+            &invocation_id,
+            ChildCountLimits {
+                logical_requests,
+                tool_calls,
+            },
+        )
+        .await
+        .map_err(map_admission_error)?;
+    let view = session.view().clone();
+    let child_token = CancellationToken::new();
+    let caller_token = cancellation.clone();
+    let ledger_token = ledger.cancellation_token();
+    let monitor_token = child_token.clone();
+    let deadline = ledger.remaining().await;
+    let monitor = tokio::spawn(async move {
+        tokio::select! {
+            biased;
+            _ = caller_token.cancelled() => monitor_token.cancel_with_reason(caller_token.reason().unwrap_or(CancellationReason::User)),
+            _ = ledger_token.cancelled() => monitor_token.cancel_with_reason(ledger_token.reason().unwrap_or(CancellationReason::OwnerFailure)),
+            _ = tokio::time::sleep(deadline) => {
+                ledger_token.cancel_with_reason(CancellationReason::Budget(
+                    saya_agent::BudgetDimension::ElapsedTime,
+                ));
+                let reason = ledger_token
+                    .reason()
+                    .unwrap_or(CancellationReason::Budget(
+                        saya_agent::BudgetDimension::ElapsedTime,
+                    ));
+                monitor_token.cancel_with_reason(reason);
+            }
+        }
+    });
+    let result = run_child_inner(spec, factory, events, child_token, Some(&view)).await;
+    monitor.abort();
+    let _ = monitor.await;
+    let started = ledger.child_started(&agent_id, &invocation_id).await;
+    ledger
+        .finish_child(
+            session,
+            if started {
+                EffectOutcome::Succeeded
+            } else {
+                EffectOutcome::NotStarted
+            },
+        )
+        .await
+        .map_err(|_| ChildRunError::OwnerFailure)?;
+    result
+}
+
+fn map_admission_error(error: EffectAdmissionError) -> ChildRunError {
+    match error {
+        EffectAdmissionError::Denied => ChildRunError::BudgetDenied,
+        EffectAdmissionError::OwnerFailure(_)
+        | EffectAdmissionError::UnsupportedPhysicalCoverage => ChildRunError::OwnerFailure,
+        _ => ChildRunError::OwnerFailure,
+    }
+}
+async fn run_child_inner(
+    spec: ChildExecutionSpec,
+    factory: &dyn ChildFactory,
+    events: ChildEventSender,
+    cancellation: CancellationToken,
+    admission: Option<&dyn EffectAdmission>,
 ) -> Result<saya_agent::AgentOutput, ChildRunError> {
     let authority = spec.authority();
     if &events.job_id != authority.job_id()
@@ -239,6 +163,10 @@ pub async fn run_child(
         Some(config) => control.with_request_preflight(config),
         None => control,
     };
+    let control = match admission {
+        Some(owner) => control.with_physical_effect_admission(owner),
+        None => control,
+    };
     let result = run_agent_with_control(
         provider.as_ref(),
         tools.as_ref(),
@@ -264,69 +192,4 @@ pub async fn run_child(
         }
     }
     result.map_err(ChildRunError::Agent)
-}
-
-struct ChildEventSink {
-    events: ChildEventSender,
-    cancellation: CancellationToken,
-    owner_failure: AtomicBool,
-}
-
-impl ChildEventSink {
-    async fn publish(&self, kind: ChildEventKind) {
-        let event = ChildEvent {
-            job_id: self.events.job_id.clone(),
-            agent_id: self.events.agent_id.clone(),
-            invocation_id: self.events.invocation_id.clone(),
-            kind,
-        };
-        if event.to_json_bytes().is_err() {
-            self.cancel_owner_failure();
-            return;
-        }
-        tokio::select! {
-            biased;
-            _ = self.cancellation.cancelled() => {
-                if self.events.sender.is_closed() {
-                    self.cancel_owner_failure();
-                }
-            }
-            sent = self.events.sender.send(event) => {
-                if sent.is_err() {
-                    self.cancel_owner_failure();
-                }
-            }
-        }
-    }
-
-    fn cancel_owner_failure(&self) {
-        self.owner_failure.store(true, Ordering::Release);
-        self.cancellation
-            .cancel_with_reason(CancellationReason::OwnerFailure);
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentEventSink for ChildEventSink {
-    async fn emit(&self, event: AgentEvent) {
-        match super::event_projection::progress(event) {
-            Ok(Some(progress)) => {
-                self.publish(ChildEventKind::Progress { progress }).await;
-            }
-            Ok(None) => {}
-            Err(()) => self.cancel_owner_failure(),
-        }
-    }
-
-    async fn observe_answering(&self, observation: AnsweringObservation) {
-        self.publish(ChildEventKind::Observation { observation })
-            .await;
-    }
-
-    async fn metric(&self, metric: AgentMetric) {
-        match super::event_projection::metric(metric) {
-            Ok(metric) => self.publish(ChildEventKind::Metric { metric }).await,
-            Err(()) => self.cancel_owner_failure(),
-        }
-    }
 }
