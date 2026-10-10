@@ -41,6 +41,7 @@ async fn upgrade_from_eleven_preserves_coding_events_and_child_metadata() {
     store.append_coding_event(running.clone()).await.unwrap();
     store.close().await;
     let raw = create_pool(&db).await;
+    checkout_upgrade::drop_step13_tables(&raw).await;
     sqlx::query("DROP TABLE coding_budget_reservations")
         .execute(&raw)
         .await
@@ -78,7 +79,7 @@ async fn upgrade_from_eleven_preserves_coding_events_and_child_metadata() {
         vec![running]
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 12);
+    assert_eq!(user_version(&db).await, 13);
     assert!(table_exists(&db, "coding_budget_reservations").await);
     let _ = fs::remove_dir_all(root);
 }

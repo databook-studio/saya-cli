@@ -24,6 +24,8 @@ type AuditRow = (
 
 #[path = "migration/budget_upgrade.rs"]
 mod budget_upgrade;
+#[path = "migration/checkout_upgrade.rs"]
+mod checkout_upgrade;
 #[path = "migration/current_schema.rs"]
 mod current_schema;
 #[path = "migration/safety.rs"]
