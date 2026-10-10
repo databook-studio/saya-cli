@@ -7,6 +7,7 @@ mod children;
 mod fresh;
 mod ledger;
 mod reservations;
+mod resume;
 mod sequencer;
 mod settlement;
 mod snapshot;

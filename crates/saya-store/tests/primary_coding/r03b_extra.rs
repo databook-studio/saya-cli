@@ -137,13 +137,15 @@ async fn concurrent_recorders_with_different_policies_leave_one_row() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A valid retry that returns `AlreadyPresentSame` must roll back its
-/// `BEGIN IMMEDIATE` transaction instead of committing it: afterwards the
-/// pool must be able to start a fresh write transaction immediately (a
-/// different job's record succeeds without a busy/lock error), and the first
-/// job still has exactly one row with the original digest.
+/// After an `AlreadyPresentSame` retry, the observable claim is that no
+/// write transaction is left holding the database: a different job's
+/// record succeeds immediately without a busy/lock error, and the first
+/// job still has exactly one row with the original digest. Whether the
+/// retry itself committed or rolled back its empty transaction is not
+/// observable here — both produce these outcomes — so this test proves
+/// only the absence of a leaked write transaction.
 #[tokio::test]
-async fn already_present_same_retry_leaves_no_open_transaction_and_is_stable() {
+async fn already_present_same_retry_does_not_block_the_next_writer_and_is_stable() {
     let root = temp_root("r03bx-retry-tx");
     let db = root.join("state.sqlite3");
     let store = SqliteStateStore::new(&db);

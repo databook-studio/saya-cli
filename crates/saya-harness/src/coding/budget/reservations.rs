@@ -81,6 +81,45 @@ pub(super) async fn settle_reservation(
     }
 }
 
+impl State {
+    /// The owner's reservation entry point: bounded, cancel-aware, and
+    /// serialized through the durable append. It lives beside the other
+    /// reservation-append paths it serializes through.
+    pub(super) async fn reserve(
+        &mut self,
+        charges: Vec<(BudgetDimension, u64)>,
+        agent: Option<saya_types::AgentId>,
+        invocation: Option<saya_types::InvocationId>,
+    ) -> Result<NonZeroU64, EffectAdmissionError> {
+        if self.snapshot.poisoned || self.reservations >= super::ledger::MAX_RESERVATIONS {
+            return Err(EffectAdmissionError::Denied);
+        }
+        if self.cancellation.is_cancelled() {
+            return Err(EffectAdmissionError::Denied);
+        }
+        if self.deadline_expired() {
+            self.latch_deadline_expiry();
+            return Err(EffectAdmissionError::Denied);
+        }
+        if self.permits.len() >= super::ledger::MAX_LIVE_PERMITS
+            || self
+                .reservations
+                .checked_add(1)
+                .is_none_or(|next| next > super::ledger::MAX_RESERVATIONS)
+        {
+            return Err(EffectAdmissionError::Denied);
+        }
+        let sequence = NonZeroU64::new(self.sequence).ok_or_else(|| self.owner_failure())?;
+        append_reservation(self, sequence, charges, agent, invocation).await?;
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or_else(|| self.owner_failure())?;
+        self.reservations += 1;
+        Ok(sequence)
+    }
+}
+
 fn corrupt(state: &mut State) -> EffectAdmissionError {
     state.snapshot.poisoned = true;
     state
