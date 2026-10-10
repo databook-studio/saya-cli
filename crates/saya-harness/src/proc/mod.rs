@@ -13,13 +13,16 @@
 use std::{
     io,
     process::ExitStatus,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 use saya_agent::CancellationToken;
 
-use super::runner::output::{OUTPUT_CAP_BYTES, OutputRing, ProgramOutcome, StreamCapture};
+use super::runner::output::{ProgramOutcome, StreamCapture};
+
+mod pipes;
+pub use pipes::Pipes;
+pub(crate) use pipes::{OutputSinks, RawChunkSink};
 
 #[cfg(windows)]
 mod windows;
@@ -92,53 +95,6 @@ pub async fn wait(
         killed_orphans,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     })
-}
-
-/// The captured stdio rings for one child: stdout and stderr pumped on
-/// dedicated threads from spawn until EOF, bounded by the shared cap.
-pub struct Pipes {
-    stdout: Arc<OutputRing>,
-    stderr: Arc<OutputRing>,
-    pumps: Vec<std::thread::JoinHandle<()>>,
-}
-
-impl Pipes {
-    /// Takes the child's pipes and starts the pumps. The pipes must be
-    /// piped; a missing pipe is a wait failure, never a silent gap.
-    pub fn take(
-        stdout: &mut Option<impl io::Read + Send + 'static>,
-        stderr: &mut Option<impl io::Read + Send + 'static>,
-    ) -> io::Result<Self> {
-        let stdout_ring = Arc::new(OutputRing::new(OUTPUT_CAP_BYTES));
-        let stderr_ring = Arc::new(OutputRing::new(OUTPUT_CAP_BYTES));
-        let stdout_pipe = stdout
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stdout not captured"))?;
-        let stderr_pipe = stderr
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stderr not captured"))?;
-        let pumps = vec![
-            pump(Arc::clone(&stdout_ring), stdout_pipe),
-            pump(Arc::clone(&stderr_ring), stderr_pipe),
-        ];
-        Ok(Self {
-            stdout: stdout_ring,
-            stderr: stderr_ring,
-            pumps,
-        })
-    }
-
-    /// Joins the pumps and redacts both rings through the single capture
-    /// gate both lanes share.
-    pub fn finish(self, secrets: &[String]) -> (StreamCapture, StreamCapture) {
-        for pump in self.pumps {
-            let _ = pump.join();
-        }
-        (
-            super::runner::output::capture(&self.stdout, secrets),
-            super::runner::output::capture(&self.stderr, secrets),
-        )
-    }
 }
 
 /// Builds the outcome shape both lanes report from one settled wait and its
@@ -239,11 +195,4 @@ pub fn sweep_process_group(pgid: u32) -> bool {
 pub fn sweep_process_group(pgid: u32) -> bool {
     let _ = pgid;
     false
-}
-
-fn pump(
-    ring: Arc<OutputRing>,
-    pipe: impl io::Read + Send + 'static,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || ring.pump(pipe))
 }

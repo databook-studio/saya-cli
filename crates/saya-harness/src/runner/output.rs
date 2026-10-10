@@ -20,6 +20,10 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[path = "output_scrub.rs"]
+mod scrub;
+pub(crate) use scrub::secret_spans;
+
 use saya_types::redact;
 
 use super::error::RunnerError;
@@ -31,8 +35,9 @@ pub const OUTPUT_CAP_BYTES: usize = 64 * 1024;
 
 /// The read chunk a pump uses: output is drained continuously — the child
 /// never blocks long on a full pipe — while the ring stays the only thing
-/// that grows.
-const PUMP_CHUNK: usize = 8 * 1024;
+/// that grows. Also the granularity the bounded read responses (C02) are
+/// sized to.
+pub(crate) const PUMP_CHUNK: usize = 8 * 1024;
 
 /// The ring buffer for one stream: the last `cap` bytes it was fed, with the
 /// byte accounting the truncation report needs. Shared across the reader
@@ -139,17 +144,39 @@ pub fn capture(ring: &OutputRing, secrets: &[String]) -> StreamCapture {
     }
 }
 
-/// Replaces every occurrence of a resolved credential value with the
-/// redaction marker. Empty values are skipped: an empty pattern would match
-/// everywhere and destroy the capture without protecting anything.
-fn scrub_secrets(text: &str, secrets: &[String]) -> String {
-    let mut scrubbed = text.to_owned();
-    for secret in secrets {
-        if !secret.is_empty() && scrubbed.contains(secret.as_str()) {
-            scrubbed = scrubbed.replace(secret.as_str(), "[redacted]");
-        }
+/// Locates every occurrence of every non-empty secret in the ORIGINAL text,
+/// including overlapping occurrences, and replaces the matches with the
+/// redaction marker. Strictly overlapping spans merge into one marker;
+/// adjacent non-overlapping spans keep one marker each. Empty values are
+/// skipped: an empty pattern would match everywhere and destroy the capture
+/// without protecting anything.
+pub(crate) fn scrub_secrets(text: &str, secrets: &[String]) -> String {
+    let spans = secret_spans(text, secrets);
+    if spans.is_empty() {
+        return text.to_owned();
     }
+    let mut scrubbed = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for (start, end) in spans {
+        scrubbed.push_str(&text[cursor..start]);
+        scrubbed.push_str("[redacted]");
+        cursor = end;
+    }
+    scrubbed.push_str(&text[cursor..]);
     scrubbed
+}
+
+/// Redacts one raw chunk through the full two-pass gate: the value registry
+/// first, then the pattern pass. The output store's per-chunk sink uses this
+/// so no unredacted byte reaches the file. A credential value split across
+/// two chunks is not matched here as one string — the store's streaming
+/// writer carries a holdback window across reads so a split value is
+/// redacted before it is appended, and there is no final full-file re-scrub
+/// pass to catch what slipped through: the pattern-pass split remains a
+/// stated residual risk, the same class the ring documents at its cap
+/// boundary.
+pub(crate) fn redact_chunk(chunk: &str, secrets: &[String]) -> String {
+    redact(&scrub_secrets(chunk, secrets))
 }
 
 /// Persists the redacted outcome into the run workspace — the disk record
@@ -243,3 +270,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "output_scrub_tests.rs"]
+mod output_scrub_tests;
