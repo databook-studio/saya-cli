@@ -1,5 +1,6 @@
 //! Native coding coordination contracts.
 
+pub mod budget;
 pub mod policy;
 pub mod skills;
 
@@ -18,11 +19,13 @@ pub mod commands;
 pub mod coordinator {
     mod api;
     mod event_projection;
+    mod events;
 
-    pub use api::{
+    pub use api::{ChildRunError, run_child, run_child_budgeted};
+    pub use events::{
         ChildEvent, ChildEventChannelError, ChildEventKind, ChildEventReceiver, ChildEventSender,
-        ChildMetric, ChildProgress, ChildRunError, MAX_CHILD_EVENT_BYTES,
-        MAX_CHILD_EVENT_QUEUE_CAPACITY, child_event_channel, run_child,
+        ChildMetric, ChildProgress, MAX_CHILD_EVENT_BYTES, MAX_CHILD_EVENT_QUEUE_CAPACITY,
+        child_event_channel,
     };
 }
 
