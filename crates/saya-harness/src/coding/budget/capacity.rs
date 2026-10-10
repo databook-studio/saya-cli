@@ -49,6 +49,9 @@ pub(super) fn check_limit(
         BudgetDimension::ToolCalls => (state.counts.tools, state.limits.tool_calls),
         BudgetDimension::ModelRequestSlots => (state.counts.model_slots, state.limits.model_slots),
         BudgetDimension::ChildSlots => (state.counts.child_slots, state.limits.child_slots),
+        BudgetDimension::CommandSlots => {
+            (state.counts.command_slots, super::ledger::MAX_COMMAND_SLOTS)
+        }
         _ => return Err(EffectAdmissionError::Denied),
     };
     if used.checked_add(amount).is_none_or(|next| next > cap) {
@@ -68,6 +71,7 @@ pub(super) fn bump(
         BudgetDimension::ToolCalls => state.counts.tools,
         BudgetDimension::ModelRequestSlots => state.counts.model_slots,
         BudgetDimension::ChildSlots => state.counts.child_slots,
+        BudgetDimension::CommandSlots => state.counts.command_slots,
         _ => return Err(EffectAdmissionError::Denied),
     };
     let Some(next) = value.checked_add(amount) else {
@@ -79,6 +83,7 @@ pub(super) fn bump(
         BudgetDimension::ToolCalls => state.counts.tools = next,
         BudgetDimension::ModelRequestSlots => state.counts.model_slots = next,
         BudgetDimension::ChildSlots => state.counts.child_slots = next,
+        BudgetDimension::CommandSlots => state.counts.command_slots = next,
         _ => return Err(EffectAdmissionError::Denied),
     }
     Ok(())

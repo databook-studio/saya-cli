@@ -12,6 +12,7 @@ impl JobBudgetLedger {
         view.tool_calls = state.counts.tools;
         view.model_slots_active = state.counts.model_slots;
         view.child_slots_active = state.counts.child_slots;
+        view.command_slots_active = state.counts.command_slots;
         view.tool_permits_pending = u64::try_from(
             state
                 .permits
