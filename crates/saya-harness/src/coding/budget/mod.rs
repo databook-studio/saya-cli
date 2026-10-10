@@ -15,6 +15,10 @@ mod snapshot;
 mod tools;
 mod views;
 pub use commands::CommandPermit;
+pub use commands::{
+    BudgetedCommandSession, BudgetedCommandStartError, BudgetedJoin, start_budgeted,
+    start_budgeted_with_output, start_budgeted_with_stdin,
+};
 pub use ledger::{
     BudgetLedgerError, BudgetSnapshot, ChildCountLimits, ChildSession, CountLimits,
     JobBudgetLedger, UsageCoverage,
