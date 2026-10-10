@@ -1,4 +1,7 @@
-use saya_types::{AgentId, InvocationId, JobId, JobState, RepositoryId, SnapshotId};
+use saya_types::{
+    AgentId, CodingResultOutcome, InvocationId, JobId, JobState, RepositoryId, Sha256Digest,
+    SnapshotId,
+};
 use sqlx::Row;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,6 +39,8 @@ pub struct CodingChildRecord {
     pub agent_id: AgentId,
     pub current_invocation_id: InvocationId,
     pub state: JobState,
+    pub result_source_sha256: Option<Sha256Digest>,
+    pub result_outcome: Option<CodingResultOutcome>,
     pub created_unix_ms: i64,
     pub updated_unix_ms: i64,
 }
@@ -111,6 +116,8 @@ impl SqliteStateStore {
             agent_id: child.agent_id,
             current_invocation_id: child.current_invocation_id,
             state: JobState::Queued,
+            result_source_sha256: None,
+            result_outcome: None,
             created_unix_ms: stamp,
             updated_unix_ms: stamp,
         })
@@ -129,7 +136,7 @@ impl SqliteStateStore {
         if limit > MAX_PAGE_SIZE {
             return Err(StoreError::LimitExceeded);
         }
-        let rows = sqlx::query("SELECT job_id, agent_id, current_invocation_id, state, created_unix_ms, updated_unix_ms FROM coding_children WHERE job_id=? AND (? IS NULL OR agent_id > ?) ORDER BY agent_id LIMIT ?")
+        let rows = sqlx::query("SELECT job_id, agent_id, current_invocation_id, state, result_source_sha256, result_outcome, created_unix_ms, updated_unix_ms FROM coding_children WHERE job_id=? AND (? IS NULL OR agent_id > ?) ORDER BY agent_id LIMIT ?")
             .bind(job_id.as_str())
             .bind(after_agent_id.map(AgentId::as_str))
             .bind(after_agent_id.map(AgentId::as_str))
@@ -149,7 +156,7 @@ impl SqliteStateStore {
     }
 }
 
-fn now() -> Result<i64, StoreError> {
+pub(crate) fn now() -> Result<i64, StoreError> {
     let milliseconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| StoreError::Invalid)?
@@ -171,12 +178,15 @@ fn job_record(row: &sqlx::sqlite::SqliteRow) -> Result<CodingJobRecord, StoreErr
 }
 
 fn child_record(row: &sqlx::sqlite::SqliteRow) -> Result<CodingChildRecord, StoreError> {
+    let (result_source_sha256, result_outcome) = result_projection(row)?;
     Ok(CodingChildRecord {
         job_id: JobId::parse(&text(row, "job_id")?).map_err(|_| StoreError::Invalid)?,
         agent_id: AgentId::parse(&text(row, "agent_id")?).map_err(|_| StoreError::Invalid)?,
         current_invocation_id: InvocationId::parse(&text(row, "current_invocation_id")?)
             .map_err(|_| StoreError::Invalid)?,
         state: state(&text(row, "state")?)?,
+        result_source_sha256,
+        result_outcome,
         created_unix_ms: timestamp(row, "created_unix_ms")?,
         updated_unix_ms: timestamp_pair(row)?,
     })
@@ -199,7 +209,7 @@ fn timestamp_pair(row: &sqlx::sqlite::SqliteRow) -> Result<i64, StoreError> {
         .ok_or(StoreError::Invalid)
 }
 
-fn state(value: &str) -> Result<JobState, StoreError> {
+pub(crate) fn state(value: &str) -> Result<JobState, StoreError> {
     match value {
         "queued" => Ok(JobState::Queued),
         "running" => Ok(JobState::Running),
@@ -209,6 +219,31 @@ fn state(value: &str) -> Result<JobState, StoreError> {
         "failed" => Ok(JobState::Failed),
         "cancelled" => Ok(JobState::Cancelled),
         "uncertain" => Ok(JobState::Uncertain),
+        _ => Err(StoreError::Invalid),
+    }
+}
+
+fn result_projection(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<(Option<Sha256Digest>, Option<CodingResultOutcome>), StoreError> {
+    let source = row
+        .try_get::<Option<String>, _>("result_source_sha256")
+        .map_err(|_| StoreError::Invalid)?;
+    let outcome = row
+        .try_get::<Option<String>, _>("result_outcome")
+        .map_err(|_| StoreError::Invalid)?;
+    match (source, outcome) {
+        (None, None) => Ok((None, None)),
+        (Some(source), Some(outcome)) => Ok((
+            Some(Sha256Digest::parse(&source).map_err(|_| StoreError::Invalid)?),
+            Some(match outcome.as_str() {
+                "completed" => CodingResultOutcome::Completed,
+                "failed" => CodingResultOutcome::Failed,
+                "cancelled" => CodingResultOutcome::Cancelled,
+                "uncertain" => CodingResultOutcome::Uncertain,
+                _ => return Err(StoreError::Invalid),
+            }),
+        )),
         _ => Err(StoreError::Invalid),
     }
 }

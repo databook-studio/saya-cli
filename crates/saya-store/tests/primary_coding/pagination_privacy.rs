@@ -21,6 +21,8 @@ const CHILD_COLUMNS: &[&str] = &[
     "state",
     "created_unix_ms",
     "updated_unix_ms",
+    "result_source_sha256",
+    "result_outcome",
 ];
 
 async fn read_pool(db: &Path) -> SqlitePool {
