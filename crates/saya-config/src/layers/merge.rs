@@ -8,6 +8,9 @@ pub(crate) fn merge(
 ) {
     macro_rules! apply { ($($path:ident).+) => { if layer.$($path).+.is_some() { base.$($path).+ = layer.$($path).+.clone(); recorder.record(stringify!($($path).+), source.clone()); } }; }
     apply!(default_profile);
+    crate::coding::merge(&mut base.coding, &layer.coding, recorder, |_| {
+        source.clone()
+    });
     apply!(ai.provider);
     apply!(ai.model);
     apply!(ai.base_url);

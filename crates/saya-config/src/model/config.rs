@@ -10,6 +10,8 @@ pub struct ConfigFile {
     pub run: RunFile,
     #[serde(default)]
     pub jobs: JobsFile,
+    #[serde(default)]
+    pub coding: CodingFile,
     /// The `[host_commands]` section (H1): the unsandboxed second lane's own
     /// shaping — `pass_env`, `timeout_seconds`. User-layer only; a
     /// project-layer declaration is a typed resolve error (see `layers.rs`),

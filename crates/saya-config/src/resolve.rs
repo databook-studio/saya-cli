@@ -9,7 +9,10 @@ use crate::{
     layers::{apply_cli, apply_env, merge, revert_untrusted, snapshot_protected},
     memory::ResolvedMemory,
     profile_env::overlay_database_environment,
-    provenance::{Recorder, SettingProvenance, SettingSource, apply_user_facing_defaults},
+    provenance::{
+        Recorder, SettingProvenance, SettingSource, apply_coding_defaults,
+        apply_user_facing_defaults,
+    },
 };
 
 const DEFAULT_MODEL: &str = "qwen2.5-coder:14b";
@@ -63,6 +66,9 @@ pub struct ResolvedConfig {
     pub profile_name: Option<String>,
     pub profile: Option<DatabaseProfile>,
     pub ai: ResolvedAi,
+    /// Trusted opt-in coding admission settings. They remain separate from
+    /// authority: enabled configuration never grants a capability by itself.
+    pub coding: crate::ResolvedCoding,
     /// Validated ceilings for one interactive investigation. These are a
     /// configuration contract; runtime enforcement is composed separately.
     pub investigation_budgets: crate::ResolvedInvestigationBudgets,
