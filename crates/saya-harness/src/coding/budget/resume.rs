@@ -28,6 +28,9 @@ pub(super) struct Folded {
     pub(super) unknown_transport_attempts: u64,
     pub(super) unknown_tool_calls: u64,
     pub(super) measured_tool_calls: u64,
+    /// Reservation records folded with no settlement: interrupted
+    /// effects whose usage is unknown.
+    pub(super) unsettled: u64,
     pub(super) usage_ever_unknown: bool,
     pub(super) usage_ever_incomplete: bool,
 }
@@ -110,6 +113,15 @@ async fn fold(store: &SqliteStateStore, job: &JobId) -> Result<Folded, BudgetLed
     Ok(folded)
 }
 
+/// Folds one durable reservation record into the resumed state.
+///
+/// A record with a settlement is folded unchanged from its charges and
+/// observations. A record whose `settlement` is `None` was interrupted
+/// mid-effect: its usage and outcome are UNKNOWN, so its reserved
+/// charges stay counted (never refunded), the reserved amounts also
+/// count toward the matching unknown-usage counters for the count
+/// dimensions, the record counts as unsettled, and usage coverage may
+/// never read Complete again.
 fn fold_record(
     folded: &mut Folded,
     record: &CodingBudgetReservationRecord,
@@ -148,6 +160,21 @@ fn fold_record(
         }
     }
     let Some(settlement) = &record.settlement else {
+        folded.usage_ever_unknown = true;
+        add(&mut folded.unsettled, 1)?;
+        for charge in record.reservation.charges() {
+            let amount = charge.reserved().get();
+            match charge.dimension() {
+                BudgetDimension::LogicalRequests => {
+                    add(&mut folded.unknown_logical_requests, amount)?
+                }
+                BudgetDimension::TransportAttempts => {
+                    add(&mut folded.unknown_transport_attempts, amount)?
+                }
+                BudgetDimension::ToolCalls => add(&mut folded.unknown_tool_calls, amount)?,
+                _ => {}
+            }
+        }
         return Ok(());
     };
     for observation in settlement.observations() {
@@ -251,6 +278,7 @@ fn resumed_snapshot(folded: &Folded) -> BudgetSnapshot {
         unknown_transport_attempts: folded.unknown_transport_attempts,
         unknown_tool_calls: folded.unknown_tool_calls,
         measured_tool_calls: folded.measured_tool_calls,
+        unsettled_reservations: folded.unsettled,
         usage_coverage: coverage,
         ..BudgetSnapshot::default()
     }

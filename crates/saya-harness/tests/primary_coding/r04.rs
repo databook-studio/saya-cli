@@ -5,3 +5,6 @@ mod fixture;
 
 #[path = "r04/estimates.rs"]
 mod estimates;
+
+#[path = "r04/restart.rs"]
+mod restart;
