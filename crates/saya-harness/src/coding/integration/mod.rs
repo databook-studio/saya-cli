@@ -3,10 +3,13 @@
 mod apply;
 mod apply_fs;
 mod candidate;
+mod conflicts;
+mod conflicts_types;
 mod delta;
 mod delta_output;
 mod delta_types;
 mod delta_walk;
+mod evidence;
 mod integrate;
 mod integrate_events;
 mod paths;
@@ -16,8 +19,13 @@ pub use apply::{
     AcceptedDelta, ApplyError, OverlapConflict, OverlapPair, apply_delta, detect_overlaps,
 };
 pub use candidate::{CandidateError, CandidateIdentity, candidate_source_digest};
+pub use conflicts::{
+    ConflictDecision, ConflictError, ConflictQueue, ConflictResolution, MAX_RETAINED_CONFLICTS,
+};
+pub use conflicts_types::{RetainedConflict, RetainedDeltaInput, RetainedPair};
 pub use delta::compute_delta;
 pub use delta_types::{CheckoutDelta, DEFAULT_DELTA_DEADLINE, DeltaError, DeltaKind, PathDelta};
+pub use evidence::{EvidenceBinding, EvidenceError};
 pub use integrate::{IntegrateError, IntegrateInput, IntegratedCandidate, integrate_candidate};
 pub use paths::{
     AssignedPaths, AssignedPathsError, MAX_ASSIGNED_PATH_BYTES, MAX_ASSIGNED_PATHS,
