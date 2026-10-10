@@ -1,5 +1,6 @@
 //! Shared public contracts for SAYA CLI.
 
+mod coding;
 mod context_doc;
 mod continuation;
 mod contract;
@@ -17,6 +18,10 @@ mod run;
 mod schema;
 mod session_tasks;
 
+pub use coding::{
+    AgentId, CodingIdError, InvocationId, JobId, JobState, JobStateTransitionError,
+    ManagedCheckoutId, RepositoryId, SnapshotId,
+};
 pub use context_doc::{
     CONTEXT_FORMAT, CONTEXT_FORMAT_VERSION, ContextDocumentV1, ContextError, ContextItem,
     MAX_DOCUMENT_BYTES, MAX_ITEM_BYTES, MAX_ITEMS, MAX_ORIGIN_NOTE_BYTES, PortableObject,
