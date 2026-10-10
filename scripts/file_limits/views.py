@@ -47,10 +47,20 @@ def is_valid_view(view: str) -> bool:
 
 
 def is_eligible(path: str, policy) -> bool:
-    """True when the path has a policy extension and no excluded component."""
-    return PurePosixPath(path).suffix in policy.extensions and not any(
-        part in policy.exclude_dir_names for part in path.split("/")
-    )
+    """True when the path is source, outside generated and dependency dirs."""
+    parts = PurePosixPath(path).parts
+    extensions = {extension.casefold() for extension in policy.extensions}
+    excluded = set(policy.exclude_dir_names)
+    if PurePosixPath(path).suffix.casefold() not in extensions:
+        return False
+    if any(part in excluded - {"target"} for part in parts):
+        return False
+    if "target" in excluded:
+        target = next((index for index, part in enumerate(parts) if part == "target"), None)
+        source_roots = {"src", "tests", "benches", "examples"}
+        if target is not None and not source_roots.intersection(parts[:target]):
+            return False
+    return True
 
 
 def _index_entries(repo):

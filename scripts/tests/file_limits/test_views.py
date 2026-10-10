@@ -1,6 +1,8 @@
 """Tests for source enumeration over git views."""
 
 import os
+import shutil
+import subprocess
 import unittest
 
 import fixtures
@@ -21,6 +23,33 @@ class EnumerateViewTests(unittest.TestCase):
         sources, errors = enumerate_view(self.repo.path, view, self.policy())
         self.assertEqual(errors, [])
         return {path: count_physical_lines(data) for path, data in sources}
+
+    def assert_compiled_module_is_counted(self, source_path, declaration):
+        module = "\n".join(f"pub fn item_{line}() {{}}" for line in range(252)) + "\n"
+        self.repo.write("src/lib.rs", f"{declaration}\n".encode())
+        self.repo.write(source_path, module.encode())
+        rustc = shutil.which("rustc")
+        if rustc:
+            proc = subprocess.run(
+                [rustc, "--crate-type", "lib", "--emit", "metadata", "-o",
+                 str(self.repo.path / "lib.rmeta"), str(self.repo.path / "src/lib.rs")],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        self.repo.commit_all("compiled source fixture")
+        for view in ("worktree", "index", "rev:HEAD"):
+            self.assertEqual(self.counts(view).get(source_path), 252, view)
+
+    def test_uppercase_rust_suffix_is_counted_in_every_git_view(self):
+        self.assert_compiled_module_is_counted(
+            "src/extra.RS", '#[path = "extra.RS"] pub mod extra;'
+        )
+
+    def test_tracked_src_target_module_is_counted_in_every_git_view(self):
+        self.assert_compiled_module_is_counted(
+            "src/target/mod.rs", "pub mod target;"
+        )
 
     def test_index_counts_staged_bytes_without_a_commit(self):
         self.repo.write_lines("src/lib.rs", 251)
@@ -96,6 +125,7 @@ class IsEligibleTests(unittest.TestCase):
     def test_excluded_dir_names_are_not_eligible(self):
         self.assertFalse(is_eligible("target/debug/lib.rs", self.policy))
         self.assertFalse(is_eligible("a/target/b.rs", self.policy))
+        self.assertFalse(is_eligible("crates/saya/target/b.rs", self.policy))
         self.assertFalse(is_eligible("src/node_modules/thing.py", self.policy))
 
     def test_directory_name_prefixes_do_not_exclude(self):
