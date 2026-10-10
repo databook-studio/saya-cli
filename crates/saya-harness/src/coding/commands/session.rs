@@ -1,6 +1,7 @@
 use std::{
     fmt,
     num::NonZeroU64,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -18,6 +19,7 @@ use crate::runner::{
 };
 
 use super::input::{CommandInput, CommandInputError, StdinQueueReceipt};
+use super::output::{CommandOutputStatus, CommandOutputStore};
 #[path = "session_errors.rs"]
 mod errors;
 pub use errors::CommandSessionError;
@@ -30,6 +32,7 @@ pub struct CommandSession {
     cancellation: CancelOnDrop,
     input: Option<CommandInput>,
     process_state: watch::Receiver<CommandProcessState>,
+    output: Option<Arc<CommandOutputStore>>,
 }
 
 impl fmt::Debug for CommandSession {
@@ -50,11 +53,13 @@ impl CommandSession {
         owner_cancellation: CancellationToken,
         permit: OwnedSemaphorePermit,
         input: Option<(CommandInput, StdinInputPipe)>,
+        output: Option<Arc<CommandOutputStore>>,
     ) -> Self {
         let cancellation = CancellationToken::new();
         let task_cancellation = cancellation.clone();
         let (input, input_pipe) =
             input.map_or((None, None), |(input, pipe)| (Some(input), Some(pipe)));
+        let output_sinks = output.as_ref().map(|store| store.sinks());
         let (process_state_tx, process_state) = watch::channel(CommandProcessState::Pending);
         let task = tokio::spawn(async move {
             let _permit = permit;
@@ -80,6 +85,7 @@ impl CommandSession {
                         Some(timeout_seconds.get()),
                         input_pipe,
                         run_process_state,
+                        output_sinks,
                     )
                     .await
             };
@@ -119,6 +125,7 @@ impl CommandSession {
             cancellation: CancelOnDrop(cancellation),
             input,
             process_state,
+            output,
         }
     }
 
@@ -132,6 +139,24 @@ impl CommandSession {
     /// Spawned identifies an OS child PID, not an independent liveness probe.
     pub fn process_state(&self) -> CommandProcessState {
         *self.process_state.borrow()
+    }
+
+    /// The nonce-named directory holding this session's stored command
+    /// output, when the session was started with an output store. The
+    /// per-stream files inside are named by `OutputStream::file_name`;
+    /// bounded reads belong to `CommandSession::read_output` (C02b).
+    pub fn output_dir(&self) -> Option<PathBuf> {
+        self.output.as_ref().map(|store| store.dir().to_path_buf())
+    }
+
+    /// The typed output-store accounting once the run's outcome is settled and
+    /// both streams finished; `None` while the run is still producing output
+    /// or the session was started without one. Call it before consuming the
+    /// session through `join` or `stop_and_join`. A writer failure or a
+    /// failed `sync_all` is never reported as a clean store.
+    pub fn output_status(&self) -> Option<CommandOutputStatus> {
+        let store = self.output.as_ref()?;
+        store.output_status()
     }
 
     /// Queues one bounded stdin chunk. Success means queued, not written to

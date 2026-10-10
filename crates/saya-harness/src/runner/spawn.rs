@@ -15,9 +15,11 @@
 //!   reaped before anything is reported, and partial output is reported as
 //!   partial.
 
-use std::{path::PathBuf, process::Stdio};
+use std::{path::PathBuf, process::Stdio, time::Duration};
 
 use saya_agent::CancellationToken;
+
+use crate::proc::OutputSinks;
 
 use super::{
     env::{Credential, inject},
@@ -33,6 +35,11 @@ use tokio::sync::watch;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
+
+/// How long a wait-failed child's pumps may keep running before their
+/// handles are dropped and the threads detach: the join must stay bounded
+/// because the child may still hold its pipes open.
+const PUMP_JOIN_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Spawns the validated call, waits on it under the timeout and the run's
 /// cancellation, and reports. Exit code is data, not an error.
@@ -57,6 +64,7 @@ pub(super) async fn run(
         cancellation,
         None,
         None,
+        None,
     )
     .await
     .map(|result| result.outcome)
@@ -76,6 +84,7 @@ pub(super) async fn run_command(
     cancellation: &CancellationToken,
     input: Option<StdinInputPipe>,
     process_state: watch::Sender<CommandProcessState>,
+    sinks: Option<OutputSinks>,
 ) -> Result<CommandSpawnResult, RunnerError> {
     execute(
         spawn,
@@ -86,6 +95,7 @@ pub(super) async fn run_command(
         cancellation,
         input,
         Some(process_state),
+        sinks,
     )
     .await
 }
@@ -99,6 +109,7 @@ async fn execute(
     cancellation: &CancellationToken,
     input: Option<StdinInputPipe>,
     process_state: Option<watch::Sender<CommandProcessState>>,
+    sinks: Option<OutputSinks>,
 ) -> Result<CommandSpawnResult, RunnerError> {
     let mut command = spawn.command(&call.program_path);
     // Typed argv, verbatim: every element is one argv element on the
@@ -132,8 +143,9 @@ async fn execute(
     if let Some(state) = &process_state {
         state.send_replace(CommandProcessState::Spawned { pid });
     }
-    let pipes = crate::proc::Pipes::take(&mut child.stdout, &mut child.stderr)
-        .map_err(|source| RunnerError::WaitFailed { source })?;
+    let pipes =
+        crate::proc::Pipes::take_with_sinks(&mut child.stdout, &mut child.stderr, sinks, &resolved)
+            .map_err(|source| RunnerError::WaitFailed { source })?;
     let mut input_failure = None;
     let mut input_writer = None;
     if let Some(input) = input {
@@ -155,20 +167,27 @@ async fn execute(
     }
     let wait = crate::proc::wait(child, call.timeout, cancellation).await;
     let writer_delivery = input_writer.map(StdinWriter::finish);
+    let stdin = input_failure.or(writer_delivery);
+    // The wait result is inspected before the pipes are finished: a failed
+    // wait means the child may still hold its pipes open, so an
+    // unconditional pump join could block forever on a stream that never
+    // reaches EOF. The bounded finish seals the sinks without waiting on
+    // such a pump, and the WaitFailed error is returned without publishing
+    // Reaped.
     let settled = match wait {
-        Ok(settled) => {
-            if let Some(state) = &process_state {
-                state.send_replace(CommandProcessState::Reaped { pid });
-            }
-            settled
-        }
+        Ok(settled) => settled,
         Err(source) => {
-            let _ = pipes.finish(&resolved);
+            pipes.finish_bounded(&resolved, PUMP_JOIN_DEADLINE);
             return Err(RunnerError::WaitFailed { source });
         }
     };
-    let stdin = input_failure.or(writer_delivery);
+    // The pipes are finished — pumps joined, sinks flushed — before the
+    // Reaped state is published, so a consumer that sees Reaped knows the
+    // output store's final flush has already happened.
     let (stdout, stderr) = pipes.finish(&resolved);
+    if let Some(state) = &process_state {
+        state.send_replace(CommandProcessState::Reaped { pid });
+    }
     Ok(CommandSpawnResult {
         outcome: crate::proc::outcome(call.program, pid, &settled, stdout, stderr),
         stdin,

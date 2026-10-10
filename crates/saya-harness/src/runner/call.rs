@@ -1,3 +1,4 @@
+use crate::proc::OutputSinks;
 use saya_types::is_refused_runner_program;
 
 use super::CommandProcessState;
@@ -49,6 +50,7 @@ impl RunProgram {
         timeout_seconds: Option<u64>,
         input: Option<StdinInputPipe>,
         process_state: watch::Sender<CommandProcessState>,
+        sinks: Option<OutputSinks>,
     ) -> Result<CommandRunOutcome, RunnerError> {
         let call = self.validated_call(program, argv, timeout_seconds)?;
         let result = spawn::run_command(
@@ -60,6 +62,7 @@ impl RunProgram {
             &self.cancellation,
             input,
             process_state,
+            sinks,
         )
         .await?;
         Ok(CommandRunOutcome {
