@@ -1,13 +1,10 @@
-use std::{fmt, num::NonZeroU64};
+use std::num::NonZeroU64;
 
-use serde::{
-    Deserialize, Serialize,
-    de::{Deserializer, Visitor},
-};
+use serde::{Deserialize, Serialize, de::Deserializer};
 use thiserror::Error;
 
 use super::checkout_values::{GitObjectId, ManagedCheckoutLifecycle, ManagedCheckoutPath};
-use super::control_wire::{self, ControlWireError};
+use super::control_wire::{self, ControlWireError, RequiredNullableId};
 use super::{AgentId, JobId, ManagedCheckoutId, RepositoryId, Sha256Digest, SnapshotId};
 
 pub const MANAGED_CHECKOUT_RECORD_VERSION: u32 = 1;
@@ -150,67 +147,12 @@ impl<'de> Deserialize<'de> for ManagedCheckoutRecordV1 {
     }
 }
 
-struct RequiredAgentId(Option<AgentId>);
-
-impl<'de> Deserialize<'de> for RequiredAgentId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct RequiredAgentIdVisitor;
-
-        impl<'de> Visitor<'de> for RequiredAgentIdVisitor {
-            type Value = RequiredAgentId;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("an agent ID string or null")
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(RequiredAgentId(None))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(RequiredAgentId(None))
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                AgentId::parse(value)
-                    .map(Some)
-                    .map(RequiredAgentId)
-                    .map_err(E::custom)
-            }
-
-            fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                AgentId::try_from(value)
-                    .map(Some)
-                    .map(RequiredAgentId)
-                    .map_err(E::custom)
-            }
-        }
-
-        deserializer.deserialize_any(RequiredAgentIdVisitor)
-    }
-}
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireManagedCheckoutRecord {
     version: u32,
     job_id: JobId,
-    agent_id: RequiredAgentId,
+    agent_id: RequiredNullableId<AgentId>,
     managed_checkout_id: ManagedCheckoutId,
     repository_id: RepositoryId,
     common_dir_sha256: Sha256Digest,
