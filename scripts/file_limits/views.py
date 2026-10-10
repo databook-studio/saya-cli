@@ -53,12 +53,14 @@ def is_eligible(path: str, policy) -> bool:
     excluded = set(policy.exclude_dir_names)
     if PurePosixPath(path).suffix.casefold() not in extensions:
         return False
-    if any(part in excluded - {"target"} for part in parts):
-        return False
-    if "target" in excluded:
-        target = next((index for index, part in enumerate(parts) if part == "target"), None)
-        source_roots = {"src", "tests", "benches", "examples"}
-        if target is not None and not source_roots.intersection(parts[:target]):
+    source_roots = {"src", "tests", "benches", "examples", "scripts"}
+    source_owned = bool(parts and parts[0] in source_roots) or (
+        len(parts) > 2 and parts[0] == "crates" and parts[2] in source_roots
+    )
+    for part in parts:
+        if part in excluded and not (
+            source_owned and part in {"target", "node_modules"}
+        ):
             return False
     return True
 

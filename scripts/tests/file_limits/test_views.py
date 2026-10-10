@@ -51,6 +51,17 @@ class EnumerateViewTests(unittest.TestCase):
             "src/target/mod.rs", "pub mod target;"
         )
 
+    def test_source_owned_target_and_node_modules_paths_are_counted(self):
+        module = "\n".join(f"def item_{line}(): pass" for line in range(252)) + "\n"
+        paths = ("scripts/target/fixture.py", "src/node_modules/fixture.py")
+        for path in paths:
+            self.repo.write(path, module.encode())
+        self.repo.commit_all("source-owned directories")
+        for view in ("worktree", "index", "rev:HEAD"):
+            counts = self.counts(view)
+            for path in paths:
+                self.assertEqual(counts.get(path), 252, (view, path))
+
     def test_index_counts_staged_bytes_without_a_commit(self):
         self.repo.write_lines("src/lib.rs", 251)
         self.repo.git("add", "--", "src/lib.rs")
@@ -80,6 +91,8 @@ class EnumerateViewTests(unittest.TestCase):
     def test_ineligible_paths_are_absent_from_every_view(self):
         self.repo.write_lines("docs/x.md", 251)
         self.repo.write_lines("target/debug/gen.rs", 251)
+        self.repo.write_lines("node_modules/package/index.py", 251)
+        self.repo.write_lines("crates/saya/target/debug/gen.rs", 251)
         self.repo.commit_all("base")
         for view in ("index", "worktree", "rev:HEAD"):
             self.assertEqual(self.counts(view), {})
@@ -124,9 +137,10 @@ class IsEligibleTests(unittest.TestCase):
 
     def test_excluded_dir_names_are_not_eligible(self):
         self.assertFalse(is_eligible("target/debug/lib.rs", self.policy))
+        self.assertFalse(is_eligible("node_modules/package/index.py", self.policy))
         self.assertFalse(is_eligible("a/target/b.rs", self.policy))
         self.assertFalse(is_eligible("crates/saya/target/b.rs", self.policy))
-        self.assertFalse(is_eligible("src/node_modules/thing.py", self.policy))
+        self.assertTrue(is_eligible("src/node_modules/thing.py", self.policy))
 
     def test_directory_name_prefixes_do_not_exclude(self):
         self.assertTrue(is_eligible("targets/lib.rs", self.policy))
