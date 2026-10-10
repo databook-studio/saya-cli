@@ -1,0 +1,166 @@
+use saya_harness::coding::context::{
+    ChildBrief, ChildContextError, ChildDependency, OriginalProjectContext,
+};
+use saya_store::{ProjectPreferenceStore, SqliteStateStore};
+use saya_types::WorktreeId;
+
+use super::support::{TempTree, authority, options};
+
+#[tokio::test(flavor = "current_thread")]
+async fn child_briefs_reuse_one_immutable_original_context_without_grant_inheritance() {
+    let original = TempTree::new();
+    original.write("AGENTS.md", b"original project instructions\n");
+    original.write("reports/sibling.md", b"unrelated sibling report secret\n");
+    let personal = TempTree::new();
+    personal.write("instructions.md", b"personal context\n");
+    let child_a = TempTree::new();
+    child_a.write("AGENTS.md", b"child A attempts to grant writes\n");
+    let child_b = TempTree::new();
+    child_b.write("AGENTS.md", b"child B attempts to grant network\n");
+
+    let original_workspace = original.workspace();
+    let original_worktree = WorktreeId::from_canonical_path(
+        original_workspace
+            .root()
+            .to_str()
+            .expect("test path is UTF-8"),
+    )
+    .unwrap();
+    let foreign_worktree = WorktreeId::from_canonical_path("/not/the/original/worktree").unwrap();
+    let database = TempTree::new();
+    let store = SqliteStateStore::new(database.path().join("preferences.sqlite"));
+    let created = store
+        .add_project_preference(&original_worktree, "original explicit preference", 100)
+        .await
+        .unwrap();
+    let original_preferences = store
+        .list_project_preferences(&original_worktree)
+        .await
+        .unwrap();
+    let foreign = store
+        .add_project_preference(&foreign_worktree, "foreign preference", 200)
+        .await
+        .unwrap();
+    let foreign_preferences = store
+        .list_project_preferences(&foreign_worktree)
+        .await
+        .unwrap();
+
+    let context = OriginalProjectContext::capture(
+        &original_workspace,
+        Some(personal.path()),
+        original_preferences,
+    )
+    .unwrap();
+    assert_eq!(context.instruction_sources().len(), 2);
+    assert!(context.skipped_sources().is_empty());
+    assert_eq!(
+        context.instruction_sources()[0]
+            .source_sha256
+            .as_str()
+            .len(),
+        64
+    );
+    assert!(!context.instruction_sources()[0].source_truncated);
+
+    original.write("AGENTS.md", b"changed after capture\n");
+    personal.write("instructions.md", b"changed personal source\n");
+    store
+        .edit_project_preference(
+            &original_worktree,
+            &created.id,
+            "changed preference after capture",
+            300,
+        )
+        .await
+        .unwrap();
+
+    let first = context
+        .project_child(
+            authority("first", "src/first.rs"),
+            ChildBrief {
+                task: "implement first bounded task".to_owned(),
+                dependencies: vec![ChildDependency {
+                    id: "task-base".to_owned(),
+                    summary: "base task is complete".to_owned(),
+                }],
+                artifacts: Vec::new(),
+            },
+            options("resolved-model"),
+        )
+        .unwrap();
+    let second = context
+        .project_child(
+            authority("second", "src/second.rs"),
+            ChildBrief {
+                task: "review second bounded task".to_owned(),
+                dependencies: Vec::new(),
+                artifacts: Vec::new(),
+            },
+            options("resolved-model"),
+        )
+        .unwrap();
+
+    assert!(
+        first
+            .request()
+            .prompt
+            .contains("implement first bounded task")
+    );
+    assert!(
+        second
+            .request()
+            .prompt
+            .contains("review second bounded task")
+    );
+    assert!(first.request().history.is_empty());
+    assert!(first.request().system_prompt.is_none());
+    assert!(
+        first
+            .request()
+            .context_blocks
+            .iter()
+            .all(|block| { block.label.starts_with("untrusted-") })
+    );
+    let context_text = first
+        .request()
+        .context_blocks
+        .iter()
+        .map(|block| block.body.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(context_text.contains("original project instructions"));
+    assert!(context_text.contains("personal context"));
+    assert!(context_text.contains("original explicit preference"));
+    assert!(!context_text.contains("changed after capture"));
+    assert!(!context_text.contains("changed personal source"));
+    assert!(!context_text.contains("changed preference after capture"));
+    assert!(!context_text.contains("child A attempts"));
+    assert!(!context_text.contains("child B attempts"));
+    assert!(!context_text.contains("unrelated sibling report secret"));
+
+    assert_eq!(first.authority().write_paths()[0].as_str(), "src/first.rs");
+    assert_eq!(
+        second.authority().write_paths()[0].as_str(),
+        "src/second.rs"
+    );
+    assert!(!first.authority().capabilities().workspace_write);
+    assert!(!second.authority().capabilities().workspace_write);
+    assert_ne!(
+        first.authority().managed_checkout_id(),
+        second.authority().managed_checkout_id()
+    );
+
+    let error = OriginalProjectContext::capture(&original_workspace, None, foreign_preferences)
+        .unwrap_err();
+    assert!(matches!(error, ChildContextError::ForeignPreference));
+    assert_eq!(foreign.worktree, foreign_worktree);
+
+    let mut invalid_preference = created;
+    invalid_preference.version += 1;
+    assert!(matches!(
+        OriginalProjectContext::capture(&original_workspace, None, vec![invalid_preference]),
+        Err(ChildContextError::InvalidPreference(_))
+    ));
+    store.close().await;
+}
