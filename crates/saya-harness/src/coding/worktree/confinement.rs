@@ -11,13 +11,19 @@
 //! A [`VerifiedCheckout`] holds only at the moment of verification. Callers
 //! must call `verify_owned_checkout` and [`confine_checkout`] in one flow and
 //! never cache a [`ConfinedCheckout`] as standing authority.
+//!
+//! Every child command spawned through [`ConfinedCheckout::command`] sees
+//! only the child environment's six variables (`HOME`, `LANG`, `LC_ALL`,
+//! `PATH`, `TMPDIR`, `XDG_CONFIG_HOME`); the harness process's environment is
+//! never inherited, so no provider, database, cloud, SSH or proxy secret can
+//! reach the child.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 use saya_types::ManagedCheckoutId;
 
-use crate::coding::worktree::VerifiedCheckout;
+use crate::coding::worktree::{ChildEnvironment, ChildEnvironmentError, VerifiedCheckout};
 use crate::runner::sandbox::{RunSandbox, RunnerSpawn, SandboxError, SandboxProvision};
 
 /// A spawn configuration proven for exactly one verified managed checkout.
@@ -27,6 +33,7 @@ use crate::runner::sandbox::{RunSandbox, RunnerSpawn, SandboxError, SandboxProvi
 /// never reports a path.
 pub struct ConfinedCheckout {
     spawn: RunnerSpawn,
+    environment: ChildEnvironment,
     checkout_id: ManagedCheckoutId,
 }
 
@@ -46,9 +53,14 @@ impl ConfinedCheckout {
     }
 
     /// A command to exec `program` under the confinement; cwd is the owned
-    /// checkout (first and only root).
+    /// checkout (first and only root). The child's environment is built
+    /// here, not inherited: every inherited variable is cleared and exactly
+    /// the six allowlisted variables are set. This is the only command path
+    /// the confinement offers.
     pub fn command(&self, program: &Path) -> std::process::Command {
-        self.spawn.command(program)
+        let mut command = self.spawn.command(program);
+        self.environment.apply(&mut command);
+        command
     }
 }
 
@@ -68,6 +80,9 @@ pub enum ConfinementError {
     /// fully denied.
     #[error("the proven confinement does not match the checkout")]
     RootMismatch,
+    /// The child environment could not be prepared for the confinement.
+    #[error("the child environment could not be prepared")]
+    Environment(#[from] ChildEnvironmentError),
 }
 
 /// Confine a child command to exactly one verified managed checkout.
@@ -81,6 +96,11 @@ pub enum ConfinementError {
 /// [`ConfinementError::RootMismatch`].
 ///
 /// Pair with `verify_owned_checkout` in one flow; see the module docs.
+///
+/// The child environment is prepared only after the sandbox is proven and
+/// checked, so a missing or unusable program directory still fails first as
+/// [`ConfinementError::Sandbox`]; an unusable private directory fails as
+/// [`ConfinementError::Environment`].
 pub fn confine_checkout(
     verified: &VerifiedCheckout,
     program_dir: &Path,
@@ -96,8 +116,10 @@ pub fn confine_checkout(
     if spawn.fs_roots().len() != 1 || !spawn.net_allow().is_empty() {
         return Err(ConfinementError::RootMismatch);
     }
+    let environment = ChildEnvironment::prepare(Path::new(verified.path().as_str()), program_dir)?;
     Ok(ConfinedCheckout {
         spawn,
+        environment,
         checkout_id: verified.checkout_id().clone(),
     })
 }
