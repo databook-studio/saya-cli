@@ -1,8 +1,11 @@
+mod error;
+
+use error::{cancelled, contract_failure, owner_failure};
 use std::collections::HashSet;
 
 use crate::{
-    AgentError, CancellationReason, CancellationToken, EffectAdmission, EffectAdmissionError,
-    EffectOutcome, EffectOwnerFailure, EffectPermit, EffectSettlement, TokenUsage, ToolEffect,
+    AgentError, CancellationToken, EffectAdmission, EffectAdmissionError, EffectOutcome,
+    EffectOwnerFailure, EffectPermit, EffectSettlement, TokenUsage, ToolEffect,
 };
 
 use super::Admission;
@@ -20,6 +23,7 @@ pub(in crate::loop_runner) async fn admit_model_request(
         Err(EffectAdmissionError::OwnerFailure(error)) => {
             return Err(owner_failure(cancellation, error));
         }
+        Err(_) => return Err(contract_failure(cancellation)),
     };
     if cancellation.is_cancelled() {
         let error = cancelled(cancellation);
@@ -51,6 +55,7 @@ pub(in crate::loop_runner) async fn admit_tool_batch(
         Err(EffectAdmissionError::OwnerFailure(error)) => {
             return Err(owner_failure(cancellation, error));
         }
+        Err(_) => return Err(contract_failure(cancellation)),
     };
     let mut seen = HashSet::with_capacity(permits.len());
     let valid =
@@ -239,17 +244,4 @@ async fn settle_unstarted_permits(
         return Err(owner_failure(cancellation, error));
     }
     Ok(())
-}
-
-fn cancelled(cancellation: &CancellationToken) -> AgentError {
-    Admission::cancellation_error(cancellation.reason(), true).unwrap_or(AgentError::Cancelled)
-}
-
-fn owner_failure(cancellation: &CancellationToken, error: EffectOwnerFailure) -> AgentError {
-    cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
-    AgentError::EffectOwnerFailure(error)
-}
-
-fn contract_failure(cancellation: &CancellationToken) -> AgentError {
-    owner_failure(cancellation, EffectOwnerFailure::contract_violation())
 }

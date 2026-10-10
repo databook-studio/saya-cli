@@ -28,9 +28,11 @@ mod state_contracts;
 
 pub use checkpoints::{CheckpointStoreError, NewCheckpoint, RecoveryReport, ScreenRefusal};
 pub use coding::{
-    CodingBudgetReservationPage, CodingBudgetReservationRecord, CodingChildPage, CodingChildRecord,
-    CodingEventAppend, CodingEventPage, CodingJobRecord, MAX_CODING_EVENT_PAGE_SIZE,
-    NewCodingChild, NewCodingJob,
+    CheckoutOperationPage, CodingBudgetReservationPage, CodingBudgetReservationRecord,
+    CodingChildPage, CodingChildRecord, CodingEventAppend, CodingEventPage, CodingJobRecord,
+    MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB, MAX_CHECKOUT_RECORDS_PER_JOB,
+    MAX_CODING_EVENT_PAGE_SIZE, ManagedCheckoutPage, ManagedCheckoutRecord, NewCodingChild,
+    NewCodingJob,
 };
 pub use continuation::StoredContinuation;
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};

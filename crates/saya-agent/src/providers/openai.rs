@@ -5,8 +5,8 @@ use super::{
     wire::{messages, tools},
 };
 use crate::{
-    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderStream,
-    ReasoningEffort, ResponseFormat,
+    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ControlledProviderError,
+    PhysicalAttemptControl, ProviderError, ProviderStream, ReasoningEffort, ResponseFormat,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -19,6 +19,7 @@ pub struct OpenAiCompatibleProvider {
 
 impl OpenAiCompatibleProvider {
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
+        settings.validate_retries()?;
         // Establishment is bounded per request; stream bodies are bounded by
         // the parser's per-chunk idle timeout instead of a total cap.
         // Redirects are refused outright: `base_url` is user-configurable, so
@@ -28,6 +29,7 @@ impl OpenAiCompatibleProvider {
         // the cross-host hop; the prompt body would not.)
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -51,6 +53,29 @@ impl ChatProvider for OpenAiCompatibleProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
+        self.stream_inner(request, cancellation, None)
+            .await
+            .map_err(super::http::provider_error)
+    }
+
+    async fn stream_with_physical_attempts(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+        attempts: &mut PhysicalAttemptControl<'_>,
+    ) -> Result<ProviderStream, ControlledProviderError> {
+        self.stream_inner(request, cancellation, Some(attempts))
+            .await
+    }
+}
+
+impl OpenAiCompatibleProvider {
+    async fn stream_inner(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+    ) -> Result<ProviderStream, ControlledProviderError> {
         let body = OpenAiRequest::from_request(
             request,
             self.settings.temperature,
@@ -63,21 +88,34 @@ impl ChatProvider for OpenAiCompatibleProvider {
         );
         let client = &self.client;
         let key = self.api_key.as_deref();
-        let response = send_stream(
-            || {
-                let request = client.post(&url).json(&body);
-                if let Some(value) = key {
-                    request.bearer_auth(value)
-                } else {
-                    request
-                }
-            },
-            &self.settings.retry_delays,
-            &cancellation,
-            &url,
-            self.settings.timeout,
-        )
-        .await?;
+        let build = || {
+            let request = client.post(&url).json(&body);
+            if let Some(value) = key {
+                request.bearer_auth(value)
+            } else {
+                request
+            }
+        };
+        let response = if let Some(control) = attempts {
+            super::http::send_stream_controlled(
+                build,
+                &self.settings.retry_delays,
+                &cancellation,
+                &url,
+                self.settings.timeout,
+                control,
+            )
+            .await?
+        } else {
+            send_stream(
+                build,
+                &self.settings.retry_delays,
+                &cancellation,
+                &url,
+                self.settings.timeout,
+            )
+            .await?
+        };
         Ok(openai_stream::parse(
             response,
             cancellation,

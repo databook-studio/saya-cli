@@ -48,3 +48,27 @@ pub(crate) async fn step12(connection: &mut PoolConnection<Sqlite>) -> Result<()
         .map_err(|_| StoreError::Unavailable)?;
     Ok(())
 }
+
+pub(crate) async fn step13(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE coding_managed_checkouts(job_id TEXT NOT NULL, checkout_id TEXT NOT NULL, created_by_sequence INTEGER NOT NULL CHECK(created_by_sequence > 0), latest_operation_sequence INTEGER NOT NULL CHECK(latest_operation_sequence >= created_by_sequence), PRIMARY KEY(job_id, checkout_id), FOREIGN KEY(job_id, created_by_sequence) REFERENCES coding_events(job_id, sequence) ON DELETE RESTRICT, FOREIGN KEY(job_id, latest_operation_sequence) REFERENCES coding_events(job_id, sequence) ON DELETE RESTRICT)")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("CREATE TABLE coding_checkout_operations(job_id TEXT NOT NULL, operation_sequence INTEGER NOT NULL CHECK(operation_sequence > 0), checkout_id TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('create_checkout', 'remove_checkout', 'integrate_candidate', 'apply_back')), outcome_sequence INTEGER CHECK(outcome_sequence IS NULL OR outcome_sequence > operation_sequence), PRIMARY KEY(job_id, operation_sequence), FOREIGN KEY(job_id, operation_sequence) REFERENCES coding_events(job_id, sequence) ON DELETE RESTRICT, FOREIGN KEY(job_id, checkout_id) REFERENCES coding_managed_checkouts(job_id, checkout_id) ON DELETE RESTRICT, FOREIGN KEY(job_id, outcome_sequence) REFERENCES coding_events(job_id, sequence) ON DELETE RESTRICT)")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("CREATE UNIQUE INDEX coding_checkout_one_open_operation ON coding_checkout_operations(job_id, checkout_id) WHERE outcome_sequence IS NULL")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("CREATE UNIQUE INDEX coding_checkout_one_outcome_event ON coding_checkout_operations(job_id, outcome_sequence) WHERE outcome_sequence IS NOT NULL")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 13")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}

@@ -68,6 +68,8 @@ async fn main_loop_request_does_not_set_json_mode() {
         events: &mut events,
         admission: &mut admission,
         effect_admission: None,
+        require_physical_effect_admission: false,
+        call_kind: crate::EffectCallKind::Answer,
     })
     .await
     .expect("receive succeeds");

@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use crate::TokenUsage;
 
 use super::ToolEffect;
+use super::coding_usage::PhysicalAttempt;
 
 /// Owner-assigned identity for one held effect reservation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,6 +44,14 @@ pub enum EffectSettlement {
     },
     Tool {
         outcome: EffectOutcome,
+    },
+    /// One transport send under a logical model request. A failed response
+    /// without usage remains Unknown rather than known zero.
+    PhysicalAttempt {
+        attempt: PhysicalAttempt,
+        outcome: EffectOutcome,
+        reported_usage: Option<TokenUsage>,
+        usage_complete: bool,
     },
 }
 
@@ -89,9 +98,14 @@ pub enum EffectAdmissionError {
     Denied,
     #[error(transparent)]
     OwnerFailure(#[from] EffectOwnerFailure),
+    #[error("provider cannot report physical transport attempts")]
+    UnsupportedPhysicalCoverage,
 }
 
-/// A borrowed root-owned gate for logical model requests and executable tools.
+/// A borrowed root-owned gate for logical requests, optional physical sends,
+/// and executable tools. `with_effect_admission` stays logical-only;
+/// `with_physical_effect_admission` fails closed unless the owner implements
+/// physical admission.
 ///
 /// Tool-batch admission is atomic: on success the returned permits must have
 /// exactly the input length and order; the agent supplies at most
@@ -100,7 +114,8 @@ pub enum EffectAdmissionError {
 /// dropped. The loop awaits them without racing child cancellation. A permit
 /// dropped without settlement remains held/unknown at its owner; dropping it
 /// never proves no effect. One model permit covers one logical receive; it does
-/// not count physical retries or hidden auxiliary provider calls. On model
+/// not count physical retries or hidden auxiliary provider calls unless the
+/// strict physical builder is used. On model
 /// settlements, `usage_complete` describes whether all attempts visible to the
 /// agent receive loop reported scalar token totals; observed partial totals
 /// stay present. It is not proof that provider-internal retries were observed.
@@ -112,6 +127,16 @@ pub trait EffectAdmission: Send + Sync {
         &self,
         effects: &[ToolEffect],
     ) -> Result<Vec<EffectPermit>, EffectAdmissionError>;
+
+    /// Reserves one actual provider transport send under its logical request.
+    /// Existing owners remain logical-only unless they explicitly implement
+    /// this operation; strict provider coverage fails closed by default.
+    async fn admit_physical_attempt(
+        &self,
+        _attempt: PhysicalAttempt,
+    ) -> Result<EffectPermit, EffectAdmissionError> {
+        Err(EffectAdmissionError::UnsupportedPhysicalCoverage)
+    }
 
     async fn settle(
         &self,

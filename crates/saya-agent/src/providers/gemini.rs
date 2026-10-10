@@ -1,7 +1,7 @@
 use super::{gemini_request, gemini_response, settings::ProviderSettings};
 use crate::{
-    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ProviderError, ProviderEvent,
-    ProviderStream,
+    CancellationToken, ChatProvider, ChatRequest, ChatResponse, ControlledProviderError,
+    PhysicalAttemptControl, ProviderError, ProviderEvent, ProviderStream,
 };
 use async_trait::async_trait;
 use futures_util::stream;
@@ -16,6 +16,7 @@ pub struct GeminiProvider {
 impl GeminiProvider {
     /// Creates a new `GeminiProvider` with the given settings and optional API key.
     pub fn new(settings: ProviderSettings, api_key: Option<&str>) -> Result<Self, ProviderError> {
+        settings.validate_retries()?;
         // Redirects are refused outright: `base_url` is user-configurable, so
         // a misconfigured or hostile endpoint could answer 307 and have the
         // default policy replay the POST to another host — prompt plus
@@ -24,6 +25,7 @@ impl GeminiProvider {
         // `Authorization` and cookie headers).
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
             .build()
             .map_err(|_| ProviderError::Configuration("HTTP client unavailable".into()))?;
         Ok(Self {
@@ -41,7 +43,10 @@ impl ChatProvider for GeminiProvider {
     }
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
-        let value = self.fetch_value(request, CancellationToken::new()).await?;
+        let value = self
+            .fetch_value(request, CancellationToken::new(), None)
+            .await
+            .map_err(super::http::provider_error)?;
         gemini_response::parse(value)
     }
 
@@ -50,7 +55,30 @@ impl ChatProvider for GeminiProvider {
         request: ChatRequest,
         cancellation: CancellationToken,
     ) -> Result<ProviderStream, ProviderError> {
-        let value = self.fetch_value(request, cancellation).await?;
+        self.stream_inner(request, cancellation, None)
+            .await
+            .map_err(super::http::provider_error)
+    }
+
+    async fn stream_with_physical_attempts(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+        attempts: &mut PhysicalAttemptControl<'_>,
+    ) -> Result<ProviderStream, ControlledProviderError> {
+        self.stream_inner(request, cancellation, Some(attempts))
+            .await
+    }
+}
+
+impl GeminiProvider {
+    async fn stream_inner(
+        &self,
+        request: ChatRequest,
+        cancellation: CancellationToken,
+        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+    ) -> Result<ProviderStream, ControlledProviderError> {
+        let value = self.fetch_value(request, cancellation, attempts).await?;
         let response = match gemini_response::parse(value.clone()) {
             Ok(response) => response,
             Err(error @ ProviderError::OutputTruncated { .. }) => {
@@ -63,7 +91,7 @@ impl ChatProvider for GeminiProvider {
                 items.push(Err(error));
                 return Ok(Box::pin(stream::iter(items)));
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         };
         let mut events = if response.message.tool_calls.is_empty() {
             vec![
@@ -81,14 +109,13 @@ impl ChatProvider for GeminiProvider {
         }
         Ok(Box::pin(stream::iter(events.into_iter().map(Ok))))
     }
-}
 
-impl GeminiProvider {
     async fn fetch_value(
         &self,
         request: ChatRequest,
         cancellation: CancellationToken,
-    ) -> Result<serde_json::Value, ProviderError> {
+        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+    ) -> Result<serde_json::Value, ControlledProviderError> {
         let model = request.model.clone();
         let body = gemini_request::build_body(
             request,
@@ -105,24 +132,37 @@ impl GeminiProvider {
         let client = &self.client;
         let key = self.api_key.as_deref();
 
-        let response = super::http::send_stream(
-            || {
-                let r = client.post(&url).json(&body);
-                if let Some(k) = key {
-                    r.header("x-goog-api-key", k)
-                } else {
-                    r
-                }
-            },
-            &self.settings.retry_delays,
-            &cancellation,
-            &url,
-            self.settings.timeout,
-        )
-        .await?;
+        let build = || {
+            let r = client.post(&url).json(&body);
+            if let Some(k) = key {
+                r.header("x-goog-api-key", k)
+            } else {
+                r
+            }
+        };
+        let response = if let Some(control) = attempts {
+            super::http::send_stream_controlled(
+                build,
+                &self.settings.retry_delays,
+                &cancellation,
+                &url,
+                self.settings.timeout,
+                control,
+            )
+            .await?
+        } else {
+            super::http::send_stream(
+                build,
+                &self.settings.retry_delays,
+                &cancellation,
+                &url,
+                self.settings.timeout,
+            )
+            .await?
+        };
 
         let value: serde_json::Value = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
+            _ = cancellation.cancelled() => return Err(ProviderError::Cancelled.into()),
             value = tokio::time::timeout(
                 self.settings.timeout,
                 super::http::read_json(response, crate::MAX_STREAM_BYTES),
