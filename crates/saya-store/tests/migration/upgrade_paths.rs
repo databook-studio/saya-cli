@@ -8,7 +8,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     // Step 6 drops the legacy tables even on a v1 upgrade path.
     assert_eq!(contract_tables(&db).await.len(), 0);
     let pool = read_pool(&db).await;
@@ -38,7 +38,7 @@ async fn upgrade_from_version_one_preserves_data() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 2` database upgrades to 11. Step 6 drops the legacy
+/// A `user_version = 2` database upgrades to 12. Step 6 drops the legacy
 /// `contract_*` tables, so the claim/object/evidence/event rows a v2 database
 /// held do not survive — they were never going to: nothing has shipped, and
 /// `knowledge_items` is the sole store. What the ladder preserves across the
@@ -53,7 +53,7 @@ async fn upgrade_from_version_two_drops_contract_tables_keeps_survivors() {
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(
         table_exists(&db, "schema_cache").await,
         "schema_cache dropped"
@@ -72,7 +72,7 @@ async fn upgrade_from_version_two_drops_contract_tables_keeps_survivors() {
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 4` database — the latest before step 5 — upgrades to 11 and
+/// A `user_version = 4` database — the latest before step 5 — upgrades to 12 and
 /// gains `knowledge_items`. Step 6 then drops the legacy `contract_*` tables,
 /// so the claim a v4 database held is gone too; the surviving guarantee is the
 /// knowledge table arriving and the legacy ones leaving.
@@ -84,7 +84,7 @@ async fn upgrade_from_version_four_adds_knowledge_items_and_drops_contract_table
     let store = SqliteStateStore::new(&db);
     store.list_schema_metadata().await.unwrap();
     store.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(
         table_exists(&db, "knowledge_items").await,
         "upgrade did not add knowledge_items"
@@ -94,7 +94,7 @@ async fn upgrade_from_version_four_adds_knowledge_items_and_drops_contract_table
     let _ = fs::remove_dir_all(root);
 }
 
-/// A `user_version = 6` database — the latest before step 7 — upgrades to 11
+/// A `user_version = 6` database — the latest before step 7 — upgrades to 12
 /// and gains the run-spine tables (`runs`, `run_steps`). A v6 database is one
 /// that migrated through step 6 before step 7 existed: fully migrated for its
 /// ladder, carrying no run tables. The test builds that state by migrating a
@@ -110,6 +110,10 @@ async fn upgrade_from_version_six_adds_run_tables() {
     store.list_schema_metadata().await.unwrap();
     store.close().await;
     let pool = create_pool(&db).await;
+    sqlx::query("DROP TABLE coding_budget_reservations")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE coding_events")
         .execute(&pool)
         .await
@@ -137,11 +141,11 @@ async fn upgrade_from_version_six_adds_run_tables() {
     pool.close().await;
     assert_eq!(user_version(&db).await, 6);
     assert!(!table_exists(&db, "runs").await, "runs should be absent");
-    // The upgrade re-adds the run tables and reaches version 11.
+    // The upgrade re-adds the run tables and reaches version 12.
     let reopened = SqliteStateStore::new(&db);
     reopened.list_schema_metadata().await.unwrap();
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(table_exists(&db, "runs").await, "upgrade did not add runs");
     assert!(
         table_exists(&db, "run_steps").await,
@@ -171,6 +175,10 @@ async fn upgrade_from_version_nine_preserves_metadata_and_adds_coding_tables() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("DROP TABLE coding_budget_reservations")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE coding_events")
         .execute(&pool)
         .await
@@ -192,7 +200,7 @@ async fn upgrade_from_version_nine_preserves_metadata_and_adds_coding_tables() {
     let upgraded = SqliteStateStore::new(&db);
     upgraded.list_schema_metadata().await.unwrap();
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(table_exists(&db, "coding_jobs").await);
     assert!(table_exists(&db, "coding_children").await);
     let pool = read_pool(&db).await;
@@ -239,6 +247,10 @@ async fn upgrade_from_version_ten_preserves_coding_metadata() {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query("DROP TABLE coding_budget_reservations")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE coding_events")
         .execute(&pool)
         .await
@@ -270,7 +282,7 @@ async fn upgrade_from_version_ten_preserves_coding_metadata() {
     assert_eq!(child.result_source_sha256, None);
     assert_eq!(child.result_outcome, None);
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 11);
+    assert_eq!(user_version(&db).await, 12);
     assert!(table_exists(&db, "coding_events").await);
     let _ = fs::remove_dir_all(root);
 }

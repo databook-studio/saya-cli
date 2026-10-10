@@ -22,6 +22,8 @@ type AuditRow = (
     Option<i64>,
 );
 
+#[path = "migration/budget_upgrade.rs"]
+mod budget_upgrade;
 #[path = "migration/current_schema.rs"]
 mod current_schema;
 #[path = "migration/safety.rs"]
