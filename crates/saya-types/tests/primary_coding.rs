@@ -2,6 +2,8 @@
 mod a01;
 #[path = "primary_coding/a02.rs"]
 mod a02;
+#[path = "primary_coding/a06_approval_root.rs"]
+mod a06_approval_root;
 #[path = "primary_coding/a06_approvals.rs"]
 mod a06_approvals;
 #[path = "primary_coding/a06_approvals_network.rs"]

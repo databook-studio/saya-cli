@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::Deserializer};
 use thiserror::Error;
 
 use super::approval_scope::ApprovalScope;
-use super::control_wire::{self, ControlWireError};
+use super::control_wire::{self, ControlWireError, RequiredNullableId};
 use super::{AgentId, InvocationId, JobId, Sha256Digest};
 
 pub const APPROVAL_REQUEST_VERSION: u32 = 1;
@@ -43,8 +43,8 @@ impl ApprovalRequestContext {
 pub struct ApprovalRequestV1 {
     version: u32,
     job_id: JobId,
-    agent_id: AgentId,
-    invocation_id: InvocationId,
+    agent_id: Option<AgentId>,
+    invocation_id: Option<InvocationId>,
     request_sequence: NonZeroU64,
     policy_sha256: Sha256Digest,
     revocation_epoch: u64,
@@ -62,6 +62,36 @@ impl ApprovalRequestV1 {
         context: ApprovalRequestContext,
         scope: ApprovalScope,
     ) -> Result<Self, ApprovalRequestError> {
+        Self::new_with_actor(
+            job_id,
+            Some(agent_id),
+            Some(invocation_id),
+            request_sequence,
+            context,
+            scope,
+        )
+    }
+
+    pub fn new_for_coordinator(
+        job_id: JobId,
+        request_sequence: NonZeroU64,
+        context: ApprovalRequestContext,
+        scope: ApprovalScope,
+    ) -> Result<Self, ApprovalRequestError> {
+        Self::new_with_actor(job_id, None, None, request_sequence, context, scope)
+    }
+
+    fn new_with_actor(
+        job_id: JobId,
+        agent_id: Option<AgentId>,
+        invocation_id: Option<InvocationId>,
+        request_sequence: NonZeroU64,
+        context: ApprovalRequestContext,
+        scope: ApprovalScope,
+    ) -> Result<Self, ApprovalRequestError> {
+        if agent_id.is_some() != invocation_id.is_some() {
+            return Err(ApprovalRequestError::InvalidActor);
+        }
         let request = Self {
             version: APPROVAL_REQUEST_VERSION,
             job_id,
@@ -79,7 +109,10 @@ impl ApprovalRequestV1 {
     }
 
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, ApprovalRequestError> {
-        control_wire::decode_versioned(bytes, APPROVAL_REQUEST_VERSION).map_err(map_wire_error)
+        control_wire::check_version(bytes, APPROVAL_REQUEST_VERSION).map_err(map_wire_error)?;
+        let wire: WireApprovalRequest =
+            serde_json::from_slice(bytes).map_err(|_| ApprovalRequestError::Malformed)?;
+        Self::from_wire(wire)
     }
 
     pub fn to_json_bytes(&self) -> Result<Vec<u8>, ApprovalRequestError> {
@@ -90,12 +123,12 @@ impl ApprovalRequestV1 {
         &self.job_id
     }
 
-    pub fn agent_id(&self) -> &AgentId {
-        &self.agent_id
+    pub fn agent_id(&self) -> Option<&AgentId> {
+        self.agent_id.as_ref()
     }
 
-    pub fn invocation_id(&self) -> &InvocationId {
-        &self.invocation_id
+    pub fn invocation_id(&self) -> Option<&InvocationId> {
+        self.invocation_id.as_ref()
     }
 
     pub fn request_sequence(&self) -> NonZeroU64 {
@@ -132,10 +165,10 @@ impl ApprovalRequestV1 {
             wire.requested_at_unix_ms,
             wire.expires_at_unix_ms,
         )?;
-        Self::new(
+        Self::new_with_actor(
             wire.job_id,
-            wire.agent_id,
-            wire.invocation_id,
+            wire.agent_id.0,
+            wire.invocation_id.0,
             wire.request_sequence,
             context,
             wire.scope,
@@ -168,8 +201,8 @@ fn map_wire_error(error: ControlWireError) -> ApprovalRequestError {
 struct WireApprovalRequest {
     version: u32,
     job_id: JobId,
-    agent_id: AgentId,
-    invocation_id: InvocationId,
+    agent_id: RequiredNullableId<AgentId>,
+    invocation_id: RequiredNullableId<InvocationId>,
     request_sequence: NonZeroU64,
     policy_sha256: Sha256Digest,
     revocation_epoch: u64,
@@ -190,4 +223,6 @@ pub enum ApprovalRequestError {
     Malformed,
     #[error("approval request expiry must be later than its request time")]
     InvalidExpiry,
+    #[error("approval request actor must contain both agent and invocation identities or neither")]
+    InvalidActor,
 }
