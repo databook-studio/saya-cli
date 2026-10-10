@@ -85,25 +85,31 @@ impl Anchor {
         open_file_at(self.dir.as_raw_fd(), &self.name, flags, mode)
     }
 
-    /// The contained read open: no-follow, then a post-open identity check
-    /// against the scan `expected` — the opened file's (dev, inode) must be
-    /// the one that was scanned.
+    /// The contained read open: nonblocking and no-follow, then post-open
+    /// regular-file and identity checks against the scan `expected`.
     pub(crate) fn open_verified(
         &self,
         expected: (u64, u64),
         rel: &str,
     ) -> Result<fs::File, HarnessError> {
-        let file = self.open_file(libc::O_RDONLY, 0).map_err(|error| {
-            if error.raw_os_error() == Some(libc::ELOOP) {
-                return HarnessError::SymlinkRefused {
-                    path: rel.to_string(),
-                };
-            }
-            io_error("open workspace file", &self.path, error)
-        })?;
+        let file = self
+            .open_file(libc::O_RDONLY | libc::O_NONBLOCK | libc::O_NOCTTY, 0)
+            .map_err(|error| {
+                if error.raw_os_error() == Some(libc::ELOOP) {
+                    return HarnessError::SymlinkRefused {
+                        path: rel.to_string(),
+                    };
+                }
+                io_error("open workspace file", &self.path, error)
+            })?;
         let opened = file
             .metadata()
             .map_err(|error| io_error("stat opened workspace file", &self.path, error))?;
+        if !opened.is_file() {
+            return Err(HarnessError::NotRegularFile {
+                path: rel.to_string(),
+            });
+        }
         if (opened.dev(), opened.ino()) != expected {
             return Err(HarnessError::IdentityChanged {
                 path: rel.to_string(),
@@ -197,3 +203,7 @@ impl Anchor {
         unlink_at(self.dir.as_raw_fd(), &self.name)
     }
 }
+
+#[cfg(test)]
+#[path = "anchor_tests.rs"]
+mod tests;
