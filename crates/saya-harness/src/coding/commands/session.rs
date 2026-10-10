@@ -8,16 +8,28 @@ use std::{
 };
 
 use saya_agent::CancellationToken;
-use thiserror::Error;
-use tokio::{sync::OwnedSemaphorePermit, task::JoinHandle};
+use tokio::{
+    sync::{OwnedSemaphorePermit, watch},
+    task::JoinHandle,
+};
 
-use crate::runner::{ProgramOutcome, RunProgram, RunnerError};
+use crate::runner::{
+    CommandProcessState, ProgramOutcome, RunProgram, stdin_channel::StdinInputPipe,
+};
+
+use super::input::{CommandInput, CommandInputError, StdinQueueReceipt};
+#[path = "session_errors.rs"]
+mod errors;
+pub use errors::CommandSessionError;
+use errors::{input_result, mark_failed_process_state};
 
 /// A supervised `RunProgram` call. Dropping the handle requests cancellation;
 /// the task remains alive until the existing runner has cleaned up the process.
 pub struct CommandSession {
     task: JoinHandle<Result<ProgramOutcome, CommandSessionError>>,
     cancellation: CancelOnDrop,
+    input: Option<CommandInput>,
+    process_state: watch::Receiver<CommandProcessState>,
 }
 
 impl fmt::Debug for CommandSession {
@@ -37,22 +49,38 @@ impl CommandSession {
         timeout_seconds: NonZeroU64,
         owner_cancellation: CancellationToken,
         permit: OwnedSemaphorePermit,
+        input: Option<(CommandInput, StdinInputPipe)>,
     ) -> Self {
         let cancellation = CancellationToken::new();
         let task_cancellation = cancellation.clone();
+        let (input, input_pipe) =
+            input.map_or((None, None), |(input, pipe)| (Some(input), Some(pipe)));
+        let (process_state_tx, process_state) = watch::channel(CommandProcessState::Pending);
         let task = tokio::spawn(async move {
             let _permit = permit;
-            if task_cancellation.is_cancelled() || owner_cancellation.is_cancelled() {
+            let run_cancellation = runner.cancellation_token();
+            if task_cancellation.is_cancelled()
+                || owner_cancellation.is_cancelled()
+                || run_cancellation.is_cancelled()
+            {
                 task_cancellation.cancel();
+                process_state_tx.send_replace(CommandProcessState::NotSpawned);
                 return Err(CommandSessionError::CancelledBeforeStart);
             }
             let runner = runner.with_cancellation(task_cancellation.clone());
             let run_started = Arc::new(AtomicBool::new(false));
             let mark_started = Arc::clone(&run_started);
+            let run_process_state = process_state_tx.clone();
             let run = async move {
                 mark_started.store(true, Ordering::Release);
                 runner
-                    .run(&program, &argv, Some(timeout_seconds.get()))
+                    .run_command(
+                        &program,
+                        &argv,
+                        Some(timeout_seconds.get()),
+                        input_pipe,
+                        run_process_state,
+                    )
                     .await
             };
             tokio::pin!(run);
@@ -60,16 +88,28 @@ impl CommandSession {
                 biased;
                 _ = task_cancellation.cancelled() => None,
                 _ = owner_cancellation.cancelled() => None,
+                _ = run_cancellation.cancelled() => None,
                 result = &mut run => Some(result),
             };
             match completed {
-                Some(result) => result.map_err(CommandSessionError::Runner),
+                Some(Ok(run)) => input_result(run.outcome, run.stdin),
+                Some(Err(error)) => {
+                    mark_failed_process_state(&process_state_tx);
+                    Err(CommandSessionError::Runner(error))
+                }
                 None if run_started.load(Ordering::Acquire) => {
                     task_cancellation.cancel();
-                    run.await.map_err(CommandSessionError::Runner)
+                    match run.await {
+                        Ok(run) => input_result(run.outcome, run.stdin),
+                        Err(error) => {
+                            mark_failed_process_state(&process_state_tx);
+                            Err(CommandSessionError::Runner(error))
+                        }
+                    }
                 }
                 None => {
                     task_cancellation.cancel();
+                    process_state_tx.send_replace(CommandProcessState::NotSpawned);
                     Err(CommandSessionError::CancelledBeforeStart)
                 }
             }
@@ -77,6 +117,8 @@ impl CommandSession {
         Self {
             task,
             cancellation: CancelOnDrop(cancellation),
+            input,
+            process_state,
         }
     }
 
@@ -86,20 +128,52 @@ impl CommandSession {
         self.task.is_finished()
     }
 
+    /// Returns the last process lifecycle observed by the existing runner.
+    /// Spawned identifies an OS child PID, not an independent liveness probe.
+    pub fn process_state(&self) -> CommandProcessState {
+        *self.process_state.borrow()
+    }
+
+    /// Queues one bounded stdin chunk. Success means queued, not written to
+    /// the kernel pipe or consumed by the command.
+    pub fn send_stdin(&self, bytes: &[u8]) -> Result<StdinQueueReceipt, CommandInputError> {
+        self.input
+            .as_ref()
+            .ok_or(CommandInputError::Unavailable)?
+            .send(bytes)
+    }
+
+    /// Closes stdin after already queued bytes drain. Later writes are refused.
+    pub fn close_stdin(&self) -> Result<(), CommandInputError> {
+        self.input
+            .as_ref()
+            .ok_or(CommandInputError::Unavailable)?
+            .close()
+    }
+
     /// Requests this session to stop without releasing its owner's capacity.
     /// Call `join` or `stop_and_join` to observe cleanup completion.
     pub fn stop(&self) {
+        if let Some(input) = &self.input {
+            input.close_if_open();
+        }
         self.cancellation.0.cancel();
     }
 
     /// Waits for the original `RunProgram` outcome or its cause-preserving error.
     pub async fn join(self) -> Result<ProgramOutcome, CommandSessionError> {
+        if let Some(input) = &self.input {
+            input.close_if_open();
+        }
         join_task(self.task).await
     }
 
     /// Stops this command, then waits until the existing runner reports after
     /// process cleanup and reaping.
     pub async fn stop_and_join(self) -> Result<ProgramOutcome, CommandSessionError> {
+        if let Some(input) = &self.input {
+            input.close_if_open();
+        }
         self.cancellation.0.cancel();
         join_task(self.task).await
     }
@@ -120,16 +194,4 @@ async fn join_task(
         Ok(result) => result,
         Err(source) => Err(CommandSessionError::Join(source)),
     }
-}
-
-/// Why a supervised command could not produce its existing runner outcome.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum CommandSessionError {
-    #[error(transparent)]
-    Runner(#[from] RunnerError),
-    #[error("command supervision task failed to join")]
-    Join(#[source] tokio::task::JoinError),
-    #[error("command owner stopped before runner dispatch")]
-    CancelledBeforeStart,
 }
