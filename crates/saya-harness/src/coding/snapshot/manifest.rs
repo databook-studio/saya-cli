@@ -136,6 +136,10 @@ pub enum SnapshotError {
     ArtifactRootRefused,
     #[error("snapshot manifest bytes do not match their declared digest")]
     ManifestDigestMismatch,
+    #[error("no published snapshot exists under this id")]
+    SnapshotNotFound,
+    #[error("the published snapshot manifest or completion record is malformed")]
+    CapturedManifestMalformed,
     #[error("staged object bytes do not match their declared digest")]
     ObjectDigestMismatch,
     #[error("the snapshot source no longer matches the planned identity")]

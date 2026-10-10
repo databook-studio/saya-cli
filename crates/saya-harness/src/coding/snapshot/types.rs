@@ -1,7 +1,7 @@
 use std::fmt;
 
 use saya_types::GitObjectId;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::SnapshotError;
 
@@ -26,7 +26,7 @@ pub enum SnapshotContentSource {
     WorkingTree,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SnapshotFileMode {
     Regular,
@@ -55,6 +55,14 @@ impl SnapshotPath {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SnapshotPath {
+    /// Re-validates on read: a stored path is never trusted.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(|_| serde::de::Error::custom("unsafe snapshot path"))
     }
 }
 

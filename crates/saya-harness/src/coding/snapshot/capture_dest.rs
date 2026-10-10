@@ -100,6 +100,12 @@ impl SnapshotArtifacts {
         &self.root
     }
 
+    /// The pinned artifacts root descriptor for the verified reader.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn root_dir(&self) -> &fs::File {
+        &self.root_dir
+    }
+
     /// Opens a staging directory for one capture of `snapshot_id`: the id
     /// is re-validated as a safe component, any existing entry under the id
     /// refuses, and a unique `.staging-<id>-<pid>-<nanos>` directory (0700,

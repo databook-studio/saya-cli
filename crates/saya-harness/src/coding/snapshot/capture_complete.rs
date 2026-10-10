@@ -23,11 +23,11 @@ use crate::workspace::fd::{open_dir_at, open_file_at, stat_at};
 /// The record is exactly the 64-byte lowercase manifest digest `commit`
 /// wrote; a longer file is malformed by definition.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const MAX_COMPLETION_RECORD_BYTES: usize = 64;
+pub(super) const MAX_COMPLETION_RECORD_BYTES: usize = 64;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const COMPLETION_RECORD: &str = "COMPLETE";
+pub(super) const COMPLETION_RECORD: &str = "COMPLETE";
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const MANIFEST_FILE: &str = "manifest.json";
+pub(super) const MANIFEST_FILE: &str = "manifest.json";
 
 /// Re-checks `snapshot_id` at the artifacts boundary, then verifies the
 /// final directory's completion record against its manifest bytes.
@@ -88,7 +88,7 @@ fn is_complete_unix(root_dir: &fs::File, snapshot_id: &SnapshotId) -> Result<boo
 /// over-bound files read as `None` (malformed), so a tampered destination
 /// can only lower confidence, never fake completion.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn read_optional_bounded(
+pub(super) fn read_optional_bounded(
     dir: &fs::File,
     name: &str,
     maximum: usize,
