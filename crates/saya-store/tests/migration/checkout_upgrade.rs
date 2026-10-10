@@ -25,6 +25,13 @@ pub(super) async fn drop_step14_table(pool: &SqlitePool) {
         .unwrap();
 }
 
+pub(super) async fn drop_step15_table(pool: &SqlitePool) {
+    sqlx::query("DROP TABLE coding_budget_policies")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn upgrade_from_twelve_preserves_jobs_children_events_and_budget_records() {
     let seed = CodingSeed::new("upgrade-v12-checkouts").await;
@@ -33,6 +40,7 @@ async fn upgrade_from_twelve_preserves_jobs_children_events_and_budget_records()
 
     let raw = create_pool(&db).await;
     drop_step13_tables(&raw).await;
+    drop_step15_table(&raw).await;
     sqlx::query("PRAGMA user_version = 12")
         .execute(&raw)
         .await
@@ -43,7 +51,7 @@ async fn upgrade_from_twelve_preserves_jobs_children_events_and_budget_records()
     let upgraded = SqliteStateStore::new(&db);
     assert_coding_seed_survives(&upgraded, &seed, &seed.events).await;
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     assert!(table_exists(&db, "coding_managed_checkouts").await);
     assert!(table_exists(&db, "coding_checkout_operations").await);
     assert!(table_exists(&db, "coding_approval_requests").await);
@@ -62,6 +70,7 @@ async fn upgrade_from_thirteen_preserves_completed_checkout_ownership_and_operat
 
     let raw = create_pool(&db).await;
     drop_step14_table(&raw).await;
+    drop_step15_table(&raw).await;
     sqlx::query("PRAGMA user_version = 13")
         .execute(&raw)
         .await
@@ -100,6 +109,6 @@ async fn upgrade_from_thirteen_preserves_completed_checkout_ownership_and_operat
         vec![completed_operation]
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 14);
+    assert_eq!(user_version(&db).await, 15);
     let _ = fs::remove_dir_all(seed.root);
 }

@@ -30,11 +30,11 @@ pub use checkpoints::{CheckpointStoreError, NewCheckpoint, RecoveryReport, Scree
 pub use coding::{
     CheckoutOperationPage, CodingApprovalClosure, CodingApprovalConsumptionAppend,
     CodingApprovalConsumptionContext, CodingApprovalConsumptionReceipt, CodingApprovalRequestPage,
-    CodingApprovalRequestRecord, CodingBudgetReservationPage, CodingBudgetReservationRecord,
-    CodingChildPage, CodingChildRecord, CodingEventAppend, CodingEventPage, CodingJobRecord,
-    MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB, MAX_CHECKOUT_RECORDS_PER_JOB,
-    MAX_CODING_EVENT_PAGE_SIZE, ManagedCheckoutPage, ManagedCheckoutRecord, NewCodingChild,
-    NewCodingJob,
+    CodingApprovalRequestRecord, CodingBudgetPolicyAppend, CodingBudgetReservationPage,
+    CodingBudgetReservationRecord, CodingChildPage, CodingChildRecord, CodingEventAppend,
+    CodingEventPage, CodingJobRecord, MAX_CHECKOUT_OPERATION_INTENTS_PER_JOB,
+    MAX_CHECKOUT_RECORDS_PER_JOB, MAX_CODING_EVENT_PAGE_SIZE, ManagedCheckoutPage,
+    ManagedCheckoutRecord, NewCodingChild, NewCodingJob, StoredBudgetPolicy,
 };
 pub use continuation::StoredContinuation;
 pub use contracts::{ForgetReason, MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};

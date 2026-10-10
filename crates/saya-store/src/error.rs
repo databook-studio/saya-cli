@@ -11,6 +11,11 @@ pub enum StoreError {
     NotFound,
     #[error("the record conflicts with an existing record")]
     Conflict,
+    /// A different budget policy is already recorded for the job. The
+    /// original row is left untouched; the job must keep its original
+    /// ceiling.
+    #[error("a different coding budget policy is already recorded for this job")]
+    PolicyConflict,
     #[error("the value exceeds a store limit")]
     LimitExceeded,
     #[error("the value is not valid for storage")]
