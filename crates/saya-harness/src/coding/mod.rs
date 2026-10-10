@@ -22,3 +22,5 @@ pub mod coordinator {
         MAX_CHILD_EVENT_QUEUE_CAPACITY, child_event_channel, run_child,
     };
 }
+
+pub mod git;
