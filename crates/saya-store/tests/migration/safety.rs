@@ -1,15 +1,15 @@
 use super::*;
 
 /// A version ahead of the highest step the migration knows about fails closed.
-/// Step 12 makes `user_version = 12` supported, so the future-version sentinel is
-/// now 13 — anything the running build cannot migrate *to* must be refused, not
+/// Step 13 makes `user_version = 13` supported, so the future-version sentinel is
+/// now 14 — anything the running build cannot migrate *to* must be refused, not
 /// silently rewritten under.
 #[tokio::test]
 async fn unknown_future_version_fails_closed() {
     let root = temp_root("future");
     let db = root.join("state.sqlite3");
     let pool = create_pool(&db).await;
-    sqlx::query("PRAGMA user_version = 13")
+    sqlx::query("PRAGMA user_version = 14")
         .execute(&pool)
         .await
         .unwrap();
