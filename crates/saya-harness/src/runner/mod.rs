@@ -21,9 +21,14 @@ pub mod env;
 pub mod error;
 pub mod nested_saya;
 pub mod output;
+mod process_state;
 pub mod refuse;
 pub mod sandbox;
 pub(crate) mod spawn;
+pub(crate) mod stdin;
+pub(crate) mod stdin_channel;
+
+pub use process_state::CommandProcessState;
 
 mod call;
 mod definition;
@@ -123,6 +128,10 @@ impl RunProgram {
     pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
         self.cancellation = cancellation;
         self
+    }
+
+    pub(crate) fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation.clone()
     }
 
     /// Redirects the outcome record out of the default (`fs_roots[0]` /

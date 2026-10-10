@@ -23,9 +23,13 @@ use super::{
     env::{Credential, inject},
     error::RunnerError,
     output::ProgramOutcome,
+    process_state::CommandProcessState,
     refuse::ValidatedCall,
     sandbox::RunnerSpawn,
+    stdin::{StdinDelivery, StdinWriter},
+    stdin_channel::StdinInputPipe,
 };
+use tokio::sync::watch;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
@@ -44,6 +48,58 @@ pub(super) async fn run(
     source: &dyn super::env::CredentialSource,
     cancellation: &CancellationToken,
 ) -> Result<ProgramOutcome, RunnerError> {
+    execute(
+        spawn,
+        call,
+        pinned_env,
+        credentials,
+        source,
+        cancellation,
+        None,
+        None,
+    )
+    .await
+    .map(|result| result.outcome)
+}
+
+pub(super) struct CommandSpawnResult {
+    pub(super) outcome: ProgramOutcome,
+    pub(super) stdin: Option<StdinDelivery>,
+}
+
+pub(super) async fn run_command(
+    spawn: &RunnerSpawn,
+    call: ValidatedCall,
+    pinned_env: &[(&'static str, PathBuf)],
+    credentials: &[Credential],
+    source: &dyn super::env::CredentialSource,
+    cancellation: &CancellationToken,
+    input: Option<StdinInputPipe>,
+    process_state: watch::Sender<CommandProcessState>,
+) -> Result<CommandSpawnResult, RunnerError> {
+    execute(
+        spawn,
+        call,
+        pinned_env,
+        credentials,
+        source,
+        cancellation,
+        input,
+        Some(process_state),
+    )
+    .await
+}
+
+async fn execute(
+    spawn: &RunnerSpawn,
+    call: ValidatedCall,
+    pinned_env: &[(&'static str, PathBuf)],
+    credentials: &[Credential],
+    source: &dyn super::env::CredentialSource,
+    cancellation: &CancellationToken,
+    input: Option<StdinInputPipe>,
+    process_state: Option<watch::Sender<CommandProcessState>>,
+) -> Result<CommandSpawnResult, RunnerError> {
     let mut command = spawn.command(&call.program_path);
     // Typed argv, verbatim: every element is one argv element on the
     // sandbox-exec (or confined) command line. There is no string here that
@@ -59,7 +115,11 @@ pub(super) async fn run(
     }
     let resolved = inject(&mut command, credentials, source)?;
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(unix)]
@@ -69,17 +129,48 @@ pub(super) async fn run(
         .spawn()
         .map_err(|source| RunnerError::Spawn { source })?;
     let pid = child.id();
+    if let Some(state) = &process_state {
+        state.send_replace(CommandProcessState::Spawned { pid });
+    }
     let pipes = crate::proc::Pipes::take(&mut child.stdout, &mut child.stderr)
         .map_err(|source| RunnerError::WaitFailed { source })?;
-    let settled = crate::proc::wait(child, call.timeout, cancellation)
-        .await
-        .map_err(|source| RunnerError::WaitFailed { source })?;
+    let mut input_failure = None;
+    let mut input_writer = None;
+    if let Some(input) = input {
+        match child.stdin.take() {
+            Some(stdin) => match StdinWriter::start(stdin, input) {
+                Ok(writer) => input_writer = Some(writer),
+                Err(delivery) => input_failure = Some(delivery),
+            },
+            None => {
+                input_failure = Some(StdinDelivery::failed(
+                    &input,
+                    std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "child stdin pipe was unavailable",
+                    ),
+                ));
+            }
+        }
+    }
+    let wait = crate::proc::wait(child, call.timeout, cancellation).await;
+    let writer_delivery = input_writer.map(StdinWriter::finish);
+    let settled = match wait {
+        Ok(settled) => {
+            if let Some(state) = &process_state {
+                state.send_replace(CommandProcessState::Reaped { pid });
+            }
+            settled
+        }
+        Err(source) => {
+            let _ = pipes.finish(&resolved);
+            return Err(RunnerError::WaitFailed { source });
+        }
+    };
+    let stdin = input_failure.or(writer_delivery);
     let (stdout, stderr) = pipes.finish(&resolved);
-    Ok(crate::proc::outcome(
-        call.program,
-        pid,
-        &settled,
-        stdout,
-        stderr,
-    ))
+    Ok(CommandSpawnResult {
+        outcome: crate::proc::outcome(call.program, pid, &settled, stdout, stderr),
+        stdin,
+    })
 }
