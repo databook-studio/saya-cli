@@ -4,8 +4,8 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-use super::EndpointDiagnostics;
-use crate::{ColorChoice, CompactionMode, MemoryMode, OutputFormat, ThemeChoice};
+use super::{EndpointDiagnostics, redact_endpoint};
+use crate::{ColorChoice, CompactionMode, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice};
 
 /// A display-safe view of the *effective* runtime settings, with no resolved
 /// secrets. This is what `saya config show` prints.
@@ -54,4 +54,73 @@ pub struct ResolvedDiagnostics {
     /// `orchestrator`, the plain `[ai]` block fallback. Secrets stay
     /// references: `api_key_reference` is the redacted label, never a value.
     pub endpoints: BTreeMap<String, EndpointDiagnostics>,
+}
+
+impl ResolvedConfig {
+    pub fn redacted_diagnostics(&self) -> ResolvedDiagnostics {
+        ResolvedDiagnostics {
+            profile_name: self.profile_name.clone(),
+            profile_dialect: self
+                .profile
+                .as_ref()
+                .map(|value| value.dialect().as_str().into()),
+            provider: self.ai.provider.as_str().into(),
+            model: self.ai.model.clone(),
+            base_url: self.ai.base_url.as_deref().map(redact_endpoint),
+            api_key_reference: self.ai.api_key.as_ref().map(|value| value.redacted_label()),
+            allow_data_sharing: self.ai.allow_data_sharing,
+            temperature: self.ai.temperature,
+            timeout_seconds: self.ai.timeout_seconds,
+            idle_timeout_seconds: self.ai.idle_timeout_seconds,
+            max_output_tokens: self.ai.max_output_tokens,
+            retry_delays_ms: self.ai.retry_delays_ms.clone(),
+            context_byte_budget: self.ai.context_byte_budget,
+            context_window_tokens: self.ai.context_window_tokens,
+            show_thinking: self.ai.show_thinking,
+            max_rows: self.max_rows,
+            read_only: self.read_only,
+            max_iterations: self.max_iterations,
+            candidates: self.candidates,
+            jobs_wall_clock_seconds: self.jobs.wall_clock_seconds,
+            jobs_tokens_per_endpoint: self.jobs.tokens_per_endpoint.clone(),
+            jobs_turns: self.jobs.turns,
+            jobs_tool_calls: self.jobs.tool_calls,
+            jobs_runner_allow: self.jobs.runner.allow.clone(),
+            jobs_runner_program_dir: self
+                .jobs
+                .runner
+                .program_dir
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            jobs_runner_timeout_seconds: self.jobs.runner.timeout_seconds,
+            query_timeout_seconds: self.query_timeout_seconds,
+            output_format: self.output_format,
+            output_color: self.output_color,
+            ui_theme: self.ui_theme,
+            compaction: self.ai.compaction,
+            memory_mode: self.memory.mode,
+            memory_max_contracts: self.memory.max_contracts,
+            memory_max_claims_per_contract: self.memory.max_claims_per_contract,
+            memory_max_context_bytes: self.memory.max_context_bytes,
+            endpoints: self
+                .endpoints
+                .iter()
+                .map(|(name, endpoint)| {
+                    (
+                        name.clone(),
+                        EndpointDiagnostics {
+                            name: endpoint.name.clone(),
+                            provider: Some(endpoint.provider.as_str().into()),
+                            model: Some(endpoint.model.clone()),
+                            base_url: endpoint.base_url.as_deref().map(redact_endpoint),
+                            api_key_reference: endpoint
+                                .api_key
+                                .as_ref()
+                                .map(|value| value.redacted_label()),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
 }
