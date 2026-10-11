@@ -21,6 +21,10 @@ pub enum ChildRunError {
     Factory(#[from] ChildFactoryError),
     #[error("child event channel identity does not match its execution spec")]
     ChannelIdentityMismatch,
+    #[error("child did not settle within the cancellation join grace period")]
+    Unsettled,
+    #[error("child-owned resources did not settle")]
+    Settlement(#[source] saya_agent::ToolError),
     #[error("child progress owner failed")]
     OwnerFailure,
     #[error("shared child or effect budget denied admission")]
@@ -38,7 +42,7 @@ pub async fn run_child(
     events: ChildEventSender,
     cancellation: CancellationToken,
 ) -> Result<saya_agent::AgentOutput, ChildRunError> {
-    run_child_inner(spec, factory, events, cancellation, None).await
+    run_child_inner(spec, factory, events, cancellation, None, None).await
 }
 /// Native child invocation with job-owned budgets and one active turn per agent.
 /// The caller must retain and join this future through cancellation; dropping it
@@ -49,6 +53,17 @@ pub async fn run_child_budgeted(
     events: ChildEventSender,
     cancellation: CancellationToken,
     ledger: &JobBudgetLedger,
+) -> Result<saya_agent::AgentOutput, ChildRunError> {
+    run_child_controlled(spec, factory, events, cancellation, ledger, None).await
+}
+
+pub(super) async fn run_child_controlled(
+    spec: ChildExecutionSpec,
+    factory: &dyn ChildFactory,
+    events: ChildEventSender,
+    cancellation: CancellationToken,
+    ledger: &JobBudgetLedger,
+    mailbox: Option<saya_agent::AgentMailbox>,
 ) -> Result<saya_agent::AgentOutput, ChildRunError> {
     let (job_id, agent_id, invocation_id) = {
         let authority = spec.authority();
@@ -64,6 +79,9 @@ pub async fn run_child_budgeted(
         || events.invocation_id != invocation_id
     {
         return Err(ChildRunError::ChannelIdentityMismatch);
+    }
+    if let Some(reason) = cancellation.reason() {
+        return Err(ChildRunError::Cancelled { reason });
     }
     let limits = spec.answering_limits();
     let logical_requests = limits.max_requests.ok_or(ChildRunError::BudgetDenied)?;
@@ -81,15 +99,17 @@ pub async fn run_child_budgeted(
         .map_err(map_admission_error)?;
     let view = session.view().clone();
     let child_token = CancellationToken::new();
+    let mut invocation_guard =
+        super::super::child::failure::InvocationGuard(Some(child_token.clone()));
     let caller_token = cancellation.clone();
     let ledger_token = ledger.cancellation_token();
     let monitor_token = child_token.clone();
     let deadline = ledger.remaining().await;
-    let monitor = tokio::spawn(async move {
+    let monitor = super::super::child::failure::AbortMonitor(Some(tokio::spawn(async move {
         tokio::select! {
             biased;
-            _ = caller_token.cancelled() => monitor_token.cancel_with_reason(caller_token.reason().unwrap_or(CancellationReason::User)),
-            _ = ledger_token.cancelled() => monitor_token.cancel_with_reason(ledger_token.reason().unwrap_or(CancellationReason::OwnerFailure)),
+            _ = caller_token.cancelled() => { monitor_token.cancel_with_reason(caller_token.reason().unwrap_or(CancellationReason::User)); },
+            _ = ledger_token.cancelled() => { monitor_token.cancel_with_reason(ledger_token.reason().unwrap_or(CancellationReason::OwnerFailure)); },
             _ = tokio::time::sleep(deadline) => {
                 ledger_token.cancel_with_reason(CancellationReason::Budget(
                     saya_agent::BudgetDimension::ElapsedTime,
@@ -102,15 +122,20 @@ pub async fn run_child_budgeted(
                 monitor_token.cancel_with_reason(reason);
             }
         }
-    });
-    let result = run_child_inner(spec, factory, events, child_token, Some(&view)).await;
-    monitor.abort();
-    let _ = monitor.await;
+    })));
+    let result = run_child_inner(spec, factory, events, child_token, Some(&view), mailbox).await;
+    monitor.stop().await;
     let started = ledger.child_started(&agent_id, &invocation_id).await;
     ledger
         .finish_child(
             session,
-            if started {
+            if matches!(
+                &result,
+                Err(ChildRunError::Settlement(_)
+                    | ChildRunError::Agent(AgentError::EffectOwnerFailure(_)))
+            ) {
+                EffectOutcome::Unknown
+            } else if started {
                 EffectOutcome::Succeeded
             } else {
                 EffectOutcome::NotStarted
@@ -118,6 +143,7 @@ pub async fn run_child_budgeted(
         )
         .await
         .map_err(|_| ChildRunError::OwnerFailure)?;
+    invocation_guard.0 = None;
     result
 }
 
@@ -135,6 +161,7 @@ async fn run_child_inner(
     events: ChildEventSender,
     cancellation: CancellationToken,
     admission: Option<&dyn EffectAdmission>,
+    mailbox: Option<saya_agent::AgentMailbox>,
 ) -> Result<saya_agent::AgentOutput, ChildRunError> {
     let authority = spec.authority();
     if &events.job_id != authority.job_id()
@@ -142,6 +169,9 @@ async fn run_child_inner(
         || &events.invocation_id != authority.invocation_id()
     {
         return Err(ChildRunError::ChannelIdentityMismatch);
+    }
+    if let Some(reason) = cancellation.reason() {
+        return Err(ChildRunError::Cancelled { reason });
     }
     let ChildComponents {
         provider,
@@ -162,6 +192,10 @@ async fn run_child_inner(
         &sink,
         cancellation.clone(),
     );
+    let control = match mailbox {
+        Some(mailbox) => control.with_mailbox(mailbox),
+        None => control,
+    };
     let control = match preflight {
         Some(config) => control.with_request_preflight(config),
         None => control,
@@ -178,6 +212,10 @@ async fn run_child_inner(
         control,
     )
     .await;
+    tools
+        .settle_invocation()
+        .await
+        .map_err(ChildRunError::Settlement)?;
     let reason = cancellation.reason();
     if sink.owner_failure.load(Ordering::Acquire)
         || reason == Some(CancellationReason::OwnerFailure)

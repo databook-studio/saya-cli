@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 /// Root-scoped count view sharing the job ledger with all child views.
-/// Physical attempts remain unsupported until a root provider owner supplies an actor identity.
+/// Physical attempts bind to the job-root actor and its exact model permit.
 pub struct RootBudgetView {
     pub(super) inner: Arc<Mutex<State>>,
 }
@@ -37,9 +37,9 @@ impl EffectAdmission for RootBudgetView {
 
     async fn admit_physical_attempt(
         &self,
-        _attempt: PhysicalAttempt,
+        attempt: PhysicalAttempt,
     ) -> Result<EffectPermit, EffectAdmissionError> {
-        Err(EffectAdmissionError::UnsupportedPhysicalCoverage)
+        admission::admit_physical(&mut self.inner.lock().await, attempt, None, None).await
     }
 
     async fn settle(
@@ -116,8 +116,8 @@ impl EffectAdmission for ChildBudgetView {
         admission::admit_physical(
             &mut state,
             attempt,
-            self.agent.clone(),
-            self.invocation.clone(),
+            Some(self.agent.clone()),
+            Some(self.invocation.clone()),
         )
         .await
     }

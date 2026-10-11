@@ -20,6 +20,14 @@ impl SqliteStateStore {
         &self,
         event: CodingEventV1,
     ) -> Result<CodingEventAppend, StoreError> {
+        self.reserve_coding_budget_fenced(event, None).await
+    }
+
+    pub async fn reserve_coding_budget_fenced(
+        &self,
+        event: CodingEventV1,
+        authority: Option<&super::CodingRuntimeAuthority>,
+    ) -> Result<CodingEventAppend, StoreError> {
         let CodingEventKind::BudgetReserved { reservation } = event.event() else {
             return Err(StoreError::Invalid);
         };
@@ -29,6 +37,7 @@ impl SqliteStateStore {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|_| StoreError::Unavailable)?;
+        super::runtime::check_fence(&mut transaction, event.job_id(), authority).await?;
         let outcome = match append_event_in_tx(&mut transaction, event).await {
             Ok(CodingEventAppend::AlreadyPresent(sequence)) => {
                 Ok(CodingEventAppend::AlreadyPresent(sequence))

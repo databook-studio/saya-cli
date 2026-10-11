@@ -28,6 +28,10 @@ pub enum CodingEventKind {
     StateChanged {
         state: JobState,
     },
+    RuntimeResumed {
+        revocation_epoch: NonZeroU64,
+        policy_sha256: Sha256Digest,
+    },
     ResultReported {
         source_sha256: Sha256Digest,
         outcome: CodingResultOutcome,
@@ -63,6 +67,10 @@ pub(super) enum WireCodingEventKind {
     StateChanged {
         state: JobState,
     },
+    RuntimeResumed {
+        revocation_epoch: NonZeroU64,
+        policy_sha256: String,
+    },
     ResultReported {
         source_sha256: String,
         outcome: CodingResultOutcome,
@@ -96,6 +104,14 @@ impl WireCodingEventKind {
     pub(super) fn into_public(self) -> Result<CodingEventKind, CodingEventError> {
         Ok(match self {
             Self::StateChanged { state } => CodingEventKind::StateChanged { state },
+            Self::RuntimeResumed {
+                revocation_epoch,
+                policy_sha256,
+            } => CodingEventKind::RuntimeResumed {
+                revocation_epoch,
+                policy_sha256: Sha256Digest::parse(&policy_sha256)
+                    .map_err(|_| CodingEventError::InvalidDigest)?,
+            },
             Self::ResultReported {
                 source_sha256,
                 outcome,

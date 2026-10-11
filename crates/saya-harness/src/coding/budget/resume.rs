@@ -46,6 +46,11 @@ pub(super) async fn resume_ledger(
     job: JobId,
     limits: super::ledger::CountLimits,
 ) -> Result<JobBudgetLedger, BudgetLedgerError> {
+    let runtime_authority = store
+        .coding_recovery_status(&job)
+        .await
+        .map_err(map_resume_store)?
+        .authority;
     let proposed = super::fresh::proposed_policy(&limits)?;
     let stored = store
         .get_coding_budget_policy(&job)
@@ -71,6 +76,9 @@ pub(super) async fn resume_ledger(
     Ok(JobBudgetLedger {
         schedule: Arc::new(tokio::sync::Semaphore::new(1)),
         inner: Arc::new(Mutex::new(State {
+            quiescent: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            runtime_authority,
+            runtime_renewal_required: true,
             store,
             job,
             limits: durable,

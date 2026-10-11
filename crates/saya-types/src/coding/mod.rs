@@ -72,3 +72,8 @@ pub enum CodingIdError {
     #[error("{0} must be 1-128 ASCII letters, digits, hyphens, or underscores")]
     InvalidId(&'static str),
 }
+
+mod joined_result;
+pub use joined_result::{
+    JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
+};

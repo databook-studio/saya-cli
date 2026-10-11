@@ -4,7 +4,7 @@
 
 use super::*;
 
-/// A `user_version = 14` database upgrades to the current version (16),
+/// A `user_version = 14` database upgrades to the current version (17),
 /// gaining the `coding_budget_policies` table with no rows in it, and
 /// preserves the job rows the v14 database already held. Built by migrating a
 /// fresh database, inserting one job, then dropping the step-15 table and
@@ -47,7 +47,7 @@ async fn upgrade_from_version_fourteen_reaches_fifteen_with_policy_table() {
         saya_types::JobState::Running
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 16);
+    assert_eq!(user_version(&db).await, 17);
     assert!(table_exists(&db, "coding_budget_policies").await);
     let pool = read_pool(&db).await;
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM coding_budget_policies")

@@ -33,3 +33,21 @@ mod w10;
 mod w11;
 #[path = "primary_coding/w11b.rs"]
 mod w11b;
+
+#[path = "primary_coding/c06_resources.rs"]
+mod c06_resources;
+
+#[path = "primary_coding/w12.rs"]
+mod w12;
+
+#[path = "primary_coding/w13.rs"]
+mod w13;
+
+#[path = "primary_coding/x01.rs"]
+mod x01;
+
+#[path = "primary_coding/x03.rs"]
+mod x03;
+
+#[path = "primary_coding/snapshot_restore.rs"]
+mod snapshot_restore;

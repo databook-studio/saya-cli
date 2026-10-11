@@ -87,23 +87,31 @@ impl Fixture {
             })
             .await
             .unwrap();
-        self.authority(agent_id, invocation_id)
+        self.authority(agent_id, invocation_id).await
     }
 
-    pub fn authority(&self, agent_id: AgentId, invocation_id: InvocationId) -> ChildAuthorityView {
-        RootDelegationScope::new(RootDelegationInput {
-            job_id: self.job.clone(),
-            agent_id,
-            invocation_id,
-            repository_id: self.repository.clone(),
-            snapshot_id: self.snapshot.clone(),
-            managed_checkout_id: None,
-            policy_digest: Sha256Digest::parse(&"a".repeat(64)).unwrap(),
-            revocation_epoch: 1,
-            write_paths: Vec::new(),
-            capabilities: Capabilities::default(),
-            database_profiles: Vec::new(),
-        })
+    pub async fn authority(
+        &self,
+        agent_id: AgentId,
+        invocation_id: InvocationId,
+    ) -> ChildAuthorityView {
+        RootDelegationScope::approve(
+            RootDelegationInput {
+                job_id: self.job.clone(),
+                agent_id,
+                invocation_id,
+                repository_id: self.repository.clone(),
+                snapshot_id: self.snapshot.clone(),
+                managed_checkout_id: None,
+                policy_digest: Sha256Digest::parse(&"a".repeat(64)).unwrap(),
+                revocation_epoch: 1,
+                write_paths: Vec::new(),
+                capabilities: Capabilities::default(),
+                database_profiles: Vec::new(),
+            },
+            &FixtureApproval,
+        )
+        .await
         .unwrap()
         .narrow(
             ChildAuthorityRequest::new(
@@ -188,5 +196,13 @@ pub(super) fn limits(
         model_slots,
         child_slots,
         deadline,
+    }
+}
+
+struct FixtureApproval;
+#[async_trait::async_trait]
+impl saya_agent::ApprovalDecider for FixtureApproval {
+    async fn approve(&self, _: &saya_agent::ToolDefinition, _: &serde_json::Value) -> bool {
+        true
     }
 }

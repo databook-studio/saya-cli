@@ -29,37 +29,44 @@ pub(super) async fn execute_batch(
 ) -> Vec<CompletedTool> {
     use futures_util::{StreamExt, stream};
 
-    let pending = calls.iter().zip(result_caps).map(|(call, &cap)| {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.name == call.name);
-        let name = call.name.clone();
-        let arguments = call.arguments.clone();
-        let context = ToolExecutionContext {
-            result_cap: cap,
-            cancellation: cancellation.clone(),
-        };
-        async move {
-            let (result, summary, succeeded, executed) = if cancellation.is_cancelled() {
-                (
-                    serde_json::json!({"error":"tool was not executed after cancellation"}),
-                    "tool not executed after cancellation".to_owned(),
-                    false,
-                    false,
-                )
-            } else {
-                let result =
-                    tools::execute_with_outcome(executor, &name, arguments, definition, context)
-                        .await;
-                if result.2 {
-                    sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
-                        .await;
-                }
-                (result.0, result.1, result.2, true)
+    // Materialize the bounded list so the spawned loop retains a Send future;
+    // a lazy borrowed async iterator introduces a higher-ranked closure lifetime.
+    let pending = calls
+        .iter()
+        .zip(result_caps)
+        .map(|(call, &cap)| {
+            let definition = definitions
+                .iter()
+                .find(|definition| definition.name == call.name);
+            let name = call.name.clone();
+            let arguments = call.arguments.clone();
+            let context = ToolExecutionContext {
+                result_cap: cap,
+                cancellation: cancellation.clone(),
             };
-            complete_tool(call.id.clone(), result, summary, succeeded, executed, cap)
-        }
-    });
+            async move {
+                let (result, summary, succeeded, executed) = if cancellation.is_cancelled() {
+                    (
+                        serde_json::json!({"error":"tool was not executed after cancellation"}),
+                        "tool not executed after cancellation".to_owned(),
+                        false,
+                        false,
+                    )
+                } else {
+                    let result = tools::execute_with_outcome(
+                        executor, &name, arguments, definition, context,
+                    )
+                    .await;
+                    if result.2 {
+                        sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
+                            .await;
+                    }
+                    (result.0, result.1, result.2, true)
+                };
+                complete_tool(call.id.clone(), result, summary, succeeded, executed, cap)
+            }
+        })
+        .collect::<Vec<_>>();
     stream::iter(pending)
         .buffered(tools::MAX_CONCURRENT_TOOL_CALLS)
         .collect()

@@ -1,4 +1,4 @@
-//! Durable, payload-free metadata for native coding jobs.
+//! Durable native coding metadata, bounded joined results, and control intents.
 
 use saya_types::{CheckoutOperationState, ManagedCheckoutLifecycle, RepositoryMutationAction};
 
@@ -66,3 +66,18 @@ pub(crate) fn lifecycle(
         _ => ManagedCheckoutLifecycle::Uncertain,
     }
 }
+
+mod result_reads;
+mod results;
+pub use result_reads::{CodingCompletion, CodingCompletionPage, MAX_COMPLETION_PAGE_SIZE};
+pub use results::MAX_COMPLETIONS_PER_JOB;
+
+mod recovery;
+mod runtime;
+pub use recovery::CodingRecoveryStatus;
+pub use runtime::CodingRuntimeAuthority;
+
+mod job_reads;
+pub use job_reads::CodingJobPage;
+
+mod control_requests;

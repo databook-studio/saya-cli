@@ -79,3 +79,11 @@ pub use state_contracts::{
     AuditEntry, AuditOperation, AuditRecord, AuditStatus, AuditStore, CachedSchema, SCHEMA_VERSION,
     SchemaCacheEntry, SchemaStore,
 };
+
+pub use coding::{
+    CodingCompletion, CodingCompletionPage, MAX_COMPLETION_PAGE_SIZE, MAX_COMPLETIONS_PER_JOB,
+};
+
+pub use coding::{CodingRecoveryStatus, CodingRuntimeAuthority};
+
+pub use coding::CodingJobPage;

@@ -82,30 +82,29 @@ pub(super) async fn resume_sequence(
     store: &SqliteStateStore,
     job: &JobId,
 ) -> Result<u64, BudgetLedgerError> {
+    const MAX_RESUME_EVENTS: u64 = 65_536;
     let mut cursor = None;
-    let mut history = Vec::with_capacity(256);
+    let mut expected = 1_u64;
     loop {
         let page = store
             .list_coding_events(job, cursor, 100)
             .await
             .map_err(|_| BudgetLedgerError::Store)?;
-        history.extend(page.events);
-        if history.len() > 256 {
-            return Err(BudgetLedgerError::ResumeHistoryTooLong);
+        for event in &page.events {
+            if expected > MAX_RESUME_EVENTS {
+                return Err(BudgetLedgerError::ResumeHistoryTooLong);
+            }
+            if event.sequence().get() != expected {
+                return Err(BudgetLedgerError::ResumeRecordCorrupt);
+            }
+            expected += 1;
         }
-        let Some(next) = page.next_cursor else { break };
-        if Some(next) == cursor || history.len() == 256 {
-            return Err(BudgetLedgerError::ResumeHistoryTooLong);
+        let Some(next) = page.next_cursor else {
+            return Ok(expected);
+        };
+        if Some(next) == cursor {
+            return Err(BudgetLedgerError::ResumeRecordCorrupt);
         }
         cursor = Some(next);
     }
-    if history.iter().enumerate().any(|(index, event)| {
-        event.sequence().get() != u64::try_from(index).unwrap_or(u64::MAX) + 1
-    }) {
-        return Err(BudgetLedgerError::ResumeRecordCorrupt);
-    }
-    history
-        .last()
-        .map_or(Some(1), |event| event.sequence().get().checked_add(1))
-        .ok_or(BudgetLedgerError::Store)
 }

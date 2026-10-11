@@ -69,7 +69,9 @@ impl JobBudgetLedger {
                 .checked_sub(1)
                 .ok_or_else(|| state.owner_failure())?;
         }
-        state.local.remove(&key);
+        if outcome != EffectOutcome::Unknown {
+            state.local.remove(&key);
+        }
         super::tools::finish_open_groups(&mut state, &key).await?;
         Ok(())
     }

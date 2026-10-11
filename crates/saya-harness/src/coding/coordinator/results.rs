@@ -1,0 +1,64 @@
+use super::{admit::NodePlan, api::ChildRunError, schedule_types::ScheduleChildError};
+use crate::coding::budget::{JobBudgetLedger, SequencerError};
+use saya_agent::{AgentOutput, CancellationReason};
+use saya_types::{CodingResultOutcome, JoinedResultV1, MAX_JOINED_ANSWER_BYTES};
+use std::num::NonZeroU64;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CompletionError {
+    #[error("joined result failed its bounded contract")]
+    Envelope(#[from] saya_types::JoinedResultError),
+    #[error("joined result could not be made durable")]
+    Store(#[from] SequencerError),
+}
+
+pub(super) async fn persist(
+    ledger: &JobBudgetLedger,
+    plan: &NodePlan,
+    result: &Result<AgentOutput, ScheduleChildError>,
+) -> Result<NonZeroU64, CompletionError> {
+    let outcome = match result {
+        Ok(output) if output.truncated => CodingResultOutcome::Failed,
+        Ok(_) => CodingResultOutcome::Completed,
+        Err(
+            ScheduleChildError::Join(_)
+            | ScheduleChildError::Run(
+                ChildRunError::Unsettled
+                | ChildRunError::Settlement(_)
+                | ChildRunError::Agent(saya_agent::AgentError::EffectOwnerFailure(_)),
+            ),
+        ) => CodingResultOutcome::Uncertain,
+        Err(ScheduleChildError::Run(ChildRunError::Cancelled {
+            reason: CancellationReason::User,
+        })) => CodingResultOutcome::Cancelled,
+        Err(_) => CodingResultOutcome::Failed,
+    };
+    // Never persist raw provider/tool errors or trace payloads. Oversized answers
+    // are omitted, not sliced through a credential; redaction operates on a
+    // bounded complete string. Callers see explicit omission in the envelope.
+    let (answer, truncated) = match result {
+        Ok(output) if output.answer.len() <= MAX_JOINED_ANSWER_BYTES => {
+            let answer = saya_types::redact(&output.answer);
+            if answer.len() <= MAX_JOINED_ANSWER_BYTES {
+                (answer, false)
+            } else {
+                (String::new(), true)
+            }
+        }
+        Ok(_) => (String::new(), true),
+        Err(_) => (String::new(), false),
+    };
+    let envelope = JoinedResultV1::new(
+        ledger.job_id().await,
+        plan.agent.clone(),
+        plan.invocation.clone(),
+        outcome,
+        answer,
+        truncated,
+    )?;
+    Ok(ledger
+        .sequencer()
+        .append_completion(&envelope)
+        .await?
+        .sequence)
+}

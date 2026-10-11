@@ -112,6 +112,9 @@ pub struct JobBudgetLedger {
 }
 
 pub(super) struct State {
+    pub(super) quiescent: Arc<std::sync::atomic::AtomicBool>,
+    pub(super) runtime_authority: Option<saya_store::CodingRuntimeAuthority>,
+    pub(super) runtime_renewal_required: bool,
     pub(super) store: SqliteStateStore,
     pub(super) job: JobId,
     pub(super) limits: CountLimits,
@@ -186,6 +189,9 @@ impl JobBudgetLedger {
         Ok(Self {
             schedule: Arc::new(tokio::sync::Semaphore::new(1)),
             inner: Arc::new(Mutex::new(State {
+                quiescent: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                runtime_authority: None,
+                runtime_renewal_required: false,
                 store,
                 job,
                 limits,

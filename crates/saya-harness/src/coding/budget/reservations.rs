@@ -38,7 +38,11 @@ pub(super) async fn append_reservation(
         },
     )
     .map_err(|_| corrupt(state))?;
-    match state.store.reserve_coding_budget(event).await {
+    match state
+        .store
+        .reserve_coding_budget_fenced(event, state.runtime_authority.as_ref())
+        .await
+    {
         Ok(CodingEventAppend::Appended(actual)) if actual == sequence => Ok(()),
         _ => Err(corrupt(state)),
     }
@@ -91,6 +95,11 @@ impl State {
         agent: Option<saya_types::AgentId>,
         invocation: Option<saya_types::InvocationId>,
     ) -> Result<NonZeroU64, EffectAdmissionError> {
+        if self.quiescent.load(std::sync::atomic::Ordering::Acquire)
+            || (self.runtime_renewal_required && self.runtime_authority.is_some())
+        {
+            return Err(EffectAdmissionError::Denied);
+        }
         if self.snapshot.poisoned || self.reservations >= super::ledger::MAX_RESERVATIONS {
             return Err(EffectAdmissionError::Denied);
         }

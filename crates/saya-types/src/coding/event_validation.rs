@@ -14,6 +14,7 @@ pub(super) fn validate_event(
     event: &CodingEventKind,
 ) -> Result<(), CodingEventError> {
     let valid = match event {
+        CodingEventKind::RuntimeResumed { .. } => agent_id.is_none() && invocation_id.is_none(),
         CodingEventKind::StateChanged { .. } | CodingEventKind::ResultReported { .. } => true,
         CodingEventKind::BudgetReserved { reservation } => {
             sequence == reservation.reservation_sequence()

@@ -1,4 +1,4 @@
-//! Bounded one-shot dispatch. Durable results/restart and native caller are later owners.
+//! Bounded one-shot dispatch with durable joined results. Restart execution is separate.
 use super::super::budget::JobBudgetLedger;
 use super::{
     admit::{self, NodeState},
@@ -54,6 +54,13 @@ pub async fn run_schedule(
     if ledger.snapshot().await.child_slots_active != 0 {
         return Err(ScheduleError::ActiveChildren);
     }
+    ledger
+        .bind_runtime(
+            nodes[0].spec.authority().revocation_epoch(),
+            nodes[0].spec.authority().policy_digest(),
+        )
+        .await
+        .map_err(|_| ScheduleError::FreshAuthorityRequired)?;
     let cancellation = CancellationToken::new();
     let mut nodes = nodes.into_iter().map(Some).collect::<Vec<_>>();
     let mut states = vec![NodeState::Pending; nodes.len()];
@@ -141,6 +148,7 @@ pub async fn run_schedule(
             cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
             continue;
         };
+        let completion = super::results::persist(ledger, &plans[index], &result).await;
         let result = match result {
             Ok(output) if output.truncated => Err(ScheduleChildError::Incomplete),
             other => other,
@@ -150,20 +158,47 @@ pub async fn run_schedule(
         } else {
             NodeState::Failed
         };
-        if result.is_err() && stop.is_none() {
+        if completion.is_err() {
+            settled = false;
+            stop = Some(ScheduleStop::OwnerFailure);
+            cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
+        }
+        if matches!(
+            &result,
+            Err(ScheduleChildError::Run(
+                super::api::ChildRunError::Unsettled
+            ))
+        ) {
+            settled = false;
+        }
+        let individual_cancel = matches!(
+            &result,
+            Err(ScheduleChildError::Run(
+                super::api::ChildRunError::Cancelled {
+                    reason: CancellationReason::User
+                }
+            ))
+        );
+        if result.is_err() && !individual_cancel && stop.is_none() {
             stop = Some(ScheduleStop::ChildFailed);
             cancellation.cancel_with_reason(CancellationReason::OwnerFailure);
         }
+        let (completion_sequence, completion_error) = match completion {
+            Ok(sequence) => (Some(sequence), None),
+            Err(error) => (None, Some(error)),
+        };
         outcomes.push(ScheduleOutcome {
             agent_id: plans[index].agent.clone(),
             invocation_id: plans[index].invocation.clone(),
             result,
+            completion_sequence,
+            completion_error,
         });
     }
     // Returning from every future is necessary; unsettled slot charges still
     // prevent successful release, including a failed finish_child operation.
     let final_budget = ledger.snapshot().await;
-    if settled && final_budget.child_slots_active == 0 {
+    if settled && final_budget.child_slots_active == 0 && final_budget.command_slots_active == 0 {
         lease.complete();
     } else {
         stop = Some(ScheduleStop::Unsettled);
@@ -174,7 +209,13 @@ pub async fn run_schedule(
     {
         stop = Some(ScheduleStop::OwnerFailure);
     }
+    let effects_uncertain = final_budget.model_slots_active != 0
+        || final_budget.unknown_logical_requests != 0
+        || final_budget.unknown_transport_attempts != 0
+        || final_budget.unknown_tool_calls != 0
+        || stop == Some(ScheduleStop::Unsettled);
     Ok(ScheduleReport {
+        effects_uncertain,
         outcomes,
         stop,
         not_started: plans

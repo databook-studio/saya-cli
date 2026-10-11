@@ -9,6 +9,25 @@ pub(crate) async fn apply_common_projection(
     event: &CodingEventV1,
 ) -> Result<(), StoreError> {
     match event.event() {
+        CodingEventKind::RuntimeResumed { .. } => {
+            if event.agent_id().is_some()
+                || event.invocation_id().is_some()
+                || !matches!(
+                    job_state(transaction, event).await?,
+                    JobState::Running | JobState::Paused
+                )
+            {
+                return Err(StoreError::Conflict);
+            }
+            // Only fresh runtime CAS may append this kind; generic append refuses it.
+            sqlx::query("UPDATE coding_jobs SET state='running', updated_unix_ms=? WHERE job_id=?")
+                .bind(now()?)
+                .bind(event.job_id().as_str())
+                .execute(&mut **transaction)
+                .await
+                .map_err(|_| StoreError::Unavailable)?;
+            Ok(())
+        }
         CodingEventKind::StateChanged { state: next } => {
             let job_state = job_state(transaction, event).await?;
             if terminal(job_state) {
