@@ -40,6 +40,9 @@ pub async fn run_child(
 ) -> Result<saya_agent::AgentOutput, ChildRunError> {
     run_child_inner(spec, factory, events, cancellation, None).await
 }
+/// Native child invocation with job-owned budgets and one active turn per agent.
+/// The caller must retain and join this future through cancellation; dropping it
+/// does not settle its durable reservations or join the cancellation monitor.
 pub async fn run_child_budgeted(
     spec: ChildExecutionSpec,
     factory: &dyn ChildFactory,
