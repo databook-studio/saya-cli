@@ -11,6 +11,14 @@ pub(super) fn path_string(path: &std::path::Path) -> Result<String, SnapshotErro
         .ok_or(SnapshotError::UnsafePath)
 }
 
+/// Git marks a directory record (an ignored directory under
+/// `--untracked-files=all`) with a trailing `/`; the snapshot namespace names
+/// paths without that marker.
+pub(super) fn snapshot_status_path(path: &std::path::Path) -> Result<String, SnapshotError> {
+    let path = path_string(path)?;
+    Ok(path.strip_suffix('/').unwrap_or(&path).to_owned())
+}
+
 pub(super) fn status_proves_deletion(status: &[GitPathStatus], path: &str) -> bool {
     let path = std::path::Path::new(path);
     status

@@ -14,7 +14,8 @@ use super::{
     manifest::{SnapshotError, SnapshotManifest, SnapshotManifestBody, digest, manifest_bytes},
     policy::SnapshotOmissionPolicy,
     select_support::{
-        check_control, file_mode, path_string, sensitive_path, status_proves_deletion,
+        check_control, file_mode, path_string, sensitive_path, snapshot_status_path,
+        status_proves_deletion,
     },
     types::*,
 };
@@ -77,13 +78,13 @@ impl GitService {
         let mut changes = Vec::new();
         let mut omissions = Vec::new();
         for status in &inputs.status {
-            let path = path_string(status.path())?;
+            let path = snapshot_status_path(status.path())?;
             let parsed = SnapshotPath::parse(path.clone())?;
             status_facts.push(SnapshotStatusFact {
                 path: parsed.clone(),
                 original_path: status
                     .original_path()
-                    .map(path_string)
+                    .map(snapshot_status_path)
                     .transpose()?
                     .map(SnapshotPath::parse)
                     .transpose()?,
@@ -104,7 +105,7 @@ impl GitService {
             }
             if let Some(from) = status.original_path() {
                 changes.push(SnapshotChange::Rename {
-                    from: SnapshotPath::parse(path_string(from)?)?,
+                    from: SnapshotPath::parse(snapshot_status_path(from)?)?,
                     to: parsed.clone(),
                     staged: status.staged(),
                     unstaged: status.unstaged(),
@@ -129,7 +130,7 @@ impl GitService {
                 let mut paths: BTreeSet<String> = tracked.clone();
                 for status in &inputs.status {
                     if !status.ignored() {
-                        paths.insert(path_string(status.path())?);
+                        paths.insert(snapshot_status_path(status.path())?);
                     }
                 }
                 paths.into_iter().map(|path| (path, None)).collect()
