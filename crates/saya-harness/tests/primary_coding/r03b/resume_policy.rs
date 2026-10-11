@@ -189,9 +189,8 @@ async fn resume_streams_a_history_beyond_the_old_scan_bound() {
         .unwrap();
     assert_eq!(events.events.len(), 1);
     assert_eq!(events.events[0].sequence().get(), 258);
-    // The 65,536 refusal is a backstop that legal histories cannot reach
-    // (job states form a DAG; reservations are capped), so it has no
-    // black-box test.
+    // The 65,536-event bound has its own owner-boundary test in
+    // `resume_bound.rs`.
     fixture.close().await;
 }
 

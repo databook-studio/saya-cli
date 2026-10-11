@@ -32,4 +32,5 @@ libc = "0.2"
 
 [dev-dependencies]
 proptest.workspace = true
+sqlx.workspace = true
 saya-connectors = { path = "../saya-connectors", version = "0.5.0" }
