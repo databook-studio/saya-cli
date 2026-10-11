@@ -19,9 +19,20 @@ pub mod checks;
 pub mod commands;
 
 pub mod coordinator {
+    mod admit;
     mod api;
     mod event_projection;
     mod events;
+    mod schedule;
+    mod schedule_types;
+    mod scheduled_child;
+
+    pub use schedule::run_schedule;
+    pub use schedule_types::{
+        MAX_SCHEDULE_DEPENDENCIES, MAX_SCHEDULE_EVENT_CAPACITY, MAX_SCHEDULE_TASKS,
+        ScheduleChildError, ScheduleError, ScheduleLimits, ScheduleOutcome, ScheduleReport,
+        ScheduleStop, ScheduledChild,
+    };
 
     pub use api::{ChildRunError, run_child, run_child_budgeted};
     pub use events::{

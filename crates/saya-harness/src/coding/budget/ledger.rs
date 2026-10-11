@@ -106,6 +106,7 @@ pub enum UsageCoverage {
 
 #[derive(Clone)]
 pub struct JobBudgetLedger {
+    pub(super) schedule: Arc<tokio::sync::Semaphore>,
     pub(super) inner: Arc<Mutex<State>>,
     pub(super) cancellation: CancellationToken,
 }
@@ -183,6 +184,7 @@ impl JobBudgetLedger {
         let sequence = super::fresh::initial_sequence(&store, &job).await?;
         let cancellation = CancellationToken::new();
         Ok(Self {
+            schedule: Arc::new(tokio::sync::Semaphore::new(1)),
             inner: Arc::new(Mutex::new(State {
                 store,
                 job,

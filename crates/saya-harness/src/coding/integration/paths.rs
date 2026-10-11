@@ -87,6 +87,51 @@ impl AssignedPaths {
         })
     }
 
+    /// Conservatively detects case-folded equal or component-ancestor paths.
+    /// Component sorting keeps descendants contiguous, unlike raw string order.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        // Unicode aliases depend on filesystem normalization/case rules. Without
+        // a platform identity proof, serialize any assignment containing them.
+        if self
+            .entries
+            .iter()
+            .chain(&other.entries)
+            .any(|path| !path.is_ascii())
+        {
+            return true;
+        }
+        let fold = |paths: &[String]| {
+            let mut paths = paths
+                .iter()
+                .map(|path| path.to_lowercase())
+                .collect::<Vec<_>>();
+            paths.sort_by(|a, b| a.split('/').cmp(b.split('/')));
+            paths
+        };
+        let left = fold(&self.entries);
+        let right = fold(&other.entries);
+        let (mut i, mut j) = (0, 0);
+        while i < left.len() && j < right.len() {
+            let a = &left[i];
+            let b = &right[j];
+            let contains = |parent: &str, child: &str| {
+                child == parent
+                    || child
+                        .strip_prefix(parent)
+                        .is_some_and(|tail| tail.starts_with('/'))
+            };
+            if contains(a, b) || contains(b, a) {
+                return true;
+            }
+            if a.split('/').cmp(b.split('/')).is_lt() {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        false
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }

@@ -10,6 +10,7 @@ mod fresh;
 mod ledger;
 mod reservations;
 mod resume;
+mod schedule_lease;
 mod sequencer;
 mod settlement;
 mod snapshot;
