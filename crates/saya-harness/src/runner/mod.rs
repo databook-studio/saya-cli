@@ -41,7 +41,7 @@ pub use env::{Credential, CredentialSource, SharedCredentialSource, StaticCreden
 pub use error::RunnerError;
 pub use output::{OUTPUT_CAP_BYTES, OutputRing, ProgramOutcome, StreamCapture};
 
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use saya_agent::CancellationToken;
 use saya_types::{InterpreterScope, RunnerScope};
@@ -77,7 +77,7 @@ pub struct RunProgram {
     /// Environment pairs pinned onto every child: set after the spawn's
     /// `env_clear` and before the credentials.
     pinned_env: Vec<(&'static str, PathBuf)>,
-    credentials: Vec<Credential>,
+    credentials: Arc<[Credential]>,
     resolver: SharedCredentialSource,
     default_timeout: Duration,
     cancellation: CancellationToken,
@@ -113,7 +113,7 @@ impl RunProgram {
             runner,
             interpreters,
             pinned_env: Vec::new(),
-            credentials: Vec::new(),
+            credentials: Arc::<[Credential]>::from(Vec::new()),
             resolver,
             default_timeout,
             cancellation: CancellationToken::new(),
@@ -123,8 +123,26 @@ impl RunProgram {
     /// Attaches the credentials the approved plan declared for this step:
     /// only what is on this list can ever reach a child's environment.
     pub fn with_credentials(mut self, credentials: Vec<Credential>) -> Self {
-        self.credentials = credentials;
+        self.credentials = Arc::<[Credential]>::from(credentials);
         self
+    }
+
+    /// Copies the proven runner configuration for one child invocation.
+    /// Only the cancellation signal changes; confinement, allowlists,
+    /// environment, credentials, resolver, timeout, and record path are
+    /// shared unchanged with the prepared runner.
+    pub fn for_invocation(&self, cancellation: CancellationToken) -> Self {
+        Self {
+            spawn: self.spawn.clone(),
+            runner: self.runner.clone(),
+            interpreters: self.interpreters.clone(),
+            pinned_env: self.pinned_env.clone(),
+            credentials: Arc::clone(&self.credentials),
+            resolver: Arc::clone(&self.resolver),
+            default_timeout: self.default_timeout,
+            cancellation,
+            record_dir: self.record_dir.clone(),
+        }
     }
 
     /// Pins environment pairs onto every child: the pairs are set after the
@@ -178,4 +196,63 @@ fn validate_json_argv(items: &[serde_json::Value]) -> Result<(), RunnerError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod invocation_tests {
+    use std::{path::Path, sync::Arc, time::Duration};
+
+    use saya_agent::{CancellationReason, CancellationToken};
+    use saya_types::{InterpreterScope, RunnerScope, SecretRef};
+
+    use super::{Credential, RunProgram, StaticCredentialSource, sandbox::SandboxProvision};
+
+    // Protects config-copy semantics; runner tests own process-group kill/reap.
+    #[test]
+    fn invocation_copy_reuses_runner_configuration_and_uses_supplied_token() {
+        let sandbox =
+            super::sandbox::RunSandbox::new([std::env::temp_dir()], std::iter::empty()).unwrap();
+        let Ok(SandboxProvision::Proven { spawn, .. }) = sandbox.prepare(Path::new("/bin")) else {
+            return;
+        };
+        let runner = RunProgram::for_step(
+            spawn,
+            Some(RunnerScope::new(vec!["pwd".into()]).unwrap()),
+            Some(InterpreterScope::new(vec!["python".into()]).unwrap()),
+            Duration::from_secs(9),
+            Arc::new(StaticCredentialSource::new([])),
+        )
+        .with_pinned_env(vec![("HOME", std::env::temp_dir())])
+        .with_credentials(vec![
+            Credential::new(
+                "token",
+                "TOKEN",
+                SecretRef::Env {
+                    env: "TOKEN".into(),
+                },
+            )
+            .unwrap(),
+        ])
+        .with_record_dir(std::env::temp_dir().join("saya-child-records"));
+        let supplied = CancellationToken::new();
+        let invocation = runner.for_invocation(supplied.clone());
+
+        assert_eq!(runner.spawn.fs_roots(), invocation.spawn.fs_roots());
+        assert_eq!(runner.spawn.net_allow(), invocation.spawn.net_allow());
+        assert_eq!(runner.spawn.program_dir(), invocation.spawn.program_dir());
+        assert_eq!(runner.runner, invocation.runner);
+        assert_eq!(runner.interpreters, invocation.interpreters);
+        assert_eq!(runner.pinned_env, invocation.pinned_env);
+        assert!(Arc::ptr_eq(&runner.credentials, &invocation.credentials));
+        assert!(Arc::ptr_eq(&runner.resolver, &invocation.resolver));
+        assert_eq!(runner.default_timeout, invocation.default_timeout);
+        assert_eq!(runner.record_dir, invocation.record_dir);
+
+        supplied.cancel_with_reason(CancellationReason::User);
+        assert_eq!(
+            invocation.cancellation_token().reason(),
+            Some(CancellationReason::User)
+        );
+        assert_eq!(runner.cancellation_token().reason(), None);
+    }
 }

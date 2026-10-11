@@ -10,7 +10,7 @@ use std::{fs, path::Path, sync::Arc, time::Duration};
 
 use super::tests::{Sandbox, checkout, implementer_view};
 use super::{ChildToolsError, CliChildFactory};
-use saya_agent::{AgentLimits, AgentRequest, AnsweringLimits};
+use saya_agent::{AgentLimits, AgentRequest, AnsweringLimits, CancellationToken};
 use saya_config::{AiProvider, ResolvedAi};
 use saya_harness::coding::child::{ChildExecutionSpec, ChildFactory};
 use saya_harness::coding::policy::{
@@ -171,7 +171,11 @@ fn factory_builds_for_a_workspace_only_child() {
     let sandbox = Sandbox::new("factory-workspace-only");
     let factory = factory(&sandbox, &checkout_id, None);
 
-    assert!(factory.build(&spec(view)).is_ok());
+    assert!(
+        factory
+            .build(&spec(view), &CancellationToken::new())
+            .is_ok()
+    );
 }
 
 // authored, not executed
@@ -183,7 +187,7 @@ fn factory_refuses_a_command_scope_without_a_proven_runner() {
     let factory = factory(&sandbox, &checkout_id, None);
 
     let err = factory
-        .build(&spec(view))
+        .build(&spec(view), &CancellationToken::new())
         .err()
         .expect("a command scope without a proven runner must refuse");
     let source = err
@@ -202,7 +206,7 @@ fn factory_refuses_a_view_for_another_checkout() {
     let factory = factory(&sandbox, &checkout_a, None);
 
     let err = factory
-        .build(&spec(view))
+        .build(&spec(view), &CancellationToken::new())
         .err()
         .expect("a view for another checkout must refuse");
     let source = err
@@ -222,5 +226,9 @@ fn factory_ignores_a_runner_when_the_view_grants_no_command_scope() {
     };
     let factory = factory(&sandbox, &checkout_id, Some(runner));
 
-    assert!(factory.build(&spec(view)).is_ok());
+    assert!(
+        factory
+            .build(&spec(view), &CancellationToken::new())
+            .is_ok()
+    );
 }
