@@ -5,3 +5,6 @@ pub mod lsp;
 pub mod mcp;
 mod process;
 pub use config::{ExtensionConfig, ExtensionError};
+
+mod receipt;
+pub use receipt::{ExtensionProcessEvent, ExtensionProcessObserver, ExtensionProcessReceipt};

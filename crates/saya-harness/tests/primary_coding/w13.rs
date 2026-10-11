@@ -95,3 +95,78 @@ async fn reconcile_remove_after_git_effect_repairs_event_without_replaying_effec
     );
     assert!(fixture.repo_root.join("tracked.txt").exists());
 }
+
+#[tokio::test]
+async fn reconcile_create_after_real_git_effect_before_outcome_preserves_original() {
+    use saya_harness::coding::{snapshot::materialize_snapshot, worktree::CreateCheckoutError};
+    let fixture = create_support::CreateCheckoutFixture::new("w13-create-effect").await;
+    let token = CancellationToken::new();
+    let id = ManagedCheckoutId::parse("interrupted-create").unwrap();
+    let original = std::fs::read(fixture.repo_root.join("tracked.txt")).unwrap();
+    let (object, bytes) = fixture.corrupt_first_object();
+    let error = create_managed_checkout(&fixture.input(&id), &token)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CreateCheckoutError::Snapshot(_)));
+    let record = fixture.record(&id).await.unwrap();
+    assert_eq!(record.current_lifecycle, ManagedCheckoutLifecycle::Creating);
+    let path = std::path::PathBuf::from(fixture.service.managed_path(&id).unwrap().as_str());
+    assert!(path.join(".git").is_file());
+    std::fs::write(object, bytes).unwrap();
+    materialize_snapshot(
+        &fixture.artifacts,
+        fixture.plan.snapshot_id(),
+        &path,
+        &token,
+    )
+    .unwrap();
+    fixture
+        .store
+        .record_checkout_plan_bytes(
+            &fixture.job,
+            &id,
+            fixture.plan.manifest_sha256(),
+            fixture.plan.canonical_bytes(),
+        )
+        .await
+        .unwrap();
+    let ledger = JobBudgetLedger::new(
+        fixture.store.clone(),
+        fixture.job.clone(),
+        create_support::limits(),
+    )
+    .await
+    .unwrap();
+    let quiescence = ledger.try_quiescent().await.unwrap();
+    let sequencer = ledger.sequencer();
+    let input = CleanupInput {
+        ownership: cleanup_support::ownership(&fixture, &id),
+        sequencer: &sequencer,
+        quiescence: &quiescence,
+    };
+    assert_eq!(
+        reconcile_managed_checkout(&input, &token).await.unwrap(),
+        CheckoutReconciliation::CreateCompleted
+    );
+    assert_eq!(
+        fixture.record(&id).await.unwrap().current_lifecycle,
+        ManagedCheckoutLifecycle::Active
+    );
+    let inventory = fixture
+        .service
+        .inventory_repository(&fixture.repository, &token)
+        .await
+        .unwrap();
+    assert_eq!(
+        inventory
+            .worktrees()
+            .iter()
+            .filter(|worktree| worktree.path() == path)
+            .count(),
+        1
+    );
+    assert_eq!(
+        std::fs::read(fixture.repo_root.join("tracked.txt")).unwrap(),
+        original
+    );
+}

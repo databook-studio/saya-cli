@@ -56,7 +56,7 @@ impl LspClient {
             || language.is_empty()
             || language.len() > 64
             || language.chars().any(char::is_control)
-            || version < 0
+            || !(0..=i64::from(i32::MAX)).contains(&version)
         {
             return Err(ExtensionError::Configuration);
         }
@@ -111,13 +111,18 @@ impl LspClient {
         }
         Err(ExtensionError::Limit)
     }
-    pub async fn shutdown(mut self) -> Result<(), ExtensionError> {
+    pub async fn shutdown(self) -> Result<(), ExtensionError> {
+        self.shutdown_with_receipt().await.map(|_| ())
+    }
+    pub async fn shutdown_with_receipt(
+        mut self,
+    ) -> Result<super::super::ExtensionProcessReceipt, ExtensionError> {
         let cancel = CancellationToken::new();
         let result = self.process.request("shutdown", Value::Null, &cancel).await;
         if result.is_ok() {
             let _ = self.process.notify("exit", Value::Null, &cancel).await;
         }
-        let cleanup = self.process.shutdown().await;
-        result.map(|_| ()).and(cleanup)
+        let cleanup = self.process.shutdown_receipt().await;
+        result.and(cleanup)
     }
 }

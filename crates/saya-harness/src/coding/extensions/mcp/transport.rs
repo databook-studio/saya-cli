@@ -81,7 +81,12 @@ impl McpClient {
             )
             .await
     }
-    pub async fn shutdown(mut self) -> Result<(), ExtensionError> {
-        self.process.shutdown().await
+    pub async fn shutdown(self) -> Result<(), ExtensionError> {
+        self.shutdown_with_receipt().await.map(|_| ())
+    }
+    pub async fn shutdown_with_receipt(
+        mut self,
+    ) -> Result<super::super::ExtensionProcessReceipt, ExtensionError> {
+        self.process.shutdown_receipt().await
     }
 }

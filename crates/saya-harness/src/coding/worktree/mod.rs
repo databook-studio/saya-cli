@@ -106,3 +106,6 @@ mod retention;
 pub use cleanup::{CleanupError, CleanupInput, cleanup_managed_checkout};
 pub use reconcile::{CheckoutReconciliation, reconcile_managed_checkout};
 pub use retention::{RetainedCheckout, retain_managed_checkout};
+
+mod retention_budget;
+pub use retention_budget::ensure_retention_capacity;

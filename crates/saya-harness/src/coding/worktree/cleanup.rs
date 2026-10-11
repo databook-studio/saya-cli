@@ -37,6 +37,10 @@ pub enum CleanupError {
     ArtifactUnavailable,
     #[error("checkout contains work that must be retained")]
     RetainWork,
+    #[error(
+        "retained checkouts exceed the bounded disk budget; preserve work and free capacity explicitly"
+    )]
+    RetentionBudgetExceeded,
     #[error("checkout reconciliation requires operator inspection")]
     RequireOperator,
 }

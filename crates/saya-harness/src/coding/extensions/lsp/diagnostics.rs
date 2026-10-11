@@ -1,13 +1,13 @@
 use super::super::ExtensionError;
 use serde_json::Value;
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LspDiagnostic {
     pub line: u32,
     pub character: u32,
     pub severity: Option<u8>,
     pub message: String,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DocumentDiagnostics {
     pub document_uri: String,
     pub version: i64,
@@ -67,4 +67,22 @@ pub(super) fn decode(
         version,
         diagnostics,
     })
+}
+
+impl std::fmt::Debug for LspDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LspDiagnostic")
+            .field("line", &self.line)
+            .field("character", &self.character)
+            .field("severity", &self.severity)
+            .finish_non_exhaustive()
+    }
+}
+impl std::fmt::Debug for DocumentDiagnostics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocumentDiagnostics")
+            .field("version", &self.version)
+            .field("count", &self.diagnostics.len())
+            .finish_non_exhaustive()
+    }
 }

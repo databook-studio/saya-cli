@@ -45,6 +45,19 @@ async fn cleanup_preserves_dirty_work_and_removes_only_clean_recoverable_checkou
             sequencer: &sequencer,
             quiescence: &quiescence,
         };
+        assert!(matches!(
+            saya_harness::coding::worktree::ensure_retention_capacity(
+                &fixture.store,
+                &fixture.service,
+                &fixture.job,
+                0,
+                1,
+                &token
+            )
+            .await,
+            Err(CleanupError::RetentionBudgetExceeded)
+        ));
+        assert!(path.exists());
         let result = cleanup_managed_checkout(&input, &token).await;
         if dirty {
             assert!(matches!(result, Err(CleanupError::RetainWork)));

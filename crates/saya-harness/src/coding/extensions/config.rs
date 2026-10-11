@@ -7,6 +7,7 @@ pub struct ExtensionConfig {
     pub(super) executable: PathBuf,
     pub(super) argv: Vec<String>,
     pub(super) credentials: Vec<Credential>,
+    pub(super) observer: Option<std::sync::Arc<dyn super::ExtensionProcessObserver>>,
     pub(super) resolver: SharedCredentialSource,
 }
 impl ExtensionConfig {
@@ -35,8 +36,16 @@ impl ExtensionConfig {
             executable,
             argv,
             credentials: Vec::new(),
+            observer: None,
             resolver: std::sync::Arc::new(crate::runner::StaticCredentialSource::new([])),
         })
+    }
+    pub fn with_observer(
+        mut self,
+        observer: std::sync::Arc<dyn super::ExtensionProcessObserver>,
+    ) -> Self {
+        self.observer = Some(observer);
+        self
     }
     pub fn with_credentials(
         mut self,

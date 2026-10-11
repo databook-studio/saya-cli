@@ -35,7 +35,10 @@ printf touched > forbidden
 #[tokio::test]
 async fn mcp_stalled_initialize_cancels_and_settles() {
     let fixture = support::Fixture::new();
-    let config = fixture.config("read init; read never");
+    let observer = std::sync::Arc::new(ObservedProcesses::default());
+    let config = fixture
+        .config("read init; read never")
+        .with_observer(observer.clone());
     let token = CancellationToken::new();
     let cancellation = token.clone();
     let cancel = tokio::spawn(async move {
@@ -47,4 +50,33 @@ async fn mcp_stalled_initialize_cancels_and_settles() {
         Err(ExtensionError::Cancelled)
     ));
     cancel.await.unwrap();
+    let events = observer.0.lock().unwrap();
+    let [
+        saya_harness::coding::extensions::ExtensionProcessEvent::Spawned { pid },
+        saya_harness::coding::extensions::ExtensionProcessEvent::Settled(receipt),
+    ] = events.as_slice()
+    else {
+        panic!("one actual process must be started and settled: {events:?}")
+    };
+    assert_eq!(*pid, receipt.pid);
+    assert!(receipt.joined);
+    assert_eq!(unsafe { libc::kill(*pid as libc::pid_t, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
+}
+
+#[derive(Default)]
+struct ObservedProcesses(
+    std::sync::Mutex<Vec<saya_harness::coding::extensions::ExtensionProcessEvent>>,
+);
+impl saya_harness::coding::extensions::ExtensionProcessObserver for ObservedProcesses {
+    fn record(
+        &self,
+        event: saya_harness::coding::extensions::ExtensionProcessEvent,
+    ) -> Result<(), ExtensionError> {
+        self.0.lock().unwrap().push(event);
+        Ok(())
+    }
 }

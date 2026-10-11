@@ -1,5 +1,6 @@
 use super::{
-    ExtensionConfig, ExtensionError,
+    ExtensionConfig, ExtensionError, ExtensionProcessEvent, ExtensionProcessObserver,
+    ExtensionProcessReceipt,
     framing::{self, Framing},
 };
 use saya_agent::CancellationToken;
@@ -18,7 +19,9 @@ use tokio::{
 
 pub(super) struct ProtocolProcess {
     child: Option<Child>,
-    _permit: tokio::sync::OwnedSemaphorePermit,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    observer: Option<Arc<dyn ExtensionProcessObserver>>,
+    fork_denied: bool,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
     framing: Framing,
@@ -27,6 +30,7 @@ pub(super) struct ProtocolProcess {
     pub(super) notifications: Vec<Value>,
     secrets: Vec<String>,
     pid: u32,
+    receipt: Option<ExtensionProcessReceipt>,
 }
 impl ProtocolProcess {
     pub(super) fn start(config: ExtensionConfig, framing: Framing) -> Result<Self, ExtensionError> {
@@ -66,9 +70,16 @@ impl ProtocolProcess {
             let pid = child.id().ok_or(ExtensionError::Process)?;
             let input = child.stdin.take().ok_or(ExtensionError::Process)?;
             let output = BufReader::new(child.stdout.take().ok_or(ExtensionError::Process)?);
-            Ok(Self {
+            let fork_denied = config.spawn.profile().is_some_and(|profile| {
+                !profile
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("(allow process-fork)"))
+            });
+            let process = Self {
                 child: Some(child),
-                _permit: permit,
+                permit: Some(permit),
+                observer: config.observer,
+                fork_denied,
                 input,
                 output,
                 framing,
@@ -77,7 +88,12 @@ impl ProtocolProcess {
                 notifications: Vec::new(),
                 secrets,
                 pid,
-            })
+                receipt: None,
+            };
+            if let Some(observer) = &process.observer {
+                observer.record(ExtensionProcessEvent::Spawned { pid })?;
+            }
+            Ok(process)
         }
     }
 
@@ -147,39 +163,73 @@ impl ProtocolProcess {
         Ok(value)
     }
 
-    /// Kill the complete owned group on every exit path, then reap the leader.
+    /// Kill the owned group on every exit path, then reap the leader.
     pub(super) async fn shutdown(&mut self) -> Result<(), ExtensionError> {
-        self.kill_group();
-        if let Some(mut child) = self.child.take() {
-            if child
-                .try_wait()
-                .map_err(|_| ExtensionError::Process)?
-                .is_none()
-            {
-                child.start_kill().map_err(|_| ExtensionError::Process)?;
-            }
-            tokio::time::timeout(Duration::from_secs(3), child.wait())
-                .await
-                .map_err(|_| ExtensionError::Timeout)?
-                .map_err(|_| ExtensionError::Process)?;
-        }
-        Ok(())
+        self.shutdown_receipt().await.map(|_| ())
     }
-    fn kill_group(&self) {
+
+    pub(super) async fn shutdown_receipt(
+        &mut self,
+    ) -> Result<ExtensionProcessReceipt, ExtensionError> {
+        if let Some(receipt) = &self.receipt {
+            return Ok(receipt.clone());
+        }
+        let delivered = self.kill_group();
+        let Some(child) = self.child.take() else {
+            return Err(ExtensionError::Process);
+        };
+        let receipt =
+            match super::receipt::settle(child, self.pid, delivered, self.fork_denied).await {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    if let Some(observer) = &self.observer {
+                        let _ = observer.record(ExtensionProcessEvent::Uncertain { pid: self.pid });
+                    }
+                    return Err(error);
+                }
+            };
+        self.receipt = Some(receipt.clone());
+        if let Some(observer) = &self.observer {
+            observer.record(ExtensionProcessEvent::Settled(receipt.clone()))?;
+        }
+        Ok(receipt)
+    }
+    fn kill_group(&self) -> bool {
         #[cfg(unix)]
         if self.child.is_some() {
             // The child became this group's leader at spawn; never a caller PID.
-            unsafe {
-                libc::killpg(self.pid as libc::pid_t, libc::SIGKILL);
-            }
+            return unsafe { libc::killpg(self.pid as libc::pid_t, libc::SIGKILL) == 0 };
         }
+        false
     }
 }
 impl Drop for ProtocolProcess {
     fn drop(&mut self) {
-        self.kill_group();
+        let delivered = self.kill_group();
+        let Some(child) = self.child.take() else {
+            return;
+        };
+        let observer = self.observer.clone();
+        let permit = self.permit.take();
+        let pid = self.pid;
+        let fork_denied = self.fork_denied;
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _permit = permit;
+                let result = super::receipt::settle(child, pid, delivered, fork_denied).await;
+                if let Some(observer) = observer {
+                    let event = result
+                        .map(ExtensionProcessEvent::Settled)
+                        .unwrap_or(ExtensionProcessEvent::Uncertain { pid });
+                    let _ = observer.record(event);
+                }
+            });
+        } else if let Some(observer) = observer {
+            let _ = observer.record(ExtensionProcessEvent::Uncertain { pid });
+        }
     }
 }
+
 fn scrub(value: &mut Value, secrets: &[String]) {
     match value {
         Value::String(text) => {
