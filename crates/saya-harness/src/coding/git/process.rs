@@ -12,7 +12,7 @@ use saya_agent::CancellationToken;
 use tokio::time::Instant;
 
 use super::{
-    command::{GitError, GitOperation},
+    command::GitError,
     environment::GitEnvironment,
     process_group::GitProcessGroup,
     process_observer::{GitProcessObserver, Observation},

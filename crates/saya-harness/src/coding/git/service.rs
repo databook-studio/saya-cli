@@ -1,6 +1,6 @@
 use std::{
     fmt, fs,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use saya_agent::CancellationToken;

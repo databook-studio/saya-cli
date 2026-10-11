@@ -5,9 +5,7 @@ use saya_types::GitObjectId;
 use tokio::time::Instant;
 
 use super::{
-    command::{
-        GitConfigRisk, GitError, GitObjectFormat, GitOperation, GitRepository, require_success,
-    },
+    command::{GitConfigRisk, GitError, GitObjectFormat, GitRepository, require_success},
     request::GitRequest,
     service::GitService,
 };

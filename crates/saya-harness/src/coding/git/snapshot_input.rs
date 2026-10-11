@@ -225,7 +225,7 @@ fn reject_filter_attributes(
     if fields.len() != expected_paths.len() * 3 {
         return Err(GitInventoryError::MalformedOutput);
     }
-    for (record, expected) in fields.chunks_exact(3).zip(expected_paths) {
+    for (record, expected) in fields.as_chunks::<3>().0.iter().zip(expected_paths) {
         if record[0] != expected.as_bytes() || record[1] != b"filter" {
             return Err(GitInventoryError::MalformedOutput);
         }
