@@ -83,8 +83,9 @@ impl CodingApplication {
 
 fn manual_edit(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
     let review_command = format!("coding review-existing {job} {candidate} --approve");
-    let apply_command =
-        format!("coding apply {job} {candidate} --source-sha256 <review source_sha256> --approve");
+    let apply_command = format!(
+        "coding apply {job} {candidate} --source-sha256 SOURCE_SHA256_FROM_REVIEW --approve"
+    );
     json!({
         "candidate_checkout_id":candidate,
         "next_action":"run_review_existing_to_locate_candidate_edit_then_rerun_fresh_review",
@@ -92,7 +93,8 @@ fn manual_edit(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
         "edit_scope":"only_the_returned_candidate_path",
         "review_command":review_command,
         "apply_command":apply_command,
-        "fresh_review":{"snapshot":true,"configured_checks":true,"source_binding":true},
+        "fresh_review":{"owned_checkout_verification":true,"configured_checks":true,"source_digest_binding":true},
+        "apply_command_note":"replace SOURCE_SHA256_FROM_REVIEW with the exact source_sha256 returned by the second review-existing response",
         "retained_record_mutated":false,
         "applies_to_original":false,
         "later_apply_requires_fresh_approval":true,

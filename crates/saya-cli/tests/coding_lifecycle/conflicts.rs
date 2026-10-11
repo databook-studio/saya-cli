@@ -139,11 +139,18 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     );
     assert_eq!(
         manual_edit["apply_command"],
-        "coding apply native-conflicts conflict-candidate --source-sha256 <review source_sha256> --approve"
+        "coding apply native-conflicts conflict-candidate --source-sha256 SOURCE_SHA256_FROM_REVIEW --approve"
     );
-    assert_eq!(manual_edit["fresh_review"]["snapshot"], true);
+    assert_eq!(
+        manual_edit["fresh_review"]["owned_checkout_verification"],
+        true
+    );
     assert_eq!(manual_edit["fresh_review"]["configured_checks"], true);
-    assert_eq!(manual_edit["fresh_review"]["source_binding"], true);
+    assert_eq!(manual_edit["fresh_review"]["source_digest_binding"], true);
+    assert_eq!(
+        manual_edit["apply_command_note"],
+        "replace SOURCE_SHA256_FROM_REVIEW with the exact source_sha256 returned by the second review-existing response"
+    );
     assert_eq!(manual_edit["retained_record_mutated"], false);
     assert_eq!(manual_edit["applies_to_original"], false);
     assert_eq!(manual_edit["later_apply_requires_fresh_approval"], true);
