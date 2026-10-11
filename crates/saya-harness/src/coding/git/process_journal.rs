@@ -236,17 +236,9 @@ fn write_incomplete_marker(
 /// What one journal read settles: the receipts in order, whether the tail
 /// was truncated or corrupt, the valid-byte and record accounting, and the
 /// sessions still open.
-type JournalRead = (
-    Vec<GitProcessReceipt>,
-    bool,
-    usize,
-    usize,
-    HashSet<String>,
-);
+type JournalRead = (Vec<GitProcessReceipt>, bool, usize, usize, HashSet<String>);
 
-fn read_records(
-    file: &File,
-) -> std::io::Result<JournalRead> {
+fn read_records(file: &File) -> std::io::Result<JournalRead> {
     let mut reader = file.try_clone()?;
     reader.seek(SeekFrom::Start(0))?;
     let mut bytes = Vec::new();

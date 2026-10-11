@@ -183,9 +183,7 @@ fn run_writer(
         &mut error,
         &mut failed,
     );
-    if !failed
-        && let Err(source) = file.sync_all()
-    {
+    if !failed && let Err(source) = file.sync_all() {
         error = Some((source.kind(), source.raw_os_error()));
     }
     WriterResult {
