@@ -9,6 +9,7 @@ mod doctor_extensions;
 mod doctor_probe;
 mod worktrees;
 pub use cli::dispatch as dispatch_coding;
+mod conflict_record;
 mod controls;
 mod create;
 mod delegate;

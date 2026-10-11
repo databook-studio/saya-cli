@@ -1,8 +1,8 @@
 use super::{CodingError, CodingReview, CodingTask, NativeCodingJob, context};
 use saya_harness::coding::{
     integration::{
-        AcceptedDelta, AssignedPaths, ConflictQueue, DEFAULT_DELTA_DEADLINE, IntegrateError,
-        IntegrateInput, compute_delta, evaluate_receipt, integrate_candidate,
+        AcceptedDelta, AssignedPaths, ConflictQueue, DEFAULT_DELTA_DEADLINE, EvidenceBinding,
+        IntegrateError, IntegrateInput, compute_delta, evaluate_receipt, integrate_candidate,
     },
     worktree::verify_owned_checkout,
 };
@@ -95,15 +95,21 @@ impl NativeCodingJob {
             let assigned =
                 AssignedPaths::parse(task.write_paths.clone()).map_err(CodingError::owner)?;
             let receipt = evaluate_receipt(&verified, &delta, &assigned, 64 * 1024 * 1024);
-            sources.push((verified, delta, receipt));
+            let binding =
+                EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
+                    .map_err(CodingError::owner)?;
+            sources.push((verified, delta, receipt, binding));
         }
         self.create_checkout(candidate).await?;
         let verified = verify_owned_checkout(&self.ownership(candidate), &self.cancellation)
             .await
             .map_err(CodingError::owner)?;
+        let candidate_binding =
+            EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
+                .map_err(CodingError::owner)?;
         let accepted = sources
             .iter()
-            .map(|(verified, delta, receipt)| AcceptedDelta::new(verified, receipt, delta))
+            .map(|(verified, delta, receipt, _)| AcceptedDelta::new(verified, receipt, delta))
             .collect::<Result<Vec<_>, _>>()
             .map_err(CodingError::owner)?;
         let result = integrate_candidate(
@@ -130,8 +136,16 @@ impl NativeCodingJob {
                 let retained = queue
                     .open_for(candidate)
                     .ok_or(CodingError::InvalidRequest)?;
-                let value = super::conflicts::retained_value(self.job_id(), retained);
-                let bytes = serde_json::to_vec(&value).map_err(CodingError::owner)?;
+                let bindings = sources
+                    .iter()
+                    .map(|(_, _, _, binding)| binding.clone())
+                    .collect::<Vec<_>>();
+                let bytes = super::conflicts::retained_bytes(
+                    self.job_id(),
+                    retained,
+                    &candidate_binding,
+                    &bindings,
+                )?;
                 super::conflicts::validate_retained_bytes(&bytes, self.job_id())?;
                 context::append_line(
                     &self.records.join("conflicts.jsonl"),

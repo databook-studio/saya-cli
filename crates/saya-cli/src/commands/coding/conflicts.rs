@@ -1,73 +1,13 @@
-use super::{CodingApplication, CodingError};
-use saya_harness::coding::integration::RetainedConflict;
-use saya_types::{JobId, ManagedCheckoutId, Sha256Digest, WorkspacePath};
-use serde::{Deserialize, Serialize};
+use super::{
+    CodingApplication, CodingError,
+    conflict_record::{self, parse_retained_record, validate_ownership},
+};
+use saya_types::{JobId, ManagedCheckoutId};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, io};
 
 pub(super) const MAX_LOG_BYTES: usize = 1024 * 1024;
-pub(super) const MAX_RECORD_BYTES: usize = 64 * 1024;
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Record {
-    version: u8,
-    job_id: String,
-    candidate_checkout_id: String,
-    status: String,
-    authority: String,
-    resolution: String,
-    fresh_revalidation_required: bool,
-    pairs: Vec<Pair>,
-    inputs: Vec<Input>,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Pair {
-    first: usize,
-    second: usize,
-    path: String,
-}
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Input {
-    checkout_id: String,
-    content_sha256s: Vec<Option<String>>,
-    total_bytes: u64,
-}
-
-pub(super) fn retained_value(job: &JobId, conflict: &RetainedConflict) -> Value {
-    json!({
-        "version": 1,
-        "job_id": job,
-        "candidate_checkout_id": conflict.candidate_checkout_id(),
-        "status": "open",
-        "authority": "none",
-        "resolution": "not_implemented",
-        "fresh_revalidation_required": true,
-        "pairs": conflict.pairs().iter().map(|pair| json!({
-            "first": pair.first(), "second": pair.second(), "path": pair.path()
-        })).collect::<Vec<_>>(),
-        "inputs": conflict.inputs().iter().map(|input| json!({
-            "checkout_id": input.checkout_id(),
-            "content_sha256s": input.content_sha256s(),
-            "total_bytes": input.total_bytes()
-        })).collect::<Vec<_>>()
-    })
-}
-
-pub(super) fn validate_retained_bytes(bytes: &[u8], job: &JobId) -> Result<(), CodingError> {
-    parse_retained_record(bytes, job).map(|_| ())
-}
-
-fn parse_retained_record(bytes: &[u8], job: &JobId) -> Result<Record, CodingError> {
-    if bytes.len() > MAX_RECORD_BYTES {
-        return Err(CodingError::InvalidRequest);
-    }
-    let record: Record = serde_json::from_slice(bytes).map_err(CodingError::owner)?;
-    validate_record(&record, job)?;
-    Ok(record)
-}
+pub(super) use conflict_record::{retained_bytes, validate_retained_bytes};
 
 impl CodingApplication {
     pub async fn conflicts(
@@ -114,12 +54,27 @@ impl CodingApplication {
             let record = parse_retained_record(line, job)?;
             validate_ownership(&record, &ownership)?;
             if record.candidate_checkout_id == candidate.as_str() {
-                found = Some(serde_json::to_value(record).map_err(CodingError::owner)?);
+                let record_sha256 = record
+                    .record_sha256
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::String(super::create::digest(line)?.to_string()));
+                let provenance = json!({
+                    "complete": record.version == 2,
+                    "source_sha256s_complete": record.version == 2,
+                    "candidate_source_sha256": record.candidate_source_sha256.clone(),
+                    "record_sha256_scope": if record.version == 2 { "canonical_record_without_record_sha256" } else { "raw_json_line" },
+                    "record_sha256": record_sha256
+                });
+                found = Some((
+                    serde_json::to_value(record).map_err(CodingError::owner)?,
+                    provenance,
+                ));
             }
         }
         Ok(match found {
-            Some(conflict) => {
-                json!({"job_id":job,"candidate_checkout_id":candidate,"status":"open","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"conflict":conflict})
+            Some((conflict, provenance)) => {
+                json!({"job_id":job,"candidate_checkout_id":candidate,"status":"open","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"provenance":provenance,"conflict":conflict})
             }
             None => unknown(job, candidate),
         })
@@ -128,55 +83,6 @@ impl CodingApplication {
 
 fn unknown(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
     json!({"job_id":job,"candidate_checkout_id":candidate,"status":"not_retained","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"conflict":null})
-}
-fn validate_record(record: &Record, job: &JobId) -> Result<(), CodingError> {
-    if record.version != 1
-        || record.job_id != job.as_str()
-        || record.status != "open"
-        || record.authority != "none"
-        || record.resolution != "not_implemented"
-        || !record.fresh_revalidation_required
-        || record.pairs.is_empty()
-        || record.inputs.len() < 2
-        || record.inputs.len() > 100
-    {
-        return Err(CodingError::InvalidRequest);
-    }
-    ManagedCheckoutId::parse(&record.candidate_checkout_id).map_err(CodingError::owner)?;
-    for input in &record.inputs {
-        ManagedCheckoutId::parse(&input.checkout_id).map_err(CodingError::owner)?;
-        if input.total_bytes > 64 * 1024 * 1024 || input.content_sha256s.len() > 100_000 {
-            return Err(CodingError::InvalidRequest);
-        }
-        for digest in input.content_sha256s.iter().flatten() {
-            Sha256Digest::parse(digest).map_err(CodingError::owner)?;
-        }
-    }
-    for pair in &record.pairs {
-        if pair.first >= record.inputs.len()
-            || pair.second >= record.inputs.len()
-            || pair.first == pair.second
-            || pair.path.len() > 512
-            || WorkspacePath::try_from(pair.path.clone()).is_err()
-        {
-            return Err(CodingError::InvalidRequest);
-        }
-    }
-    Ok(())
-}
-fn validate_ownership(
-    record: &Record,
-    ownership: &BTreeMap<String, bool>,
-) -> Result<(), CodingError> {
-    if ownership.get(&record.candidate_checkout_id) != Some(&false)
-        || record
-            .inputs
-            .iter()
-            .any(|input| ownership.get(&input.checkout_id) != Some(&true))
-    {
-        return Err(CodingError::InvalidRequest);
-    }
-    Ok(())
 }
 fn not_found(error: &CodingError) -> bool {
     let CodingError::Owner(source) = error else {

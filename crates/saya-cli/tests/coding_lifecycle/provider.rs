@@ -150,7 +150,7 @@ fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
                 let tasks = (0..24).map(|index| {
                     let id = format!("child-{index:02}");
                     let dependencies = (index > 0).then(|| vec![format!("child-{:02}", index - 1)]).unwrap_or_default();
-                    json!({"agent_id":id,"task":format!("write for {id}"),"write_paths":["shared.txt"],"dependencies":dependencies})
+                    json!({"agent_id":id,"task":format!("write for {id}"),"write_paths":["shared.txt","rename-before.txt","rename-after.txt"],"dependencies":dependencies})
                 }).collect::<Vec<_>>();
                 tool("delegate", json!({"tasks":tasks}))
             }
@@ -175,6 +175,12 @@ fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
         return tool(
             "workspace_write",
             json!({"path":"shared.txt","content":format!("{actor}\n")}),
+        );
+    }
+    if mode == 3 && actor == "child-00" && stage == 1 {
+        return tool(
+            "workspace_write",
+            json!({"path":"rename-before.txt","content":"stable rename bytes\n"}),
         );
     }
     if mode == 3 {

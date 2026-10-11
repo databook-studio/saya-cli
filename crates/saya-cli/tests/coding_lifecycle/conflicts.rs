@@ -11,7 +11,11 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     let request = CodingJobRequest::new(
         JobId::parse("native-conflicts").unwrap(),
         "Make dependent native child changes".into(),
-        vec!["shared.txt".into()],
+        vec![
+            "shared.txt".into(),
+            "rename-before.txt".into(),
+            "rename-after.txt".into(),
+        ],
         vec![],
     )
     .unwrap();
@@ -115,6 +119,79 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     assert_eq!(
         inspected["conflict"]["inputs"].as_array().unwrap().len(),
         24
+    );
+    assert_eq!(inspected["conflict"]["version"], 2);
+    assert_eq!(inspected["provenance"]["complete"], true);
+    assert_eq!(inspected["provenance"]["source_sha256s_complete"], true);
+    assert_eq!(
+        inspected["provenance"]["record_sha256_scope"],
+        "canonical_record_without_record_sha256"
+    );
+    assert_eq!(
+        inspected["provenance"]["record_sha256"],
+        inspected["conflict"]["record_sha256"]
+    );
+    let first_conflict = inspected["conflict"].clone();
+    let child_zero = records
+        .items
+        .iter()
+        .find(|record| {
+            record
+                .ownership
+                .agent_id()
+                .is_some_and(|agent| agent.as_str() == "child-00")
+        })
+        .unwrap();
+    let child_zero_root = std::path::Path::new(child_zero.ownership.managed_path().as_str());
+    std::fs::rename(
+        child_zero_root.join("rename-before.txt"),
+        child_zero_root.join("rename-after.txt"),
+    )
+    .unwrap();
+    let next_candidate = ManagedCheckoutId::parse("conflict-candidate-next").unwrap();
+    assert!(matches!(
+        resumed.review(&next_candidate).await,
+        Err(CodingError::ConflictRetained { .. })
+    ));
+    let next_inspected = fixture
+        .application
+        .conflicts(job.job_id(), &next_candidate)
+        .await
+        .unwrap();
+    let next_conflict = &next_inspected["conflict"];
+    let child_zero_id = child_zero.ownership.managed_checkout_id().as_str();
+    let first_child_zero = first_conflict["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["checkout_id"] == child_zero_id)
+        .unwrap();
+    let next_child_zero = next_conflict["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|input| input["checkout_id"] == child_zero_id)
+        .unwrap();
+    assert_eq!(first_conflict["pairs"], next_conflict["pairs"]);
+    assert_ne!(
+        first_conflict["candidate_checkout_id"],
+        next_conflict["candidate_checkout_id"]
+    );
+    assert_eq!(
+        first_conflict["candidate_source_sha256"],
+        next_conflict["candidate_source_sha256"]
+    );
+    assert_ne!(
+        first_child_zero["source_sha256"],
+        next_child_zero["source_sha256"]
+    );
+    assert_ne!(
+        first_conflict["record_sha256"],
+        next_conflict["record_sha256"]
+    );
+    assert_eq!(
+        std::fs::read(child_zero_root.join("rename-after.txt")).unwrap(),
+        b"stable rename bytes\n"
     );
     let metadata = fixture
         .root
