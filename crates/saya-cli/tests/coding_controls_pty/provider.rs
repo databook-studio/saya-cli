@@ -77,13 +77,15 @@ impl Provider {
     pub fn shutdown(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
-            let deadline = Instant::now() + Duration::from_millis(250);
+            let deadline = Instant::now() + Duration::from_secs(4);
             while !worker.is_finished() && Instant::now() < deadline {
                 thread::sleep(Duration::from_millis(10));
             }
-            if worker.is_finished() {
-                let _ = worker.join();
+            if !worker.is_finished() {
+                self.worker = Some(worker);
+                panic!("provider worker did not finish within its read deadline");
             }
+            let _ = worker.join();
         }
     }
 }

@@ -182,12 +182,28 @@ impl Session {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             let text = String::from_utf8_lossy(self.raw.get(checkpoint..).unwrap_or_default());
-            let ticket = format!("pause_requested\":{ticket}");
-            if text.contains(&ticket)
-                && text.contains("pause_acknowledged\":true")
-                && text.contains(&format!("target\":\"{target}\""))
-            {
-                return;
+            let mut cursor = 0;
+            while let Some(offset) = text[cursor..].find('{') {
+                let start = cursor + offset;
+                let Some(end) = text[start..].find('}') else {
+                    break;
+                };
+                let object = &text[start..=start + end];
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(object) {
+                    let matches = value
+                        .get("pause_requested")
+                        .and_then(|value| value.as_u64())
+                        == Some(ticket)
+                        && value
+                            .get("pause_acknowledged")
+                            .and_then(|value| value.as_bool())
+                            == Some(true)
+                        && value.get("target").and_then(|value| value.as_str()) == Some(target);
+                    if matches {
+                        return;
+                    }
+                }
+                cursor = start + 1;
             }
             self.pump();
         }
