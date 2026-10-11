@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod approval_test_support;
 mod compose;
+mod decider;
 mod executor;
 mod factory;
 #[cfg(test)]
