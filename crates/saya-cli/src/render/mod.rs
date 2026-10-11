@@ -7,6 +7,7 @@ use saya_agent::{
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
+mod coding;
 mod contract_view;
 mod io_view;
 mod render_clarification;
@@ -23,6 +24,7 @@ pub(crate) mod render_turn;
 /// The shared tool-call grouper and shaper both adapters consume: the piped
 /// text renderer buffers through it, the TUI transcript follows in slice 3.
 pub(crate) mod tool_groups;
+pub(crate) use coding::render_coding_result;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };

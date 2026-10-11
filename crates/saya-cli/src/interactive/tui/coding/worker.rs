@@ -127,9 +127,10 @@ async fn work(
         approve,
     } = command
     else {
+        let shown = command.clone();
         return dispatch_coding(&application, command)
             .await
-            .map(|value| value.to_string());
+            .map(|value| crate::render::render_coding_result(&shown, &value));
     };
     let request = CodingJobRequest::new(
         saya_types::JobId::parse(&id).map_err(CodingError::owner)?,
