@@ -33,7 +33,9 @@ read list
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}'
 read call
 printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[]}}'
-sleep 30
+read shutdown
+printf '%s\n' '{"jsonrpc":"2.0","id":4,"result":null}'
+read exit
 "#);
     let token = CancellationToken::new();
     let mut client = McpClient::connect(config, &token).await.unwrap();
