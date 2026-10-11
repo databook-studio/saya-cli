@@ -117,6 +117,10 @@ fn build_fixture() -> Option<Fixture> {
     let workspace = root.join("workspace");
     let programs = root.join("programs");
     fs::create_dir_all(&workspace).expect("workspace is created");
+    // The sandbox profile allows only the canonicalised root (spike §4.2
+    // measured that a /private/var rule denies a write via the /var alias),
+    // so every marker path handed to a child must be the resolved one.
+    let workspace = fs::canonicalize(&workspace).expect("workspace path canonicalises");
     fs::create_dir_all(&programs).expect("program directory is created");
     fs::set_permissions(&workspace, fs::Permissions::from_mode(0o700))
         .expect("workspace is private");

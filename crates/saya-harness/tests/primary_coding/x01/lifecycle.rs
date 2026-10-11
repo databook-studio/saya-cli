@@ -109,7 +109,10 @@ async fn mcp_live_call_cancellation_uses_public_process_owner() {
     let config = fixture.config(r#"
 read init; printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}'
 read initialized; read list; printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}'
-read call; sleep 30
+read call
+# Hold with builtins only: the profile denies process-fork, so no external
+# command (sleep) can run and the server must idle on reads until killed.
+while IFS= read -r ignored; do :; done
 "#).with_observer(observer.clone());
     let token = CancellationToken::new();
     let mut client = McpClient::connect(config, &token).await.unwrap();

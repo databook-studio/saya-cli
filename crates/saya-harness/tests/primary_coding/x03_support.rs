@@ -7,10 +7,18 @@ const READ_FRAME: &str = r#"
 read_frame() {
     IFS= read -r header || exit 0
     length=${header#Content-Length: }
-    carriage=$(printf '\r')
-    length=${length%"$carriage"}
+    # The client's framing::write always emits CRLF, so the header line read
+    # by `read` ends with a carriage return; strip it with parameter
+    # expansion.
+    length=${length%?}
     IFS= read -r blank || exit 0
-    /bin/dd bs=1 count="$length" of=/dev/null 2>/dev/null || exit 0
+    # The profile denies process-fork: no external command and no command
+    # substitution can run, so the body is consumed with the read builtin.
+    # The host /bin/sh is bash 3.2, whose read has no -N; `read -r -n` reads
+    # exactly the count when the body holds no newline, which holds because
+    # the client writes compact JSON (newlines only as two-byte escapes) and
+    # the cleared environment pins the C locale, where -n counts bytes.
+    IFS= read -r -n "$length" body || exit 0
 }
 "#;
 
@@ -28,8 +36,10 @@ fn frames(messages: impl IntoIterator<Item = String>) -> String {
 }
 
 pub fn after_open(messages: impl IntoIterator<Item = String>) -> String {
+    // `frames` terminates every message with `;` itself, so the block is
+    // never followed by another separator: `cmd;;` is a shell syntax error.
     format!(
-        "{READ_FRAME} read_frame; {}; read_frame; read_frame; {} read_frame; {}; read_frame;",
+        "{READ_FRAME} read_frame; {} read_frame; read_frame; {} read_frame; {} read_frame;",
         frames([response(1)]),
         frames(messages),
         frames([response(2)])
@@ -38,7 +48,7 @@ pub fn after_open(messages: impl IntoIterator<Item = String>) -> String {
 
 pub fn after_initialize() -> String {
     format!(
-        "{READ_FRAME} read_frame; {}; read_frame; read_frame; {}; read_frame;",
+        "{READ_FRAME} read_frame; {} read_frame; read_frame; {} read_frame;",
         frames([response(1)]),
         frames([response(2)])
     )
@@ -46,7 +56,7 @@ pub fn after_initialize() -> String {
 
 pub fn initialize_then_idle() -> String {
     format!(
-        "{READ_FRAME} read_frame; {}; read_frame; while IFS= read -r ignored; do :; done",
+        "{READ_FRAME} read_frame; {} read_frame; while IFS= read -r ignored; do :; done",
         frames([response(1)])
     )
 }
