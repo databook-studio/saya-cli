@@ -184,7 +184,7 @@ pub(super) async fn admit_physical(
     // digest: reserve_amount proved the request endpoint hashes to it.
     let token_scope = token_bounds
         .is_some()
-        .then(|| state.token_policy.as_ref())
+        .then_some(state.token_policy.as_ref())
         .flatten()
         .map(|policy| policy.data().endpoint_sha256.as_str().to_owned());
     let sequence = state
