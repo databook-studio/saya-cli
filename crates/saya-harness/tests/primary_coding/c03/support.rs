@@ -59,10 +59,8 @@ async fn fixture_with_program(label: &str, program: &str) -> Option<Fixture> {
     let active = active::active(label, "checkout-c03-real-exit").await;
     let checkout = active.verified.checkout_id().clone();
     let runner = RunnerScope::new(vec![program.to_owned()]).unwrap();
-    let capabilities = Capabilities {
-        runner: Some(runner),
-        ..Capabilities::default()
-    };
+    let mut capabilities = Capabilities::default();
+    capabilities.runner = Some(runner);
     let root = approval_support::approved_root(RootDelegationInput {
         job_id: active.fixture.job.clone(),
         agent_id: AgentId::parse("agent-c03").unwrap(),

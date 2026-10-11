@@ -200,7 +200,8 @@ async fn observer_records_spawn_failure_without_a_pid() {
         service.git_version(&CancellationToken::new()).await,
         Err(GitError::Spawn(_))
     ));
-    let receipt = service.process_observations().receipts().last().unwrap();
+    let snapshot = service.process_observations();
+    let receipt = snapshot.receipts().last().unwrap();
     assert_eq!(receipt.outcome(), GitProcessOutcome::SpawnFailed);
     assert_eq!(receipt.pid(), None);
     assert_eq!(receipt.killed_orphans(), None);

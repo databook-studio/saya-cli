@@ -172,7 +172,11 @@ impl Fixture {
         self.authority(agent_id, invocation_id).await
     }
 
-    fn authority(&self, agent_id: AgentId, invocation_id: InvocationId) -> ChildAuthorityView {
+    async fn authority(
+        &self,
+        agent_id: AgentId,
+        invocation_id: InvocationId,
+    ) -> ChildAuthorityView {
         RootDelegationScope::approve(
             RootDelegationInput {
                 job_id: self.job.clone(),
