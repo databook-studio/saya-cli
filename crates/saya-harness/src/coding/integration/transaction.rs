@@ -40,6 +40,8 @@ use super::transaction_journal::{
 /// The inputs of one apply-back run against the user's original checkout.
 /// `state_dir` must be trusted and outside the original checkout, otherwise
 /// journal artifacts themselves would change the user's working tree.
+/// All callers for a state store must share this canonical host state root
+/// so apply and recovery contend on the same persistent lease inode.
 pub struct ApplyBackInput<'a> {
     pub store: &'a SqliteStateStore,
     pub sequencer: &'a JobEventSequencer,
@@ -95,6 +97,10 @@ pub enum ApplyBackError {
     StaleVerification,
     #[error("the plan, baseline and checkouts do not identify the same captured state")]
     SnapshotMismatch,
+    #[error("another apply-back or recovery owns the original tree")]
+    OperationBusy,
+    #[error("the original file permissions changed before apply")]
+    OriginalModeChanged,
     #[error("the job is not running")]
     JobNotRunning,
     #[error("the job has reached its checkout operation cap")]
@@ -148,11 +154,12 @@ pub async fn apply_back(
     if cancellation.is_cancelled() {
         return Err(ApplyBackError::Cancelled);
     }
+    let user_ws = Workspace::open(input.repository.root()).map_err(|_| ApplyError::Fs)?;
+    let _lease = super::transaction_lease::acquire(input.state_dir, &user_ws)?;
     preflight_apply_back_admission(input).await?;
     if input.plan.digest() != input.baseline.plan_manifest_sha256() {
         return Err(ApplyBackError::SnapshotMismatch);
     }
-    let user_ws = Workspace::open(input.repository.root()).map_err(|_| ApplyError::Fs)?;
     let preflight = preflight_apply_back_at(
         &PreflightInput {
             repository: input.repository,
@@ -173,8 +180,16 @@ pub async fn apply_back(
     }
     detect_overlaps(input.accepted).map_err(ApplyBackError::Overlap)?;
     verify_apply_back_checkouts(input, cancellation).await?;
+    let observed =
+        super::recover_journal::operation_binding(input, NonZeroU64::MAX, &user_ws, None)?;
+    super::recover_binding::check_journal_budget(input, &observed)?;
     let operation_sequence = append_apply_back_intent(input).await?;
+    let binding = observed.for_sequence(operation_sequence)?;
     let mut journal = ApplyBackJournal::create(input.state_dir, input.job_id, operation_sequence)?;
+    journal.append(&JournalEvent::Begin {
+        binding: binding.digest.clone(),
+        baseline_modes: binding.baseline_modes.clone(),
+    })?;
     let mut images = BeforeImageStore::new(journal.dir());
     let mut applied_files: usize = 0;
     for accepted in input.accepted {
@@ -192,6 +207,10 @@ pub async fn apply_back(
             let (baseline, image) = if entry.kind() == DeltaKind::Added {
                 (None, None)
             } else {
+                let original_mode = super::apply_fs::file_mode(&user_ws, entry.path())?;
+                if binding.baseline_modes.get(entry.path()).copied() != Some(original_mode) {
+                    return Err(ApplyBackError::OriginalModeChanged);
+                }
                 let baseline_entry = input
                     .baseline
                     .entries()
@@ -212,7 +231,13 @@ pub async fn apply_back(
                 delta: entry.content_sha256().map(|d| d.as_str().to_owned()),
                 image,
             })?;
-            super::apply::apply_entry(&user_ws, &child_ws, entry, input.baseline)?;
+            super::apply::apply_entry_with_mode(
+                &user_ws,
+                &child_ws,
+                entry,
+                input.baseline,
+                binding.target_modes.get(entry.path()).copied(),
+            )?;
             super::apply_fs::sync_applied_entry(
                 &user_ws,
                 entry.path(),

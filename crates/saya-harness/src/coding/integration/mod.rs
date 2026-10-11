@@ -17,12 +17,19 @@ mod paths;
 mod preflight;
 mod preflight_fs;
 mod receipt;
+mod recover;
+mod recover_binding;
+mod recover_files;
+mod recover_journal;
 mod transaction;
 mod transaction_events;
 mod transaction_identity;
 mod transaction_images;
 mod transaction_journal;
 mod transaction_journal_io;
+mod transaction_lease;
+#[cfg(all(test, unix))]
+mod transaction_tests;
 
 pub use apply::{
     AcceptedDelta, ApplyError, OverlapConflict, OverlapPair, apply_delta, detect_overlaps,
@@ -48,6 +55,7 @@ pub use preflight::{
 pub use receipt::{
     ChangeReceipt, ChangeScope, ReceiptChange, ReceiptOutcome, RejectionReason, evaluate_receipt,
 };
+pub use recover::{RecoverError, RecoveryMode, RecoveryOutcome, recover_apply_back};
 pub use transaction::{
     AppliedApplyBack, ApplyBackBounds, ApplyBackError, ApplyBackInput, apply_back,
 };

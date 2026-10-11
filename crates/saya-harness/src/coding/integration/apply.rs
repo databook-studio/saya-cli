@@ -217,6 +217,17 @@ pub(super) fn apply_entry(
     entry: &PathDelta,
     baseline: &CapturedSnapshot,
 ) -> Result<(), ApplyError> {
+    apply_entry_with_mode(workspace, child_workspace, entry, baseline, None)
+}
+
+/// Apply-back supplies the mode from its durable whole-operation observation.
+pub(super) fn apply_entry_with_mode(
+    workspace: &Workspace,
+    child_workspace: &Workspace,
+    entry: &PathDelta,
+    baseline: &CapturedSnapshot,
+    mode: Option<u32>,
+) -> Result<(), ApplyError> {
     if entry.kind() == DeltaKind::Deleted {
         let baseline_hex = baseline_hex(baseline, entry.path())?;
         workspace
@@ -228,7 +239,9 @@ pub(super) fn apply_entry(
         return Err(ApplyError::Oversize);
     }
     let file = super::apply_fs::read_child_file(child_workspace, entry.path())?;
-    if Some(file.sha256_hex.as_str()) != entry.content_sha256().map(|d| d.as_str()) {
+    if Some(file.sha256_hex.as_str()) != entry.content_sha256().map(|d| d.as_str())
+        || mode.is_some_and(|expected| (expected & 0o111 != 0) != file.executable)
+    {
         return Err(ApplyError::ContentMismatch);
     }
     if entry.kind() == DeltaKind::Added {
@@ -241,7 +254,11 @@ pub(super) fn apply_entry(
             .write_guarded(entry.path(), baseline_hex, &file.bytes)
             .map_err(|_| ApplyError::Fs)?;
     }
-    super::apply_fs::set_candidate_mode(workspace, entry.path(), file.executable)?;
+    super::apply_fs::set_candidate_mode_bits(
+        workspace,
+        entry.path(),
+        mode.unwrap_or(if file.executable { 0o755 } else { 0o644 }),
+    )?;
     Ok(())
 }
 

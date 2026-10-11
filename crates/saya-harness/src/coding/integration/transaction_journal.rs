@@ -18,7 +18,6 @@ pub enum JournalError {
     #[error("the apply-back journal is unusable")]
     Io,
     #[error("a journal record is corrupt")]
-    #[allow(dead_code)] // consumed by W11b recovery
     Corrupt,
     #[error("the before-image budget is exceeded")]
     OverBudget,
@@ -38,6 +37,10 @@ pub(super) enum JournalKind {
 /// the matching done. Digests are lowercase-hex strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum JournalEvent {
+    Begin {
+        binding: String,
+        baseline_modes: std::collections::BTreeMap<String, u32>,
+    },
     Intent {
         path: String,
         kind: JournalKind,
@@ -48,6 +51,12 @@ pub(super) enum JournalEvent {
     Done {
         path: String,
         result: Option<String>,
+    },
+    Restoring {
+        path: String,
+    },
+    Restored {
+        path: String,
     },
 }
 
@@ -74,7 +83,7 @@ pub(super) fn sha_hex(bytes: &[u8]) -> String {
     hex
 }
 
-fn job_dir(state_dir: &Path, job_id: &JobId) -> PathBuf {
+pub(super) fn job_dir(state_dir: &Path, job_id: &JobId) -> PathBuf {
     state_dir
         .join("coding")
         .join("apply-back")

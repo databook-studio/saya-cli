@@ -64,15 +64,17 @@ pub(super) fn read_child_file(workspace: &Workspace, rel: &str) -> Result<ChildF
 /// workspace's pinned root descriptor: the Workspace writes files 0600, so
 /// this sets the mode the receipt recorded.
 #[cfg(unix)]
-pub(super) fn set_candidate_mode(
+pub(super) fn set_candidate_mode_bits(
     workspace: &Workspace,
     rel: &str,
-    executable: bool,
+    mode: u32,
 ) -> Result<(), ApplyError> {
+    if mode > 0o777 {
+        return Err(ApplyError::Fs);
+    }
     let (parent, last) = open_parent(workspace.root_dir_fd().as_raw_fd(), rel)?;
     let file = open_file_at(parent.as_raw_fd(), OsStr::new(last), libc::O_RDONLY, 0)
         .map_err(|_| ApplyError::Fs)?;
-    let mode = if executable { 0o755 } else { 0o644 };
     file.set_permissions(std::fs::Permissions::from_mode(mode))
         .map_err(|_| ApplyError::Fs)
 }
@@ -147,6 +149,29 @@ pub(super) fn sync_applied_entry(
     Ok(())
 }
 
+/// Permissions observed through the pinned root; symlinks and special files refuse.
+#[cfg(unix)]
+pub(super) fn file_mode(workspace: &Workspace, rel: &str) -> Result<u32, ApplyError> {
+    let (parent, last) = open_parent(workspace.root_dir_fd().as_raw_fd(), rel)?;
+    let file = open_file_at(
+        parent.as_raw_fd(),
+        OsStr::new(last),
+        libc::O_RDONLY | libc::O_NONBLOCK,
+        0,
+    )
+    .map_err(|_| ApplyError::Fs)?;
+    let meta = file.metadata().map_err(|_| ApplyError::Fs)?;
+    if !meta.is_file() {
+        return Err(ApplyError::Fs);
+    }
+    Ok(meta.permissions().mode() & 0o777)
+}
+
+#[cfg(not(unix))]
+pub(super) fn file_mode(_workspace: &Workspace, _rel: &str) -> Result<u32, ApplyError> {
+    Err(ApplyError::Fs)
+}
+
 #[cfg(not(unix))]
 pub(super) fn sync_applied_entry(
     _workspace: &Workspace,
@@ -162,10 +187,10 @@ pub(super) fn read_child_file(_workspace: &Workspace, _rel: &str) -> Result<Chil
 }
 
 #[cfg(not(unix))]
-pub(super) fn set_candidate_mode(
+pub(super) fn set_candidate_mode_bits(
     _workspace: &Workspace,
     _rel: &str,
-    _executable: bool,
+    _mode: u32,
 ) -> Result<(), ApplyError> {
     Err(ApplyError::Fs)
 }
