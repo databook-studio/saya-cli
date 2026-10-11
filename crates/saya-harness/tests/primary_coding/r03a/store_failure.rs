@@ -27,7 +27,7 @@ async fn failed_durable_child_reservation_denies_factory_and_provider() {
     let authority = fixture
         .add_child("agent-store-down", "invocation-store-down")
         .await;
-    let mut server = LocalOpenAi::new().await;
+    let server = LocalOpenAi::new().await;
     let ledger = fixture
         .ledger(limits(2, 2, 1, 1, 1, Duration::from_secs(5)))
         .await

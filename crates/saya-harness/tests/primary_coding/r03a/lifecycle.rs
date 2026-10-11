@@ -188,7 +188,7 @@ async fn cancellation_after_child_slot_but_before_model_dispatch_is_known_not_st
     let authority = fixture
         .add_child("agent-pre-cancel", "invocation-pre-cancel")
         .await;
-    let mut server = LocalOpenAi::new().await;
+    let server = LocalOpenAi::new().await;
     let ledger = fixture
         .ledger(limits(2, 2, 1, 1, 1, Duration::from_secs(5)))
         .await
@@ -291,7 +291,7 @@ async fn racing_children_share_one_child_slot_and_only_the_winner_builds() {
         .await;
     let mut server = LocalOpenAi::new().await;
     let ledger = fixture
-        .ledger(limits(3, 3, 1, 1, 1, Duration::from_secs(5)))
+        .ledger(limits(2, 2, 1, 1, 1, Duration::from_secs(5)))
         .await
         .unwrap();
     let first_spec = fixture.spec(first_authority, "child one", 2, 1);
