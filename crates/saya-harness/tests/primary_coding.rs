@@ -6,6 +6,8 @@ mod r05a;
 mod r05a_boundaries;
 #[path = "primary_coding/r05b2.rs"]
 mod r05b2;
+#[path = "primary_coding/r05d.rs"]
+mod r05d;
 #[path = "primary_coding/w01.rs"]
 mod w01;
 #[path = "primary_coding/w04b.rs"]

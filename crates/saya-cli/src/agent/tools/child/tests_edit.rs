@@ -70,3 +70,29 @@ async fn edit_with_a_second_path_key_is_refused() {
     assert!(outcome.is_err());
     assert!(!sandbox.ws_root().join("a/other.txt").exists());
 }
+
+// authored, not executed
+#[tokio::test]
+async fn child_write_definitions_require_the_child_decider() {
+    let checkout = checkout("checkout");
+    let view = implementer_view(&checkout, &["a/ok.txt"]);
+    let sandbox = Sandbox::new("edit-decider");
+    let pair = sandbox.pair(&checkout);
+    let (definitions, _) = child_toolset(&view, &pair).unwrap();
+
+    let write = definitions
+        .iter()
+        .find(|d| d.name == "workspace_write")
+        .expect("workspace_write is defined for a view with write paths");
+    assert!(write.effect.requires_approval);
+    let edit = definitions
+        .iter()
+        .find(|d| d.name == "workspace_edit")
+        .expect("workspace_edit is defined for a view with write paths");
+    assert!(edit.effect.requires_approval);
+    let read = definitions
+        .iter()
+        .find(|d| d.name == "workspace_read")
+        .expect("workspace_read is always defined");
+    assert!(!read.effect.requires_approval);
+}
