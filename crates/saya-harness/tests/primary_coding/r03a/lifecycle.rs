@@ -138,16 +138,32 @@ async fn root_deadline_cancels_and_joins_a_child_with_an_open_provider_request()
         Some(1),
         "first provider request was not observed before the deadline"
     );
-    let result = tokio::time::timeout(Duration::from_secs(10), child)
+    let result = tokio::time::timeout(Duration::from_secs(20), child)
         .await
         .expect("child did not finish after the root deadline elapsed")
-        .unwrap();
-    assert!(matches!(
-        result,
-        Err(ChildRunError::Cancelled {
-            reason: CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime)
-        })
-    ));
+        .unwrap()
+        .expect("a deadline-stopped child completes with its answering-budget output");
+    // A controlled answering run surfaces a budget-dimension cancellation as a
+    // truncated output, not a cancelled error: the answering admission maps a
+    // Budget cancellation reason to Limit("answering budget stopped") (saya-agent
+    // src/loop_runner/admission.rs cancellation_error), the turn converts a
+    // cancelled receive into that limit and returns Ok(budget_output)
+    // (src/loop_runner/turn.rs, and the top-of-turn check in
+    // src/loop_runner/runner.rs), and the coordinator passes a non-User-reason Ok
+    // through (src/coding/coordinator/api.rs run_child_inner). The deadline still
+    // cancels and joins the child: the invocation and ledger tokens below carry
+    // the ElapsedTime reason and the child slot drains.
+    assert!(
+        result.truncated,
+        "the deadline stop surfaces as a truncated answering-budget output"
+    );
+    assert_eq!(result.answer, "");
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        saya_agent::AgentEvent::AnsweringBudgetStopped {
+            dimension: saya_agent::BudgetDimension::ElapsedTime
+        }
+    )));
     stats.assert_invocation_cancellation(CancellationReason::Budget(
         saya_agent::BudgetDimension::ElapsedTime,
     ));
@@ -201,13 +217,65 @@ async fn cancellation_after_child_slot_but_before_model_dispatch_is_known_not_st
         .list_coding_budget_reservations(&fixture.job, None, 10)
         .await
         .unwrap();
-    assert_eq!(reservations.items.len(), 1);
-    let settlement = reservations.items[0].settlement.as_ref().unwrap();
+    // Two durable rows. The loop's effect owner admits the first model request
+    // durably BEFORE it observes the cancellation: the reservation is
+    // LogicalRequests+ModelRequestSlots (saya-agent
+    // src/loop_runner/receive/runner.rs -> admission/coding.rs admit_model_request
+    // -> crates/saya-harness/src/coding/budget/admission.rs admit_model), and only
+    // afterwards does the cancellation check settle it NotStarted with Measured(0)
+    // observations (admission/coding.rs settle_model_request ->
+    // src/coding/budget/settlement.rs finish_effect -> accounting.rs observation).
+    // The child slot was used by that admission (children.rs child_started sees
+    // counts.logical > 0), so run_child_controlled's finish_child settles it
+    // Succeeded, Measured(1) (src/coding/coordinator/api.rs).
+    assert_eq!(reservations.items.len(), 2);
+    let child_slot = reservations
+        .items
+        .iter()
+        .find(|record| {
+            record
+                .reservation
+                .charges()
+                .iter()
+                .any(|charge| charge.dimension() == BudgetDimension::ChildSlots)
+        })
+        .expect("the child-slot reservation is durable");
+    let settlement = child_slot.settlement.as_ref().unwrap();
     assert_eq!(settlement.effect_state(), BudgetEffectState::Settled);
+    assert_eq!(settlement.observations().len(), 1);
+    assert_eq!(
+        settlement.observations()[0].dimension(),
+        BudgetDimension::ChildSlots
+    );
     assert_eq!(
         settlement.observations()[0].value(),
-        BudgetObservationValue::Measured(0)
+        BudgetObservationValue::Measured(1)
     );
+    let model_request = reservations
+        .items
+        .iter()
+        .find(|record| {
+            record
+                .reservation
+                .charges()
+                .iter()
+                .any(|charge| charge.dimension() == BudgetDimension::LogicalRequests)
+        })
+        .expect("the model-request reservation is durable");
+    assert_eq!(model_request.reservation.charges().len(), 2);
+    let settlement = model_request.settlement.as_ref().unwrap();
+    assert_eq!(settlement.effect_state(), BudgetEffectState::Settled);
+    for dimension in [
+        BudgetDimension::LogicalRequests,
+        BudgetDimension::ModelRequestSlots,
+    ] {
+        let observation = settlement
+            .observations()
+            .iter()
+            .find(|observation| observation.dimension() == dimension)
+            .unwrap_or_else(|| panic!("missing {dimension:?} observation"));
+        assert_eq!(observation.value(), BudgetObservationValue::Measured(0));
+    }
     server.shutdown().await;
     fixture.close().await;
 }

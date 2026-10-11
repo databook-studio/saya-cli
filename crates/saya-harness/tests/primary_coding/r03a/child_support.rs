@@ -59,8 +59,8 @@ impl ChildFactory for OpenAiFactory {
         }
         let provider = OpenAiCompatibleProvider::new(
             ProviderSettings::new("r03a-test-model", Some(self.endpoint.clone()))
-                .with_timeout(Duration::from_secs(3))
-                .with_idle_timeout(Duration::from_secs(3))
+                .with_timeout(Duration::from_secs(10))
+                .with_idle_timeout(Duration::from_secs(10))
                 .with_retry_delays(self.retry_delays.clone()),
             None,
         )
@@ -90,7 +90,7 @@ pub(super) fn tool_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
-        concurrency: ToolConcurrency::Serial,
+        concurrency: ToolConcurrency::Concurrent,
         completion: Some("inspection complete".to_owned()),
     }
 }
