@@ -11,15 +11,18 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     provider.wait_for_children(2, INTERACTIVE);
     session.send(b"/coding message pty-job child-a inspect\r");
     session.wait_for("queued", INTERACTIVE);
+    let pause_checkpoint = session.checkpoint();
     session.send(b"/coding pause pty-job child-a\r");
-    session.wait_for("pause_requested", INTERACTIVE);
-    session.wait_for("pause_acknowledged", INTERACTIVE);
+    session.wait_for_after(pause_checkpoint, "pause_requested", INTERACTIVE);
+    let ticket = session.pause_ticket_after(pause_checkpoint, INTERACTIVE);
+    session.wait_for_pause_ack(pause_checkpoint, ticket, "child-a", INTERACTIVE);
     session.send(b"/coding continue pty-job child-a\r");
     session.wait_for("continue_requested", INTERACTIVE);
     session.send(b"/coding cancel-child pty-job child-b\r");
     session.wait_for("cancel_requested", INTERACTIVE);
     session.send(b"/coding pause pty-job missing-child\r");
     session.wait_for("not owned", INTERACTIVE);
+    provider.wait_for_child_finished("child-a", INTERACTIVE);
     let raw = session.finish();
     let records = session.records("pty-job");
     let children = tokio::runtime::Builder::new_current_thread()
@@ -34,8 +37,8 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
                 .items
         });
     assert!(raw.len() <= OUTPUT_LIMIT);
-    let enter = raw.windows(8).position(|window| window == b"\x1b[?1049h");
-    let leave = raw.windows(8).position(|window| window == b"\x1b[?1049l");
+    let enter = raw.windows(8).rposition(|window| window == b"\x1b[?1049h");
+    let leave = raw.windows(8).rposition(|window| window == b"\x1b[?1049l");
     let marker = raw
         .windows(b"saya local metrics".len())
         .position(|window| window == b"saya local metrics");
@@ -44,6 +47,14 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     assert!(
         marker > leave,
         "post-run marker follows terminal restoration"
+    );
+    assert!(
+        session.child_reaped(),
+        "PTY child was reaped before finish returned"
+    );
+    assert!(
+        session.reader_finished(),
+        "PTY reader reached EOF/is_finished before finish returned"
     );
     let text = String::from_utf8_lossy(&raw);
     assert!(text.contains("queued"), "message was not reported queued");
@@ -68,4 +79,5 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     assert!(!text.contains("api_key"));
     assert!(!text.contains("password"));
     assert!(!text.contains("state.sqlite3"));
+    provider.shutdown();
 }

@@ -1,12 +1,12 @@
 use super::DEADLINE;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -14,7 +14,8 @@ use std::{
 
 pub struct Provider {
     endpoint: String,
-    child_requests: Arc<AtomicUsize>,
+    child_actors: Arc<Mutex<BTreeSet<String>>>,
+    finished_actors: Arc<Mutex<BTreeSet<String>>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -32,13 +33,16 @@ impl Provider {
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
         let stop = Arc::new(AtomicBool::new(false));
-        let child_requests = Arc::new(AtomicUsize::new(0));
+        let child_actors = Arc::new(Mutex::new(BTreeSet::new()));
+        let finished_actors = Arc::new(Mutex::new(BTreeSet::new()));
         let stopped = Arc::clone(&stop);
-        let received = Arc::clone(&child_requests);
-        let worker = thread::spawn(move || serve(listener, stopped, received));
+        let actors = Arc::clone(&child_actors);
+        let finished = Arc::clone(&finished_actors);
+        let worker = thread::spawn(move || serve(listener, stopped, actors, finished));
         Self {
             endpoint,
-            child_requests,
+            child_actors,
+            finished_actors,
             stop,
             worker: Some(worker),
         }
@@ -51,19 +55,32 @@ impl Provider {
     pub fn wait_for_children(&self, minimum: usize, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if self.child_requests.load(Ordering::Acquire) >= minimum {
+            if self.child_actors.lock().unwrap().len() >= minimum {
                 return;
             }
             thread::sleep(Duration::from_millis(10));
         }
         panic!("provider did not receive {minimum} child requests");
     }
-}
 
-impl Drop for Provider {
-    fn drop(&mut self) {
+    pub fn wait_for_child_finished(&self, actor: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.finished_actors.lock().unwrap().contains(actor) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("provider did not receive a finishing turn for {actor}");
+    }
+
+    pub fn shutdown(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
+            let deadline = Instant::now() + Duration::from_millis(250);
+            while !worker.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
             if worker.is_finished() {
                 let _ = worker.join();
             }
@@ -71,7 +88,19 @@ impl Drop for Provider {
     }
 }
 
-fn serve(listener: TcpListener, stop: Arc<AtomicBool>, child_requests: Arc<AtomicUsize>) {
+impl Drop for Provider {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.worker.take();
+    }
+}
+
+fn serve(
+    listener: TcpListener,
+    stop: Arc<AtomicBool>,
+    child_actors: Arc<Mutex<BTreeSet<String>>>,
+    finished_actors: Arc<Mutex<BTreeSet<String>>>,
+) {
     let deadline = Instant::now() + DEADLINE;
     let mut parent_turn = 0;
     let mut child_turns = BTreeMap::<String, usize>::new();
@@ -86,11 +115,14 @@ fn serve(listener: TcpListener, stop: Arc<AtomicBool>, child_requests: Arc<Atomi
         };
         let request = read_request(&mut stream);
         let body = if request.contains("UNTRUSTED CHILD TASK") {
-            child_requests.fetch_add(1, Ordering::AcqRel);
             let actor = actor(&request);
+            child_actors.lock().unwrap().insert(actor.clone());
             let turn = child_turns.entry(actor.clone()).or_default();
             let body = child_response(&actor, *turn);
             *turn += 1;
+            if *turn >= 3 {
+                finished_actors.lock().unwrap().insert(actor.clone());
+            }
             body
         } else {
             let response = parent_response(parent_turn);
@@ -128,13 +160,15 @@ fn child_response(actor: &str, turn: usize) -> String {
     if turn == 0 {
         tool(
             "coding_command_start",
-            json!({"program":"sleep","argv":["20"],"timeout_seconds":30}),
+            json!({"program":"sleep","argv":[if actor == "child-a" { "2" } else { "20" }],"timeout_seconds":30}),
         )
-    } else {
+    } else if turn == 1 {
         tool(
             "coding_command_read",
-            json!({"command_id":1,"stderr":false,"marker":actor}),
+            json!({"command_id":1,"stderr":false}),
         )
+    } else {
+        answer(&format!("{actor} child work complete"))
     }
 }
 

@@ -28,6 +28,8 @@ pub struct Session {
     output: mpsc::Receiver<Vec<u8>>,
     reader: Option<JoinHandle<()>>,
     raw: Vec<u8>,
+    child_reaped: bool,
+    reader_finished: bool,
 }
 
 impl Session {
@@ -104,6 +106,8 @@ impl Session {
             output,
             reader: Some(reader),
             raw: Vec::new(),
+            child_reaped: false,
+            reader_finished: false,
         }
     }
 
@@ -123,6 +127,74 @@ impl Session {
             self.pump();
         }
         panic!("PTY did not show {needle:?}; tail:\n{}", self.tail());
+    }
+
+    pub fn checkpoint(&self) -> usize {
+        self.raw.len()
+    }
+
+    pub fn wait_for_after(&mut self, checkpoint: usize, needle: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self
+                .raw
+                .get(checkpoint..)
+                .is_some_and(|bytes| String::from_utf8_lossy(bytes).contains(needle))
+            {
+                return;
+            }
+            self.pump();
+        }
+        panic!(
+            "PTY did not show {needle:?} after checkpoint; tail:\n{}",
+            self.tail()
+        );
+    }
+
+    pub fn pause_ticket_after(&mut self, checkpoint: usize, timeout: Duration) -> u64 {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let text = String::from_utf8_lossy(self.raw.get(checkpoint..).unwrap_or_default());
+            if let Some(start) = text.find("pause_requested\":") {
+                let digits = &text[start + "pause_requested\":".len()..];
+                let end = digits
+                    .find(|character: char| !character.is_ascii_digit())
+                    .unwrap_or(digits.len());
+                if end > 0 {
+                    return digits[..end].parse().expect("pause ticket is numeric");
+                }
+            }
+            self.pump();
+        }
+        panic!(
+            "pause ticket did not appear after checkpoint; tail:\n{}",
+            self.tail()
+        );
+    }
+
+    pub fn wait_for_pause_ack(
+        &mut self,
+        checkpoint: usize,
+        ticket: u64,
+        target: &str,
+        timeout: Duration,
+    ) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let text = String::from_utf8_lossy(self.raw.get(checkpoint..).unwrap_or_default());
+            let ticket = format!("pause_requested\":{ticket}");
+            if text.contains(&ticket)
+                && text.contains("pause_acknowledged\":true")
+                && text.contains(&format!("target\":\"{target}\""))
+            {
+                return;
+            }
+            self.pump();
+        }
+        panic!(
+            "matching pause acknowledgement did not appear; tail:\n{}",
+            self.tail()
+        );
     }
 
     pub fn finish(&mut self) -> Vec<u8> {
@@ -166,6 +238,14 @@ impl Session {
         self.root.0.join("home/state.sqlite3")
     }
 
+    pub fn child_reaped(&self) -> bool {
+        self.child_reaped
+    }
+
+    pub fn reader_finished(&self) -> bool {
+        self.reader_finished
+    }
+
     fn pump(&mut self) {
         if let Ok(chunk) = self.output.recv_timeout(IO_WAIT) {
             self.raw.extend_from_slice(&chunk);
@@ -184,7 +264,10 @@ impl Session {
             let deadline = Instant::now() + drain_for;
             while Instant::now() < deadline {
                 match child.try_wait() {
-                    Ok(Some(_)) => break,
+                    Ok(Some(_)) => {
+                        self.child_reaped = true;
+                        break;
+                    }
                     Ok(None) => thread::sleep(Duration::from_millis(10)),
                     Err(_) => break,
                 }
@@ -210,11 +293,19 @@ impl Session {
             }
         }
         if reader_finished {
+            self.reader_finished = true;
             if let Some(reader) = self.reader.take() {
                 let _ = reader.join();
             }
         } else {
-            self.reader.take();
+            if self.reader.as_ref().is_some_and(JoinHandle::is_finished) {
+                self.reader_finished = true;
+                if let Some(reader) = self.reader.take() {
+                    let _ = reader.join();
+                }
+            } else {
+                self.reader.take();
+            }
         }
     }
 }
