@@ -72,7 +72,9 @@ impl SqliteStateStore {
 const SELECT_RECORD: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reservation_sequence=?";
 const LIST_RECORDS: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND (? IS NULL OR r.reservation_sequence > ?) ORDER BY r.reservation_sequence LIMIT ?";
 
-fn record(row: &sqlx::sqlite::SqliteRow) -> Result<CodingBudgetReservationRecord, StoreError> {
+pub(super) fn record(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<CodingBudgetReservationRecord, StoreError> {
     let job = JobId::parse(
         &row.try_get::<String, _>("job_id")
             .map_err(|_| StoreError::Invalid)?,

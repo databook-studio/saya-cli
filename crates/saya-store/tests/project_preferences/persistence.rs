@@ -78,7 +78,7 @@ async fn fresh_database_reaches_version_fourteen_with_the_project_table() {
             .is_empty()
     );
     store.close().await;
-    assert_eq!(user_version(&db).await, 17);
+    assert_eq!(user_version(&db).await, 18);
     assert!(
         table_exists(&db, "project_preferences").await,
         "missing project_preferences"
@@ -105,6 +105,8 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
 
     let pool = read_pool(&db).await;
     for table in [
+        "coding_token_policies",
+        "coding_transport_observations",
         "coding_cancel_requests",
         "coding_runtime_authority",
         "coding_completions",
@@ -170,7 +172,7 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
             .is_empty()
     );
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 17);
+    assert_eq!(user_version(&db).await, 18);
     assert!(table_exists(&db, "project_preferences").await);
     let survivor = SqliteStateStore::new(&db);
     let typed = survivor

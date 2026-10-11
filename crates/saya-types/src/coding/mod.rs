@@ -77,3 +77,12 @@ mod joined_result;
 pub use joined_result::{
     JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
 };
+
+mod transport;
+pub use transport::{
+    MAX_TRANSPORT_SPAN_BYTES, TransportCallKind, TransportOutcome, TransportSpanData,
+    TransportSpanError, TransportSpanV1,
+};
+
+mod token_policy;
+pub use token_policy::{TokenBudgetError, TokenBudgetPolicyData, TokenBudgetPolicyV1};

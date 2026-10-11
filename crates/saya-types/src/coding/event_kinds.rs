@@ -25,6 +25,9 @@ pub enum ApprovalDisposition {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum CodingEventKind {
+    TransportObserved {
+        span: Box<super::TransportSpanV1>,
+    },
     StateChanged {
         state: JobState,
     },
@@ -64,6 +67,9 @@ pub enum CodingEventKind {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireCodingEventKind {
+    TransportObserved {
+        span: Box<super::TransportSpanV1>,
+    },
     StateChanged {
         state: JobState,
     },
@@ -103,6 +109,7 @@ pub(super) enum WireCodingEventKind {
 impl WireCodingEventKind {
     pub(super) fn into_public(self) -> Result<CodingEventKind, CodingEventError> {
         Ok(match self {
+            Self::TransportObserved { span } => CodingEventKind::TransportObserved { span },
             Self::StateChanged { state } => CodingEventKind::StateChanged { state },
             Self::RuntimeResumed {
                 revocation_epoch,

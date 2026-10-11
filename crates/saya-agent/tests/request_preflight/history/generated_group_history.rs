@@ -28,6 +28,7 @@ async fn actual_request_preflight_reuses_safe_group_digest_and_keeps_current_con
         context_byte_budget: 3_000,
         ..AgentLimits::default()
     };
+    let sink = RecordingSink::default();
     let output = run(
         &provider,
         &executor,
@@ -36,7 +37,7 @@ async fn actual_request_preflight_reuses_safe_group_digest_and_keeps_current_con
         control(
             limits,
             &RecordingApproval::default(),
-            &RecordingSink::default(),
+            &sink,
             CancellationToken::new(),
             preflight(Some(1024 + 128 + 4_500), 128),
         ),
@@ -56,6 +57,12 @@ async fn actual_request_preflight_reuses_safe_group_digest_and_keeps_current_con
             .collect::<Vec<_>>()
     );
     assert_eq!(executor.calls.load(Ordering::SeqCst), 14);
+    let facts = sink.compactions.lock().unwrap();
+    assert!(!facts.is_empty());
+    assert!(facts.iter().any(|fact| fact.evicted_tool_groups > 0));
+    assert!(facts.iter().all(|fact| fact.before_bytes > fact.after_bytes
+        && fact.protected_prefix_unchanged
+        && fact.protected_prefix_messages >= 2));
 
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 15);

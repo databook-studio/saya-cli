@@ -219,9 +219,11 @@ async fn checkout_plan_survives_latest_schema_migration() {
         CheckoutPlanAppend::Recorded
     );
     s.store.close().await;
-    assert_eq!(user_version(&s.db).await, 17);
+    assert_eq!(user_version(&s.db).await, 18);
     let raw = read_pool(&s.db).await;
     for table in [
+        "coding_token_policies",
+        "coding_transport_observations",
         "coding_cancel_requests",
         "coding_runtime_authority",
         "coding_completions",
@@ -243,7 +245,7 @@ async fn checkout_plan_survives_latest_schema_migration() {
     assert_eq!(user_version(&s.db).await, 15);
     s.store = SqliteStateStore::new(&s.db);
     assert_eq!(stored(&s).await, None);
-    assert_eq!(user_version(&s.db).await, 17);
+    assert_eq!(user_version(&s.db).await, 18);
     assert_eq!(
         record(&s, PLAN_BYTES).await.unwrap(),
         CheckoutPlanAppend::Recorded

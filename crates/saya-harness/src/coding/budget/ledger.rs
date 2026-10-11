@@ -63,10 +63,13 @@ pub struct ChildCountLimits {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-/// In-memory admitted counts and observed outcomes; not a token, spend, byte,
-/// or restart-recovery guarantee.
+/// Counts and optional verified-policy token charges; never an unconditional
+/// provider billing or restart-recovery guarantee.
 pub struct BudgetSnapshot {
     /// Admitted counts; these do not represent measured provider/tool success.
+    pub tokens_charged: Option<u64>,
+    pub token_limit: Option<u64>,
+    pub token_bound_violated: bool,
     pub logical_requests: u64,
     pub transport_attempts: u64,
     pub tool_calls: u64,
@@ -112,6 +115,7 @@ pub struct JobBudgetLedger {
 }
 
 pub(super) struct State {
+    pub(super) token_policy: Option<saya_types::TokenBudgetPolicyV1>,
     pub(super) quiescent: Arc<std::sync::atomic::AtomicBool>,
     pub(super) runtime_authority: Option<saya_store::CodingRuntimeAuthority>,
     pub(super) runtime_renewal_required: bool,
@@ -136,6 +140,7 @@ pub(super) struct State {
 
 #[derive(Default)]
 pub(super) struct Counts {
+    pub(super) tokens: u64,
     pub(super) logical: u64,
     pub(super) transport: u64,
     pub(super) tools: u64,
@@ -185,10 +190,15 @@ impl JobBudgetLedger {
         }
         let started = Instant::now();
         let sequence = super::fresh::initial_sequence(&store, &job).await?;
+        let token_policy = store
+            .get_coding_token_policy(&job)
+            .await
+            .map_err(|_| BudgetLedgerError::Store)?;
         let cancellation = CancellationToken::new();
         Ok(Self {
             schedule: Arc::new(tokio::sync::Semaphore::new(1)),
             inner: Arc::new(Mutex::new(State {
+                token_policy,
                 quiescent: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 runtime_authority: None,
                 runtime_renewal_required: false,

@@ -43,8 +43,8 @@ pub(super) async fn handle(
             state.protected_prefix_len,
             &assistant,
             &state.definitions,
-            state.limits.context_byte_budget,
-            state.request_preflight,
+            (state.limits.context_byte_budget, state.request_preflight),
+            state.sink,
         ) {
             Ok(budget) => budget,
             Err(preflight::PreflightError::Budget(dimension)) => {

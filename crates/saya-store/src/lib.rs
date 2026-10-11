@@ -87,3 +87,5 @@ pub use coding::{
 pub use coding::{CodingRecoveryStatus, CodingRuntimeAuthority};
 
 pub use coding::CodingJobPage;
+
+pub use coding::{CodingTransportAttemptPage, CodingTransportAttemptRecord};

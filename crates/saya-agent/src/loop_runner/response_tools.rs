@@ -101,6 +101,7 @@ pub(super) async fn execute(
         &mut state.messages,
         state.limits.context_byte_budget,
         state.protected_prefix_len,
+        Some(state.sink),
     );
     Ok(None)
 }

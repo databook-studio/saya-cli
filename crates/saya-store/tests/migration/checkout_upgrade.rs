@@ -33,6 +33,14 @@ pub(super) async fn drop_step15_table(pool: &SqlitePool) {
 }
 
 pub(super) async fn drop_step16_table(pool: &SqlitePool) {
+    sqlx::query("DROP TABLE IF EXISTS coding_token_policies")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE IF EXISTS coding_transport_observations")
+        .execute(pool)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE IF EXISTS coding_cancel_requests")
         .execute(pool)
         .await
@@ -71,7 +79,7 @@ async fn upgrade_from_twelve_preserves_jobs_children_events_and_budget_records()
     let upgraded = SqliteStateStore::new(&db);
     assert_coding_seed_survives(&upgraded, &seed, &seed.events).await;
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 17);
+    assert_eq!(user_version(&db).await, 18);
     assert!(table_exists(&db, "coding_managed_checkouts").await);
     assert!(table_exists(&db, "coding_checkout_operations").await);
     assert!(table_exists(&db, "coding_approval_requests").await);
@@ -130,7 +138,7 @@ async fn upgrade_from_thirteen_preserves_completed_checkout_ownership_and_operat
         vec![completed_operation]
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 17);
+    assert_eq!(user_version(&db).await, 18);
     let _ = fs::remove_dir_all(seed.root);
 }
 
@@ -140,6 +148,14 @@ async fn upgrade_from_sixteen_preserves_existing_records_and_adds_result_deliver
     let db = seed.database.clone();
     seed.store.close().await;
     let raw = create_pool(&db).await;
+    sqlx::query("DROP TABLE coding_token_policies")
+        .execute(&raw)
+        .await
+        .unwrap();
+    sqlx::query("DROP TABLE coding_transport_observations")
+        .execute(&raw)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE coding_cancel_requests")
         .execute(&raw)
         .await
@@ -168,7 +184,7 @@ async fn upgrade_from_sixteen_preserves_existing_records_and_adds_result_deliver
             .is_empty()
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 17);
+    assert_eq!(user_version(&db).await, 18);
     assert!(table_exists(&db, "coding_completions").await);
     fs::remove_dir_all(seed.root).unwrap();
 }

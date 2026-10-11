@@ -144,6 +144,7 @@ pub(super) async fn admit_physical(
     attempt: PhysicalAttempt,
     agent: Option<AgentId>,
     invocation: Option<InvocationId>,
+    request: Option<&saya_agent::PhysicalRequestMetadata>,
 ) -> Result<EffectPermit, EffectAdmissionError> {
     check_base(state, 1)?;
     check_id_capacity(state, 1)?;
@@ -170,13 +171,24 @@ pub(super) async fn admit_physical(
     {
         return Err(state.owner_failure());
     }
+    let token_bounds = super::token::reserve_amount(state, request)?;
+    let mut charges = vec![(BudgetDimension::TransportAttempts, 1)];
+    if let Some((input, output)) = token_bounds {
+        charges.extend([
+            (BudgetDimension::InputTokens, input),
+            (BudgetDimension::OutputTokens, output),
+        ]);
+    }
     let sequence = state
-        .reserve(
-            vec![(BudgetDimension::TransportAttempts, 1)],
-            agent.clone(),
-            invocation.clone(),
-        )
+        .reserve(charges, agent.clone(), invocation.clone())
         .await?;
+    if let Some((input, output)) = token_bounds {
+        state.counts.tokens = state
+            .counts
+            .tokens
+            .checked_add(input + output)
+            .ok_or_else(|| state.owner_failure())?;
+    }
     bump(state, BudgetDimension::TransportAttempts, 1)?;
     let id = allocate(state)?;
     let Some(parent) = state.permits.get_mut(&parent_id) else {

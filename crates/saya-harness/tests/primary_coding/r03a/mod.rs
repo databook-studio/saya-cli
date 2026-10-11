@@ -24,3 +24,4 @@ mod scheduler_lifecycle;
 mod scheduler_limits;
 mod scheduler_paths;
 mod store_failure;
+mod token_budget;

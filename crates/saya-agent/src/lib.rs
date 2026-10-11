@@ -49,3 +49,9 @@ pub use protocol::streaming::{
 pub use providers::{
     AnthropicProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderSettings,
 };
+
+pub use protocol::streaming::PhysicalAttemptObservation;
+
+pub use protocol::event_sink::ContextCompaction;
+
+pub use protocol::streaming::PhysicalRequestMetadata;

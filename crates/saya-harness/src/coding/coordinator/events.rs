@@ -109,9 +109,18 @@ pub struct ChildEvent {
 #[non_exhaustive]
 /// A safe finite progress, source-owned observation, or numeric metric payload.
 pub enum ChildEventKind {
-    Progress { progress: ChildProgress },
-    Observation { observation: AnsweringObservation },
-    Metric { metric: ChildMetric },
+    Compaction {
+        observation: saya_agent::ContextCompaction,
+    },
+    Progress {
+        progress: ChildProgress,
+    },
+    Observation {
+        observation: AnsweringObservation,
+    },
+    Metric {
+        metric: ChildMetric,
+    },
 }
 
 impl ChildEvent {
@@ -227,6 +236,18 @@ impl ChildEventSink {
 
 #[async_trait::async_trait]
 impl AgentEventSink for ChildEventSink {
+    fn observe_compaction(&self, observation: saya_agent::ContextCompaction) {
+        let event = ChildEvent {
+            job_id: self.events.job_id.clone(),
+            agent_id: self.events.agent_id.clone(),
+            invocation_id: self.events.invocation_id.clone(),
+            kind: ChildEventKind::Compaction { observation },
+        };
+        if event.to_json_bytes().is_err() || self.events.sender.try_send(event).is_err() {
+            self.cancel_owner_failure();
+        }
+    }
+
     async fn emit(&self, event: AgentEvent) {
         match super::event_projection::progress(event) {
             Ok(Some(progress)) => {

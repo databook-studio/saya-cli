@@ -36,3 +36,7 @@ mod r13a_policy;
 mod r13a_pricing;
 #[path = "primary_coding/r13a_values.rs"]
 mod r13a_values;
+#[path = "primary_coding/token_policy.rs"]
+mod token_policy;
+#[path = "primary_coding/transport.rs"]
+mod transport;

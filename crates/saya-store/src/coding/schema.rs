@@ -120,3 +120,14 @@ pub(crate) async fn step17(connection: &mut PoolConnection<Sqlite>) -> Result<()
         .map_err(|_| StoreError::Unavailable)?;
     Ok(())
 }
+
+pub(crate) async fn step18(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("CREATE TABLE coding_transport_observations(job_id TEXT NOT NULL,reservation_sequence INTEGER NOT NULL,observation_sequence INTEGER NOT NULL,PRIMARY KEY(job_id,reservation_sequence),UNIQUE(job_id,observation_sequence),FOREIGN KEY(job_id,reservation_sequence) REFERENCES coding_budget_reservations(job_id,reservation_sequence) ON DELETE RESTRICT,FOREIGN KEY(job_id,observation_sequence) REFERENCES coding_events(job_id,sequence) ON DELETE RESTRICT)")
+        .execute(&mut **connection).await.map_err(|_|StoreError::Unavailable)?;
+    sqlx::query("CREATE TABLE coding_token_policies(job_id TEXT PRIMARY KEY REFERENCES coding_jobs(job_id) ON DELETE RESTRICT,policy_json BLOB NOT NULL CHECK(length(policy_json)<=8192),policy_sha256 TEXT NOT NULL)").execute(&mut **connection).await.map_err(|_|StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 18")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}

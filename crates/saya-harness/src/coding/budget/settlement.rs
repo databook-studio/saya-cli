@@ -103,13 +103,17 @@ pub(super) async fn finish_effect(
             if call_kind != Some(attempt.kind()) || next_ordinal != attempt.ordinal() {
                 return Err(owner_error(state));
             }
-            settle_one(
+            let mut observations =
+                vec![observation(BudgetDimension::TransportAttempts, outcome, 1)];
+            observations.extend(super::token::observations(
                 state,
-                permit.get(),
-                vec![observation(BudgetDimension::TransportAttempts, outcome, 1)],
-            )
-            .await
-            .map_err(|_| owner_error(state))?;
+                outcome,
+                reported_usage,
+                usage_complete,
+            ));
+            settle_one(state, permit.get(), observations)
+                .await
+                .map_err(|_| owner_error(state))?;
             if outcome == EffectOutcome::Unknown {
                 state.snapshot.unknown_transport_attempts =
                     state.snapshot.unknown_transport_attempts.saturating_add(1);
@@ -130,6 +134,7 @@ pub(super) async fn finish_effect(
                 call_kind,
                 active_attempt: false,
             };
+            super::token::settle(state, outcome, reported_usage, usage_complete)?;
             Ok(())
         }
         (PermitKind::Tool { group }, EffectSettlement::Tool { outcome }) => {

@@ -200,6 +200,40 @@ async fn parent_and_three_useful_children_share_exact_tight_and_ample_limits() {
                 .len(),
             3
         );
+        let spans = fixture
+            .store
+            .list_coding_transport_attempts(&fixture.job, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(spans.items.len() as u64, cap);
+        assert!(spans.items.iter().all(|item| item.timing_complete()));
+        let child_spans: Vec<_> = spans
+            .items
+            .iter()
+            .filter_map(|item| item.span.as_ref())
+            .filter(|span| span.data().agent_id.is_some())
+            .collect();
+        assert_eq!(child_spans.len(), 3);
+        let domain = &child_spans[0].data().clock_domain;
+        assert!(
+            child_spans
+                .iter()
+                .all(|span| &span.data().clock_domain == domain)
+        );
+        let latest_start = child_spans
+            .iter()
+            .map(|span| span.data().dispatch_started_ns.unwrap())
+            .max()
+            .unwrap();
+        let earliest_finish = child_spans
+            .iter()
+            .map(|span| span.data().finished_ns)
+            .min()
+            .unwrap();
+        assert!(
+            latest_start < earliest_finish,
+            "actual client send/stream intervals overlap"
+        );
         parent.shutdown().await;
         a.shutdown().await;
         b.shutdown().await;

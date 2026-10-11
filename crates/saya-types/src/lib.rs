@@ -109,3 +109,10 @@ pub use session_tasks::{
 pub use coding::{
     JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
 };
+
+pub use coding::{
+    MAX_TRANSPORT_SPAN_BYTES, TransportCallKind, TransportOutcome, TransportSpanData,
+    TransportSpanError, TransportSpanV1,
+};
+
+pub use coding::{TokenBudgetError, TokenBudgetPolicyData, TokenBudgetPolicyV1};

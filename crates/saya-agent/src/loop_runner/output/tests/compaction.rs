@@ -56,7 +56,7 @@ fn trim_never_mutates_an_already_sent_tool_message() {
         budget < total,
         "test setup must exceed the budget: {budget} vs {total}"
     );
-    trim_to_budget(&mut messages, budget, 2);
+    trim_to_budget(&mut messages, budget, 2, None);
     assert_eq!(
         messages[2].content, old_sent,
         "an already-sent tool message must not be mutated"
@@ -106,7 +106,7 @@ fn trim_under_budget_leaves_the_conversation_untouched() {
     ));
     let snapshot = messages.clone();
     let total: usize = messages.iter().map(message_size).sum();
-    trim_to_budget(&mut messages, total + 1024, 2);
+    trim_to_budget(&mut messages, total + 1024, 2, None);
     assert_eq!(
         messages, snapshot,
         "under-budget trim must not touch the conversation"
@@ -139,7 +139,7 @@ fn compaction_keeps_the_system_message_and_newest_group_byte_identical() {
         .map(message_size)
         .sum();
     let budget = head + newest_size + 1024;
-    trim_to_budget(&mut messages, budget, 2);
+    trim_to_budget(&mut messages, budget, 2, None);
     assert_eq!(
         messages[0], system_snapshot,
         "the system message must be byte-identical after compaction"
@@ -192,7 +192,7 @@ fn compaction_digest_names_statements_and_carries_no_row_value() {
         budget < total,
         "test setup must exceed the budget: {budget} vs {total}"
     );
-    trim_to_budget(&mut messages, budget, 2);
+    trim_to_budget(&mut messages, budget, 2, None);
     let digest = messages
         .iter()
         .find(|message| crate::loop_runner::compaction::is_digest(message))

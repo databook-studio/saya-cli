@@ -15,6 +15,13 @@ use saya_agent::{
 
 #[derive(Default)]
 pub struct Records {
+    pub observations: Mutex<
+        Vec<(
+            EffectPermit,
+            PhysicalAttempt,
+            saya_agent::PhysicalAttemptObservation,
+        )>,
+    >,
     pub models: Mutex<Vec<EffectPermit>>,
     pub physical: Mutex<Vec<(EffectPermit, PhysicalAttempt)>>,
     pub settlements: Mutex<Vec<(EffectPermit, EffectSettlement)>>,
@@ -99,6 +106,19 @@ impl EffectAdmission for Records {
             token.cancel();
         }
         Ok(permit)
+    }
+
+    async fn observe_physical_attempt(
+        &self,
+        permit: EffectPermit,
+        attempt: PhysicalAttempt,
+        observation: saya_agent::PhysicalAttemptObservation,
+    ) -> Result<(), EffectOwnerFailure> {
+        self.observations
+            .lock()
+            .unwrap()
+            .push((permit, attempt, observation));
+        Ok(())
     }
 
     async fn settle(

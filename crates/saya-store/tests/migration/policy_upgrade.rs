@@ -47,7 +47,7 @@ async fn upgrade_from_version_fourteen_reaches_fifteen_with_policy_table() {
         saya_types::JobState::Running
     );
     upgraded.close().await;
-    assert_eq!(user_version(&db).await, 17);
+    assert_eq!(user_version(&db).await, 18);
     assert!(table_exists(&db, "coding_budget_policies").await);
     let pool = read_pool(&db).await;
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM coding_budget_policies")

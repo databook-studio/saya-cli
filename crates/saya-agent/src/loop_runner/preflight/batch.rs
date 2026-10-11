@@ -10,9 +10,10 @@ pub(super) fn reserve(
     protected_prefix_len: usize,
     assistant: &ChatMessage,
     definitions: &[ToolDefinition],
-    byte_limit: usize,
-    config: Option<super::RequestPreflightConfig>,
+    budget: (usize, Option<super::RequestPreflightConfig>),
+    sink: &dyn crate::AgentEventSink,
 ) -> Result<usize, PreflightError> {
+    let (byte_limit, config) = budget;
     let (cap, dimension) = effective_limit(byte_limit, config);
     let skeleton = Messages::Batch {
         prefix,
@@ -28,7 +29,7 @@ pub(super) fn reserve(
         // evicts only the suffix after the original question, so it cannot
         // rewrite the protected request or this pending batch.
         prefix.push(assistant.clone());
-        super::super::output::trim_to_budget(prefix, 0, protected_prefix_len);
+        super::super::output::trim_to_budget(prefix, 0, protected_prefix_len, Some(sink));
         prefix.pop();
     }
     let skeleton = Messages::Batch {

@@ -96,7 +96,8 @@ impl State {
         invocation: Option<saya_types::InvocationId>,
     ) -> Result<NonZeroU64, EffectAdmissionError> {
         if self.quiescent.load(std::sync::atomic::Ordering::Acquire)
-            || (self.runtime_renewal_required && self.runtime_authority.is_some())
+            || (self.runtime_renewal_required
+                && (self.runtime_authority.is_some() || self.token_policy.is_some()))
         {
             return Err(EffectAdmissionError::Denied);
         }
