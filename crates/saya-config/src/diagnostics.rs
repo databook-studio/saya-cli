@@ -1,3 +1,4 @@
+use saya_types::CheckDiagnosticFormat;
 use serde::Serialize;
 
 use crate::{
@@ -165,6 +166,8 @@ pub struct CheckProfileDiagnostics {
     pub timeout_seconds: u64,
     pub toolchain_reference: Option<String>,
     pub environment_profile_reference: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_format: Option<CheckDiagnosticFormat>,
 }
 
 impl CheckProfileDiagnostics {
@@ -176,6 +179,7 @@ impl CheckProfileDiagnostics {
             timeout_seconds: profile.timeout_seconds,
             toolchain_reference: profile.toolchain.clone(),
             environment_profile_reference: profile.environment_profile.clone(),
+            diagnostic_format: profile.diagnostic_format,
         }
     }
 
@@ -187,6 +191,7 @@ impl CheckProfileDiagnostics {
             timeout_seconds: profile.timeout_seconds(),
             toolchain_reference: profile.toolchain_reference().map(str::to_owned),
             environment_profile_reference: profile.environment_profile_reference().to_owned(),
+            diagnostic_format: profile.diagnostic_format(),
         }
     }
 }

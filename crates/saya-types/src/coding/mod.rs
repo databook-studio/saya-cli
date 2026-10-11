@@ -6,6 +6,7 @@ mod budget;
 mod budget_policy;
 mod budget_settlement;
 mod budget_values;
+mod check_diagnostics;
 mod check_receipts;
 mod checkout_operation;
 mod checkout_values;
@@ -34,6 +35,7 @@ pub use budget_values::{
     BudgetCharge, BudgetDimension, BudgetObservation, BudgetObservationValue,
     MAX_BUDGET_ENDPOINT_BYTES, MAX_BUDGET_ENTRIES,
 };
+pub use check_diagnostics::CheckDiagnosticFormat;
 pub use check_receipts::{
     CHECK_RECEIPT_VERSION, CheckReceiptV1, CodingCheckOutcome, MAX_CHECK_RECEIPT_BYTES,
 };

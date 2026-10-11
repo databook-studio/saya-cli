@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt};
 
-use saya_types::{MAX_RECEIPT_REFERENCE_BYTES, is_bare_name};
+use saya_types::{CheckDiagnosticFormat, MAX_RECEIPT_REFERENCE_BYTES, is_bare_name};
 
 use crate::{ConfigError, model::CheckProfileFile};
 
@@ -22,20 +22,24 @@ pub struct ResolvedCheckProfile {
     timeout_seconds: u64,
     toolchain: Option<String>,
     environment_profile: String,
+    diagnostic_format: Option<CheckDiagnosticFormat>,
 }
 
 impl fmt::Debug for ResolvedCheckProfile {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ResolvedCheckProfile")
+        let mut debug = formatter.debug_struct("ResolvedCheckProfile");
+        debug
             .field("profile_id", &self.profile_id)
             .field("command_id", &self.command_id)
             .field("program", &self.program)
             .field("argv_count", &self.argv.len())
             .field("timeout_seconds", &self.timeout_seconds)
             .field("toolchain", &self.toolchain)
-            .field("environment_profile", &self.environment_profile)
-            .finish()
+            .field("environment_profile", &self.environment_profile);
+        if let Some(format) = self.diagnostic_format {
+            debug.field("diagnostic_format", &format);
+        }
+        debug.finish()
     }
 }
 
@@ -66,6 +70,10 @@ impl ResolvedCheckProfile {
 
     pub fn environment_profile_reference(&self) -> &str {
         &self.environment_profile
+    }
+
+    pub fn diagnostic_format(&self) -> Option<CheckDiagnosticFormat> {
+        self.diagnostic_format
     }
 
     pub(crate) fn argv_count(&self) -> usize {
@@ -100,6 +108,7 @@ pub(super) fn resolve_check_profiles(
                     timeout_seconds: profile.timeout_seconds,
                     toolchain: profile.toolchain.clone(),
                     environment_profile: profile.environment_profile.clone(),
+                    diagnostic_format: profile.diagnostic_format,
                 },
             ))
         })

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use saya_types::CheckDiagnosticFormat;
 use serde::Deserialize;
 
 /// Raw trusted `[coding]` settings. Every field stays optional until layers
@@ -32,18 +33,23 @@ pub struct CheckProfileFile {
     pub(crate) timeout_seconds: u64,
     pub(crate) toolchain: Option<String>,
     pub(crate) environment_profile: String,
+    #[serde(default)]
+    pub(crate) diagnostic_format: Option<CheckDiagnosticFormat>,
 }
 
 impl fmt::Debug for CheckProfileFile {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("CheckProfileFile")
+        let mut debug = formatter.debug_struct("CheckProfileFile");
+        debug
             .field("command_id", &self.command_id)
             .field("program", &self.program)
             .field("argv_count", &self.argv.len())
             .field("timeout_seconds", &self.timeout_seconds)
             .field("toolchain", &self.toolchain)
-            .field("environment_profile", &self.environment_profile)
-            .finish()
+            .field("environment_profile", &self.environment_profile);
+        if let Some(format) = self.diagnostic_format {
+            debug.field("diagnostic_format", &format);
+        }
+        debug.finish()
     }
 }

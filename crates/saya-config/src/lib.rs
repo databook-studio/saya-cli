@@ -46,6 +46,6 @@ pub use model::{
 };
 pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
-pub use saya_types::SecretRef;
+pub use saya_types::{CheckDiagnosticFormat, SecretRef};
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};
 pub use values::{AiProvider, ColorChoice, CompactionMode, MemoryMode, OutputFormat, ThemeChoice};

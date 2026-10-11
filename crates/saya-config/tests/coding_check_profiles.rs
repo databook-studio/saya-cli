@@ -9,6 +9,7 @@ argv = ["test", "--locked", "c03b-private-argv-sentinel"]
 timeout_seconds = 90
 toolchain = "rust-stable"
 environment_profile = "confined-v1"
+diagnostic_format = "rustc_json"
 "#;
 
 fn resolved(file: ConfigFile) -> saya_config::ResolvedConfig {
@@ -25,6 +26,7 @@ fn profile_loads_as_fixed_data_and_diagnostics_hide_argv() {
     assert_eq!(raw_profile["program"], "cargo");
     assert_eq!(raw_profile["argv_count"], 3);
     assert_eq!(raw_profile["timeout_seconds"], 90);
+    assert_eq!(raw_profile["diagnostic_format"], "rustc_json");
     assert!(!raw.to_string().contains(ARG_SENTINEL));
     assert!(!format!("{file:?}").contains(ARG_SENTINEL));
     assert!(
@@ -33,11 +35,58 @@ fn profile_loads_as_fixed_data_and_diagnostics_hide_argv() {
     );
 
     let resolved = resolved(file);
+    assert_eq!(
+        resolved
+            .coding
+            .select_check_profile("ci")
+            .unwrap()
+            .diagnostic_format(),
+        Some(saya_config::CheckDiagnosticFormat::RustcJson)
+    );
     let effective: serde_json::Value =
         serde_json::to_value(resolved.redacted_diagnostics()).unwrap();
     assert_eq!(effective["coding_check_profiles"]["ci"]["argv_count"], 3);
+    assert_eq!(
+        effective["coding_check_profiles"]["ci"]["diagnostic_format"],
+        "rustc_json"
+    );
     assert!(!effective.to_string().contains(ARG_SENTINEL));
     assert!(!format!("{:?}", resolved.coding).contains(ARG_SENTINEL));
+}
+
+#[test]
+fn diagnostic_format_is_optional_and_unknown_values_are_not_echoed() {
+    let file = ConfigFile::from_toml(&profile_toml("ci", "cargo", &[], 10)).unwrap();
+    let raw: serde_json::Value = serde_json::to_value(file.redacted_diagnostics()).unwrap();
+    assert!(
+        raw["coding_check_profiles"]["ci"]
+            .get("diagnostic_format")
+            .is_none()
+    );
+    let resolved = resolved(file);
+    assert_eq!(
+        resolved
+            .coding
+            .select_check_profile("ci")
+            .unwrap()
+            .diagnostic_format(),
+        None
+    );
+    let effective: serde_json::Value =
+        serde_json::to_value(resolved.redacted_diagnostics()).unwrap();
+    assert!(
+        effective["coding_check_profiles"]["ci"]
+            .get("diagnostic_format")
+            .is_none()
+    );
+
+    let untrusted = "model-picked-unsupported-format";
+    let invalid = PROFILE_FILE.replace(
+        "diagnostic_format = \"rustc_json\"",
+        &format!("diagnostic_format = \"{untrusted}\""),
+    );
+    let error = ConfigFile::from_toml(&invalid).unwrap_err();
+    assert!(!error.to_string().contains(untrusted));
 }
 
 #[test]
