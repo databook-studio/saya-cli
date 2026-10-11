@@ -94,17 +94,17 @@ impl PersistedDiagnosticBaseline {
         if bytes.len() > MAX_DIAGNOSTIC_BASELINE_BYTES {
             return Err(DiagnosticBaselineWireError::Oversize(bytes.len()));
         }
-        let envelope: WireEnvelope =
+        let envelope: RawEnvelope =
             serde_json::from_slice(bytes).map_err(|_| DiagnosticBaselineWireError::Malformed)?;
         if envelope.version != DIAGNOSTIC_BASELINE_VERSION {
             return Err(DiagnosticBaselineWireError::Malformed);
         }
-        let payload_bytes = serde_json::to_vec(&envelope.payload)
-            .map_err(|_| DiagnosticBaselineWireError::Malformed)?;
-        if digest(&payload_bytes) != envelope.payload_sha256 {
+        if digest(envelope.payload.get().as_bytes()) != envelope.payload_sha256 {
             return Err(DiagnosticBaselineWireError::DigestMismatch);
         }
-        Self::from_wire(envelope.payload)
+        let payload: WirePayload = serde_json::from_str(envelope.payload.get())
+            .map_err(|_| DiagnosticBaselineWireError::Malformed)?;
+        Self::from_wire(payload)
     }
 
     fn from_wire(payload: WirePayload) -> Result<Self, DiagnosticBaselineWireError> {
@@ -152,11 +152,22 @@ impl BaselineIdentity {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 struct WireEnvelope {
     version: u32,
     payload: WirePayload,
+    payload_sha256: Sha256Digest,
+}
+
+/// Borrows the payload bytes exactly as transmitted so the digest covers the
+/// wire representation rather than a re-serialization of parsed content.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEnvelope<'a> {
+    version: u32,
+    #[serde(borrow)]
+    payload: &'a serde_json::value::RawValue,
     payload_sha256: Sha256Digest,
 }
 
