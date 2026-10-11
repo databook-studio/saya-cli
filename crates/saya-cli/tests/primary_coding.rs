@@ -12,3 +12,6 @@ mod review;
 #[cfg(unix)]
 #[path = "primary_coding/support.rs"]
 mod support;
+#[cfg(unix)]
+#[path = "primary_coding/x02.rs"]
+mod x02;

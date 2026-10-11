@@ -26,8 +26,21 @@ impl Fixture {
     pub async fn with_check(label: &str, endpoint: &str) -> Self {
         Self::build(label, Some(endpoint), true).await
     }
+    pub async fn with_extensions(label: &str, endpoint: &str, extensions: &str) -> Self {
+        Self::build_options(
+            label,
+            Some(endpoint),
+            false,
+            false,
+            false,
+            None,
+            None,
+            Some(extensions),
+        )
+        .await
+    }
     pub async fn with_diagnostic_output(label: &str, output: &str) -> Self {
-        Self::build_options(label, None, false, false, false, Some(output), None).await
+        Self::build_options(label, None, false, false, false, Some(output), None, None).await
     }
     pub async fn with_personal_instructions(label: &str, endpoint: &str, enabled: bool) -> Self {
         Self::build_options(
@@ -38,17 +51,18 @@ impl Fixture {
             false,
             None,
             Some(enabled),
+            None,
         )
         .await
     }
     async fn build(label: &str, endpoint: Option<&str>, check: bool) -> Self {
-        Self::build_options(label, endpoint, check, false, false, None, None).await
+        Self::build_options(label, endpoint, check, false, false, None, None, None).await
     }
     pub async fn with_deadline(label: &str, endpoint: &str) -> Self {
-        Self::build_options(label, Some(endpoint), false, true, false, None, None).await
+        Self::build_options(label, Some(endpoint), false, true, false, None, None, None).await
     }
     pub async fn with_slow_check(label: &str) -> Self {
-        Self::build_options(label, None, true, false, true, None, None).await
+        Self::build_options(label, None, true, false, true, None, None, None).await
     }
     async fn build_options(
         label: &str,
@@ -58,6 +72,7 @@ impl Fixture {
         slow: bool,
         diagnostic_output: Option<&str>,
         personal_enabled: Option<bool>,
+        extensions: Option<&str>,
     ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let stamp = SystemTime::now()
@@ -120,6 +135,16 @@ impl Fixture {
         }
         if deadline {
             runtime.resolved.coding.max_elapsed_seconds = 1;
+        }
+        if let Some(extensions) = extensions {
+            let file = saya_config::ConfigFile::from_toml(extensions).unwrap();
+            runtime.resolved.coding.extensions = saya_config::resolve(
+                saya_config::ResolutionInput::new(saya_config::ConnectionsFile::default())
+                    .with_user(file),
+            )
+            .unwrap()
+            .coding
+            .extensions;
         }
         let personal_instructions = personal_enabled.map(|_| root.join("personal-instructions"));
         if let Some(output) = diagnostic_output {
