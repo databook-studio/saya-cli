@@ -25,21 +25,21 @@ pub struct ChildBudgetView {
 #[async_trait]
 impl EffectAdmission for RootBudgetView {
     async fn admit_model_request(&self) -> Result<EffectPermit, EffectAdmissionError> {
-        admission::admit_model(&mut self.inner.lock().await, None, None, None).await
+        admission::admit_model(&mut *self.inner.lock().await, None, None, None).await
     }
 
     async fn admit_tool_batch(
         &self,
         effects: &[ToolEffect],
     ) -> Result<Vec<EffectPermit>, EffectAdmissionError> {
-        super::tools::admit_tools(&mut self.inner.lock().await, effects, None, None, None).await
+        super::tools::admit_tools(&mut *self.inner.lock().await, effects, None, None, None).await
     }
 
     async fn admit_physical_attempt(
         &self,
         attempt: PhysicalAttempt,
     ) -> Result<EffectPermit, EffectAdmissionError> {
-        admission::admit_physical(&mut self.inner.lock().await, attempt, None, None, None).await
+        admission::admit_physical(&mut *self.inner.lock().await, attempt, None, None, None).await
     }
 
     async fn admit_physical_request(
@@ -47,7 +47,7 @@ impl EffectAdmission for RootBudgetView {
         attempt: PhysicalAttempt,
         request: Option<&saya_agent::PhysicalRequestMetadata>,
     ) -> Result<EffectPermit, EffectAdmissionError> {
-        admission::admit_physical(&mut self.inner.lock().await, attempt, None, None, request).await
+        admission::admit_physical(&mut *self.inner.lock().await, attempt, None, None, request).await
     }
 
     async fn observe_physical_attempt(
@@ -57,7 +57,7 @@ impl EffectAdmission for RootBudgetView {
         observation: saya_agent::PhysicalAttemptObservation,
     ) -> Result<(), EffectOwnerFailure> {
         super::transport::observe(
-            &mut self.inner.lock().await,
+            &mut *self.inner.lock().await,
             None,
             permit,
             attempt,
@@ -71,7 +71,7 @@ impl EffectAdmission for RootBudgetView {
         permit: EffectPermit,
         settlement: EffectSettlement,
     ) -> Result<(), EffectOwnerFailure> {
-        super::settlement::finish_effect(&mut self.inner.lock().await, None, permit, settlement)
+        super::settlement::finish_effect(&mut *self.inner.lock().await, None, permit, settlement)
             .await
     }
 }
@@ -176,7 +176,7 @@ impl EffectAdmission for ChildBudgetView {
         observation: saya_agent::PhysicalAttemptObservation,
     ) -> Result<(), EffectOwnerFailure> {
         super::transport::observe(
-            &mut self.inner.lock().await,
+            &mut *self.inner.lock().await,
             Some((&self.agent, &self.invocation)),
             permit,
             attempt,
@@ -191,7 +191,7 @@ impl EffectAdmission for ChildBudgetView {
         settlement: EffectSettlement,
     ) -> Result<(), EffectOwnerFailure> {
         super::settlement::finish_effect(
-            &mut self.inner.lock().await,
+            &mut *self.inner.lock().await,
             Some((&self.agent, &self.invocation)),
             permit,
             settlement,

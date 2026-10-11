@@ -128,7 +128,9 @@ fn plan_digest(plan_bytes: &[u8]) -> Result<Sha256Digest, PlanError> {
 }
 
 fn validate_path(path: &str) -> Result<(), PlanError> {
-    SnapshotPath::parse(path.to_owned()).map_err(|_| PlanError::UnsafePath)
+    SnapshotPath::parse(path.to_owned())
+        .map(|_| ())
+        .map_err(|_| PlanError::UnsafePath)
 }
 
 #[derive(Deserialize)]

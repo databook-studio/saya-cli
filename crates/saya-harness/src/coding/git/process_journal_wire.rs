@@ -43,7 +43,7 @@ fn request_kind(value: &str) -> Option<&'static str> {
     })
 }
 
-pub(super) struct JournalReceipt {
+pub(in crate::coding::git) struct JournalReceipt {
     pub(super) version: u32,
     pub(super) service_identity: String,
     pub(super) sequence: u64,
@@ -62,7 +62,7 @@ pub(super) struct JournalReceipt {
     pub(super) stderr_truncated: bool,
 }
 
-pub(super) enum JournalLine {
+pub(in crate::coding::git) enum JournalLine {
     Receipt(JournalReceipt),
     SessionStart(String),
     SessionClose(String),
@@ -106,7 +106,7 @@ struct WireSession {
     service_identity: String,
 }
 
-pub(super) fn decode_line(line: &[u8]) -> Option<Result<JournalLine, ()>> {
+pub(in crate::coding::git) fn decode_line(line: &[u8]) -> Option<Result<JournalLine, ()>> {
     if let Ok(marker) = serde_json::from_slice::<WireIncomplete>(line) {
         let _valid =
             marker.kind == "incomplete" && marker.reason == "bounded" && marker.version == VERSION;
@@ -129,7 +129,9 @@ pub(super) fn decode_line(line: &[u8]) -> Option<Result<JournalLine, ()>> {
     )
 }
 
-pub(super) fn encode_receipt(receipt: &GitProcessReceipt) -> Result<Vec<u8>, serde_json::Error> {
+pub(in crate::coding::git) fn encode_receipt(
+    receipt: &GitProcessReceipt,
+) -> Result<Vec<u8>, serde_json::Error> {
     let receipt = JournalReceipt::from(receipt);
     let value = serde_json::json!({
         "kind":"receipt", "version":receipt.version,

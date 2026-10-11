@@ -117,8 +117,7 @@ pub(super) async fn record_integrate_outcome(
             }
         })
         .await
-        .map(|_| ())
-        .map_err(Into::into)?;
+        .map(|_| ())?;
     Ok(())
 }
 

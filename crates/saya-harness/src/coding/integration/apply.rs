@@ -75,7 +75,7 @@ fn receipt_describes_delta(receipt: &ChangeReceipt, delta: &CheckoutDelta) -> bo
             .changes()
             .iter()
             .zip(delta.entries())
-            .all(pair_matches)
+            .all(|(change, entry)| pair_matches(change, entry))
 }
 
 fn pair_matches(change: &ReceiptChange, entry: &PathDelta) -> bool {
@@ -263,7 +263,7 @@ pub(super) fn apply_entry_with_mode(
 }
 
 /// The baseline digest for a path, failing closed when the baseline has none.
-fn baseline_hex(baseline: &CapturedSnapshot, path: &str) -> Result<&str, ApplyError> {
+fn baseline_hex<'a>(baseline: &'a CapturedSnapshot, path: &str) -> Result<&'a str, ApplyError> {
     baseline
         .entries()
         .iter()
