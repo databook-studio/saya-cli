@@ -76,30 +76,38 @@ fn redact_markers(value: &str) -> String {
         };
         output.push_str(&value[cursor..start + marker.len()]);
         let value_start = start + marker.len();
-        let rest = &value[value_start..];
-        let end = match rest.chars().next() {
-            Some(quote @ ('"' | '\'')) => {
-                let after_open = value_start + quote.len_utf8();
-                value[after_open..]
-                    .find(quote)
-                    .map(|offset| after_open + offset + quote.len_utf8())
-                    .unwrap_or(value.len())
-            }
-            _ => rest
-                .find(|character: char| {
-                    character.is_whitespace()
-                        || character == '&'
-                        || character == ';'
-                        || character == '"'
-                })
-                .map(|offset| value_start + offset)
-                .unwrap_or(value.len()),
-        };
+        let end = bounded_value_end(value, value_start);
         output.push_str("[redacted]");
         cursor = end;
     }
     output.push_str(&value[cursor..]);
     output
+}
+
+/// End (byte offset) of the secret value that starts at `start`. A value
+/// that starts with a quote ends after its matching closing quote (or at the
+/// end of the input when unterminated: fail closed); an unquoted value ends
+/// at whitespace, `&`, `;` or a closing `"`.
+pub(super) fn bounded_value_end(value: &str, start: usize) -> usize {
+    let rest = &value[start..];
+    match rest.chars().next() {
+        Some(quote @ ('"' | '\'')) => {
+            let after_open = start + quote.len_utf8();
+            value[after_open..]
+                .find(quote)
+                .map(|offset| after_open + offset + quote.len_utf8())
+                .unwrap_or(value.len())
+        }
+        _ => rest
+            .find(|character: char| {
+                character.is_whitespace()
+                    || character == '&'
+                    || character == ';'
+                    || character == '"'
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(value.len()),
+    }
 }
 
 fn redact_urls(value: &str) -> String {

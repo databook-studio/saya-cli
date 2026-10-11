@@ -9,10 +9,8 @@ fn marker_inside_a_json_string_does_not_swallow_the_rest_of_the_line() {
     // A marker value inside a compact JSON string has no whitespace before
     // the value ends: the enclosing `"` is the value's terminator, and
     // everything after it is ordinary, non-secret text. Pinned on the marker
-    // pass, which owns this rule — the credential-named env-assignment pass
-    // shares the value boundary and still consumes such a value first
-    // through the full chain (reported blocked; its file is outside this
-    // task's ownership).
+    // pass, which shares the bounded-value rule with the env-assignment
+    // pass; chain_boundary.rs proves the same output through `redact()`.
     assert_eq!(
         redact_markers("{\"message\":\"password=zz\",\"code\":\"E0425\",\"spans\":[1]}"),
         "{\"message\":\"password=[redacted]\",\"code\":\"E0425\",\"spans\":[1]}"
@@ -33,8 +31,8 @@ fn marker_redaction_preserves_following_json_lines() {
 fn quoted_value_with_a_space_is_fully_redacted() {
     // A quoted value redacts through its closing quote — stopping at the
     // opening quote would leak `s3cr et` piecewise. Pinned on the marker
-    // pass, which owns this rule (see the JSON-string test above for why the
-    // full chain is not the proof layer here).
+    // pass, which shares the bounded-value rule with the env-assignment
+    // pass; chain_boundary.rs proves the same output through `redact()`.
     let out = redact_markers("password=\"s3cr et\" next");
     assert_eq!(out, "password=[redacted] next", "{out:?}");
     assert!(!out.contains("s3cr") && !out.contains("et"), "{out:?}");
@@ -70,10 +68,8 @@ struct AdversarialCase {
     secret_fragments: &'static [&'static str],
     tail: Option<&'static str>,
     count: Option<usize>,
-    /// Pinned through the marker pass alone: the credential-named
-    /// env-assignment pass shares the value boundary and still consumes such
-    /// a value first through the full chain (reported blocked; its file is
-    /// outside this task's ownership).
+    /// Pinned through the marker pass alone, at the pass boundary itself;
+    /// chain_boundary.rs proves the same shapes through the public chain.
     marker_pass_only: bool,
 }
 
@@ -146,8 +142,7 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
             Some(1),
         ),
         // A quoted value holding a multibyte character and a space. Pinned
-        // through the marker pass: the env-assignment pass consumes this
-        // value first through the full chain (reported blocked).
+        // through the marker pass; chain_boundary.rs covers the full chain.
         marker_pass_only(
             "password=\"é ü\" ok",
             Some("password=[redacted] ok"),
@@ -164,7 +159,8 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
         ),
         // A marker value inside a JSON string: the closing `"` of the
         // enclosing string ends the value, the rest of the object survives.
-        // Pinned through the marker pass (same env-pass block as above).
+        // Pinned through the marker pass; chain_boundary.rs covers the full
+        // chain.
         marker_pass_only(
             "{\"m\":\"token=ab\"}",
             Some("{\"m\":\"token=[redacted]\"}"),
