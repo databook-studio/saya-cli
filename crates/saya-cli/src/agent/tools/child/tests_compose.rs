@@ -24,6 +24,11 @@ fn record_directory_inside_checkout_is_refused() {
     fs::create_dir_all(&checkout).unwrap();
     let records = checkout.join("records");
     fs::create_dir_all(&records).unwrap();
+    // The production contract hands in an already-canonical record dir (the
+    // caller's `trusted_record_dir`); the macOS temp dir sits behind a
+    // `/var/folders` symlink, so the fixture canonicalizes like the sibling
+    // test does.
+    let records = records.canonicalize().unwrap();
 
     let error = ensure_record_dir_outside_checkout(&records, &checkout).unwrap_err();
 
