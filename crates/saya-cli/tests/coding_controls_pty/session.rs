@@ -39,9 +39,9 @@ impl Session {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("home")).unwrap();
+        fs::create_dir_all(root.join("home/saya")).unwrap();
         fs::create_dir_all(root.join("repo")).unwrap();
-        fs::write(root.join("home/config.toml"), config).unwrap();
+        fs::write(root.join("home/saya/config.toml"), config).unwrap();
         let git = Command::new("git")
             .args(["init", "--quiet"])
             .current_dir(root.join("repo"))
@@ -75,11 +75,8 @@ impl Session {
                 pixel_height: 0,
             })
             .unwrap();
-        let config_path = root.join("home/config.toml");
         let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_saya"));
         command.args([
-            "--config",
-            config_path.to_str().unwrap(),
             "--workspace",
             root.join("repo").to_str().unwrap(),
             "--approval-mode",
