@@ -1,4 +1,5 @@
 #![cfg(unix)]
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[path = "extension_support.rs"]
 mod support;
 #[path = "x03_support.rs"]

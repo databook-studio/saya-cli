@@ -236,5 +236,6 @@ fn public_constructors_enforce_path_and_profile_set_bounds() {
     );
 }
 
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[path = "approval_support.rs"]
 mod approval_support;
