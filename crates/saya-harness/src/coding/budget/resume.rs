@@ -69,6 +69,7 @@ pub(super) async fn resume_ledger(
     let started = Instant::now();
     let cancellation = CancellationToken::new();
     Ok(JobBudgetLedger {
+        schedule: Arc::new(tokio::sync::Semaphore::new(1)),
         inner: Arc::new(Mutex::new(State {
             store,
             job,

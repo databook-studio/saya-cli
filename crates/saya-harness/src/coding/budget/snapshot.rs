@@ -4,6 +4,11 @@ use saya_types::JobId;
 use std::time::Duration;
 
 impl JobBudgetLedger {
+    /// Authenticated owner ceilings, including the policy restored on resume.
+    pub async fn limits(&self) -> super::CountLimits {
+        self.inner.lock().await.limits
+    }
+
     pub async fn snapshot(&self) -> BudgetSnapshot {
         let state = self.inner.lock().await;
         let mut view = state.snapshot.clone();
