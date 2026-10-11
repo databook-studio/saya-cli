@@ -68,12 +68,18 @@ async fn continuation_context_compacts_large_history_without_losing_durable_iden
         .await
         .unwrap();
     assert!(second_page.next_cursor.is_none());
-    let unaccepted = first_page
+    let unaccepted_items: Vec<_> = first_page
         .items
         .iter()
         .chain(second_page.items.iter())
         .filter(|item| !item.acknowledged)
-        .count();
+        .collect();
+    let unaccepted = unaccepted_items.len();
+    assert!(unaccepted > 0, "the replay needs at least one open result");
+    let unaccepted_sequences: Vec<u64> = unaccepted_items
+        .iter()
+        .map(|item| item.sequence.get())
+        .collect();
     append_large_pending_tasks(&fixture, job.job_id());
 
     let approval = CodingAuthorization::scoped(
@@ -128,6 +134,32 @@ async fn continuation_context_compacts_large_history_without_losing_durable_iden
             .any(|decision| decision["sequence"] == later_accepted.get())
     );
     assert_eq!(body["omitted"]["unaccepted_decisions"], json!(unaccepted));
+    // Unaccepted results replay by their stable identity, so the resumed
+    // root can read each one with `coding_result`; replay carries no answer
+    // content and no authority.
+    let replayed = body["unaccepted_findings"].as_array().unwrap();
+    assert_eq!(
+        replayed
+            .iter()
+            .map(|finding| finding["sequence"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        unaccepted_sequences
+            .iter()
+            .copied()
+            .take(32)
+            .collect::<Vec<_>>(),
+        "replay lists the oldest open results first, bounded to 32"
+    );
+    assert!(replayed.iter().all(|finding| {
+        finding["agent_id"].is_string()
+            && finding["outcome"].is_string()
+            && finding.get("answer").is_none()
+            && finding.get("content").is_none()
+    }));
+    assert_eq!(
+        body["omitted"]["unaccepted_findings"],
+        json!(unaccepted.saturating_sub(32))
+    );
     assert_eq!(
         body["pending_conflicts"][0]["record_sha256"],
         conflict["provenance"]["record_sha256"]

@@ -138,6 +138,8 @@ impl NativeCodingJob {
     ) -> Result<Vec<saya_agent::ContextBlock>, CodingError> {
         let (pending_tasks, task_history_bytes, completed_tasks) = self.pending_tasks().await?;
         let (accepted_decisions, unaccepted_decisions) = self.accepted_decisions().await?;
+        let (unaccepted_findings, omitted_findings) =
+            self.unaccepted_findings(unaccepted_decisions).await?;
         let pending_conflicts = self.pending_conflicts()?;
         let budget = self.ledger.snapshot().await;
         let body = bounded_body(json!({
@@ -147,6 +149,7 @@ impl NativeCodingJob {
             "plan_sha256": self.plan.manifest_sha256(),
             "pending_tasks": pending_tasks,
             "accepted_decisions": accepted_decisions,
+            "unaccepted_findings": unaccepted_findings,
             "pending_conflicts": pending_conflicts,
             "budget": {
                 "charged_model_requests": budget.logical_requests,
@@ -157,6 +160,7 @@ impl NativeCodingJob {
                 "task_history_bytes": task_history_bytes,
                 "completed_tasks": completed_tasks,
                 "unaccepted_decisions": unaccepted_decisions,
+                "unaccepted_findings": omitted_findings,
                 "accepted_decision_content": 0
             }
         }))?;

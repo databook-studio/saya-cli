@@ -24,6 +24,7 @@ pub use delegate::CodingTask;
 mod conflicts;
 mod context;
 mod continuation;
+mod continuation_findings;
 mod host;
 mod integrate;
 mod notes;
