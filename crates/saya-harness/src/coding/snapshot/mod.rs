@@ -5,6 +5,7 @@ mod facts;
 mod manifest;
 mod materialize_target;
 mod policy;
+mod restore;
 mod select;
 mod select_support;
 mod types;

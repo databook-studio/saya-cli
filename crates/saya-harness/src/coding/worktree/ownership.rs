@@ -115,6 +115,14 @@ pub async fn verify_owned_checkout(
     input: &OwnershipInput<'_>,
     cancellation: &CancellationToken,
 ) -> Result<VerifiedCheckout, OwnershipError> {
+    verify_checkout_state(input, cancellation, ManagedCheckoutLifecycle::Active).await
+}
+
+pub(super) async fn verify_checkout_state(
+    input: &OwnershipInput<'_>,
+    cancellation: &CancellationToken,
+    expected: ManagedCheckoutLifecycle,
+) -> Result<VerifiedCheckout, OwnershipError> {
     if let Some(owner) = input
         .store
         .managed_checkout_owner(input.checkout_id)
@@ -131,7 +139,7 @@ pub async fn verify_owned_checkout(
     else {
         return Err(OwnershipError::NotFound);
     };
-    if record.current_lifecycle != ManagedCheckoutLifecycle::Active {
+    if record.current_lifecycle != expected {
         return Err(OwnershipError::NotActive);
     }
     if record.ownership.managed_path() != &input.service.managed_path(input.checkout_id)? {

@@ -14,6 +14,11 @@ mod index;
 mod load;
 mod load_error;
 mod metadata;
+mod resources;
+pub use resources::{
+    MAX_SKILL_RESOURCE_BYTES, MAX_SKILL_RESOURCES, MAX_SKILL_TOTAL_RESOURCE_BYTES, SkillResource,
+    load_skill_resources,
+};
 
 pub use index::discover_skills;
 pub use load::{MAX_SKILL_BODY_BYTES, SkillBody, load_skill_body};

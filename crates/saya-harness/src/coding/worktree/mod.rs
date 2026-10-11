@@ -98,3 +98,11 @@ pub use create::{CreateCheckoutInput, CreatedCheckout, create_managed_checkout};
 pub use create_error::CreateCheckoutError;
 pub use environment::{ChildEnvironment, ChildEnvironmentError, ChildNetworkPolicy};
 pub use ownership::{OwnershipError, OwnershipInput, VerifiedCheckout, verify_owned_checkout};
+
+mod cleanup;
+mod reconcile;
+mod repair;
+mod retention;
+pub use cleanup::{CleanupError, CleanupInput, cleanup_managed_checkout};
+pub use reconcile::{CheckoutReconciliation, reconcile_managed_checkout};
+pub use retention::{RetainedCheckout, retain_managed_checkout};
