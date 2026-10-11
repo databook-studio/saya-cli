@@ -13,6 +13,11 @@ pub enum CommandSessionError {
     Join(#[source] tokio::task::JoinError),
     #[error("command owner stopped before runner dispatch")]
     CancelledBeforeStart,
+    #[error("command owner stopped a session whose runner refused before any process existed")]
+    StoppedBeforeSpawn {
+        #[source]
+        source: RunnerError,
+    },
     #[error(
         "command exited after only {written_bytes} of {accepted_bytes} queued stdin bytes reached its pipe"
     )]
