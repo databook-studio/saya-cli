@@ -104,9 +104,7 @@ pub(super) fn update_usage_coverage(
     }
     state.snapshot.usage_coverage = if state.usage_ever_unknown {
         UsageCoverage::Unknown
-    } else if state.usage_ever_incomplete {
-        UsageCoverage::Partial
-    } else if state.pending_physical_attempts() > 0 {
+    } else if state.usage_ever_incomplete || state.pending_physical_attempts() > 0 {
         UsageCoverage::Partial
     } else if reported {
         UsageCoverage::Complete

@@ -3,10 +3,7 @@ use saya_agent::{
     AgentError, AgentRunControl, CancellationReason, CancellationToken, EffectAdmission,
     EffectAdmissionError, EffectOutcome, run_agent_with_control,
 };
-use std::{
-    sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 use thiserror::Error;
 
 use super::super::{
@@ -227,10 +224,10 @@ async fn run_child_inner(
             reason: CancellationReason::User,
         });
     }
-    if matches!(&result, Err(AgentError::Cancelled)) {
-        if let Some(reason) = reason {
-            return Err(ChildRunError::Cancelled { reason });
-        }
+    if matches!(&result, Err(AgentError::Cancelled))
+        && let Some(reason) = reason
+    {
+        return Err(ChildRunError::Cancelled { reason });
     }
     result.map_err(ChildRunError::Agent)
 }

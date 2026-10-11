@@ -84,7 +84,7 @@ pub(super) async fn admit_one(
             invocation,
         },
     );
-    Ok(effect_permit(id)?)
+    effect_permit(id)
 }
 
 pub(super) async fn admit_model(
@@ -136,7 +136,7 @@ pub(super) async fn admit_model(
             invocation,
         },
     );
-    Ok(effect_permit(id)?)
+    effect_permit(id)
 }
 
 pub(super) async fn admit_physical(
@@ -211,5 +211,5 @@ pub(super) async fn admit_physical(
             invocation,
         },
     );
-    Ok(effect_permit(id)?)
+    effect_permit(id)
 }

@@ -13,28 +13,6 @@ use super::stdin_channel::StdinInputPipe;
 
 const WRITER_POLL: Duration = Duration::from_millis(2);
 
-#[cfg(test)]
-mod tests {
-    use crate::runner::stdin_channel::{StdinSendError, input_channel};
-    use saya_agent::CancellationToken;
-
-    use super::StdinDelivery;
-
-    #[test]
-    fn setup_failure_closes_queue_with_exact_accepted_count() {
-        let (sender, pipe) = input_channel(CancellationToken::new());
-        assert!(matches!(sender.try_send(b"accepted"), Ok(8)));
-
-        let failure = StdinDelivery::failed(&pipe, std::io::Error::other("setup failed"));
-
-        assert_eq!(failure.accepted_bytes, 8);
-        assert!(matches!(
-            sender.try_send(b"racing input"),
-            Err(StdinSendError::Closed)
-        ));
-    }
-}
-
 pub(crate) struct StdinDelivery {
     pub(crate) accepted_bytes: usize,
     pub(crate) written_bytes: usize,
@@ -189,4 +167,26 @@ fn set_nonblocking(_stdin: &ChildStdin) -> io::Result<()> {
         io::ErrorKind::Unsupported,
         "post-spawn command stdin requires Unix nonblocking pipes",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::runner::stdin_channel::{StdinSendError, input_channel};
+    use saya_agent::CancellationToken;
+
+    use super::StdinDelivery;
+
+    #[test]
+    fn setup_failure_closes_queue_with_exact_accepted_count() {
+        let (sender, pipe) = input_channel(CancellationToken::new());
+        assert!(matches!(sender.try_send(b"accepted"), Ok(8)));
+
+        let failure = StdinDelivery::failed(&pipe, std::io::Error::other("setup failed"));
+
+        assert_eq!(failure.accepted_bytes, 8);
+        assert!(matches!(
+            sender.try_send(b"racing input"),
+            Err(StdinSendError::Closed)
+        ));
+    }
 }
