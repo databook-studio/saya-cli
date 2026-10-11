@@ -70,14 +70,15 @@ impl Provider {
                 let actor = body
                     .split("UNTRUSTED CHILD TASK")
                     .nth(1)
-                    .and_then(|task| task.split("write for child-").nth(1))
+                    .and_then(|task| task.split("write for ").nth(1))
                     .map(|tail| {
-                        let end = tail
+                        let suffix = tail.strip_prefix("child-")?;
+                        let end = suffix
                             .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
-                            .unwrap_or(tail.len());
-                        format!("child-{}", &tail[..end])
+                            .unwrap_or(suffix.len());
+                        (end > 0).then_some(&tail[.."child-".len() + end])
                     })
-                    .filter(|task| task.len() > "child-".len())
+                    .flatten()
                     .unwrap_or("parent");
                 let stage = turns.entry(actor.into()).or_default();
                 let current = *stage;
