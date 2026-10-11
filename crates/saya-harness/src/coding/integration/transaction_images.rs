@@ -74,9 +74,15 @@ impl BeforeImageStore {
     }
 
     /// Returns the bytes previously captured for `rel`.
-    #[allow(dead_code)] // consumed by W11b recovery
-    pub(super) fn load(&self, rel: &str) -> Result<Vec<u8>, JournalError> {
-        fs::read(self.dir.join(sha_hex(rel.as_bytes()))).map_err(|_| JournalError::Io)
+    pub(super) fn load(&self, rel: &str, expected: &Sha256Digest) -> Result<Vec<u8>, JournalError> {
+        let store = Workspace::open(&self.dir).map_err(|_| JournalError::Io)?;
+        let read = store
+            .read(&sha_hex(rel.as_bytes()), MAX_IO_BYTES as u64)
+            .map_err(|_| JournalError::Io)?;
+        if read.truncated || read.digest != expected.as_str() {
+            return Err(JournalError::BeforeImageMismatch);
+        }
+        Ok(read.bytes)
     }
 }
 
