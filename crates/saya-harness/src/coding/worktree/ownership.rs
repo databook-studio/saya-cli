@@ -120,6 +120,28 @@ pub async fn verify_owned_checkout(
     verify_checkout_state(input, cancellation, ManagedCheckoutLifecycle::Active).await
 }
 
+/// Verifies ownership for a checkout admitted to apply-back work. The durable
+/// lifecycle must be [`ManagedCheckoutLifecycle::Active`] or
+/// [`ManagedCheckoutLifecycle::Retained`] — an open or settled apply-back or
+/// candidate integration retains the checkout — and the record's current
+/// lifecycle is the verification expectation, never a caller claim. Read-only
+/// like [`verify_owned_checkout`].
+pub async fn verify_admitted_checkout(
+    input: &OwnershipInput<'_>,
+    cancellation: &CancellationToken,
+) -> Result<VerifiedCheckout, OwnershipError> {
+    let record = input
+        .store
+        .get_managed_checkout(input.job_id, input.checkout_id)
+        .await?
+        .ok_or(OwnershipError::NotFound)?;
+    match record.current_lifecycle {
+        ManagedCheckoutLifecycle::Active | ManagedCheckoutLifecycle::Retained => {}
+        _ => return Err(OwnershipError::NotActive),
+    }
+    verify_checkout_state(input, cancellation, record.current_lifecycle).await
+}
+
 pub(super) async fn verify_checkout_state(
     input: &OwnershipInput<'_>,
     cancellation: &CancellationToken,
