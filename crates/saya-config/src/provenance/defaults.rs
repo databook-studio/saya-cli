@@ -66,6 +66,8 @@ const CODING: &[&str] = &[
     "coding.max_tool_calls",
     "coding.max_known_tokens",
     "coding.max_elapsed_seconds",
+    "coding.extensions",
+    "coding.check_profiles",
 ];
 
 /// After resolution, every user-facing key with no recorded origin is a
