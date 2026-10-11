@@ -133,11 +133,11 @@ impl NativeCodingJob {
                 if published.is_none() {
                     DiagnosticDeltaState::Unavailable("baseline_unavailable")
                 } else {
-                    self.compare_stored_baseline(evidence, &path, &ownership)
+                    self.compare_stored_baseline(evidence, path, &ownership)
                         .await
                 }
             } else {
-                self.mint_baseline(evidence, &path, &publication, &ownership)
+                self.mint_baseline(evidence, path, &publication, &ownership)
                     .await
             };
             states.push(Some(state));
@@ -263,11 +263,9 @@ fn read_publication(path: &Path, paths: &[PathBuf]) -> Option<BaselinePublicatio
         return None;
     }
     for entry in &publication.baselines {
-        let Some(path) = paths.iter().find(|path| {
+        let path = paths.iter().find(|path| {
             path.file_name().and_then(|name| name.to_str()) == Some(entry.path.as_str())
-        }) else {
-            return None;
-        };
+        })?;
         let bytes = super::context::read(path, MAX_DIAGNOSTIC_BASELINE_BYTES).ok()?;
         if bytes.len() != entry.bytes || super::create::digest(&bytes).ok()? != entry.sha256 {
             return None;

@@ -8,9 +8,12 @@ use saya_types::AgentId;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::{sync::mpsc, task::JoinHandle};
 
+type ScheduleHandle =
+    Arc<tokio::sync::Mutex<Option<JoinHandle<Result<ScheduleReport, CodingError>>>>>;
+
 pub(super) struct LiveSchedule {
     controls: BTreeMap<AgentId, ChildControl>,
-    handle: Arc<tokio::sync::Mutex<Option<JoinHandle<Result<ScheduleReport, CodingError>>>>>,
+    handle: ScheduleHandle,
 }
 impl NativeCodingJob {
     pub async fn delegate(

@@ -18,8 +18,10 @@ mod tests_loop;
 #[cfg(test)]
 mod tests_runner;
 
-pub(crate) use compose::{ChildComposeError, ChildComposeRequest, ChildComposition, compose_child};
-pub(crate) use executor::{ChildTools, child_toolset, child_toolset_with_runner};
+pub(crate) use compose::{ChildComposeRequest, compose_child};
+#[cfg(test)]
+pub(crate) use executor::ChildTools;
+pub(crate) use executor::{child_toolset, child_toolset_with_runner};
 pub(crate) use factory::CliChildFactory;
 
 use std::path::Path;
