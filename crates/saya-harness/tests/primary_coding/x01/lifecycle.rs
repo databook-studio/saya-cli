@@ -17,7 +17,7 @@ async fn mcp_transport_refuses_dead_malformed_wrong_id_and_oversized_servers() {
         let fixture = support::Fixture::new();
         assert!(matches!(
             McpClient::connect(fixture.config(script), &CancellationToken::new()).await,
-            Err(ExtensionError::Protocol | ExtensionError::Limit | ExtensionError::Process(_))
+            Err(ExtensionError::Protocol | ExtensionError::Limit | ExtensionError::Process)
         ));
     }
 }
@@ -33,11 +33,26 @@ read list
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}'
 read call
 printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[]}}'
+sleep 30
 "#);
     let token = CancellationToken::new();
     let mut client = McpClient::connect(config, &token).await.unwrap();
     client.list_tools(&token).await.unwrap();
-    assert!(client.shutdown_with_receipt().await.unwrap().joined);
+    let policy = McpPolicy::new([("read".into(), McpToolEffect::ReadOnly)].into()).unwrap();
+    let result = client
+        .call_tool("read", &json!({}), &policy, &token)
+        .await
+        .unwrap();
+    assert_eq!(result["content"], json!([]));
+    let receipt = client.shutdown_with_receipt().await.unwrap();
+    assert!(receipt.joined);
+    assert_ne!(receipt.pid, 0);
+    assert!(receipt.exit_code.is_some() || receipt.signal.is_some());
+    assert_eq!(unsafe { libc::kill(receipt.pid as libc::pid_t, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 }
 
 #[tokio::test]
@@ -88,11 +103,12 @@ read initialized; read list; printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"t
 #[tokio::test]
 async fn mcp_live_call_cancellation_uses_public_process_owner() {
     let fixture = support::Fixture::new();
+    let observer = std::sync::Arc::new(super::ObservedProcesses::default());
     let config = fixture.config(r#"
 read init; printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}'
 read initialized; read list; printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}'
 read call; sleep 30
-"#);
+"#).with_observer(observer.clone());
     let token = CancellationToken::new();
     let mut client = McpClient::connect(config, &token).await.unwrap();
     client.list_tools(&token).await.unwrap();
@@ -106,4 +122,19 @@ read call; sleep 30
         task.await.unwrap(),
         Err(ExtensionError::Cancelled)
     ));
+    let events = observer.0.lock().unwrap();
+    let [
+        saya_harness::coding::extensions::ExtensionProcessEvent::Spawned { pid },
+        saya_harness::coding::extensions::ExtensionProcessEvent::Settled(receipt),
+    ] = events.as_slice()
+    else {
+        panic!("one actual process must be started and settled: {events:?}");
+    };
+    assert_eq!(*pid, receipt.pid);
+    assert!(receipt.joined);
+    assert_eq!(unsafe { libc::kill(*pid as libc::pid_t, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
 }
