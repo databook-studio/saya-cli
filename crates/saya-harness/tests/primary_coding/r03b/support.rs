@@ -126,7 +126,7 @@ impl Fixture {
             NEXT_ROOT.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir(&root).unwrap();
-        let store = SqliteStateStore::new(&root.join("state.sqlite3"));
+        let store = SqliteStateStore::new(root.join("state.sqlite3"));
         let job = JobId::parse("job-a").unwrap();
         let repository = RepositoryId::parse("repository-a").unwrap();
         let snapshot = SnapshotId::parse("snapshot-a").unwrap();
@@ -229,7 +229,7 @@ impl Fixture {
     }
 
     pub fn reopen(&self) -> SqliteStateStore {
-        SqliteStateStore::new(&self.root.join("state.sqlite3"))
+        SqliteStateStore::new(self.root.join("state.sqlite3"))
     }
 }
 
