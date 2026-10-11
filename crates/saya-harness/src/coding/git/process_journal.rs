@@ -141,7 +141,7 @@ impl GitProcessJournal {
         result
     }
 
-    fn lock<T>(&self, mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    fn lock<'a, T>(&self, mutex: &'a Mutex<T>) -> std::sync::MutexGuard<'a, T> {
         mutex
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -250,7 +250,7 @@ fn read_records(
     let mut closed_sessions = HashSet::new();
     let mut open_sessions = HashSet::new();
     let mut records = 0;
-    let mut valid_bytes = 0;
+    let mut valid_bytes: usize = 0;
     let mut incomplete = false;
     for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
         if records >= MAX_RECORDS {

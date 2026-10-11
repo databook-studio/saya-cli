@@ -175,6 +175,10 @@ impl JobEventSequencer {
                 state.owner_failure();
                 Err(SequencerError::AlreadyPresent(actual.get()))
             }
+            Ok(_) => {
+                state.owner_failure();
+                Err(SequencerError::Conflict(allocated.get()))
+            }
             Err(StoreError::Conflict) => {
                 state.owner_failure();
                 Err(SequencerError::Conflict(allocated.get()))

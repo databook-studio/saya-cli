@@ -4,6 +4,7 @@ use saya_types::{GitObjectId, RepositoryId, Sha256Digest, SnapshotId};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use super::facts::{SnapshotChange, SnapshotStatusFact};
 use super::types::*;
 
 #[derive(Serialize)]

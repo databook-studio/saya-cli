@@ -6,6 +6,7 @@
 use saya_types::JobId;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::NonZeroU64;
+use std::path::Path;
 
 use serde_json::{Value, json};
 

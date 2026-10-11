@@ -92,7 +92,7 @@ pub(super) async fn verify_heads(
     budget.add_output(&output.stdout)?;
     let output = require_success(output, GitOperation::Read).map_err(GitInventoryError::Git)?;
     let lines: Vec<_> = output.stdout.split(|byte| *byte == b'\n').collect();
-    if lines.len() != heads.len() + 1 || lines.last() != Some(&b""[..]) {
+    if lines.len() != heads.len() + 1 || lines.last() != Some(&&b""[..]) {
         return Err(GitInventoryError::MalformedOutput);
     }
     for (line, expected) in lines.iter().take(heads.len()).zip(heads) {

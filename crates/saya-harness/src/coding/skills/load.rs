@@ -164,8 +164,9 @@ fn read_snapshot(file: std::fs::File) -> Result<Vec<u8>, SkillLoadError> {
         else {
             return Err(SkillLoadError::TooLarge { max: cap });
         };
+        let take = remaining.min(chunk.len());
         let read = (&file)
-            .read(&mut chunk[..remaining.min(chunk.len())])
+            .read(&mut chunk[..take])
             .map_err(|_| SkillLoadError::Unreadable)?;
         if read == 0 {
             break;

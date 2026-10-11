@@ -169,8 +169,7 @@ pub(super) async fn record_outcome(
             }
         })
         .await
-        .map(|_| ())
-        .map_err(Into::into)?;
+        .map(|_| ())?;
     Ok(())
 }
 

@@ -45,6 +45,9 @@ pub(super) fn failure_code(error: &AgentError) -> RunFailureCode {
     match error {
         AgentError::Provider(_) | AgentError::Limit(_) => RunFailureCode::Provider,
         AgentError::InvalidToolCall | AgentError::InvalidHistory => RunFailureCode::Provider,
+        AgentError::EffectAdmissionDenied
+        | AgentError::UnsupportedPhysicalCoverage
+        | AgentError::EffectOwnerFailure(_) => RunFailureCode::Provider,
         // Unreachable in the driver's flow; the match must be total.
         AgentError::Cancelled => RunFailureCode::Provider,
     }

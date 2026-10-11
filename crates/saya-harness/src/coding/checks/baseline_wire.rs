@@ -59,10 +59,11 @@ impl PersistedDiagnosticBaseline {
         baseline: &DiagnosticBaseline<'_>,
     ) -> Result<Self, DiagnosticEvidenceError> {
         let evidence = baseline.evidence();
-        let diagnostics = evidence
-            .diagnostics()
-            .map_err(|_| DiagnosticEvidenceError::Incomplete)?
-            .map(redacted_diagnostics);
+        let diagnostics = redacted_diagnostics(
+            evidence
+                .diagnostics()
+                .map_err(|_| DiagnosticEvidenceError::Incomplete)?,
+        );
         Ok(Self {
             key: BaselineIdentity::from_receipt(evidence),
             format: evidence.format(),
@@ -226,15 +227,17 @@ fn receipt_identity_digest(receipt: &CheckReceipt) -> Sha256Digest {
         receipt.wire.argv_sha256(),
         receipt.wire.environment_profile(),
         receipt.lineage.checkout.as_str(),
-        receipt.lineage.path.as_str(),
-        receipt.lineage.repository.as_str(),
-        receipt.lineage.snapshot.as_str(),
-        receipt.lineage.snapshot_sha256.as_str(),
-        receipt.lineage.plan_sha256.as_str(),
-        receipt.lineage.base.as_str(),
-        receipt.lineage.agent.as_ref().map(|agent| agent.as_str()),
-        receipt.lineage.policy.as_str(),
-        receipt.lineage.epoch,
+        (
+            receipt.lineage.path.as_str(),
+            receipt.lineage.repository.as_str(),
+            receipt.lineage.snapshot.as_str(),
+            receipt.lineage.snapshot_sha256.as_str(),
+            receipt.lineage.plan_sha256.as_str(),
+            receipt.lineage.base.as_str(),
+            receipt.lineage.agent.as_ref().map(|agent| agent.as_str()),
+            receipt.lineage.policy.as_str(),
+            receipt.lineage.epoch,
+        ),
     ))
     .expect("receipt identity serializes");
     let digest = Sha256::digest(bytes);
@@ -306,6 +309,7 @@ impl WireDiagnostic {
         {
             return Err(DiagnosticBaselineWireError::Malformed);
         }
+        let had_code = self.code.is_some();
         let code = self.code.filter(|code| {
             !code.is_empty()
                 && code.len() <= MAX_CODE_BYTES
@@ -313,7 +317,7 @@ impl WireDiagnostic {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b':' | b'-'))
         });
-        if self.code.is_some() && code.is_none() {
+        if had_code && code.is_none() {
             return Err(DiagnosticBaselineWireError::Malformed);
         }
         let locations = self

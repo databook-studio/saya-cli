@@ -195,7 +195,7 @@ fn copy_entry(
     total: &mut u64,
     cancellation: &CancellationToken,
 ) -> Result<u64, SnapshotError> {
-    let object = open_object(root_dir, snapshot_id, entry.content_sha256())?;
+    let mut object = open_object(root_dir, snapshot_id, entry.content_sha256())?;
     let mut out = writer.create_file(entry.path(), entry.mode())?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; CHUNK_BYTES];

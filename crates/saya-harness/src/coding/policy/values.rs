@@ -77,14 +77,14 @@ pub(super) fn validate_capabilities(
             .map(|(role, endpoint)| (role.clone(), endpoint.clone())),
     )
     .map_err(|_| AuthorityError::InvalidCapabilityShape)?;
-    Ok(Capabilities {
-        workspace_write: capabilities.workspace_write,
-        fetch,
-        runner,
-        interpreter,
-        scratch: capabilities.scratch,
-        endpoints,
-    })
+    let mut validated = Capabilities::default();
+    validated.workspace_write = capabilities.workspace_write;
+    validated.fetch = fetch;
+    validated.runner = runner;
+    validated.interpreter = interpreter;
+    validated.scratch = capabilities.scratch;
+    validated.endpoints = endpoints;
+    Ok(validated)
 }
 
 fn validate_fetch(scope: &FetchScope) -> Result<FetchScope, AuthorityError> {
@@ -181,14 +181,14 @@ fn intersect_capabilities(
         },
     ))
     .map_err(|_| AuthorityError::InvalidCapabilityShape)?;
-    Ok(Capabilities {
-        workspace_write: false,
-        fetch,
-        runner,
-        interpreter,
-        scratch: false,
-        endpoints,
-    })
+    let mut intersected = Capabilities::default();
+    intersected.workspace_write = false;
+    intersected.fetch = fetch;
+    intersected.runner = runner;
+    intersected.interpreter = interpreter;
+    intersected.scratch = false;
+    intersected.endpoints = endpoints;
+    Ok(intersected)
 }
 
 fn intersect_fetch(root: &Capabilities, request: &Capabilities) -> Option<FetchScope> {
