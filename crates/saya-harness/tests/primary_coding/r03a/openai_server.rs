@@ -177,7 +177,7 @@ fn response(status: u16, content_type: &str, body: &[u8]) -> Vec<u8> {
 pub(super) const TOOL_RESPONSE: &str = concat!(
     "data: {\"choices\":[{\"delta\":{\"tool_calls\":[",
     "{\"index\":0,\"id\":\"call-0\",\"function\":{\"name\":\"inspect\",\"arguments\":\"{}\"}}",
-    "],\"finish_reason\":\"tool_calls\"}]}\n\n",
+    "]},\"finish_reason\":\"tool_calls\"}]}\n\n",
     "data: [DONE]\n\n",
 );
 
@@ -185,7 +185,7 @@ pub(super) const TWO_TOOL_RESPONSE: &str = concat!(
     "data: {\"choices\":[{\"delta\":{\"tool_calls\":[",
     "{\"index\":0,\"id\":\"call-0\",\"function\":{\"name\":\"inspect\",\"arguments\":\"{}\"}},",
     "{\"index\":1,\"id\":\"call-1\",\"function\":{\"name\":\"inspect\",\"arguments\":\"{}\"}}",
-    "],\"finish_reason\":\"tool_calls\"}]}\n\n",
+    "]},\"finish_reason\":\"tool_calls\"}]}\n\n",
     "data: [DONE]\n\n",
 );
 
