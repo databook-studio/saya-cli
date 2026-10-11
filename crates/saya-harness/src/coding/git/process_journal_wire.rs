@@ -62,6 +62,12 @@ pub(super) struct JournalReceipt {
     pub(super) stderr_truncated: bool,
 }
 
+pub(super) enum JournalLine {
+    Receipt(JournalReceipt),
+    SessionStart(String),
+    SessionClose(String),
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireReceipt {
@@ -92,16 +98,34 @@ struct WireIncomplete {
     version: u32,
 }
 
-pub(super) fn decode_line(line: &[u8]) -> Option<Result<JournalReceipt, ()>> {
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireSession {
+    kind: String,
+    version: u32,
+    service_identity: String,
+}
+
+pub(super) fn decode_line(line: &[u8]) -> Option<Result<JournalLine, ()>> {
     if let Ok(marker) = serde_json::from_slice::<WireIncomplete>(line) {
         let _valid =
             marker.kind == "incomplete" && marker.reason == "bounded" && marker.version == VERSION;
         return Some(Err(()));
     }
+    if let Ok(session) = serde_json::from_slice::<WireSession>(line) {
+        if session.version != VERSION || !valid_identity(&session.service_identity) {
+            return Some(Err(()));
+        }
+        return Some(match session.kind.as_str() {
+            "session_start" => Ok(JournalLine::SessionStart(session.service_identity)),
+            "session_close" => Ok(JournalLine::SessionClose(session.service_identity)),
+            _ => Err(()),
+        });
+    }
     Some(
         serde_json::from_slice::<WireReceipt>(line)
             .map_err(|_| ())
-            .and_then(|wire| validate_wire(wire).ok_or(())),
+            .and_then(|wire| validate_wire(wire).map(JournalLine::Receipt).ok_or(())),
     )
 }
 
@@ -126,15 +150,36 @@ pub(super) const INCOMPLETE_LINE: &[u8] =
     b"{\"kind\":\"incomplete\",\"reason\":\"bounded\",\"version\":1}\n";
 pub(super) const MAX_LINE: usize = MAX_LINE_BYTES;
 
+pub(super) fn encode_session_start(service_identity: &str) -> Result<Vec<u8>, serde_json::Error> {
+    encode_session("session_start", service_identity)
+}
+
+pub(super) fn encode_session_close(service_identity: &str) -> Result<Vec<u8>, serde_json::Error> {
+    encode_session("session_close", service_identity)
+}
+
+fn encode_session(kind: &str, service_identity: &str) -> Result<Vec<u8>, serde_json::Error> {
+    let mut bytes = serde_json::to_vec(&serde_json::json!({
+        "kind": kind,
+        "version": VERSION,
+        "service_identity": service_identity,
+    }))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn valid_identity(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_IDENTITY_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 fn validate_wire(wire: WireReceipt) -> Option<JournalReceipt> {
     if wire.kind != "receipt"
         || wire.version != VERSION
-        || wire.service_identity.is_empty()
-        || wire.service_identity.len() > MAX_IDENTITY_BYTES
-        || !wire
-            .service_identity
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || !valid_identity(&wire.service_identity)
         || wire.sequence == 0
         || wire.duration_ms > MAX_DURATION_MS
         || wire.stdout_bytes > MAX_STREAM_BYTES
