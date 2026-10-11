@@ -63,6 +63,9 @@ fn serve(listener: TcpListener, calls: Arc<AtomicUsize>, stop: Arc<AtomicBool>) 
             }
             Err(_) => return,
         };
+        // macOS hands out sockets that inherit the listener's O_NONBLOCK; the
+        // request read below must block instead of racing the writer.
+        stream.set_nonblocking(false).unwrap();
         let request = read_request(&mut stream);
         calls.fetch_add(1, Ordering::AcqRel);
         let actor = actor(&request);

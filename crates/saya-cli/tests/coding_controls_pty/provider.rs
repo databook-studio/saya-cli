@@ -115,6 +115,9 @@ fn serve(
             }
             Err(_) => break,
         };
+        // macOS hands out sockets that inherit the listener's O_NONBLOCK; the
+        // request read below must block instead of racing the writer.
+        stream.set_nonblocking(false).unwrap();
         let request = read_request(&mut stream);
         let body = if request.contains("UNTRUSTED CHILD TASK") {
             let actor = actor(&request);

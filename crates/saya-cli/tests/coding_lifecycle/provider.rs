@@ -62,6 +62,9 @@ impl Provider {
                     }
                     Err(_) => break,
                 };
+                // macOS hands out sockets that inherit the listener's O_NONBLOCK;
+                // the request read below must block instead of racing the writer.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
