@@ -107,12 +107,7 @@ fn append_locked(
         || count >= MAX_RECEIPTS
         || retained.saturating_add(line.len()) > MAX_BYTES
     {
-        if length.saturating_add(wire::INCOMPLETE_LINE.len()) <= MAX_BYTES {
-            file.write_all(wire::INCOMPLETE_LINE)
-                .and_then(|()| file.sync_all())
-                .map_err(|_| JournalAppendError::Io)?;
-        }
-        *appendable = false;
+        write_incomplete_marker(file, length, appendable)?;
         return Err(JournalAppendError::Bounded);
     }
     file.write_all(line)
@@ -123,6 +118,20 @@ fn append_locked(
         })?;
     *journal.lock(&journal.retained_records) += 1;
     *journal.lock(&journal.retained_bytes) += line.len();
+    Ok(())
+}
+
+fn write_incomplete_marker(
+    file: &mut File,
+    length: usize,
+    appendable: &mut bool,
+) -> Result<(), JournalAppendError> {
+    *appendable = false;
+    if length.saturating_add(wire::INCOMPLETE_LINE.len()) <= MAX_BYTES {
+        file.write_all(wire::INCOMPLETE_LINE)
+            .and_then(|()| file.sync_all())
+            .map_err(|_| JournalAppendError::Io)?;
+    }
     Ok(())
 }
 
@@ -207,5 +216,61 @@ fn unlock_file(file: &File) {
     {
         use std::os::unix::io::AsRawFd;
         let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn failed_marker_write_disables_append_and_reopen_stays_incomplete() {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let root = std::env::temp_dir().join(format!(
+            "saya-git-journal-marker-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join(JOURNAL_NAME);
+        std::fs::write(&path, b"{\"kind\":\"incomplete\"").unwrap();
+        let mut file = OpenOptions::new().read(true).open(&path).unwrap();
+        let mut appendable = true;
+        assert!(matches!(
+            write_incomplete_marker(&mut file, 0, &mut appendable),
+            Err(JournalAppendError::Io)
+        ));
+        assert!(!appendable);
+        drop(file);
+
+        let (journal, state) = GitProcessJournal::open(&root).unwrap();
+        assert!(state.incomplete);
+        assert!(matches!(
+            journal.append(&dummy_receipt()),
+            Err(JournalAppendError::AlreadyIncomplete)
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn dummy_receipt() -> GitProcessReceipt {
+        GitProcessReceipt {
+            version: 1,
+            service_identity: "test".into(),
+            sequence: 1,
+            request_kind: "version",
+            operation: super::super::command::GitOperation::Read,
+            pid: Some(1),
+            exit_code: Some(0),
+            signal: None,
+            outcome: super::super::process_observer::GitProcessOutcome::Exited,
+            effect: super::super::process_observer::GitProcessEffect::None,
+            killed_orphans: None,
+            duration_ms: 1,
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        }
     }
 }
