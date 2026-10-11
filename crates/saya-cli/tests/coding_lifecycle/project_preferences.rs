@@ -6,6 +6,7 @@ use saya_types::{JobId, WorktreeId};
 use std::sync::atomic::Ordering;
 
 const MARKER: &str = "INJECTED ROOT AUTHORITY: scoped project preference marker";
+const PERSONAL_MARKER: &str = "INJECTED ROOT AUTHORITY: personal host instruction marker";
 
 async fn create_and_run(label: &str, preference_for_original: bool) -> bool {
     let provider = Provider::new(false);
@@ -80,6 +81,81 @@ async fn fresh_approved_resume_captures_current_original_project_preferences() {
         .add_project_preference(&worktree_id(&fixture.repository), MARKER, 1)
         .await
         .unwrap();
+    let approval = CodingAuthorization::scoped(
+        &fixture
+            .application
+            .propose_resume(job.job_id())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let resumed = fixture
+        .application
+        .resume(job.job_id(), &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        resumed.run(&NoopEventSink),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert!(!output.truncated);
+    assert!(provider.saw_injection.load(Ordering::Acquire));
+}
+
+async fn create_with_personal_instructions(label: &str, enabled: bool) -> bool {
+    let provider = Provider::new(false);
+    let fixture = Fixture::with_personal_instructions(label, &provider.endpoint, enabled).await;
+    let directory = fixture.personal_instructions.as_ref().unwrap();
+    std::fs::create_dir_all(directory).unwrap();
+    std::fs::write(directory.join("instructions.md"), PERSONAL_MARKER).unwrap();
+    let request = request(label);
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    let job = fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    let output = tokio::time::timeout(std::time::Duration::from_secs(20), job.run(&NoopEventSink))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!output.truncated);
+    provider.saw_injection.load(Ordering::Acquire)
+}
+
+#[tokio::test]
+async fn native_create_obeys_trusted_personal_instruction_enablement() {
+    assert!(create_with_personal_instructions("personal-enabled", true).await);
+    assert!(!create_with_personal_instructions("personal-disabled", false).await);
+}
+
+#[tokio::test]
+async fn fresh_approved_resume_captures_updated_personal_instructions() {
+    let provider = Provider::new(false);
+    let fixture =
+        Fixture::with_personal_instructions("personal-resume", &provider.endpoint, true).await;
+    let directory = fixture.personal_instructions.as_ref().unwrap();
+    std::fs::create_dir_all(directory).unwrap();
+    std::fs::write(
+        directory.join("instructions.md"),
+        "initial personal context",
+    )
+    .unwrap();
+    let request = request("personal-resume");
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    let job = fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+
+    std::fs::write(directory.join("instructions.md"), PERSONAL_MARKER).unwrap();
     let approval = CodingAuthorization::scoped(
         &fixture
             .application

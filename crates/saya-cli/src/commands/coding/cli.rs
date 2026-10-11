@@ -189,7 +189,7 @@ pub(crate) async fn run(
             .join("coding");
         private_directory(&root)?;
         let git = find_git()?;
-        let app = CodingApplication::open(
+        let app = CodingApplication::open_default(
             runtime.clone(),
             store.clone(),
             &repository,

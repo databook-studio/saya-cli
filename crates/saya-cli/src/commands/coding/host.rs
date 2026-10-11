@@ -22,6 +22,7 @@ pub struct CodingApplication {
     pub(super) artifacts: SnapshotArtifacts,
     pub(super) state_root: PathBuf,
     pub(super) program_dir: PathBuf,
+    pub(super) personal_instruction_dir: Option<PathBuf>,
 }
 impl CodingApplication {
     pub async fn open(
@@ -57,7 +58,42 @@ impl CodingApplication {
             artifacts,
             state_root,
             program_dir,
+            personal_instruction_dir: None,
         }))
+    }
+    pub async fn open_default(
+        runtime: RuntimeConfig,
+        store: SqliteStateStore,
+        repository: &Path,
+        state_root: &Path,
+        git: &Path,
+        program_dir: &Path,
+        token: &CancellationToken,
+    ) -> Result<Arc<Self>, CodingError> {
+        let personal_instruction_dir = crate::config::sources::user_config_dir();
+        Self::open(
+            runtime,
+            store,
+            repository,
+            state_root,
+            git,
+            program_dir,
+            token,
+        )
+        .await?
+        .with_personal_instruction_dir(Some(&personal_instruction_dir))
+    }
+    pub fn with_personal_instruction_dir(
+        mut self: Arc<Self>,
+        path: Option<&Path>,
+    ) -> Result<Arc<Self>, CodingError> {
+        let application = Arc::get_mut(&mut self).ok_or_else(|| {
+            CodingError::owner(std::io::Error::other(
+                "personal instruction path must be selected before host publication",
+            ))
+        })?;
+        application.personal_instruction_dir = path.map(Path::to_path_buf);
+        Ok(self)
     }
     pub fn store(&self) -> &SqliteStateStore {
         &self.store
@@ -110,7 +146,7 @@ impl CodingApplication {
             .program_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from("/usr/bin"));
-        Self::open(
+        Self::open_default(
             runtime,
             store,
             repository,

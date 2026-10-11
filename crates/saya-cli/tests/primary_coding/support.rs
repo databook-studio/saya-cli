@@ -14,6 +14,7 @@ pub struct Fixture {
     pub repository: PathBuf,
     pub application: Arc<CodingApplication>,
     pub store: SqliteStateStore,
+    pub personal_instructions: Option<PathBuf>,
 }
 impl Fixture {
     pub async fn new(label: &str) -> Self {
@@ -26,16 +27,28 @@ impl Fixture {
         Self::build(label, Some(endpoint), true).await
     }
     pub async fn with_diagnostic_output(label: &str, output: &str) -> Self {
-        Self::build_options(label, None, false, false, false, Some(output)).await
+        Self::build_options(label, None, false, false, false, Some(output), None).await
+    }
+    pub async fn with_personal_instructions(label: &str, endpoint: &str, enabled: bool) -> Self {
+        Self::build_options(
+            label,
+            Some(endpoint),
+            false,
+            false,
+            false,
+            None,
+            Some(enabled),
+        )
+        .await
     }
     async fn build(label: &str, endpoint: Option<&str>, check: bool) -> Self {
-        Self::build_options(label, endpoint, check, false, false, None).await
+        Self::build_options(label, endpoint, check, false, false, None, None).await
     }
     pub async fn with_deadline(label: &str, endpoint: &str) -> Self {
-        Self::build_options(label, Some(endpoint), false, true, false, None).await
+        Self::build_options(label, Some(endpoint), false, true, false, None, None).await
     }
     pub async fn with_slow_check(label: &str) -> Self {
-        Self::build_options(label, None, true, false, true, None).await
+        Self::build_options(label, None, true, false, true, None, None).await
     }
     async fn build_options(
         label: &str,
@@ -44,6 +57,7 @@ impl Fixture {
         deadline: bool,
         slow: bool,
         diagnostic_output: Option<&str>,
+        personal_enabled: Option<bool>,
     ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let stamp = SystemTime::now()
@@ -83,6 +97,9 @@ impl Fixture {
         )
         .unwrap();
         runtime.resolved.coding.enabled = true;
+        if let Some(enabled) = personal_enabled {
+            runtime.resolved.instructions.personal_enabled = enabled;
+        }
         if let Some(endpoint) = endpoint {
             runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
             runtime.resolved.ai.model = "native-fixture".into();
@@ -104,6 +121,7 @@ impl Fixture {
         if deadline {
             runtime.resolved.coding.max_elapsed_seconds = 1;
         }
+        let personal_instructions = personal_enabled.map(|_| root.join("personal-instructions"));
         if let Some(output) = diagnostic_output {
             let argument = serde_json::to_string(output).unwrap();
             let file = saya_config::ConfigFile::from_toml(&format!(
@@ -144,11 +162,18 @@ impl Fixture {
         )
         .await
         .unwrap();
+        let application = match personal_instructions.as_deref() {
+            Some(path) => application
+                .with_personal_instruction_dir(Some(path))
+                .unwrap(),
+            None => application,
+        };
         Self {
             root,
             repository,
             application,
             store,
+            personal_instructions,
         }
     }
 }

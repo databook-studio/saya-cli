@@ -34,9 +34,14 @@ impl CodingApplication {
             project_max_bytes: config.project_max_bytes.min(MAX_PROJECT_INSTRUCTION_BYTES),
             total_max_bytes: config.total_max_bytes.min(MAX_INSTRUCTION_BYTES),
         };
+        let personal_instruction_dir = if config.personal_enabled {
+            self.personal_instruction_dir.as_deref()
+        } else {
+            None
+        };
         OriginalProjectContext::capture_with_policy(
             workspace,
-            None,
+            personal_instruction_dir,
             preferences,
             config.project_enabled,
             &limits,
