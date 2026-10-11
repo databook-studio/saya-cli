@@ -177,7 +177,12 @@ impl Fixture {
         }
         let store = SqliteStateStore::new(root.join("state.sqlite3"));
         let extension_fixture = extensions.is_some();
-        let program_dir = if extension_fixture {
+        // macOS keeps `sleep` in /bin while `printf`, `false`, and `git` live
+        // only in /usr/bin, so the program directory follows the programs each
+        // fixture shape configures: extension profiles need `sh` (/bin), the
+        // slow check and native-command fixtures run `sleep` (/bin), and the
+        // check (`false`) and diagnostic (`printf`) profiles keep /usr/bin.
+        let program_dir = if extension_fixture || slow || (endpoint.is_some() && !check) {
             Path::new("/bin")
         } else {
             Path::new("/usr/bin")
