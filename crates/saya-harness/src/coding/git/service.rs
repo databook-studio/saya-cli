@@ -8,16 +8,20 @@ use saya_types::{ManagedCheckoutId, ManagedCheckoutPath};
 use tokio::sync::{Mutex, MutexGuard};
 use tokio::time::Instant;
 
+static NEXT_SERVICE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 use super::{
     command::{GitError, GitOperation, GitRepository, require_success},
     environment::GitEnvironment,
     process::{self, GitOutput},
+    process_observer::{GitProcessObserver, GitProcessSnapshot},
     repository_check,
     request::GitRequest,
 };
 
 pub struct GitService {
     pub(super) environment: GitEnvironment,
+    pub(super) observer: std::sync::Arc<GitProcessObserver>,
     operation_lock: Mutex<()>,
 }
 
@@ -54,6 +58,11 @@ impl GitService {
             }
             Ok(Self {
                 environment: GitEnvironment::new(executable, state_root.as_ref())?,
+                observer: GitProcessObserver::new(format!(
+                    "git-service-{}-{}",
+                    std::process::id(),
+                    NEXT_SERVICE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                )),
                 operation_lock: Mutex::new(()),
             })
         }
@@ -66,6 +75,10 @@ impl GitService {
         let path = self.environment.worktrees.join(checkout_id.as_str());
         let path = path.to_str().ok_or(GitError::InvalidManagedPath)?;
         ManagedCheckoutPath::new(path.to_owned()).map_err(|_| GitError::InvalidManagedPath)
+    }
+
+    pub fn process_observations(&self) -> GitProcessSnapshot {
+        self.observer.snapshot()
     }
 
     pub async fn git_version(&self, cancellation: &CancellationToken) -> Result<String, GitError> {
@@ -157,7 +170,14 @@ impl GitService {
         request: GitRequest<'_>,
         cancellation: &CancellationToken,
     ) -> Result<GitOutput, GitError> {
-        process::execute(&self.environment, current_dir, request, cancellation).await
+        process::execute(
+            &self.environment,
+            current_dir,
+            request,
+            cancellation,
+            &self.observer,
+        )
+        .await
     }
 
     pub(super) async fn run_request_until(
@@ -173,6 +193,7 @@ impl GitService {
             request,
             cancellation,
             deadline,
+            &self.observer,
         )
         .await
     }
