@@ -63,7 +63,7 @@ impl GitService {
                 std::process::id(),
                 NEXT_SERVICE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             );
-            let (journal, journal_state) = GitProcessJournal::open(&environment.root)
+            let (journal, journal_state) = GitProcessJournal::open(&environment.root, &identity)
                 .map_err(|_| GitError::InvalidStateRoot)?;
             Ok(Self {
                 environment,
@@ -201,5 +201,11 @@ impl GitService {
             &self.observer,
         )
         .await
+    }
+}
+
+impl Drop for GitService {
+    fn drop(&mut self) {
+        self.observer.close();
     }
 }

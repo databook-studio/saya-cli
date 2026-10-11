@@ -144,6 +144,7 @@ struct State {
     retained_bytes: usize,
     omitted_bytes: u64,
     incomplete: bool,
+    session_active: bool,
 }
 
 impl GitProcessObserver {
@@ -165,11 +166,12 @@ impl GitProcessObserver {
             journal,
             state: Mutex::new(State {
                 next_sequence,
-                retained_bytes: journal_state.receipts.iter().map(receipt_bytes).sum(),
+                retained_bytes: journal_state.retained_bytes,
                 receipts: journal_state.receipts,
                 omitted: u64::from(journal_state.incomplete),
                 omitted_bytes: 0,
                 incomplete: journal_state.incomplete,
+                session_active: journal_state.session_started,
             }),
         })
     }
@@ -238,6 +240,23 @@ impl GitProcessObserver {
         } else {
             state.retained_bytes += bytes;
             state.receipts.push(receipt);
+        }
+    }
+
+    pub(super) fn close(&self) {
+        let should_close = {
+            let state = self.lock();
+            state.session_active && !state.incomplete
+        };
+        if !should_close {
+            return;
+        }
+        let result = self.journal.close_session();
+        let mut state = self.lock();
+        if result.is_err() {
+            state.incomplete = true;
+        } else {
+            state.session_active = false;
         }
     }
 
