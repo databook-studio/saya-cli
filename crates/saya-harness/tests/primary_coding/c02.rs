@@ -1,3 +1,4 @@
+#[path = "c02/capture.rs"]
 mod capture;
 #[path = "c02/cursor.rs"]
 mod cursor;
