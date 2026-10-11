@@ -44,6 +44,7 @@ use super::output_writer::StreamWriter;
 /// counters saturate at `u64::MAX`.
 #[derive(Clone)]
 pub(super) struct SinkResult {
+    pub(super) captured_bytes: Option<std::sync::Arc<[u8]>>,
     pub(super) stored_bytes: u64,
     /// Channel-rejected raw bytes plus writer-discarded raw bytes.
     pub(super) dropped_bytes: u64,
@@ -189,6 +190,7 @@ impl StoreSink {
                     None => writer.join(),
                 };
                 SinkResult {
+                    captured_bytes: written.captured_bytes,
                     stored_bytes: written.stored_bytes,
                     dropped_bytes: self
                         .dropped_bytes
@@ -204,6 +206,7 @@ impl StoreSink {
                 drop(file);
                 let error = None;
                 SinkResult {
+                    captured_bytes: Some(std::sync::Arc::from([])),
                     stored_bytes: 0,
                     dropped_bytes: self.dropped_bytes.load(Ordering::Acquire),
                     raw_total_bytes: self.raw_total_bytes.load(Ordering::Acquire),
@@ -212,6 +215,7 @@ impl StoreSink {
                 }
             }
             Some(WriterSlot::Failed(source)) => SinkResult {
+                captured_bytes: None,
                 stored_bytes: 0,
                 dropped_bytes: self.dropped_bytes.load(Ordering::Acquire),
                 raw_total_bytes: self.raw_total_bytes.load(Ordering::Acquire),

@@ -184,6 +184,10 @@ fn main() {
             let mut err = io::BufWriter::new(io::stderr());
             flood(&mut err, stderr_mib * 1024 * 1024, true).unwrap();
         }
+        Some("echo-bytes") => {
+            let text = args.next().unwrap();
+            io::stdout().write_all(text.as_bytes()).unwrap();
+        }
         Some("drip") => {
             let lines: usize = args.next().unwrap().parse().unwrap();
             for i in 0..lines {

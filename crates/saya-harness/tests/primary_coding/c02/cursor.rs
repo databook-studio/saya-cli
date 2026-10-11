@@ -236,6 +236,10 @@ async fn refused_redactor_stream_reads_empty_and_sealed() {
         status.capped && status.error.is_none(),
         "a refused redactor seals its stream without a store error: {status:?}"
     );
+    assert!(matches!(
+        session.capture_output(OutputStream::Stdout),
+        Err(CommandOutputError::OutputNotComplete)
+    ));
     let read = session
         .read_output(
             CommandOutputCursor::start(OutputStream::Stdout),

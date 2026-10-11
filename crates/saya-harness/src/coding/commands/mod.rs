@@ -1,15 +1,18 @@
+mod capture;
 mod cursor;
 mod input;
 mod lifecycle;
 mod output;
 mod output_redact;
 mod output_sink;
+mod output_snapshot;
 #[cfg(unix)]
 mod output_store_unix;
 mod output_writer;
 mod process_state;
 mod session;
 
+pub use capture::CommandOutputCapture;
 pub use cursor::{CommandOutputCursor, CommandOutputRead};
 pub use input::{
     CommandInputError, MAX_COMMAND_INPUT_BYTES, MAX_COMMAND_INPUT_CHUNK_BYTES,
