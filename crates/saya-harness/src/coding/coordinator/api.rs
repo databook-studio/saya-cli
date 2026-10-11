@@ -145,7 +145,7 @@ async fn run_child_inner(
         tools,
         definitions,
         approval,
-    } = factory.build(&spec)?;
+    } = factory.build(&spec, &cancellation)?;
     let sink = ChildEventSink {
         events,
         cancellation: cancellation.clone(),

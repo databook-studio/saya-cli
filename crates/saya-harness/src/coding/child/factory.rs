@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, error::Error, fmt, io, io::Write};
 
 use saya_agent::{
-    AgentLimits, AgentRequest, AnsweringLimits, ApprovalDecider, ChatProvider,
+    AgentLimits, AgentRequest, AnsweringLimits, ApprovalDecider, CancellationToken, ChatProvider,
     RequestPreflightConfig, ToolDefinition, ToolExecutor,
 };
 use saya_types::{MAX_NAME_CHARS, is_name_shaped};
@@ -199,7 +199,13 @@ impl Write for BoundedWriter {
 /// Synchronous composition boundary for one already-narrowed child.
 pub trait ChildFactory: Send + Sync {
     /// Builds the provider, scoped decider and matching toolset from this immutable view.
-    fn build(&self, spec: &ChildExecutionSpec) -> Result<ChildComponents, ChildFactoryError>;
+    /// `cancellation` is the token used by this invocation's agent loop; tools
+    /// that own processes must bind their lifetime to this same token.
+    fn build(
+        &self,
+        spec: &ChildExecutionSpec,
+        cancellation: &CancellationToken,
+    ) -> Result<ChildComponents, ChildFactoryError>;
 }
 
 /// Owned loop dependencies whose tool list was built from the same child view.

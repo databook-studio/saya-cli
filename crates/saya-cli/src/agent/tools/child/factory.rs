@@ -69,12 +69,20 @@ impl ChildFactory for CliChildFactory {
     /// Commands exist only where the view grants them: a command scope on the
     /// view without a proven runner is refused, and a prepared runner is
     /// ignored when the view grants no command scope.
-    fn build(&self, spec: &ChildExecutionSpec) -> Result<ChildComponents, ChildFactoryError> {
+    fn build(
+        &self,
+        spec: &ChildExecutionSpec,
+        cancellation: &saya_agent::CancellationToken,
+    ) -> Result<ChildComponents, ChildFactoryError> {
         let view = spec.authority();
         let wants_commands =
             view.capabilities().runner.is_some() || view.capabilities().interpreter.is_some();
         let (definitions, tools) = match (&self.runner, wants_commands) {
-            (Some(runner), true) => child_toolset_with_runner(view, &self.pair, Arc::clone(runner)),
+            (Some(runner), true) => child_toolset_with_runner(
+                view,
+                &self.pair,
+                Arc::new(runner.for_invocation(cancellation.clone())),
+            ),
             (None, true) => Err(ChildToolsError::ConfinementMissing),
             (_, false) => child_toolset(view, &self.pair),
         }

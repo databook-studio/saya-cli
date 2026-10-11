@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
@@ -22,6 +22,19 @@ pub(super) struct FactoryStats {
     pub builds: AtomicUsize,
     pub executor_calls: AtomicUsize,
     pub executor_saw_tool_reservation: AtomicBool,
+    pub invocation_cancellation: Mutex<Option<saya_agent::CancellationToken>>,
+}
+
+impl FactoryStats {
+    pub(super) fn assert_invocation_cancellation(&self, expected: saya_agent::CancellationReason) {
+        let actual = self
+            .invocation_cancellation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(saya_agent::CancellationToken::reason);
+        assert_eq!(actual, Some(expected));
+    }
 }
 
 pub(super) struct OpenAiFactory {
@@ -34,8 +47,13 @@ pub(super) struct OpenAiFactory {
 }
 
 impl ChildFactory for OpenAiFactory {
-    fn build(&self, _spec: &ChildExecutionSpec) -> Result<ChildComponents, ChildFactoryError> {
+    fn build(
+        &self,
+        _spec: &ChildExecutionSpec,
+        cancellation: &saya_agent::CancellationToken,
+    ) -> Result<ChildComponents, ChildFactoryError> {
         self.stats.builds.fetch_add(1, Ordering::SeqCst);
+        *self.stats.invocation_cancellation.lock().unwrap() = Some(cancellation.clone());
         if let Some(cancellation) = &self.cancel_on_build {
             cancellation.cancel_with_reason(saya_agent::CancellationReason::User);
         }

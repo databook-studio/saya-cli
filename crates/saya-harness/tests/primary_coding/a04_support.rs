@@ -69,7 +69,13 @@ impl ScenarioFactory {
 }
 
 impl ChildFactory for ScenarioFactory {
-    fn build(&self, spec: &ChildExecutionSpec) -> Result<ChildComponents, ChildFactoryError> {
+    // This scripted factory creates no process runner; the coordinator still
+    // receives and uses the invocation token for its agent loop.
+    fn build(
+        &self,
+        spec: &ChildExecutionSpec,
+        _cancellation: &saya_agent::CancellationToken,
+    ) -> Result<ChildComponents, ChildFactoryError> {
         self.stats.factory_calls.fetch_add(1, Ordering::SeqCst);
         let authority = spec.authority();
         self.stats.captured.lock().unwrap().push(CapturedAuthority {

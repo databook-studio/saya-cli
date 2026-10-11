@@ -62,6 +62,7 @@ async fn dispatched_cancellation_keeps_unknown_usage_and_count_reservations() {
             reason: CancellationReason::User
         })
     ));
+    stats.assert_invocation_cancellation(CancellationReason::User);
     let snapshot = ledger.snapshot().await;
     assert_eq!(snapshot.logical_requests, 1);
     assert_eq!(snapshot.transport_attempts, 1);
@@ -120,12 +121,14 @@ async fn root_deadline_cancels_and_joins_a_child_with_an_open_provider_request()
     let stats = Arc::new(FactoryStats::default());
     let child_factory = factory(&server, &fixture, Arc::clone(&stats));
     let child_ledger = ledger.clone();
+    let caller_cancellation = CancellationToken::new();
+    let child_cancellation = caller_cancellation.clone();
     let child = tokio::spawn(async move {
         run_child_budgeted(
             spec,
             &child_factory,
             sender,
-            CancellationToken::new(),
+            child_cancellation,
             &child_ledger,
         )
         .await
@@ -145,6 +148,10 @@ async fn root_deadline_cancels_and_joins_a_child_with_an_open_provider_request()
             reason: CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime)
         })
     ));
+    stats.assert_invocation_cancellation(CancellationReason::Budget(
+        saya_agent::BudgetDimension::ElapsedTime,
+    ));
+    assert_eq!(caller_cancellation.reason(), None);
     assert_eq!(
         ledger.cancellation_token().reason(),
         Some(CancellationReason::Budget(
