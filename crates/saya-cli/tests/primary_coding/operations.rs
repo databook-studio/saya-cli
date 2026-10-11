@@ -149,3 +149,41 @@ async fn list_shows_only_jobs_of_this_repository() {
     assert!(jobs.iter().any(|job| job["job_id"] == "job-owned"));
     assert!(!jobs.iter().any(|job| job["job_id"] == "job-foreign"));
 }
+#[tokio::test]
+async fn retain_routes_to_the_shared_operation() {
+    let fixture = Fixture::new("retain-route").await;
+    let request = CodingJobRequest::new(
+        JobId::parse("job-retain").unwrap(),
+        "inspect only".into(),
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    let job = fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    let candidate = ManagedCheckoutId::parse("retain-candidate").unwrap();
+    job.create_checkout(&candidate).await.unwrap();
+    let retained = dispatch_coding(
+        &fixture.application,
+        CodingCommand::RetainCheckout {
+            id: "job-retain".into(),
+            checkout: "retain-candidate".into(),
+            approve: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(retained["retained"], "retain-candidate");
+    let worktrees = fixture.application.worktrees(job.job_id()).await.unwrap();
+    let checkouts = worktrees["checkouts"].as_array().unwrap();
+    let record = checkouts
+        .iter()
+        .find(|checkout| checkout["checkout_id"] == "retain-candidate")
+        .unwrap();
+    assert_eq!(record["lifecycle"], "active");
+}

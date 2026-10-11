@@ -8,6 +8,7 @@ fn cli_and_slash_share_native_coding_command_grammar() {
         "pause job-a agent-a",
         "message job-a agent-a 'check the null case'",
         "start job-a 'change one file' --write tracked.txt --approve",
+        "retain job-a checkout-a --approve",
     ] {
         let slash = parse_slash_command(&format!("/coding {tail}"))
             .unwrap()
@@ -22,6 +23,9 @@ fn cli_and_slash_share_native_coding_command_grammar() {
             "pause job-a agent-a" => vec!["pause", "job-a", "agent-a"],
             "message job-a agent-a 'check the null case'" => {
                 vec!["message", "job-a", "agent-a", "check the null case"]
+            }
+            "retain job-a checkout-a --approve" => {
+                vec!["retain", "job-a", "checkout-a", "--approve"]
             }
             _ => vec![
                 "start",

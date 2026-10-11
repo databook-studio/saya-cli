@@ -52,7 +52,8 @@ pub async fn dispatch(
         | CodingCommand::Apply { .. }
         | CodingCommand::ResolveConflict { .. }
         | CodingCommand::RemoveCheckout { .. }
-        | CodingCommand::ReconcileCheckout { .. }) => {
+        | CodingCommand::ReconcileCheckout { .. }
+        | CodingCommand::RetainCheckout { .. }) => {
             super::cli_mutations::run(application, command).await
         }
         CodingCommand::Resume { id, approve } => {

@@ -75,6 +75,16 @@ pub enum CodingCommand {
         #[arg(long)]
         approve: bool,
     },
+    /// Verify an owned checkout stays recoverable; nothing is deleted.
+    RetainCheckout {
+        /// Durable job id.
+        id: String,
+        /// Owned checkout id.
+        checkout: String,
+        /// Explicitly approve this retention.
+        #[arg(long)]
+        approve: bool,
+    },
 
     /// Resume the preserved native job with fresh scope consent and unchanged budget ceilings.
     Resume {
