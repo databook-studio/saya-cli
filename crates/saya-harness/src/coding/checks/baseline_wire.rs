@@ -250,20 +250,20 @@ pub(crate) fn receipt_matches(receipt: &CheckReceipt, baseline: &BaselineIdentit
 }
 
 pub(crate) fn redacted_diagnostics(diagnostics: &DiagnosticSet) -> DiagnosticSet {
-    DiagnosticSet::new(
-        diagnostics
-            .entries()
-            .iter()
-            .map(|diagnostic| {
-                Diagnostic::new(
-                    diagnostic.severity(),
-                    diagnostic.code().map(str::to_owned),
-                    saya_types::redact(diagnostic.message()),
-                    diagnostic.locations().to_vec(),
-                )
-            })
-            .collect(),
-    )
+    let mut entries = diagnostics
+        .entries()
+        .iter()
+        .map(|diagnostic| {
+            Diagnostic::new(
+                diagnostic.severity(),
+                diagnostic.code().map(str::to_owned),
+                saya_types::redact(diagnostic.message()),
+                diagnostic.locations().to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    DiagnosticSet::new(entries)
 }
 
 fn valid_reference(value: &str) -> bool {

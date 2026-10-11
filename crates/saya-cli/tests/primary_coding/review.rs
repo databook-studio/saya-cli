@@ -95,7 +95,8 @@ async fn native_review_shows_complete_current_diagnostic_evidence() {
 
 #[tokio::test]
 async fn native_review_mints_then_reuses_a_diagnostic_baseline() {
-    let output = r#"{"reason":"compiler-message","message":{"message":"unused variable x","code":{"code":"unused_variables"},"level":"warning","spans":[{"file_name":"tracked.txt","line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true}]}}"#;
+    let output = r#"{"reason":"compiler-message","message":{"message":"password=z tail","code":{"code":"secret-shaped"},"level":"warning","spans":[{"file_name":"tracked.txt","line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true}]}}
+{"reason":"compiler-message","message":{"message":"password=zz","code":{"code":"secret-shaped"},"level":"warning","spans":[{"file_name":"tracked.txt","line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true}]}}"#;
     let fixture = Fixture::with_diagnostic_output("review-baseline", output).await;
     let request = CodingJobRequest::new(
         JobId::parse("job-review-baseline").unwrap(),
@@ -122,15 +123,27 @@ async fn native_review_mints_then_reuses_a_diagnostic_baseline() {
             "reason": "baseline_minted_for_future_review"
         })
     );
+    let review_records = fixture
+        .root
+        .join("coding")
+        .join(job.job_id().as_str())
+        .join(format!("review-{}.jsonl", candidate.as_str()));
+    let records = std::fs::read_to_string(review_records).unwrap();
+    assert!(records.contains("baseline_pending_publication"));
+    assert!(records.contains("baseline_minted_for_future_review"));
 
     let second = job.review_existing(&candidate).await.unwrap();
     assert_eq!(second.preview()["diagnostic_delta"]["available"], true);
     assert_eq!(second.preview()["diagnostic_delta"]["introduced_count"], 0);
-    assert_eq!(second.preview()["diagnostic_delta"]["unchanged_count"], 1);
+    assert_eq!(second.preview()["diagnostic_delta"]["unchanged_count"], 2);
     assert_eq!(second.preview()["diagnostic_delta"]["resolved_count"], 0);
     assert_eq!(
         second.preview()["checks"][0]["diagnostic_delta"]["unchanged"][0]["message"],
-        "unused variable x"
+        "password=[redacted]"
+    );
+    assert_eq!(
+        second.preview()["checks"][0]["diagnostic_delta"]["unchanged"][1]["message"],
+        "password=[redacted] tail"
     );
 }
 
@@ -163,10 +176,23 @@ async fn corrupt_diagnostic_baseline_stays_unavailable_and_is_not_overwritten() 
         .find(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("checks-diagnostic-baseline-"))
+                .is_some_and(|name| {
+                    name.starts_with("checks-diagnostic-baseline-")
+                        && !name.starts_with("checks-diagnostic-baseline-commit-")
+                })
         })
         .expect("review should persist a diagnostic baseline");
-    assert!(!String::from_utf8_lossy(&std::fs::read(&baseline).unwrap()).contains("hunter2"));
+    let publication = std::fs::read_dir(&records)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("checks-diagnostic-baseline-commit-"))
+        })
+        .expect("review should persist a diagnostic baseline publication marker");
+    let original = std::fs::read(&baseline).unwrap();
+    assert!(!String::from_utf8_lossy(&original).contains("hunter2"));
     std::fs::write(&baseline, b"tampered").unwrap();
 
     let review = job.review_existing(&candidate).await.unwrap();
@@ -176,6 +202,15 @@ async fn corrupt_diagnostic_baseline_stays_unavailable_and_is_not_overwritten() 
         "baseline_unavailable"
     );
     assert_eq!(std::fs::read(&baseline).unwrap(), b"tampered");
+    assert!(publication.exists());
+    std::fs::write(&baseline, &original).unwrap();
+    std::fs::remove_file(&publication).unwrap();
+    let review = job.review_existing(&candidate).await.unwrap();
+    assert_eq!(
+        review.preview()["diagnostic_delta"]["reason"],
+        "baseline_unavailable"
+    );
+    assert_eq!(std::fs::read(&baseline).unwrap(), original);
 }
 
 #[tokio::test]
