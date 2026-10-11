@@ -6,6 +6,7 @@ mod create;
 mod create_edges;
 #[path = "w05/create_retry.rs"]
 mod create_retry;
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "w05/create_support.rs"]
 mod create_support;
 #[path = "w05/ownership.rs"]

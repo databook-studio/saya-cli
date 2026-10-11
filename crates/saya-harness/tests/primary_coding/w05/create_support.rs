@@ -106,7 +106,7 @@ impl CreateCheckoutFixture {
             .await
             .unwrap();
         let base_commit = head_commit(&git, temp.path(), &repo_root);
-        let store = SqliteStateStore::new(&temp.path().join("state.sqlite3"));
+        let store = SqliteStateStore::new(temp.path().join("state.sqlite3"));
         let job = JobId::parse("job-a").unwrap();
         let identity = service
             .inventory_repository(&repository, &cancellation)
