@@ -10,6 +10,9 @@ mod operations;
 #[path = "primary_coding/parity.rs"]
 mod parity;
 #[cfg(unix)]
+#[path = "primary_coding/promotion.rs"]
+mod promotion;
+#[cfg(unix)]
 #[path = "primary_coding/review.rs"]
 mod review;
 #[cfg(unix)]
