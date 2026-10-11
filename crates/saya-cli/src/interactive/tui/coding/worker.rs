@@ -147,23 +147,23 @@ async fn work(
                     _ => None,
                 };
                 let result=job.control_command(command).await;
-                if let (Ok(receipt), Some((id, agent))) = (&result, pause) {
-                    if let Some(ticket) = receipt["pause_requested"].as_u64() {
-                        let job = Arc::clone(&job);
-                        let activity = tx.clone();
-                        let stop = pause_stop.clone();
-                        pause_acks.spawn(async move {
-                            let acknowledged = tokio::select! {
-                                result = job.wait_pause(&id, &agent, ticket) => result.unwrap_or(false),
-                                _ = stop.cancelled() => false,
-                            };
-                            deliver_outcome(
-                                &activity,
-                                json!({"pause_requested":ticket,"pause_acknowledged":acknowledged,"target":agent})
-                                    .to_string(),
-                            );
-                        });
-                    }
+                if let (Ok(receipt), Some((id, agent))) = (&result, pause)
+                    && let Some(ticket) = receipt["pause_requested"].as_u64()
+                {
+                    let job = Arc::clone(&job);
+                    let activity = tx.clone();
+                    let stop = pause_stop.clone();
+                    pause_acks.spawn(async move {
+                        let acknowledged = tokio::select! {
+                            result = job.wait_pause(&id, &agent, ticket) => result.unwrap_or(false),
+                            _ = stop.cancelled() => false,
+                        };
+                        deliver_outcome(
+                            &activity,
+                            json!({"pause_requested":ticket,"pause_acknowledged":acknowledged,"target":agent})
+                                .to_string(),
+                        );
+                    });
                 }
                 let text=match result {Ok(value)=>value.to_string(),Err(error)=>error.to_string()};
                 deliver_outcome(&tx, text);
