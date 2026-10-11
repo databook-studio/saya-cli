@@ -270,7 +270,10 @@ fn read_records(
             Some(Ok(record)) => {
                 let valid = match record {
                     wire::JournalLine::SessionStart(identity) => {
-                        !closed_sessions.contains(&identity) && open_sessions.insert(identity)
+                        !open_sessions.contains(&identity) && {
+                            closed_sessions.remove(&identity);
+                            open_sessions.insert(identity)
+                        }
                     }
                     wire::JournalLine::SessionClose(identity) => {
                         open_sessions.remove(&identity) && closed_sessions.insert(identity)

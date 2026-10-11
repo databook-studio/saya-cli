@@ -42,10 +42,10 @@ fn clean_session_reopens_and_starts_a_new_identity() {
     first.close_session().unwrap();
     drop(first);
 
-    let (second, state) = GitProcessJournal::open(&root, "second").unwrap();
+    let (second, state) = GitProcessJournal::open(&root, "first").unwrap();
     assert!(!state.incomplete);
     assert!(state.session_started);
-    second.append(&dummy_receipt("second", 1)).unwrap();
+    second.append(&dummy_receipt("first", 2)).unwrap();
     second.close_session().unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
