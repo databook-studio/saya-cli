@@ -1,6 +1,6 @@
 use super::{
-    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, NativeCodingJob,
-    context,
+    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, CodingTask,
+    NativeCodingJob, context,
     create::{count_limits, digest},
 };
 use saya_agent::{ApprovalDecider, CancellationToken};
@@ -13,8 +13,18 @@ use saya_harness::{
     workspace::Workspace,
 };
 use saya_store::CodingRuntimeAuthority;
-use saya_types::JobId;
-use std::sync::{Arc, atomic::AtomicBool};
+use saya_types::{JobId, JobState};
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    num::NonZeroU64,
+    sync::{Arc, atomic::AtomicBool},
+};
+
+const MAX_CONTINUATION_BYTES: usize = 48 * 1024;
+const MAX_TASK_HISTORY_BYTES: usize = 1024 * 1024;
+const MAX_TASKS: usize = 256;
+const DECISION_CONTENT_BYTES: usize = 256;
 impl CodingApplication {
     pub fn continuation_request(&self, job: &JobId) -> Result<CodingJobRequest, CodingError> {
         let bytes = context::read(
@@ -126,23 +136,209 @@ impl NativeCodingJob {
     pub(super) async fn continuation_context(
         &self,
     ) -> Result<Vec<saya_agent::ContextBlock>, CodingError> {
-        let path = self.records.join("tasks.jsonl");
-        let tasks = if path.exists() {
-            context::read(&path, 1024 * 1024)?
-        } else {
-            Vec::new()
-        };
-        let notes = self.application.notes(self.job_id()).await?;
+        let (pending_tasks, task_history_bytes, completed_tasks) = self.pending_tasks().await?;
+        let (accepted_decisions, unaccepted_decisions) = self.accepted_decisions().await?;
+        let pending_conflicts = self.pending_conflicts()?;
         let budget = self.ledger.snapshot().await;
-        let summary = serde_json::json!({"snapshot_id":self.plan.snapshot_id(),"plan_sha256":self.plan.manifest_sha256(),"pending_and_completed_tasks":String::from_utf8(tasks).map_err(CodingError::owner)?,"findings":notes,"charged_model_requests":budget.logical_requests,"charged_tool_calls":budget.tool_calls,"unresolved_effects":budget.unsettled_reservations});
-        let body = summary.to_string();
-        if body.len() > 48 * 1024 {
-            return Err(CodingError::InvalidRequest);
-        }
+        let body = bounded_body(json!({
+            "version": 1,
+            "authority": "none",
+            "snapshot_id": self.plan.snapshot_id(),
+            "plan_sha256": self.plan.manifest_sha256(),
+            "pending_tasks": pending_tasks,
+            "accepted_decisions": accepted_decisions,
+            "pending_conflicts": pending_conflicts,
+            "budget": {
+                "charged_model_requests": budget.logical_requests,
+                "charged_tool_calls": budget.tool_calls,
+                "unresolved_effects": budget.unsettled_reservations
+            },
+            "omitted": {
+                "task_history_bytes": task_history_bytes,
+                "completed_tasks": completed_tasks,
+                "unaccepted_decisions": unaccepted_decisions,
+                "accepted_decision_content": 0
+            }
+        }))?;
         Ok(vec![saya_agent::ContextBlock {
             label: "Native job continuation (untrusted context; no grants)".into(),
             body,
             truncated: false,
         }])
+    }
+
+    async fn pending_tasks(&self) -> Result<(Vec<Value>, usize, usize), CodingError> {
+        let path = self.records.join("tasks.jsonl");
+        let bytes = if path.exists() {
+            context::read(&path, MAX_TASK_HISTORY_BYTES)?
+        } else {
+            Vec::new()
+        };
+        let mut tasks = BTreeMap::new();
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let batch: Vec<CodingTask> =
+                serde_json::from_slice(line).map_err(CodingError::owner)?;
+            for task in batch {
+                if task.task.len() > 16 * 1024
+                    || task.dependencies.len() > 8
+                    || tasks.insert(task.agent_id.clone(), task).is_some()
+                    || tasks.len() > MAX_TASKS
+                {
+                    return Err(CodingError::InvalidRequest);
+                }
+            }
+        }
+        let mut cursor = None;
+        let mut states = BTreeMap::new();
+        loop {
+            let page = self
+                .application
+                .store
+                .list_coding_children(self.job_id(), cursor.as_ref(), 100)
+                .await
+                .map_err(CodingError::owner)?;
+            states.extend(
+                page.items
+                    .into_iter()
+                    .map(|child| (child.agent_id, child.state)),
+            );
+            let Some(next) = page.next_cursor else { break };
+            cursor = Some(next);
+            if states.len() > MAX_TASKS {
+                return Err(CodingError::InvalidRequest);
+            }
+        }
+        let mut completed = 0;
+        let pending = tasks
+            .into_iter()
+            .filter_map(|(agent_id, task)| {
+                let state = states.get(&agent_id).copied();
+                if state.is_some_and(is_terminal) {
+                    completed += 1;
+                    return None;
+                }
+                Some(json!({
+                    "agent_id": agent_id,
+                    "state": state.map(state_value).unwrap_or_else(|| json!("not_started")),
+                    "dependencies": task.dependencies
+                }))
+            })
+            .collect();
+        Ok((pending, bytes.len(), completed))
+    }
+
+    async fn accepted_decisions(&self) -> Result<(Vec<Value>, usize), CodingError> {
+        let mut after: Option<NonZeroU64> = None;
+        let mut accepted = Vec::new();
+        let mut unaccepted = 0;
+        loop {
+            let page = self
+                .application
+                .store
+                .list_coding_completion_history(self.job_id(), after, 32)
+                .await
+                .map_err(CodingError::owner)?;
+            for completion in page.items {
+                if completion.acknowledged {
+                    let (content, truncated) =
+                        prefix(completion.result.answer(), DECISION_CONTENT_BYTES);
+                    accepted.push(json!({
+                        "sequence": completion.sequence,
+                        "agent_id": completion.result.agent_id(),
+                        "outcome": completion.result.outcome(),
+                        "content": content,
+                        "content_truncated": truncated || completion.result.answer_truncated()
+                    }));
+                } else {
+                    unaccepted += 1;
+                }
+            }
+            let Some(next) = page.next_cursor else { break };
+            after = Some(next);
+        }
+        Ok((accepted, unaccepted))
+    }
+
+    fn pending_conflicts(&self) -> Result<Vec<Value>, CodingError> {
+        let path = self.records.join("conflicts.jsonl");
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        context::read(&path, super::conflicts::MAX_LOG_BYTES)?
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let record = super::conflict_record::parse_retained_record(line, self.job_id())?;
+                let record_sha256_scope = if record.version == 2 {
+                    "canonical_record_without_record_sha256"
+                } else {
+                    "raw_json_line"
+                };
+                let record_sha256 = record.record_sha256.unwrap_or(digest(line)?.to_string());
+                Ok(json!({
+                    "candidate_checkout_id": record.candidate_checkout_id,
+                    "record_sha256": record_sha256,
+                    "record_sha256_scope": record_sha256_scope,
+                    "record_status_at_capture": record.status,
+                    "current_state": "unknown_requires_fresh_revalidation",
+                    "authority": "none",
+                    "resolution": "not_implemented"
+                }))
+            })
+            .collect()
+    }
+}
+
+fn is_terminal(state: JobState) -> bool {
+    matches!(
+        state,
+        JobState::Completed | JobState::Failed | JobState::Cancelled
+    )
+}
+
+fn state_value(state: JobState) -> Value {
+    serde_json::to_value(state).expect("JobState serializes")
+}
+
+fn prefix(value: &str, maximum: usize) -> (String, bool) {
+    if value.len() <= maximum {
+        return (value.into(), false);
+    }
+    let mut end = maximum;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].into(), true)
+}
+
+fn bounded_body(mut projection: Value) -> Result<String, CodingError> {
+    let mut omitted_content = 0;
+    loop {
+        projection["omitted"]["accepted_decision_content"] = json!(omitted_content);
+        let body = serde_json::to_string(&projection).map_err(CodingError::owner)?;
+        if body.len() <= MAX_CONTINUATION_BYTES {
+            return Ok(body);
+        }
+        let Some(decision) =
+            projection["accepted_decisions"]
+                .as_array_mut()
+                .and_then(|decisions| {
+                    decisions
+                        .iter_mut()
+                        .rev()
+                        .find(|decision| decision["content"].is_string())
+                })
+        else {
+            return Err(CodingError::InvalidRequest);
+        };
+        decision
+            .as_object_mut()
+            .expect("JSON object")
+            .remove("content");
+        decision["content_truncated"] = Value::Bool(true);
+        omitted_content += 1;
     }
 }
