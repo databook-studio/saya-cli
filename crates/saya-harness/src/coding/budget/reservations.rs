@@ -10,6 +10,7 @@ pub(super) async fn append_reservation(
     state: &mut State,
     sequence: NonZeroU64,
     charges: Vec<(BudgetDimension, u64)>,
+    token_scope: Option<String>,
     agent: Option<saya_types::AgentId>,
     invocation: Option<saya_types::InvocationId>,
 ) -> Result<(), EffectAdmissionError> {
@@ -17,7 +18,16 @@ pub(super) async fn append_reservation(
         .into_iter()
         .map(|(dimension, amount)| {
             let amount = NonZeroU64::new(amount).ok_or_else(|| corrupt(state))?;
-            BudgetCharge::new(dimension, None, None, amount).map_err(|_| corrupt(state))
+            // Token-dimension charges are endpoint-scoped by the type
+            // contract; the scope is the token policy's authenticated
+            // endpoint digest, so reservations and their settlements match.
+            let endpoint = match dimension {
+                BudgetDimension::InputTokens | BudgetDimension::OutputTokens => {
+                    Some(token_scope.clone().ok_or_else(|| corrupt(state))?)
+                }
+                _ => None,
+            };
+            BudgetCharge::new(dimension, endpoint, None, amount).map_err(|_| corrupt(state))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let reservation = BudgetReservationV1::new(
@@ -92,6 +102,7 @@ impl State {
     pub(super) async fn reserve(
         &mut self,
         charges: Vec<(BudgetDimension, u64)>,
+        token_scope: Option<String>,
         agent: Option<saya_types::AgentId>,
         invocation: Option<saya_types::InvocationId>,
     ) -> Result<NonZeroU64, EffectAdmissionError> {
@@ -120,7 +131,7 @@ impl State {
             return Err(EffectAdmissionError::Denied);
         }
         let sequence = NonZeroU64::new(self.sequence).ok_or_else(|| self.owner_failure())?;
-        append_reservation(self, sequence, charges, agent, invocation).await?;
+        append_reservation(self, sequence, charges, token_scope, agent, invocation).await?;
         self.sequence = self
             .sequence
             .checked_add(1)

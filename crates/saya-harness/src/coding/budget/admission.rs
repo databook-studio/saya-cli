@@ -68,7 +68,7 @@ pub(super) async fn admit_one(
     check_id_capacity(state, 1)?;
     check_limit(state, dimension, amount)?;
     let sequence = state
-        .reserve(charges, agent.clone(), invocation.clone())
+        .reserve(charges, None, agent.clone(), invocation.clone())
         .await?;
     bump(state, dimension, amount)?;
     let id = allocate(state)?;
@@ -109,6 +109,7 @@ pub(super) async fn admit_model(
                 (BudgetDimension::LogicalRequests, 1),
                 (BudgetDimension::ModelRequestSlots, 1),
             ],
+            None,
             agent.clone(),
             invocation.clone(),
         )
@@ -179,8 +180,15 @@ pub(super) async fn admit_physical(
             (BudgetDimension::OutputTokens, output),
         ]);
     }
+    // Token charges are scoped to the policy's authenticated endpoint
+    // digest: reserve_amount proved the request endpoint hashes to it.
+    let token_scope = token_bounds
+        .is_some()
+        .then(|| state.token_policy.as_ref())
+        .flatten()
+        .map(|policy| policy.data().endpoint_sha256.as_str().to_owned());
     let sequence = state
-        .reserve(charges, agent.clone(), invocation.clone())
+        .reserve(charges, token_scope, agent.clone(), invocation.clone())
         .await?;
     if let Some((input, output)) = token_bounds {
         state.counts.tokens = state

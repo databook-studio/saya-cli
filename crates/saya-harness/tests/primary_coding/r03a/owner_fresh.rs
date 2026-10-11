@@ -71,12 +71,36 @@ async fn constructor_refuses_prior_budget_history_instead_of_resetting_counts() 
         fixture.store.reserve_coding_budget(event).await.unwrap(),
         CodingEventAppend::Appended(NonZeroU64::new(2).unwrap())
     );
+    // A fresh construction on prior budget history is refused at the
+    // policy-authentication step, before the fresh-job guard: the store's
+    // first-policy insert refuses a Running job that already has budget
+    // reservations, and the ledger surfaces that refusal as Store (the
+    // contract pinned by r03b's resume_without_policy_row_refuses). The
+    // refusal must not authenticate a policy row or disturb the counts.
     assert!(matches!(
         fixture
             .ledger(limits(2, 2, 2, 1, 1, Duration::from_secs(5)))
             .await,
-        Err(BudgetLedgerError::NotFreshRunning)
+        Err(BudgetLedgerError::Store)
     ));
+    assert!(
+        fixture
+            .store
+            .get_coding_budget_policy(&fixture.job)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .store
+            .list_coding_budget_reservations(&fixture.job, None, 10)
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
     fixture.close().await;
 }
 

@@ -59,9 +59,12 @@ pub(super) fn observations(
     usage: Option<TokenUsage>,
     complete: bool,
 ) -> Vec<BudgetObservation> {
-    if state.token_policy.is_none() {
+    let Some(policy) = &state.token_policy else {
         return Vec::new();
-    }
+    };
+    // The same authenticated endpoint scope the reservation charges carry:
+    // the settlement observations must match them key-for-key.
+    let scope = policy.data().endpoint_sha256.as_str().to_owned();
     let values = if outcome == EffectOutcome::NotStarted {
         Some((0, 0))
     } else if outcome == EffectOutcome::Succeeded && complete {
@@ -77,7 +80,7 @@ pub(super) fn observations(
     .map(|(dimension, value)| {
         BudgetObservation::new(
             dimension,
-            None,
+            Some(scope.clone()),
             None,
             value
                 .map(BudgetObservationValue::Measured)
