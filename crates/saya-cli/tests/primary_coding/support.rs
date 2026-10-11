@@ -16,6 +16,22 @@ pub struct Fixture {
     pub store: SqliteStateStore,
     pub personal_instructions: Option<PathBuf>,
 }
+struct Extras<'a> {
+    diagnostic_output: Option<&'a str>,
+    personal_enabled: Option<bool>,
+    extensions: Option<&'a str>,
+}
+
+impl Extras<'_> {
+    fn none() -> Self {
+        Self {
+            diagnostic_output: None,
+            personal_enabled: None,
+            extensions: None,
+        }
+    }
+}
+
 impl Fixture {
     pub async fn new(label: &str) -> Self {
         Self::with_endpoint(label, None).await
@@ -33,14 +49,28 @@ impl Fixture {
             false,
             false,
             false,
-            None,
-            None,
-            Some(extensions),
+            Extras {
+                diagnostic_output: None,
+                personal_enabled: None,
+                extensions: Some(extensions),
+            },
         )
         .await
     }
     pub async fn with_diagnostic_output(label: &str, output: &str) -> Self {
-        Self::build_options(label, None, false, false, false, Some(output), None, None).await
+        Self::build_options(
+            label,
+            None,
+            false,
+            false,
+            false,
+            Extras {
+                diagnostic_output: Some(output),
+                personal_enabled: None,
+                extensions: None,
+            },
+        )
+        .await
     }
     pub async fn with_personal_instructions(label: &str, endpoint: &str, enabled: bool) -> Self {
         Self::build_options(
@@ -49,20 +79,22 @@ impl Fixture {
             false,
             false,
             false,
-            None,
-            Some(enabled),
-            None,
+            Extras {
+                diagnostic_output: None,
+                personal_enabled: Some(enabled),
+                extensions: None,
+            },
         )
         .await
     }
     async fn build(label: &str, endpoint: Option<&str>, check: bool) -> Self {
-        Self::build_options(label, endpoint, check, false, false, None, None, None).await
+        Self::build_options(label, endpoint, check, false, false, Extras::none()).await
     }
     pub async fn with_deadline(label: &str, endpoint: &str) -> Self {
-        Self::build_options(label, Some(endpoint), false, true, false, None, None, None).await
+        Self::build_options(label, Some(endpoint), false, true, false, Extras::none()).await
     }
     pub async fn with_slow_check(label: &str) -> Self {
-        Self::build_options(label, None, true, false, true, None, None, None).await
+        Self::build_options(label, None, true, false, true, Extras::none()).await
     }
     async fn build_options(
         label: &str,
@@ -70,9 +102,7 @@ impl Fixture {
         check: bool,
         deadline: bool,
         slow: bool,
-        diagnostic_output: Option<&str>,
-        personal_enabled: Option<bool>,
-        extensions: Option<&str>,
+        extras: Extras<'_>,
     ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let stamp = SystemTime::now()
@@ -112,7 +142,7 @@ impl Fixture {
         )
         .unwrap();
         runtime.resolved.coding.enabled = true;
-        if let Some(enabled) = personal_enabled {
+        if let Some(enabled) = extras.personal_enabled {
             runtime.resolved.instructions.personal_enabled = enabled;
         }
         if let Some(endpoint) = endpoint {
@@ -136,7 +166,7 @@ impl Fixture {
         if deadline {
             runtime.resolved.coding.max_elapsed_seconds = 1;
         }
-        if let Some(extensions) = extensions {
+        if let Some(extensions) = extras.extensions {
             let file = saya_config::ConfigFile::from_toml(extensions).unwrap();
             runtime.resolved.coding.extensions = saya_config::resolve(
                 saya_config::ResolutionInput::new(saya_config::ConnectionsFile::default())
@@ -146,8 +176,8 @@ impl Fixture {
             .coding
             .extensions;
         }
-        let personal_instructions = personal_enabled.map(|_| root.join("personal-instructions"));
-        if let Some(output) = diagnostic_output {
+        let personal_instructions = extras.personal_enabled.map(|_| root.join("personal-instructions"));
+        if let Some(output) = extras.diagnostic_output {
             let argument = serde_json::to_string(output).unwrap();
             let file = saya_config::ConfigFile::from_toml(&format!(
                 "[coding.check_profiles.lint]\ncommand_id='diagnostic-check'\nprogram='printf'\nargv=[{argument}]\ntimeout_seconds=5\nenvironment_profile='confined'\ndiagnostic_format='cargo_json'\n"
@@ -176,7 +206,7 @@ impl Fixture {
             .check_profiles;
         }
         let store = SqliteStateStore::new(root.join("state.sqlite3"));
-        let extension_fixture = extensions.is_some();
+        let extension_fixture = extras.extensions.is_some();
         // macOS keeps `sleep` in /bin while `printf`, `false`, and `git` live
         // only in /usr/bin, so the program directory follows the programs each
         // fixture shape configures: extension profiles need `sh` (/bin), the
