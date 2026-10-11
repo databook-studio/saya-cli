@@ -4,7 +4,8 @@ use saya_harness::coding::context::{
 };
 use saya_harness::instructions::InstructionLimits;
 use saya_store::{ProjectPreferenceStore, SqliteStateStore};
-use saya_types::WorktreeId;
+use saya_types::{Sha256Digest, WorktreeId};
+use sha2::{Digest, Sha256};
 
 use super::support::{TempTree, authority, options};
 
@@ -222,4 +223,67 @@ async fn child_briefs_reuse_one_immutable_original_context_without_grant_inherit
         Err(ChildContextError::InvalidPreference(_))
     ));
     store.close().await;
+}
+
+#[test]
+fn personal_instruction_body_never_exceeds_aggregate_limit() {
+    let project = TempTree::new();
+    let source = vec![b'p'; 300];
+    project.write("instructions.md", &source);
+    for total_max_bytes in [100, 0] {
+        let limits = InstructionLimits {
+            personal_max_bytes: 300,
+            project_max_bytes: 300,
+            total_max_bytes,
+        };
+        let context = OriginalProjectContext::capture_with_policy(
+            &project.workspace(),
+            Some(project.path()),
+            Vec::new(),
+            false,
+            &limits,
+        )
+        .unwrap();
+        let fact = &context.instruction_sources()[0];
+        assert_eq!(
+            fact.origin,
+            saya_harness::instructions::InstructionOrigin::Personal
+        );
+        assert_eq!(fact.source_size, source.len() as u64);
+        assert_eq!(fact.source_sha256, digest(&source));
+        assert!(fact.source_truncated);
+
+        let spec = context
+            .project_child(
+                authority("personal-aggregate", "src/personal.rs"),
+                ChildBrief {
+                    task: "use bounded personal context".to_owned(),
+                    dependencies: Vec::new(),
+                    artifacts: Vec::new(),
+                },
+                options("model"),
+            )
+            .unwrap();
+        let block = spec
+            .request()
+            .context_blocks
+            .iter()
+            .find(|block| block.label == "untrusted-personal-instructions")
+            .unwrap();
+        let admitted = block
+            .body
+            .split_once("Untrusted instruction text:\n")
+            .unwrap()
+            .1;
+        assert_eq!(admitted.len(), total_max_bytes);
+        assert!(block.truncated);
+    }
+}
+
+fn digest(bytes: &[u8]) -> Sha256Digest {
+    let expected: String = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Sha256Digest::parse(&expected).unwrap()
 }

@@ -95,6 +95,11 @@ impl OriginalProjectContext {
         {
             return Err(ChildContextError::InvalidInstructionLimits);
         }
+        let effective_limits = InstructionLimits {
+            personal_max_bytes: limits.personal_max_bytes.min(limits.total_max_bytes),
+            project_max_bytes: limits.project_max_bytes,
+            total_max_bytes: limits.total_max_bytes,
+        };
         let canonical_path = original_workspace
             .root()
             .to_str()
@@ -107,7 +112,7 @@ impl OriginalProjectContext {
         let loaded = instructions::load_instructions(
             project_enabled.then_some(original_workspace.root()),
             personal_instruction_dir,
-            limits,
+            &effective_limits,
         );
         let instruction_sources = loaded
             .sources
