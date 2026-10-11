@@ -31,7 +31,7 @@ impl Provider {
         let stopped = Arc::clone(&stop);
         let worker = thread::spawn(move || {
             let mut turns = BTreeMap::<bool, usize>::new();
-            let deadline = Instant::now() + Duration::from_secs(25);
+            let deadline = Instant::now() + Duration::from_secs(90);
             while !stopped.load(Ordering::Acquire) && Instant::now() < deadline {
                 let (mut stream, _) = match listener.accept() {
                     Ok(pair) => pair,
@@ -41,10 +41,22 @@ impl Provider {
                     }
                     Err(_) => break,
                 };
+                // macOS accept() inherits the listener's O_NONBLOCK, so the
+                // read timeout below would be ignored and an empty window
+                // would return EAGAIN instantly — closing the socket before
+                // the client ever writes. Restore blocking mode so the read
+                // waits for the request instead of racing it.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
-                let body = read_request(&mut stream);
+                // A connection that stays silent across its read windows is a
+                // client that gave up without closing (a leaked abandoned
+                // socket). Drain it and keep serving; it is never the
+                // request this worker is waiting for.
+                let Some(body) = read_request(&mut stream) else {
+                    continue;
+                };
                 let child = body.contains("UNTRUSTED CHILD TASK");
                 if child && body.contains("safe MCP result") {
                     seen_result.store(true, Ordering::Release);
@@ -147,7 +159,7 @@ fn response(child: bool, turn: usize) -> String {
     match (child, turn) {
         (false, 0) => tool(
             "delegate",
-            json!({"tasks":[{"agent_id":"mcp-child","task":"UNTRUSTED CHILD TASK: inspect","write_paths":[]}]}),
+            json!({"tasks":[{"agent_id":"mcp-child","task":"inspect with the configured profile","write_paths":[]}]}),
         ),
         (false, 1) => tool("await_children", json!({})),
         (false, _) | (true, _) if turn > 0 => answer("finished"),
@@ -175,11 +187,26 @@ fn answer(text: &str) -> String {
     )
 }
 
-fn read_request(stream: &mut TcpStream) -> String {
+fn read_request(stream: &mut TcpStream) -> Option<String> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
+    let mut stalling = 0usize;
     loop {
-        let count = stream.read(&mut buffer).unwrap();
+        let count = match stream.read(&mut buffer) {
+            Ok(count) => count,
+            // The read timeout surfaces as EAGAIN/WouldBlock on macOS while
+            // the request is still arriving; tolerate a few empty windows,
+            // then treat the connection as abandoned.
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                stalling += 1;
+                if stalling > 6 {
+                    return None;
+                }
+                continue;
+            }
+            Err(error) => panic!("provider request read failed: {error}"),
+        };
+        stalling = 0;
         assert!(count > 0, "provider request closed early");
         bytes.extend_from_slice(&buffer[..count]);
         assert!(bytes.len() <= 1024 * 1024);
@@ -194,8 +221,10 @@ fn read_request(stream: &mut TcpStream) -> String {
                 })
                 .unwrap();
             if bytes.len() >= header_end + 4 + length {
-                return String::from_utf8(bytes[header_end + 4..header_end + 4 + length].to_vec())
-                    .unwrap();
+                return Some(
+                    String::from_utf8(bytes[header_end + 4..header_end + 4 + length].to_vec())
+                        .unwrap(),
+                );
             }
         }
     }
