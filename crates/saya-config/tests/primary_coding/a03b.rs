@@ -67,7 +67,7 @@ fn coding_diagnostics_preserve_raw_effective_types_and_provenance_keys() {
     assert_json_fields(&effective_defaults, &defaults);
 
     let file = ConfigFile::from_toml(
-        "[coding]\nenabled = true\nmax_children = 2\nmax_concurrent_model_requests = 3\nmax_concurrent_commands = 1\nmax_logical_model_requests = 40\nmax_physical_transport_attempts = 60\nmax_tool_calls = 123\nmax_known_tokens = 23456\nmax_elapsed_seconds = 900\n\n[coding.check_profiles.ci]\ncommand_id = 'cargo-test'\nprogram = 'cargo'\nargv = ['test']\ntimeout_seconds = 90\nenvironment_profile = 'confined-v1'\n",
+        "[coding]\nenabled = true\nmax_children = 2\nmax_concurrent_model_requests = 3\nmax_concurrent_commands = 1\nmax_logical_model_requests = 40\nmax_physical_transport_attempts = 60\nmax_tool_calls = 123\nmax_known_tokens = 23456\nmax_elapsed_seconds = 900\n\n[coding.extensions.lookup]\nprotocol = 'mcp'\nprogram = 'extension-server'\nargv = ['private-extension-arg']\n\n[coding.check_profiles.ci]\ncommand_id = 'cargo-test'\nprogram = 'cargo'\nargv = ['test']\ntimeout_seconds = 90\nenvironment_profile = 'confined-v1'\n",
     )
     .expect("coding values parse");
     let raw_user = serde_json::to_value(file.redacted_diagnostics()).unwrap();
@@ -84,6 +84,16 @@ fn coding_diagnostics_preserve_raw_effective_types_and_provenance_keys() {
         ("coding_max_known_tokens", json!(23_456)),
         ("coding_max_elapsed_seconds", json!(900)),
         (
+            "coding_extensions",
+            json!({"lookup": {
+                "protocol": "mcp",
+                "program": "extension-server",
+                "argv_count": 1,
+                "language": null,
+                "tool_policy_count": 0,
+            }}),
+        ),
+        (
             "coding_check_profiles",
             json!({"ci": {
                 "command_id": "cargo-test",
@@ -99,6 +109,7 @@ fn coding_diagnostics_preserve_raw_effective_types_and_provenance_keys() {
     assert_json_fields(&effective_user, &user_values);
 
     let expected_keys = [
+        ("coding_extensions", "coding.extensions"),
         ("coding_enabled", "coding.enabled"),
         ("coding_max_children", "coding.max_children"),
         (
