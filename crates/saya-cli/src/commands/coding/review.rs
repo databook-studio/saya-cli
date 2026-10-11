@@ -5,7 +5,7 @@ use saya_harness::coding::{
         AcceptedDelta, ApplyBackBounds, ApplyBackInput, AssignedPaths, DEFAULT_DELTA_DEADLINE,
         EvidenceBinding, PlanIndex, apply_back, compute_delta, evaluate_receipt,
     },
-    worktree::verify_owned_checkout,
+    worktree::verify_admitted_checkout,
 };
 use saya_types::{JobId, ManagedCheckoutId, Sha256Digest};
 use serde_json::{Value, json};
@@ -76,7 +76,7 @@ impl NativeCodingJob {
         checkout: &ManagedCheckoutId,
     ) -> Result<CodingReview, CodingError> {
         let ownership = self.ownership(checkout);
-        let verified = verify_owned_checkout(&ownership, &self.cancellation)
+        let verified = verify_admitted_checkout(&ownership, &self.cancellation)
             .await
             .map_err(CodingError::owner)?;
         if verified.agent_id().is_some() {
@@ -155,7 +155,7 @@ impl NativeCodingJob {
             return Err(CodingError::StaleReview);
         }
         let ownership = self.ownership(review.binding.candidate_checkout_id());
-        let verified = verify_owned_checkout(&ownership, &self.cancellation)
+        let verified = verify_admitted_checkout(&ownership, &self.cancellation)
             .await
             .map_err(CodingError::owner)?;
         review
