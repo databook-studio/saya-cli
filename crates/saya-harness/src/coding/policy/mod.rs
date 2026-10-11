@@ -3,6 +3,7 @@
 mod admission;
 mod approval;
 mod authority;
+mod issuance;
 mod values;
 
 pub use approval::ChildApprovalDecider;

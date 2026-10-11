@@ -1,13 +1,27 @@
 use std::num::NonZeroU64;
 
-use saya_types::MAX_RECEIPT_REFERENCE_BYTES;
+use saya_types::{CheckDiagnosticFormat, MAX_RECEIPT_REFERENCE_BYTES};
 
 use crate::runner::{MAX_ARG_BYTES, MAX_ARG_COUNT, validate_argv};
 
+mod delta;
+mod diagnostics;
+mod evidence;
 mod execute;
+mod execute_support;
+mod identity;
 mod receipt;
 
-pub use execute::{CheckExecutionInput, MAX_CHECK_TIMEOUT_SECONDS, execute_check};
+pub use delta::DiagnosticDelta;
+pub use diagnostics::{
+    Diagnostic, DiagnosticError, DiagnosticLocation, DiagnosticSet, DiagnosticSeverity,
+};
+pub use evidence::{
+    CheckDiagnosticError, CheckDiagnostics, DiagnosticBaseline, DiagnosticEvidenceError,
+};
+pub use execute::{
+    CheckExecutionInput, MAX_CHECK_TIMEOUT_SECONDS, execute_check, execute_check_with_diagnostics,
+};
 pub use receipt::{CheckOutputReference, CheckProcessOutcome, CheckReceipt};
 
 /// Why check execution or receipt reuse could not be completed honestly.
@@ -16,6 +30,8 @@ pub use receipt::{CheckOutputReference, CheckProcessOutcome, CheckReceipt};
 pub enum CheckExecutionError {
     #[error("the check invocation is invalid or exceeds its bound")]
     InvalidInvocation,
+    #[error("structured check diagnostics require an explicit supported format")]
+    DiagnosticFormatRequired,
     #[error("the candidate and narrowed child authority do not match")]
     AuthorityMismatch,
     #[error("the selected program is outside the narrowed child authority")]
@@ -57,6 +73,7 @@ pub struct CheckInvocation {
     timeout_seconds: NonZeroU64,
     toolchain: Option<String>,
     environment_profile: String,
+    diagnostic_format: Option<CheckDiagnosticFormat>,
 }
 
 impl CheckInvocation {
@@ -91,7 +108,17 @@ impl CheckInvocation {
             timeout_seconds,
             toolchain,
             environment_profile,
+            diagnostic_format: None,
         })
+    }
+
+    pub fn with_diagnostic_format(mut self, format: CheckDiagnosticFormat) -> Self {
+        self.diagnostic_format = Some(format);
+        self
+    }
+
+    pub fn diagnostic_format(&self) -> Option<CheckDiagnosticFormat> {
+        self.diagnostic_format
     }
 
     pub fn profile_id(&self) -> &str {

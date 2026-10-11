@@ -194,6 +194,9 @@ fn coding_readiness(runtime: &RuntimeConfig, cwd: &Path) -> TaskReadiness {
         ),
         Err(error) => check_hint("workspace", CheckStatus::Fail, error, WORKSPACE_HINT),
     });
+    if runtime.resolved.coding.enabled {
+        checks.push(check_hint("native_runtime",CheckStatus::Warn,"native coding is enabled; configuration inspection does not prove provider tools or host confinement","Run saya coding doctor --probe from the project for actual native readiness checks."));
+    }
     ready("coding", checks)
 }
 

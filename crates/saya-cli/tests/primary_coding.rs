@@ -1,0 +1,14 @@
+//! Native application owner contracts; runtime execution awaits final gates.
+#[path = "primary_coding/approval.rs"]
+mod approval;
+#[cfg(unix)]
+#[path = "primary_coding/operations.rs"]
+mod operations;
+#[path = "primary_coding/parity.rs"]
+mod parity;
+#[cfg(unix)]
+#[path = "primary_coding/review.rs"]
+mod review;
+#[cfg(unix)]
+#[path = "primary_coding/support.rs"]
+mod support;

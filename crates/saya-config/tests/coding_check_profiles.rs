@@ -90,6 +90,31 @@ fn diagnostic_format_is_optional_and_unknown_values_are_not_echoed() {
 }
 
 #[test]
+fn cargo_json_format_is_explicit_profile_data_without_changing_argv() {
+    let toml = PROFILE_FILE.replace("rustc_json", "cargo_json");
+    let file = ConfigFile::from_toml(&toml).unwrap();
+    let raw: serde_json::Value = serde_json::to_value(file.redacted_diagnostics()).unwrap();
+    assert_eq!(
+        raw["coding_check_profiles"]["ci"]["diagnostic_format"],
+        "cargo_json"
+    );
+    let resolved = resolved(file);
+    let profile = resolved.coding.select_check_profile("ci").unwrap();
+    assert_eq!(
+        profile.diagnostic_format(),
+        Some(saya_config::CheckDiagnosticFormat::CargoJson)
+    );
+    assert_eq!(profile.argv(), ["test", "--locked", ARG_SENTINEL]);
+    let effective: serde_json::Value =
+        serde_json::to_value(resolved.redacted_diagnostics()).unwrap();
+    assert_eq!(
+        effective["coding_check_profiles"]["ci"]["diagnostic_format"],
+        "cargo_json"
+    );
+    assert!(!effective.to_string().contains(ARG_SENTINEL));
+}
+
+#[test]
 fn malformed_profile_fields_fail_during_resolution_without_echoing_values() {
     let bad = r#"
 [coding.check_profiles.ci]

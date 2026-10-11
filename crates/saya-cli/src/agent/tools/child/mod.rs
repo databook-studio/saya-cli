@@ -1,6 +1,8 @@
 //! The child tool surface: workspace tools bound to one verified managed checkout.
 #![allow(dead_code)] // composition entrypoint is wired by the caller-facing child run slice
 
+#[cfg(test)]
+mod approval_test_support;
 mod compose;
 mod executor;
 mod factory;

@@ -6,6 +6,13 @@
 /// this lists the canonical form of each command, not every alias.
 const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
     (
+        "Native coding",
+        &[(
+            "coding",
+            "/coding <start|list|show|cancel|doctor|worktrees> …",
+        )],
+    ),
+    (
         "Connections",
         &[
             ("connect", "/connect <profile>"),

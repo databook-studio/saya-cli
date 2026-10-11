@@ -14,6 +14,7 @@ use super::limits::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedCoding {
     pub enabled: bool,
+    pub extensions: BTreeMap<String, super::ExtensionProfile>,
     pub max_children: usize,
     pub max_concurrent_model_requests: usize,
     pub max_concurrent_commands: usize,
@@ -30,6 +31,7 @@ impl Default for ResolvedCoding {
     fn default() -> Self {
         Self {
             enabled: false,
+            extensions: BTreeMap::new(),
             max_children: MAX_CHILDREN,
             max_concurrent_model_requests: MAX_CONCURRENT_MODEL_REQUESTS,
             max_concurrent_commands: MAX_CONCURRENT_COMMANDS,
@@ -122,6 +124,7 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
 
     Ok(ResolvedCoding {
         enabled: file.enabled.unwrap_or(defaults.enabled),
+        extensions: super::extensions::resolve(file.extensions.as_ref())?,
         max_children,
         max_concurrent_model_requests,
         max_concurrent_commands,

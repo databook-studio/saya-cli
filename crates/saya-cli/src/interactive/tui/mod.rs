@@ -17,6 +17,7 @@ mod capture_agent;
 #[cfg(test)]
 mod capture_tests;
 mod clipboard;
+mod coding;
 mod complete;
 #[cfg(test)]
 #[path = "continuation_acceptance_tests.rs"]

@@ -6,7 +6,6 @@ use saya_agent::{AgentLimits, AnsweringLimits};
 use saya_harness::coding::context::ChildProjectionOptions;
 use saya_harness::coding::policy::{
     ChildAuthorityRequest, ChildRole, CommandCheckoutProfile, PlatformSupport, RootDelegationInput,
-    RootDelegationScope,
 };
 use saya_harness::workspace::Workspace;
 use saya_types::{
@@ -59,7 +58,7 @@ pub(super) fn authority(tag: &str, path: &str) -> saya_harness::coding::policy::
     let write_path: WorkspacePath = path.to_owned().try_into().unwrap();
     let mut capabilities = Capabilities::default();
     capabilities.workspace_write = true;
-    let root = RootDelegationScope::new(RootDelegationInput {
+    let root = approval_support::approved_root(RootDelegationInput {
         job_id: JobId::parse(&format!("job-{tag}")).unwrap(),
         agent_id: AgentId::parse(&format!("agent-{tag}")).unwrap(),
         invocation_id: InvocationId::parse(&format!("invoke-{tag}")).unwrap(),
@@ -113,3 +112,6 @@ pub(super) fn options(model: &str) -> ChildProjectionOptions {
         request_preflight: None,
     }
 }
+
+#[path = "../approval_support.rs"]
+mod approval_support;

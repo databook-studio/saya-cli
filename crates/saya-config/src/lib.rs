@@ -20,7 +20,9 @@ mod resolve;
 mod secret;
 mod values;
 
-pub use coding::{ResolvedCheckProfile, ResolvedCoding};
+pub use coding::{
+    ExtensionProfile, ExtensionProtocol, ExtensionToolEffect, ResolvedCheckProfile, ResolvedCoding,
+};
 pub use context_window::context_window_tokens;
 pub use diagnostics::{
     CheckProfileDiagnostics, EndpointDiagnostics, RedactedDiagnostics, ResolvedDiagnostics,

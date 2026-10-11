@@ -39,6 +39,9 @@ pub(crate) fn write_files(
         None => "saya".to_owned(),
     };
     prompter.say(&format!("Next: run `{next}` and ask a question."))?;
+    if draft.profile.is_none() && draft.provider.is_some() {
+        prompter.say("Native coding needs no database. Enable [coding] enabled = true in this trusted user configuration, select installed check/MCP/LSP profiles, then run `saya coding doctor --probe` from the project. Jobs still require explicit write/program scopes and fresh approval.")?;
+    }
     Ok(0)
 }
 

@@ -98,6 +98,15 @@ impl App {
     /// cancelled (Esc) or finishes. Returns whether the quit may proceed.
     pub(crate) fn try_quit(&mut self) -> bool {
         if self
+            .coding_panel
+            .as_ref()
+            .is_some_and(|panel| panel.is_active())
+        {
+            self.transcript.push(super::super::transcript::BlockKind::System,"A coding job is still running. Use /coding cancel <job-id>, then wait for settlement before quitting.");
+            return false;
+        }
+
+        if self
             .run_panel
             .as_ref()
             .is_some_and(|panel| panel.is_active())

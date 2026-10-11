@@ -55,7 +55,7 @@ fn root(
     capabilities: Capabilities,
     profiles: Vec<ProfileIdentity>,
 ) -> RootDelegationScope {
-    RootDelegationScope::new(RootDelegationInput {
+    approval_support::approved_root(RootDelegationInput {
         job_id: JobId::parse("job").unwrap(),
         agent_id: AgentId::parse("agent").unwrap(),
         invocation_id: InvocationId::parse("invocation").unwrap(),
@@ -219,7 +219,7 @@ fn intersections_reject_malformed_destinations_and_unmatched_domains() {
     malformed_fetch.destinations[0].host = "example.test:8443".to_owned();
     malformed.fetch = Some(malformed_fetch);
     assert!(matches!(
-        RootDelegationScope::new(RootDelegationInput {
+        approval_support::approved_root(RootDelegationInput {
             job_id: JobId::parse("job").unwrap(),
             agent_id: AgentId::parse("agent").unwrap(),
             invocation_id: InvocationId::parse("invocation").unwrap(),
@@ -317,3 +317,6 @@ fn unsupported_platform_strips_otherwise_authorized_effects() {
         Err(AuthorityRefusal::DatabaseProfileDenied)
     ));
 }
+
+#[path = "approval_support.rs"]
+mod approval_support;

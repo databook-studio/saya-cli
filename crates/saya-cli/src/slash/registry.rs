@@ -5,6 +5,7 @@
 
 /// Known slash command names handled by `parse_slash_command`.
 pub(crate) const KNOWN_COMMANDS: &[&str] = &[
+    "coding",
     "connect",
     "connections",
     "include",

@@ -78,7 +78,7 @@ fn child_argv(tail: &str) -> Result<Vec<String>, String> {
 /// Splits a slash tail into argv words without invoking a shell. Quotes group
 /// whitespace and backslashes escape the next character; both are removed.
 /// Shell expansion and metacharacter handling do not exist here.
-fn tokenize_tail(tail: &str) -> Result<Vec<String>, String> {
+pub(crate) fn tokenize_tail(tail: &str) -> Result<Vec<String>, String> {
     let mut tokens = Vec::new();
     let mut token = String::new();
     let mut quote = None;

@@ -29,6 +29,7 @@ include!("action_runs.rs");
 include!("action_grants.rs");
 include!("action_sessions.rs");
 include!("action_commands.rs");
+include!("action_coding.rs");
 include!("action_lifecycle.rs");
 include!("action_dispatch.rs");
 include!("headless_entry.rs");

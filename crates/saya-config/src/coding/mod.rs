@@ -1,4 +1,6 @@
 mod check_profiles;
+mod extensions;
+pub use extensions::{ExtensionProfile, ExtensionProtocol, ExtensionToolEffect};
 mod limits;
 mod merge;
 mod resolve;

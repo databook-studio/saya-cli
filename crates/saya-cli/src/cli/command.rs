@@ -6,6 +6,17 @@ use clap::Subcommand;
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    /// Native coding jobs with bounded scoped approval and isolated managed checkouts.
+    Coding {
+        /// Original repository to snapshot; never a child-provided path.
+        #[arg(long, default_value = ".")]
+        repository: std::path::PathBuf,
+        /// Trusted directory containing installed programs for confined commands.
+        #[arg(long, default_value = "/usr/bin")]
+        program_dir: std::path::PathBuf,
+        #[command(subcommand)]
+        command: super::CodingCommand,
+    },
     /// Build (or reuse) the deterministic demo database — synthetic customers
     /// and orders designed to exercise tricky SQL — and open it read-only in
     /// an interactive session. Without a terminal (or with `--non-interactive`)

@@ -2,6 +2,7 @@
 
 /// Outcome of dispatching one line.
 pub(crate) enum Dispatch {
+    Coding(crate::cli::CodingCommand),
     /// A command was handled synchronously; keep looping.
     Handled,
     /// The session should exit.

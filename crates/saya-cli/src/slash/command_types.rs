@@ -1,5 +1,6 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
+    Coding(crate::cli::CodingCommand),
     Connect(String),
     Connections,
     Include(String),

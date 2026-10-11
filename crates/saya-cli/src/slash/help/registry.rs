@@ -13,6 +13,7 @@
 /// surface contains it verbatim. Kept beside the command it documents.
 pub(crate) const PLAN_BYPASS_SENTENCE: &str = "Plan still denies writes under `bypass`";
 pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
+    ("coding", "Start and control bounded native coding jobs"),
     ("connect", "Replace the active database profile"),
     ("connections", "List configured database connections"),
     ("include", "Add a secondary database profile to query scope"),

@@ -8,7 +8,7 @@ use saya_harness::coding::{
     child::{ChildComponents, ChildExecutionSpec, ChildFactory, ChildFactoryError},
     policy::{
         ChildAuthorityRequest, ChildRole, CommandCheckoutProfile, PlatformSupport,
-        RootDelegationInput, RootDelegationScope,
+        RootDelegationInput,
     },
 };
 use saya_types::{
@@ -116,7 +116,7 @@ pub fn authority_view(
     let allowed_path = WorkspacePath::try_from("src/owned.rs".to_owned()).unwrap();
     let mut root_capabilities = Capabilities::default();
     root_capabilities.workspace_write = true;
-    let root = RootDelegationScope::new(RootDelegationInput {
+    let root = approval_support::approved_root(RootDelegationInput {
         job_id: JobId::parse("job-a").unwrap(),
         agent_id: AgentId::parse(agent).unwrap(),
         invocation_id: InvocationId::parse(invocation).unwrap(),
@@ -196,3 +196,6 @@ pub fn spec(
     )
     .unwrap()
 }
+
+#[path = "approval_support.rs"]
+mod approval_support;

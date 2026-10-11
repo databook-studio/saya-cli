@@ -7,12 +7,12 @@ use crate::{
     coding::{
         commands::CommandOutputStatus,
         integration::{DEFAULT_DELTA_DEADLINE, candidate_source_digest},
-        worktree::{OwnershipInput, verify_owned_checkout},
+        worktree::OwnershipInput,
     },
     runner::ProgramOutcome,
 };
 
-use super::{CheckExecutionError, CheckInvocation};
+use super::{CheckExecutionError, CheckInvocation, identity::CheckLineage};
 
 #[cfg(test)]
 #[path = "outcome_tests.rs"]
@@ -26,6 +26,8 @@ pub struct CheckReceipt {
     program: String,
     process: CheckProcessOutcome,
     output: CheckOutputReference,
+    lineage: CheckLineage,
+    toolchain: Option<String>,
 }
 
 impl fmt::Debug for CheckReceipt {
@@ -49,6 +51,7 @@ impl CheckReceipt {
         process: CheckProcessOutcome,
         output: CheckOutputReference,
         actual_program: String,
+        lineage: CheckLineage,
     ) -> Self {
         Self {
             wire,
@@ -57,7 +60,21 @@ impl CheckReceipt {
             program: actual_program,
             process,
             output,
+            lineage,
+            toolchain: invocation.toolchain().map(str::to_owned),
         }
+    }
+
+    pub(super) fn comparable(&self, other: &Self) -> bool {
+        self.lineage == other.lineage
+            && self.wire.job_id() == other.wire.job_id()
+            && self.checkout_id == other.checkout_id
+            && self.profile_id == other.profile_id
+            && self.program == other.program
+            && self.toolchain == other.toolchain
+            && self.wire.command_id() == other.wire.command_id()
+            && self.wire.argv_sha256() == other.wire.argv_sha256()
+            && self.wire.environment_profile() == other.wire.environment_profile()
     }
 
     pub fn wire_receipt(&self) -> &CheckReceiptV1 {
@@ -108,7 +125,7 @@ impl CheckReceipt {
         if ownership.checkout_id != &self.checkout_id || ownership.job_id != self.wire.job_id() {
             return Err(CheckExecutionError::StaleReceipt);
         }
-        let candidate = verify_owned_checkout(ownership, cancellation).await?;
+        let candidate = self.lineage.verify(ownership, cancellation).await?;
         let source = candidate_source_digest(
             Path::new(candidate.path().as_str()),
             cancellation,
@@ -125,6 +142,7 @@ impl CheckReceipt {
 /// The process facts copied from the joined `RunProgram` result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CheckProcessOutcome {
+    pid: u32,
     exit_code: Option<i32>,
     signal: Option<i32>,
     timed_out: bool,
@@ -135,12 +153,17 @@ pub struct CheckProcessOutcome {
 impl CheckProcessOutcome {
     pub(super) fn from_program(outcome: &ProgramOutcome) -> Self {
         Self {
+            pid: outcome.pid,
             exit_code: outcome.exit_code,
             signal: outcome.signal,
             timed_out: outcome.killed_by_timeout,
             cancelled: outcome.cancelled,
             killed_orphans: outcome.killed_orphans,
         }
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.pid
     }
 
     pub fn exit_code(&self) -> Option<i32> {

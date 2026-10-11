@@ -113,6 +113,7 @@ pub(crate) struct App {
     /// The run panel: a run driven from the session, as a worker task
     /// (`run_panel.rs`). `None` until a run starts; its episode transcript
     /// and step list live here, never in the session conversation.
+    pub(crate) coding_panel: Option<super::super::coding::CodingPanel>,
     pub(crate) run_panel: Option<super::super::run_panel::RunPanel>,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,

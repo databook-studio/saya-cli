@@ -12,6 +12,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             .ok_or_else(|| SlashParseError("command requires an argument".into()))
     };
     let command = match name {
+        "coding" => coding::parse(trimmed.strip_prefix("/coding").unwrap_or("").trim_start())?,
         "connect" => SlashCommand::Connect(required()?),
         "connections" => SlashCommand::Connections,
         "include" => SlashCommand::Include(required()?),

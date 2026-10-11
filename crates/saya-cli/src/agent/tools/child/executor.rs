@@ -22,6 +22,7 @@ pub(crate) struct ChildTools {
     checkout_id: ManagedCheckoutId,
     permit_writes: bool,
     runner: Option<Arc<RunProgram>>,
+    coding: Option<Arc<crate::commands::coding::checks::ChildCodingOperations>>,
 }
 
 /// Builds the definitions and the executor for one child from one view: the
@@ -51,6 +52,7 @@ pub(crate) fn child_toolset(
             checkout_id: pair.checkout_id().clone(),
             permit_writes: permit,
             runner: None,
+            coding: None,
         },
     ))
 }
@@ -94,6 +96,15 @@ pub(crate) fn child_toolset_with_runner(
     Ok((definitions, tools))
 }
 
+impl ChildTools {
+    pub(crate) fn attach_coding(
+        &mut self,
+        coding: Arc<crate::commands::coding::checks::ChildCodingOperations>,
+    ) {
+        self.coding = Some(coding);
+    }
+}
+
 /// Admission happens immediately before the existing anchored mutation; the
 /// checkout id never comes from model arguments; data (SQL), scratch and
 /// memory tools are absent: unknown names are unsupported. Process tools
@@ -102,6 +113,34 @@ pub(crate) fn child_toolset_with_runner(
 /// runner after admission, and `run_command` is never routed.
 #[async_trait]
 impl ToolExecutor for ChildTools {
+    async fn execute_with_context(
+        &self,
+        name: &str,
+        arguments: serde_json::Value,
+        context: saya_agent::ToolExecutionContext,
+    ) -> Result<serde_json::Value, ToolError> {
+        if name.starts_with("coding_") {
+            let coding = self.coding.as_ref().ok_or(ToolError::UnsupportedTool)?;
+            return super::super::coding::child::execute(
+                coding,
+                name,
+                arguments,
+                &context.cancellation,
+            )
+            .await;
+        }
+        self.execute(name, arguments).await
+    }
+    async fn settle_invocation(&self) -> Result<(), ToolError> {
+        if let Some(coding) = &self.coding {
+            coding
+                .settle()
+                .await
+                .map_err(|error| ToolError::Runner(error.to_string()))?;
+        }
+        Ok(())
+    }
+
     async fn execute(
         &self,
         name: &str,

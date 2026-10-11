@@ -4,6 +4,7 @@ use crate::interactive::session::lifecycle::notes::NotesCommand;
 use saya_agent::{AgentMode, ApprovalPolicy};
 use std::{fmt, str::FromStr};
 
+mod coding;
 mod contracts;
 mod help;
 mod investigation;

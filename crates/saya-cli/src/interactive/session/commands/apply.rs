@@ -1,6 +1,7 @@
 impl SessionState {
     pub fn apply(&mut self, command: SlashCommand, available: &[String]) -> SessionAction {
         match command {
+            SlashCommand::Coding(command) => SessionAction::Coding(command),
             SlashCommand::Connect(name) => {
                 if !available.iter().any(|profile| profile == &name) {
                     return SessionAction::Error(format!("Unknown configured profile: {name}"));

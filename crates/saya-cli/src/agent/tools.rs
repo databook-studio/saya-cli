@@ -10,6 +10,7 @@ pub(crate) mod child;
 #[cfg(test)]
 #[path = "tools/clarification_tool_tests.rs"]
 mod clarification_tool_tests;
+pub(crate) mod coding;
 mod database_tools;
 mod executor;
 mod host_argv;

@@ -83,6 +83,7 @@ pub(crate) fn tick_pending(
             session,
         );
         match outcome {
+            Dispatch::Coding(command) => app.coding_command(command, session.root()),
             Dispatch::Quit => {
                 // An in-flight run is not orphaned by a quit: the quit is
                 // refused until the run is cancelled or finished.
