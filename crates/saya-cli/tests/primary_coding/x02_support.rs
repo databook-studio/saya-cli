@@ -141,8 +141,11 @@ pub fn server(listing: String, result: String) -> String {
 
 pub fn server_with_oversized_result(listing: String) -> String {
     let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}});
+    // One wide printf emits the oversized payload in a single builtin call;
+    // a loop of 270000 builtin iterations can outlast the client's 10s
+    // exchange window under load, turning the bounded drop into a timeout.
     format!(
-        "read init; printf '%s\\n' '{}'; read ready; read list; printf '%s\\n' '{}'; read call; printf called > mcp-called; printf '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":\"'; i=0; while [ \"$i\" -lt 270000 ]; do printf x; i=$((i + 1)); done; printf '\"}}\\n'; read idle",
+        "read init; printf '%s\\n' '{}'; read ready; read list; printf '%s\\n' '{}'; read call; printf called > mcp-called; printf '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":\"'; printf '%0270000d' 0; printf '\"}}\\n'; read idle",
         initialize, listing
     )
 }
@@ -150,7 +153,7 @@ pub fn server_with_oversized_result(listing: String) -> String {
 pub fn server_with_oversized_schema() -> String {
     let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}});
     format!(
-        "read init; printf '%s\\n' '{}'; read ready; read list; printf '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{{\"tools\":[{{\"name\":\"inspect\",\"inputSchema\":{{\"type\":\"object\",\"description\":\"'; i=0; while [ \"$i\" -lt 17000 ]; do printf x; i=$((i + 1)); done; printf '\"}}}}]}}}}\\n'; read idle",
+        "read init; printf '%s\\n' '{}'; read ready; read list; printf '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{{\"tools\":[{{\"name\":\"inspect\",\"inputSchema\":{{\"type\":\"object\",\"description\":\"'; printf '%017000d' 0; printf '\"}}}}]}}}}\\n'; read idle",
         initialize
     )
 }

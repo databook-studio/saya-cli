@@ -168,9 +168,10 @@ impl ChildCodingOperations {
 }
 
 /// Whether one MCP exchange error is a bounded, deterministic denial rather
-/// than a runtime failure: the trusted policy refused the tool, or the
-/// client's own bound rejected a listing or response. Runtime failures —
-/// process, pipe, timeout, cancellation, configuration — stay errors.
+/// than a job-failing uncertainty: the trusted policy refused the tool, the
+/// client's own bound rejected a listing or response, or the server broke the
+/// exchange (pipe or timeout) while the spawned process still settles through
+/// its receipt. Cancellation, configuration, and platform gaps stay errors.
 fn bounded_denial(error: &ExtensionError) -> bool {
     matches!(
         error,
@@ -178,6 +179,8 @@ fn bounded_denial(error: &ExtensionError) -> bool {
             | ExtensionError::ApprovalRequired
             | ExtensionError::Protocol
             | ExtensionError::Limit
+            | ExtensionError::Process
+            | ExtensionError::Timeout
     )
 }
 
@@ -187,6 +190,7 @@ fn denial_outcome(error: &ExtensionError) -> Value {
     let outcome = match error {
         ExtensionError::UntrustedTool | ExtensionError::ApprovalRequired => "refused",
         ExtensionError::Limit => "dropped",
+        ExtensionError::Process | ExtensionError::Timeout => "failed",
         _ => "rejected",
     };
     json!({"outcome":outcome,"reason":error.to_string()})
