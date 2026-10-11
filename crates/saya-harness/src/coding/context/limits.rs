@@ -13,9 +13,12 @@ pub const MAX_CHILD_ARTIFACT_REFERENCES: usize = 16;
 pub const MAX_CONTEXT_SOURCE_FACTS: usize = 80;
 pub const MAX_CONTEXT_LABEL_BYTES: usize = 128;
 pub const MAX_CONTEXT_REFERENCE_BYTES: usize = 128;
-pub(super) const MAX_PROJECT_INSTRUCTION_BYTES: usize = 8 * 1024;
-pub(super) const MAX_PERSONAL_INSTRUCTION_BYTES: usize = 8 * 1024;
-pub(super) const MAX_INSTRUCTION_BYTES: usize = 16 * 1024;
+/// Hard per-file ceiling for captured project instructions.
+pub const MAX_PROJECT_INSTRUCTION_BYTES: usize = 8 * 1024;
+/// Hard per-file ceiling for captured personal instructions.
+pub const MAX_PERSONAL_INSTRUCTION_BYTES: usize = 8 * 1024;
+/// Hard aggregate ceiling for captured instruction bodies.
+pub const MAX_INSTRUCTION_BYTES: usize = 16 * 1024;
 
 /// Bounded failures while capturing original facts or preparing a fresh child request.
 #[derive(Debug, Error)]
@@ -25,6 +28,8 @@ pub enum ChildContextError {
     OriginalProjectPathNotUtf8,
     #[error("original project identity could not be derived")]
     OriginalProjectIdentity,
+    #[error("instruction limits exceed their established capture ceilings")]
+    InvalidInstructionLimits,
     #[error("project preference belongs to a different worktree")]
     ForeignPreference,
     #[error("project preference record is invalid")]

@@ -1,5 +1,12 @@
 use super::{CodingApplication, CodingError};
-use saya_harness::{coding::context::OriginalProjectContext, workspace::Workspace};
+use saya_harness::{
+    coding::context::{
+        MAX_INSTRUCTION_BYTES, MAX_PERSONAL_INSTRUCTION_BYTES, MAX_PROJECT_INSTRUCTION_BYTES,
+        OriginalProjectContext,
+    },
+    instructions::InstructionLimits,
+    workspace::Workspace,
+};
 use saya_store::ProjectPreferenceStore;
 use saya_types::WorktreeId;
 
@@ -19,6 +26,21 @@ impl CodingApplication {
             .list_project_preferences(&worktree)
             .await
             .map_err(CodingError::owner)?;
-        OriginalProjectContext::capture(workspace, None, preferences).map_err(CodingError::owner)
+        let config = self.runtime.resolved.instructions;
+        let limits = InstructionLimits {
+            personal_max_bytes: config
+                .personal_max_bytes
+                .min(MAX_PERSONAL_INSTRUCTION_BYTES),
+            project_max_bytes: config.project_max_bytes.min(MAX_PROJECT_INSTRUCTION_BYTES),
+            total_max_bytes: config.total_max_bytes.min(MAX_INSTRUCTION_BYTES),
+        };
+        OriginalProjectContext::capture_with_policy(
+            workspace,
+            None,
+            preferences,
+            config.project_enabled,
+            &limits,
+        )
+        .map_err(CodingError::owner)
     }
 }

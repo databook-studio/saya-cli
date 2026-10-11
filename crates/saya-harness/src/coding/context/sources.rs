@@ -2,6 +2,7 @@ use std::{fmt, path::Path};
 
 use saya_types::{ProjectPreference, Sha256Digest, WorktreeId};
 
+use crate::instructions::InstructionLimits;
 use crate::{instructions, workspace::Workspace};
 
 use super::limits::{
@@ -62,8 +63,38 @@ impl OriginalProjectContext {
     pub fn capture(
         original_workspace: &Workspace,
         personal_instruction_dir: Option<&Path>,
-        mut preferences: Vec<ProjectPreference>,
+        preferences: Vec<ProjectPreference>,
     ) -> Result<Self, ChildContextError> {
+        let limits = InstructionLimits {
+            personal_max_bytes: MAX_PERSONAL_INSTRUCTION_BYTES,
+            project_max_bytes: MAX_PROJECT_INSTRUCTION_BYTES,
+            total_max_bytes: MAX_INSTRUCTION_BYTES,
+        };
+        Self::capture_with_policy(
+            original_workspace,
+            personal_instruction_dir,
+            preferences,
+            true,
+            &limits,
+        )
+    }
+
+    /// Captures original-project facts using explicit, bounded instruction policy.
+    /// Disabled project instructions are omitted at the loader boundary and are
+    /// never opened. Supplied limits may lower but cannot exceed context ceilings.
+    pub fn capture_with_policy(
+        original_workspace: &Workspace,
+        personal_instruction_dir: Option<&Path>,
+        mut preferences: Vec<ProjectPreference>,
+        project_enabled: bool,
+        limits: &InstructionLimits,
+    ) -> Result<Self, ChildContextError> {
+        if limits.personal_max_bytes > MAX_PERSONAL_INSTRUCTION_BYTES
+            || limits.project_max_bytes > MAX_PROJECT_INSTRUCTION_BYTES
+            || limits.total_max_bytes > MAX_INSTRUCTION_BYTES
+        {
+            return Err(ChildContextError::InvalidInstructionLimits);
+        }
         let canonical_path = original_workspace
             .root()
             .to_str()
@@ -74,13 +105,9 @@ impl OriginalProjectContext {
         preferences.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
 
         let loaded = instructions::load_instructions(
-            Some(original_workspace.root()),
+            project_enabled.then_some(original_workspace.root()),
             personal_instruction_dir,
-            &instructions::InstructionLimits {
-                personal_max_bytes: MAX_PERSONAL_INSTRUCTION_BYTES,
-                project_max_bytes: MAX_PROJECT_INSTRUCTION_BYTES,
-                total_max_bytes: MAX_INSTRUCTION_BYTES,
-            },
+            limits,
         );
         let instruction_sources = loaded
             .sources

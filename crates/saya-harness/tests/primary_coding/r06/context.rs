@@ -1,6 +1,8 @@
 use saya_harness::coding::context::{
-    ChildBrief, ChildContextError, ChildDependency, OriginalProjectContext,
+    ChildBrief, ChildContextError, ChildDependency, MAX_INSTRUCTION_BYTES,
+    MAX_PERSONAL_INSTRUCTION_BYTES, MAX_PROJECT_INSTRUCTION_BYTES, OriginalProjectContext,
 };
+use saya_harness::instructions::InstructionLimits;
 use saya_store::{ProjectPreferenceStore, SqliteStateStore};
 use saya_types::WorktreeId;
 
@@ -49,7 +51,7 @@ async fn child_briefs_reuse_one_immutable_original_context_without_grant_inherit
     let context = OriginalProjectContext::capture(
         &original_workspace,
         Some(personal.path()),
-        original_preferences,
+        original_preferences.clone(),
     )
     .unwrap();
     assert_eq!(context.instruction_sources().len(), 2);
@@ -62,6 +64,63 @@ async fn child_briefs_reuse_one_immutable_original_context_without_grant_inherit
         64
     );
     assert!(!context.instruction_sources()[0].source_truncated);
+
+    let disabled = OriginalProjectContext::capture_with_policy(
+        &original_workspace,
+        None,
+        original_preferences,
+        false,
+        &InstructionLimits {
+            personal_max_bytes: MAX_PERSONAL_INSTRUCTION_BYTES,
+            project_max_bytes: MAX_PROJECT_INSTRUCTION_BYTES,
+            total_max_bytes: MAX_INSTRUCTION_BYTES,
+        },
+    )
+    .unwrap();
+    assert!(disabled.instruction_sources().is_empty());
+    assert!(disabled.skipped_sources().is_empty());
+    assert_eq!(disabled.preference_count(), 1);
+    let disabled_child = disabled
+        .project_child(
+            authority("disabled-project", "src/disabled.rs"),
+            ChildBrief {
+                task: "use project preferences only".to_owned(),
+                dependencies: Vec::new(),
+                artifacts: Vec::new(),
+            },
+            options("model"),
+        )
+        .unwrap();
+    assert!(
+        disabled_child
+            .request()
+            .context_blocks
+            .iter()
+            .any(|block| block.label == "untrusted-project-preferences")
+    );
+    assert!(
+        disabled_child
+            .request()
+            .context_blocks
+            .iter()
+            .all(|block| block.label != "untrusted-project-instructions")
+    );
+
+    let invalid_limits = InstructionLimits {
+        personal_max_bytes: MAX_PERSONAL_INSTRUCTION_BYTES,
+        project_max_bytes: MAX_PROJECT_INSTRUCTION_BYTES + 1,
+        total_max_bytes: MAX_INSTRUCTION_BYTES,
+    };
+    assert!(matches!(
+        OriginalProjectContext::capture_with_policy(
+            &original_workspace,
+            None,
+            Vec::new(),
+            true,
+            &invalid_limits,
+        ),
+        Err(ChildContextError::InvalidInstructionLimits)
+    ));
 
     original.write("AGENTS.md", b"changed after capture\n");
     personal.write("instructions.md", b"changed personal source\n");
