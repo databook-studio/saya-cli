@@ -125,6 +125,9 @@ fn operation(value: GitOperation) -> &'static str {
         GitOperation::Read => "read",
         GitOperation::Materialize => "materialize",
         GitOperation::Remove => "remove",
+        // `#[non_exhaustive]`: a future variant is labelled unknown, mirroring
+        // `outcome`/`effect` in this file.
+        _ => "unknown",
     }
 }
 fn outcome(value: GitProcessOutcome) -> &'static str {

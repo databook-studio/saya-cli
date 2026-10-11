@@ -50,6 +50,7 @@ fn trust_app() -> App {
         agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
+        coding_panel: None,
         runtime: unused_runtime(),
         state_db: unused_store(),
         session: std::sync::Arc::new(

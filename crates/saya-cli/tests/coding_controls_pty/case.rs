@@ -4,7 +4,7 @@ use saya_types::{JobId, JobState};
 
 #[test]
 fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
-    let provider = Provider::new();
+    let mut provider = Provider::new();
     let config = config(&provider);
     let mut session = Session::new("selected", &config, &provider);
     session.send(b"/coding start pty-job 'controlled task' --write a.txt --write b.txt --program sleep --approve\r");

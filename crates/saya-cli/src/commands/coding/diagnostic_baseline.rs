@@ -163,6 +163,9 @@ impl NativeCodingJob {
             Err(DiagnosticEvidenceError::Execution(_)) => {
                 return DiagnosticDeltaState::Unavailable("baseline_unavailable");
             }
+            // `#[non_exhaustive]`: a future variant leaves the baseline
+            // unavailable rather than minting from incomplete evidence.
+            Err(_) => return DiagnosticDeltaState::Unavailable("baseline_unavailable"),
         };
         let record = match evidence.persisted_baseline(&minted) {
             Ok(record) => record,
@@ -211,6 +214,9 @@ impl NativeCodingJob {
             Err(DiagnosticEvidenceError::Execution(_)) => {
                 DiagnosticDeltaState::Unavailable("baseline_unavailable")
             }
+            // `#[non_exhaustive]`: a future variant keeps the delta
+            // unavailable rather than comparing against failed evidence.
+            Err(_) => DiagnosticDeltaState::Unavailable("baseline_unavailable"),
         }
     }
 }

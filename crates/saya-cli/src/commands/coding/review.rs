@@ -97,7 +97,7 @@ impl NativeCodingJob {
         let binding = EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
             .map_err(CodingError::owner)?;
         let checks = self.candidate_checks(checkout).await?;
-        let diagnostic_deltas = self.prepare_diagnostic_deltas(checkout, &checks).await?;
+        let mut diagnostic_deltas = self.prepare_diagnostic_deltas(checkout, &checks).await?;
         binding
             .verify_at_use(
                 Path::new(verified.path().as_str()),

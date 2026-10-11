@@ -19,13 +19,11 @@ impl NativeCodingJob {
         let verified = verify_owned_checkout(&ownership, &self.cancellation)
             .await
             .map_err(CodingError::owner)?;
-        let capabilities = Capabilities {
-            runner: if self.request.programs.is_empty() {
-                None
-            } else {
-                Some(RunnerScope::new(self.request.programs.clone()).map_err(CodingError::owner)?)
-            },
-            ..Capabilities::default()
+        let mut capabilities = Capabilities::default();
+        capabilities.runner = if self.request.programs.is_empty() {
+            None
+        } else {
+            Some(RunnerScope::new(self.request.programs.clone()).map_err(CodingError::owner)?)
         };
         let input = RootDelegationInput {
             job_id: self.job_id().clone(),

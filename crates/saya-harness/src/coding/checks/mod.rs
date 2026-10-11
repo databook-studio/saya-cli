@@ -13,7 +13,9 @@ mod identity;
 mod receipt;
 
 pub use delta::DiagnosticDelta;
-pub use diagnostics::baseline_wire::{DiagnosticBaselineWireError, PersistedDiagnosticBaseline};
+pub use diagnostics::baseline_wire::{
+    DiagnosticBaselineWireError, MAX_DIAGNOSTIC_BASELINE_BYTES, PersistedDiagnosticBaseline,
+};
 pub use diagnostics::{
     Diagnostic, DiagnosticError, DiagnosticLocation, DiagnosticSet, DiagnosticSeverity,
 };

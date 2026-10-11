@@ -101,14 +101,12 @@ impl NativeCodingJob {
         let before = verify_owned_checkout(&ownership, &self.cancellation)
             .await
             .map_err(CodingError::owner)?;
-        let capabilities = Capabilities {
-            workspace_write: !task.write_paths.is_empty(),
-            runner: if self.request.programs.is_empty() {
-                None
-            } else {
-                Some(RunnerScope::new(self.request.programs.clone()).map_err(CodingError::owner)?)
-            },
-            ..Capabilities::default()
+        let mut capabilities = Capabilities::default();
+        capabilities.workspace_write = !task.write_paths.is_empty();
+        capabilities.runner = if self.request.programs.is_empty() {
+            None
+        } else {
+            Some(RunnerScope::new(self.request.programs.clone()).map_err(CodingError::owner)?)
         };
         let write_paths = task
             .write_paths

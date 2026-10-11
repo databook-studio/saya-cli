@@ -53,10 +53,10 @@ impl Session {
         );
         fs::write(root.join("repo/baseline.txt"), b"tracked baseline\n").unwrap();
         for args in [
-            ["config", "user.name", "Saya PTY Fixture"],
-            ["config", "user.email", "pty@example.invalid"],
-            ["add", "baseline.txt"],
-            ["commit", "--quiet", "-m", "baseline"],
+            ["config", "user.name", "Saya PTY Fixture"].as_slice(),
+            ["config", "user.email", "pty@example.invalid"].as_slice(),
+            ["add", "baseline.txt"].as_slice(),
+            ["commit", "--quiet", "-m", "baseline"].as_slice(),
         ] {
             let status = Command::new("git")
                 .args(args)
