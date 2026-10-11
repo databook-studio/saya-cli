@@ -211,9 +211,25 @@ impl Session {
     }
 
     pub fn finish(&mut self) -> Vec<u8> {
-        self.send(b"\x03\x03");
         let deadline = Instant::now() + DEADLINE;
         while Instant::now() < deadline {
+            // A quit can be deferred while the coding panel settles its job
+            // ("a coding job is still running"); re-arming and quitting again
+            // is idempotent, so keep offering the quit until the child exits.
+            self.send(b"\x03\x03");
+            let until = Instant::now() + Duration::from_millis(250);
+            while Instant::now() < until {
+                if self
+                    .child
+                    .as_mut()
+                    .and_then(|child| child.try_wait().ok())
+                    .flatten()
+                    .is_some()
+                {
+                    break;
+                }
+                self.pump();
+            }
             if self
                 .child
                 .as_mut()
@@ -223,7 +239,6 @@ impl Session {
             {
                 break;
             }
-            self.pump();
         }
         self.cleanup(Duration::from_secs(2));
         self.raw.clone()

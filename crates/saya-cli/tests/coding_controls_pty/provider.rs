@@ -20,6 +20,11 @@ pub struct Provider {
     worker: Option<JoinHandle<()>>,
 }
 
+/// The read-loop turn pace: slow enough that the job's bounded logical
+/// request budget outlives the operator's control sequence, fast enough that
+/// child-b is demonstrably still running when cancel-child lands.
+const READ_LOOP_PACE: Duration = Duration::from_millis(60);
+
 pub fn config(provider: &Provider) -> String {
     format!(
         "[ai]\nprovider = 'openai_compatible'\nbase_url = '{}'\nmodel = 'pty-fixture'\n\n[coding]\nenabled = true\n\n[jobs.runner]\nprogram_dir = '/bin'\nallow = ['sleep']\n",
@@ -123,10 +128,17 @@ fn serve(
             let actor = actor(&request);
             child_actors.lock().unwrap().insert(actor.clone());
             let turn = child_turns.entry(actor.clone()).or_default();
+            let paced = *turn >= 2 && actor != "child-a";
             let body = child_response(&actor, *turn);
             *turn += 1;
             if *turn >= 3 {
                 finished_actors.lock().unwrap().insert(actor.clone());
+            }
+            if paced {
+                // The read loop only keeps child-b alive for the operator's
+                // controls; pacing it leaves the job's bounded request budget
+                // to the real controls instead of a hot spin.
+                thread::sleep(READ_LOOP_PACE);
             }
             body
         } else {
@@ -156,24 +168,39 @@ fn actor(request: &str) -> String {
     request
         .split("write for ")
         .nth(1)
-        .and_then(|tail| tail.split_whitespace().next())
-        .unwrap_or("child")
-        .to_owned()
+        .map(|tail| {
+            // The body quotes the delegated task in several serializations
+            // (`"task":"write for child-a"}`, history echoes, context
+            // blocks); only the agent id itself is stable — stop at the
+            // first character that cannot belong to an id, never at
+            // whitespace, or the JSON that follows leaks into the key.
+            tail.chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect()
+        })
+        .unwrap_or_else(|| "child".to_owned())
 }
 
+/// Turn 0 starts one supervised `sleep` (child-a's finishes in 2s, child-b's
+/// holds 20s so it outlives the operator's controls). From turn 1 the child
+/// reads its OWN command id — child-b keeps reading forever so it is still
+/// running when the test cancels it, while child-a answers from turn 2:
+/// its turn-1 read happens after the pause settled its command, so it
+/// exercises the refusal-as-data path on the way to its answer.
 fn child_response(actor: &str, turn: usize) -> String {
+    let command_id = if actor == "child-a" { 1 } else { 2 };
     if turn == 0 {
         tool(
             "coding_command_start",
             json!({"program":"sleep","argv":[if actor == "child-a" { "2" } else { "20" }],"timeout_seconds":30}),
         )
-    } else if turn == 1 {
+    } else if actor == "child-a" && turn >= 2 {
+        answer(&format!("{actor} child work complete"))
+    } else {
         tool(
             "coding_command_read",
-            json!({"command_id":1,"stderr":false}),
+            json!({"command_id":command_id,"stderr":false}),
         )
-    } else {
-        answer(&format!("{actor} child work complete"))
     }
 }
 

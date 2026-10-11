@@ -5,6 +5,9 @@ use saya_agent::CancellationToken;
 use std::{sync::mpsc, thread::JoinHandle};
 use tokio::sync::oneshot;
 
+#[cfg(test)]
+mod receipt_tests;
+
 pub(super) enum CodingMessage {
     Activity(String),
     Approval {
@@ -15,6 +18,14 @@ pub(super) enum CodingMessage {
 pub(crate) struct CodingPanel {
     id: Option<String>,
     rx: mpsc::Receiver<CodingMessage>,
+    /// Control receipts (queued / pause / continue / cancel outcomes and
+    /// pause acknowledgements) on their own bounded queue: `poll_coding`
+    /// drains activity first and pushes receipts last, so a receipt is the
+    /// newest block of its tick and the next frame — which runs before the
+    /// next drain — always paints it. Sharing the activity queue let a
+    /// same-tick burst of progress events scroll a receipt above the
+    /// viewport before any frame drew it.
+    receipts: mpsc::Receiver<CodingMessage>,
     done: mpsc::Receiver<Result<String, String>>,
     commands: tokio::sync::mpsc::Sender<CodingCommand>,
     cancellation: CancellationToken,
@@ -84,6 +95,21 @@ impl App {
         };
         for _ in 0..32 {
             match panel.rx.try_recv() {
+                Ok(CodingMessage::Activity(text)) => {
+                    self.transcript.push(BlockKind::System, safe_text(&text))
+                }
+                Ok(CodingMessage::Approval { text, respond }) => {
+                    panel.pending = Some(respond);
+                    self.transcript.push(BlockKind::System, safe_text(&text));
+                }
+                Err(_) => break,
+            }
+        }
+        // Receipts push last: the frame at the top of the next loop
+        // iteration runs before the next drain, so the newest block is
+        // inside the viewport and the receipt is painted.
+        for _ in 0..32 {
+            match panel.receipts.try_recv() {
                 Ok(CodingMessage::Activity(text)) => {
                     self.transcript.push(BlockKind::System, safe_text(&text))
                 }

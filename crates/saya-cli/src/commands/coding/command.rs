@@ -129,6 +129,17 @@ impl ChildCodingOperations {
                         json!({"cancelled":true,"timed_out":false,"killed_orphans":false,"started":false}),
                     );
                 }
+                // The invocation was cancelled between the session's creation
+                // and its supervision task running, so the runner spawned no
+                // process: the same known not-started terminal state, never an
+                // owner failure. Treating it as a failed join would latch the
+                // child's failed flag and settle an effect that never existed
+                // as uncertain.
+                Err(CommandSessionError::CancelledBeforeStart) => {
+                    return Ok(
+                        json!({"cancelled":true,"timed_out":false,"killed_orphans":false,"started":false}),
+                    );
+                }
                 Err(error) => {
                     self.failed
                         .store(true, std::sync::atomic::Ordering::Release);
