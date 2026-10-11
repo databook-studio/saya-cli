@@ -38,10 +38,13 @@ const CREDENTIAL_NAME_WORDS: [&str; 10] = [
 
 /// Redacts the value of a `NAME=value` assignment whose name is
 /// credential-bearing (see [`CREDENTIAL_ENV_PREFIX`] and
-/// [`CREDENTIAL_NAME_WORDS`]). The value runs to the next whitespace, `&`, or
-/// `;` — the same boundary the `key=value` markers use — so an environment
-/// dump line, an `export`, a shell echo, and an inline `x=1; y=2` chain all
-/// redact whole values, while ordinary `a=b` comparisons pass through.
+/// [`CREDENTIAL_NAME_WORDS`]). The value runs to its matching closing quote
+/// when it starts with one — or to the end of the input when that quote never
+/// closes — else to the next whitespace, `&`, `;` or a closing `"`: the same
+/// bound the `key=value` markers use ([`super::bounded_value_end`]). An
+/// environment dump line, an `export`, a shell echo, and an inline `x=1; y=2`
+/// chain all redact whole values, while ordinary `a=b` comparisons pass
+/// through.
 pub(super) fn redact_env_assignments(value: &str) -> String {
     let mut output = String::new();
     let mut cursor = 0;
@@ -54,9 +57,7 @@ pub(super) fn redact_env_assignments(value: &str) -> String {
         }
         output.push_str(&value[cursor..eq + 1]);
         let start = eq + 1;
-        let end = value[start..]
-            .find(|c: char| c.is_whitespace() || c == '&' || c == ';')
-            .map_or(value.len(), |offset| start + offset);
+        let end = super::bounded_value_end(value, start);
         output.push_str("[redacted]");
         cursor = end;
     }
