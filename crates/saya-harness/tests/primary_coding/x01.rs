@@ -80,3 +80,6 @@ impl saya_harness::coding::extensions::ExtensionProcessObserver for ObservedProc
         Ok(())
     }
 }
+
+#[path = "x01/lifecycle.rs"]
+mod lifecycle;
