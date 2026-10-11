@@ -2,6 +2,9 @@
 #[path = "primary_coding/approval.rs"]
 mod approval;
 #[cfg(unix)]
+#[path = "primary_coding/doctor.rs"]
+mod doctor;
+#[cfg(unix)]
 #[path = "primary_coding/operations.rs"]
 mod operations;
 #[path = "primary_coding/parity.rs"]
