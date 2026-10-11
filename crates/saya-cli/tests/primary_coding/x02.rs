@@ -89,7 +89,7 @@ async fn invoke(profile: &str) -> Invocation {
         JobId::parse("x02-mcp").unwrap(),
         "Call the configured MCP inspection tool".into(),
         vec![],
-        vec!["sh".into()],
+        vec![x02_support::PROGRAM.into()],
     )
     .unwrap();
     let approval =

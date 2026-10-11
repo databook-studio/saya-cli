@@ -176,13 +176,25 @@ impl Fixture {
             .check_profiles;
         }
         let store = SqliteStateStore::new(root.join("state.sqlite3"));
+        let extension_fixture = extensions.is_some();
+        let program_dir = if extension_fixture {
+            Path::new("/bin")
+        } else {
+            Path::new("/usr/bin")
+        };
+        if extension_fixture {
+            assert!(
+                program_dir.join("sh").is_file(),
+                "extension fixture requires a configured program directory containing sh"
+            );
+        }
         let application = CodingApplication::open(
             runtime,
             store.clone(),
             &repository,
             &root.join("coding"),
             &git,
-            Path::new("/usr/bin"),
+            program_dir,
             &CancellationToken::new(),
         )
         .await

@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub const PROGRAM: &str = "sh";
+
 pub struct Provider {
     pub endpoint: String,
     result: Arc<AtomicBool>,
@@ -80,7 +82,7 @@ pub fn profile(script: &str, effect: Option<&str>) -> String {
         format!("[coding.extensions.local.tools]\ninspect = '{effect}'\n")
     });
     format!(
-        "[coding.extensions.local]\nprotocol = 'mcp'\nprogram = 'sh'\nargv = ['-c', {}]\n{tools}",
+        "[coding.extensions.local]\nprotocol = 'mcp'\nprogram = '{PROGRAM}'\nargv = ['-c', {}]\n{tools}",
         serde_json::to_string(script).unwrap()
     )
 }
@@ -118,7 +120,7 @@ pub fn result() -> String {
 }
 
 pub fn server(listing: String, result: String) -> String {
-    let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}});
+    let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}});
     format!(
         "read init; printf '%s\\n' '{}'; read ready; read list; printf '%s\\n' '{}'; read call; printf called > mcp-called; printf '%s\\n' '{}'; read idle",
         initialize, listing, result
@@ -126,7 +128,7 @@ pub fn server(listing: String, result: String) -> String {
 }
 
 pub fn server_with_oversized_result(listing: String) -> String {
-    let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}});
+    let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}});
     format!(
         "read init; printf '%s\\n' '{}'; read ready; read list; printf '%s\\n' '{}'; read call; printf called > mcp-called; printf '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":\"'; i=0; while [ \"$i\" -lt 270000 ]; do printf x; i=$((i + 1)); done; printf '\"}}\\n'; read idle",
         initialize, listing
@@ -134,7 +136,7 @@ pub fn server_with_oversized_result(listing: String) -> String {
 }
 
 pub fn server_with_oversized_schema() -> String {
-    let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}});
+    let initialize = json!({"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}});
     format!(
         "read init; printf '%s\\n' '{}'; read ready; read list; printf '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{{\"tools\":[{{\"name\":\"inspect\",\"inputSchema\":{{\"type\":\"object\",\"description\":\"'; i=0; while [ \"$i\" -lt 17000 ]; do printf x; i=$((i + 1)); done; printf '\"}}}}]}}}}\\n'; read idle",
         initialize
