@@ -28,6 +28,7 @@ pub(super) enum GitRequest<'a> {
         source: Option<&'a GitObjectId>,
         paths: &'a [String],
     },
+    InitializeIndex(&'a GitObjectId),
     IndexEntries,
     IndexStageEntries,
     TreeEntries(&'a GitObjectId),
@@ -56,9 +57,9 @@ pub(super) enum GitRequest<'a> {
 impl GitRequest<'_> {
     pub(super) fn operation(self) -> GitOperation {
         match self {
-            Self::AddWorktree { .. } | Self::AddWorktreeNoCheckout { .. } => {
-                GitOperation::Materialize
-            }
+            Self::AddWorktree { .. }
+            | Self::AddWorktreeNoCheckout { .. }
+            | Self::InitializeIndex(_) => GitOperation::Materialize,
             Self::RemoveWorktree { .. } => GitOperation::Remove,
             _ => GitOperation::Read,
         }
@@ -85,6 +86,7 @@ impl GitRequest<'_> {
             Self::CommonDir => vec!["rev-parse", "--git-common-dir"],
             Self::ObjectFormat => vec!["rev-parse", "--show-object-format"],
             Self::LocalConfig => vec!["config", "--local", "--null", "--list", "--no-includes"],
+            Self::InitializeIndex(_) => vec!["read-tree"],
             Self::IndexEntries => vec!["ls-files", "-v", "-z"],
             Self::IndexStageEntries => vec!["ls-files", "--stage", "-z"],
             Self::Head => vec!["rev-parse", "--verify", "HEAD^{commit}"],
@@ -147,7 +149,10 @@ impl GitRequest<'_> {
                     arguments.insert(1, format!("--source={}", source.as_str()).into());
                 }
             }
-            Self::TreeEntries(object) | Self::ReadBlob(object) | Self::SnapshotBlob(object) => {
+            Self::TreeEntries(object)
+            | Self::ReadBlob(object)
+            | Self::SnapshotBlob(object)
+            | Self::InitializeIndex(object) => {
                 arguments.push(object.as_str().into());
             }
             Self::AddWorktree { path, base } | Self::AddWorktreeNoCheckout { path, base } => {

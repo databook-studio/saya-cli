@@ -2,6 +2,7 @@
 // this enum is `PartialEq` but not `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
+    Coding(crate::cli::CodingCommand),
     Message(String),
     /// `/compact` — shrink working memory through a bounded summariser call.
     /// The loops intercept this (it needs the provider runtime); the arm here

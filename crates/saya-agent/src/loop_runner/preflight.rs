@@ -34,9 +34,10 @@ pub(super) fn fit_request(
     ordinary_history_pairs: &mut usize,
     protected_prefix_len: &mut usize,
     definitions: &[ToolDefinition],
-    byte_limit: usize,
-    config: Option<RequestPreflightConfig>,
+    budget: (usize, Option<RequestPreflightConfig>),
+    sink: &dyn crate::AgentEventSink,
 ) -> Result<(), PreflightError> {
+    let (byte_limit, config) = budget;
     let (cap, dimension) = effective_limit(byte_limit, config);
     match projection::measure(
         model,
@@ -72,7 +73,12 @@ pub(super) fn fit_request(
             projection::Measurement::Exceeded => {}
         }
     }
-    super::output::trim_to_budget(messages, cap.saturating_sub(fixed), *protected_prefix_len);
+    super::output::trim_to_budget(
+        messages,
+        cap.saturating_sub(fixed),
+        *protected_prefix_len,
+        Some(sink),
+    );
     match projection::measure(
         model,
         projection::Messages::Slice(messages),
@@ -84,7 +90,7 @@ pub(super) fn fit_request(
             // The established compactor uses a deliberately cheap message-size
             // estimate. If that estimate leaves the exact neutral projection
             // oversized, evict older complete groups once more before refusing.
-            super::output::trim_to_budget(messages, 0, *protected_prefix_len);
+            super::output::trim_to_budget(messages, 0, *protected_prefix_len, Some(sink));
             match projection::measure(
                 model,
                 projection::Messages::Slice(messages),
@@ -106,8 +112,8 @@ pub(super) fn reserve_tool_batch(
     protected_prefix_len: usize,
     assistant: &ChatMessage,
     definitions: &[ToolDefinition],
-    byte_limit: usize,
-    config: Option<RequestPreflightConfig>,
+    budget: (usize, Option<RequestPreflightConfig>),
+    sink: &dyn crate::AgentEventSink,
 ) -> Result<usize, PreflightError> {
     batch::reserve(
         model,
@@ -115,8 +121,8 @@ pub(super) fn reserve_tool_batch(
         protected_prefix_len,
         assistant,
         definitions,
-        byte_limit,
-        config,
+        budget,
+        sink,
     )
 }
 

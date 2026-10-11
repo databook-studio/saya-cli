@@ -42,8 +42,8 @@ pub(in crate::loop_runner) async fn receive(
         ordinary_history_pairs,
         protected_prefix_len,
         definitions,
-        context_byte_budget,
-        request_preflight,
+        (context_byte_budget, request_preflight),
+        sink,
     ) {
         let error = match error {
             preflight::PreflightError::Budget(dimension) => {

@@ -28,7 +28,7 @@ fn root(
     paths: Vec<WorkspacePath>,
     capabilities: Capabilities,
 ) -> RootDelegationScope {
-    RootDelegationScope::new(RootDelegationInput {
+    approval_support::approved_root(RootDelegationInput {
         job_id: JobId::parse("job").unwrap(),
         agent_id: AgentId::parse("agent").unwrap(),
         invocation_id: InvocationId::parse("invocation").unwrap(),
@@ -214,3 +214,6 @@ fn refusal_detail_is_fixed_and_names_nothing() {
     assert!(!first.contains("workspace_delete"));
     assert!(!first.contains("sql_like"));
 }
+
+#[path = "approval_support.rs"]
+mod approval_support;

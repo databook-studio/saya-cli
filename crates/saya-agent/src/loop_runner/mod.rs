@@ -17,6 +17,7 @@ mod response;
 mod response_tools;
 mod runner;
 mod salvage;
+mod steering;
 mod tool_batch;
 mod tool_policy;
 mod tool_protocol;
@@ -42,6 +43,10 @@ pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
 pub use preflight::RequestPreflightConfig;
+pub use steering::{
+    AgentMailbox, AgentSteering, MAX_STEERING_MESSAGE_BYTES, MAX_STEERING_MESSAGES, SteeringError,
+    agent_mailbox,
+};
 pub use tools::{MAX_TOOL_MESSAGE_BYTES, ShapedToolResult, shape_tool_result, tool_message_cap};
 
 /// Re-instruction pushed as a user-role message after the provider caps a
@@ -96,6 +101,7 @@ pub async fn run_agent_with_sink(
         approval,
         sink,
         cancellation,
+        mailbox: None,
         answering: None,
         request_preflight: None,
         effect_admission: None,
@@ -104,18 +110,19 @@ pub async fn run_agent_with_sink(
     .await
 }
 
-pub async fn run_agent_with_control<'a>(
+pub fn run_agent_with_control<'a>(
     provider: &'a dyn ChatProvider,
     tools: &'a dyn ToolExecutor,
     request: AgentRequest,
     definitions: Vec<ToolDefinition>,
     control: AgentRunControl<'a>,
-) -> Result<AgentOutput, AgentError> {
+) -> impl std::future::Future<Output = Result<AgentOutput, AgentError>> + Send + 'a {
     runner::run_agent_inner(AgentRunInvocation {
         provider,
         tools,
         request,
         definitions,
+        mailbox: control.mailbox,
         limits: control.limits,
         approval: control.approval,
         sink: control.sink,
@@ -125,7 +132,6 @@ pub async fn run_agent_with_control<'a>(
         effect_admission: control.effect_admission,
         require_physical_effect_admission: control.require_physical_effect_admission,
     })
-    .await
 }
 
 pub(super) struct PartialOutput {

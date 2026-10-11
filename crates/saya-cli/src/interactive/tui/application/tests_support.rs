@@ -50,6 +50,7 @@ pub(crate) fn idle_app() -> App {
         pending_queries_desync: false,
         agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
+        coding_panel: None,
         run_panel: None,
         runtime: Arc::new(unused_runtime()),
         state_db: SqliteStateStore::new(PathBuf::new()),

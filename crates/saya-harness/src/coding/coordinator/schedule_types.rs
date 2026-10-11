@@ -13,6 +13,8 @@ pub const MAX_SCHEDULE_DEPENDENCIES: usize = 8;
 pub const MAX_SCHEDULE_EVENT_CAPACITY: usize = 128;
 
 pub struct ScheduledChild {
+    pub(super) control: super::super::child::ChildControl,
+    pub(super) mailbox: saya_agent::AgentMailbox,
     pub(super) spec: ChildExecutionSpec,
     pub(super) dependencies: Vec<AgentId>,
     pub(super) paths: Option<AssignedPaths>,
@@ -20,6 +22,9 @@ pub struct ScheduledChild {
     pub(super) factory: Arc<dyn ChildFactory>,
 }
 impl ScheduledChild {
+    pub fn control(&self) -> super::super::child::ChildControl {
+        self.control.clone()
+    }
     /// The trusted caller binds provider identity to this exact factory and routes
     /// all job children through the scheduler. Lease paths grant no write access.
     pub fn new(
@@ -42,7 +47,10 @@ impl ScheduledChild {
         }) {
             return Err(ScheduleError::AssignmentMismatch);
         }
+        let (control, mailbox) = super::super::child::ChildControl::new();
         Ok(Self {
+            control,
+            mailbox,
             spec,
             dependencies,
             paths,
@@ -61,6 +69,8 @@ pub struct ScheduleLimits {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ScheduleError {
+    #[error("job runtime needs matching fresh root authority before admission")]
+    FreshAuthorityRequired,
     #[error("schedule must contain one through 32 distinct children")]
     InvalidBatch,
     #[error("schedule dependencies are duplicated, unknown or self-referential")]
@@ -98,6 +108,9 @@ pub struct ScheduleOutcome {
     pub agent_id: AgentId,
     pub invocation_id: InvocationId,
     pub result: Result<AgentOutput, ScheduleChildError>,
+    /// Durable notification identity; None means completion could not be persisted.
+    pub completion_sequence: Option<std::num::NonZeroU64>,
+    pub completion_error: Option<super::results::CompletionError>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScheduleStop {
@@ -110,6 +123,8 @@ pub enum ScheduleStop {
 }
 #[derive(Debug)]
 pub struct ScheduleReport {
+    /// Local joins can finish while remote effects retain durable unknown charges.
+    pub effects_uncertain: bool,
     pub outcomes: Vec<ScheduleOutcome>,
     pub not_started: Vec<AgentId>,
     pub stop: Option<ScheduleStop>,

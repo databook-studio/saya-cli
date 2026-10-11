@@ -1,3 +1,4 @@
+pub(crate) mod coding;
 mod config;
 pub(crate) mod connection;
 pub(crate) mod connection_schema;
@@ -63,6 +64,11 @@ pub async fn run(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let state = SqliteStateStore::new(crate::state_path::state_db_path());
     match command {
+        Command::Coding {
+            repository,
+            program_dir,
+            command,
+        } => coding::cli::run(command, repository, program_dir, runtime, format, &state).await,
         Command::Config { command } => config::run(command, runtime, format),
         Command::Connection { command } => {
             connection::run(command, runtime, format, can_prompt, &state).await

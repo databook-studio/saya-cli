@@ -59,6 +59,7 @@ pub struct RedactedDiagnostics {
     pub coding_max_elapsed_seconds: Option<u64>,
     /// Safe profile summaries; argv bodies are never included.
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub coding_extensions: Option<BTreeMap<String, serde_json::Value>>,
     pub coding_check_profiles: Option<BTreeMap<String, CheckProfileDiagnostics>>,
     pub jobs_wall_clock_seconds: Option<u64>,
     pub jobs_tokens_per_endpoint: Option<BTreeMap<String, u64>>,
@@ -104,6 +105,12 @@ impl RedactedDiagnostics {
             coding_max_tool_calls: file.coding.max_tool_calls,
             coding_max_known_tokens: file.coding.max_known_tokens,
             coding_max_elapsed_seconds: file.coding.max_elapsed_seconds,
+            coding_extensions: file.coding.extensions.as_ref().map(|profiles| {
+                profiles
+                    .iter()
+                    .map(|(name, profile)| (name.clone(), profile.redacted_diagnostics()))
+                    .collect()
+            }),
             coding_check_profiles: file.coding.check_profiles.as_ref().map(|profiles| {
                 profiles
                     .iter()

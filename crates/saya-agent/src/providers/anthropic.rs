@@ -77,8 +77,9 @@ impl AnthropicProvider {
         &self,
         request: ChatRequest,
         cancellation: CancellationToken,
-        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+        mut attempts: Option<&mut PhysicalAttemptControl<'_>>,
     ) -> Result<ProviderStream, ControlledProviderError> {
+        let request_model = request.model.clone();
         let body = anthropic_request::build_body(
             request,
             self.settings.max_output_tokens,
@@ -89,6 +90,14 @@ impl AnthropicProvider {
             "https://api.anthropic.com/v1",
             "messages",
         );
+        if let Some(control) = attempts.as_deref_mut() {
+            control.bind_request(crate::PhysicalRequestMetadata::new(
+                "anthropic",
+                &request_model,
+                &url,
+                self.settings.max_output_tokens,
+            )?)?;
+        }
         let client = &self.client;
         let key = self.api_key.as_deref();
         let build = || {

@@ -1,6 +1,8 @@
 mod cancellation;
 mod events;
 mod physical_attempt;
+mod physical_observation;
+pub use physical_observation::PhysicalAttemptObservation;
 mod provider;
 mod usage;
 
@@ -13,3 +15,6 @@ pub use usage::TokenUsage;
 #[cfg(test)]
 #[path = "streaming/tests.rs"]
 mod tests;
+
+mod physical_request;
+pub use physical_request::PhysicalRequestMetadata;

@@ -74,8 +74,9 @@ impl OpenAiCompatibleProvider {
         &self,
         request: ChatRequest,
         cancellation: CancellationToken,
-        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+        mut attempts: Option<&mut PhysicalAttemptControl<'_>>,
     ) -> Result<ProviderStream, ControlledProviderError> {
+        let request_model = request.model.clone();
         let body = OpenAiRequest::from_request(
             request,
             self.settings.temperature,
@@ -86,6 +87,14 @@ impl OpenAiCompatibleProvider {
             "https://api.openai.com/v1",
             "chat/completions",
         );
+        if let Some(control) = attempts.as_deref_mut() {
+            control.bind_request(crate::PhysicalRequestMetadata::new(
+                "openai",
+                &request_model,
+                &url,
+                self.settings.max_output_tokens,
+            )?)?;
+        }
         let client = &self.client;
         let key = self.api_key.as_deref();
         let build = || {

@@ -105,3 +105,14 @@ pub use session_tasks::{
     MAX_SESSION_TASKS, MAX_TASK_NOTE_CHARS, MAX_TASK_TITLE_CHARS, SessionTask, SessionTaskError,
     SessionTaskList, TaskStatus,
 };
+
+pub use coding::{
+    JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
+};
+
+pub use coding::{
+    MAX_TRANSPORT_SPAN_BYTES, TransportCallKind, TransportOutcome, TransportSpanData,
+    TransportSpanError, TransportSpanV1,
+};
+
+pub use coding::{TokenBudgetError, TokenBudgetPolicyData, TokenBudgetPolicyV1};

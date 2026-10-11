@@ -30,7 +30,7 @@ fn root(
     write_paths: Vec<WorkspacePath>,
     database_profiles: Vec<ProfileIdentity>,
 ) -> Result<RootDelegationScope, AuthorityError> {
-    RootDelegationScope::new(RootDelegationInput {
+    approval_support::approved_root(RootDelegationInput {
         job_id: JobId::parse("job").unwrap(),
         agent_id: AgentId::parse("agent").unwrap(),
         invocation_id: InvocationId::parse("invocation").unwrap(),
@@ -236,3 +236,6 @@ fn public_constructors_enforce_path_and_profile_set_bounds() {
         AuthorityError::DuplicateDatabaseProfile
     );
 }
+
+#[path = "approval_support.rs"]
+mod approval_support;

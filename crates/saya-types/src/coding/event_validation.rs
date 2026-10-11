@@ -14,6 +14,14 @@ pub(super) fn validate_event(
     event: &CodingEventKind,
 ) -> Result<(), CodingEventError> {
     let valid = match event {
+        CodingEventKind::TransportObserved { span } => {
+            let data = span.data();
+            &data.job_id == job_id
+                && data.agent_id.as_ref() == agent_id
+                && data.invocation_id.as_ref() == invocation_id
+                && data.reservation_sequence < sequence
+        }
+        CodingEventKind::RuntimeResumed { .. } => agent_id.is_none() && invocation_id.is_none(),
         CodingEventKind::StateChanged { .. } | CodingEventKind::ResultReported { .. } => true,
         CodingEventKind::BudgetReserved { reservation } => {
             sequence == reservation.reservation_sequence()

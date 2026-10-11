@@ -26,6 +26,10 @@ pub(crate) fn merge(
     apply!(max_tool_calls);
     apply!(max_known_tokens);
     apply!(max_elapsed_seconds);
+    if let Some(profiles) = layer.extensions.as_ref() {
+        base.extensions = Some(profiles.clone());
+        recorder.record("coding.extensions", source("extensions"));
+    }
     if let Some(profiles) = layer.check_profiles.as_ref() {
         base.check_profiles = Some(profiles.clone());
         recorder.record("coding.check_profiles", source("check_profiles"));

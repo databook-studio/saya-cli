@@ -95,7 +95,7 @@ pub struct ChildAuthorityView {
 }
 
 impl RootDelegationScope {
-    pub fn new(input: RootDelegationInput) -> Result<Self, AuthorityError> {
+    pub(super) fn from_input(input: RootDelegationInput) -> Result<Self, AuthorityError> {
         values::validate_paths(&input.write_paths)?;
         if !input.write_paths.is_empty() && input.managed_checkout_id.is_none() {
             return Err(AuthorityError::ManagedCheckoutRequired);
@@ -144,6 +144,8 @@ impl ChildAuthorityRequest {
 /// Construction or shape failure before an authority view exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum AuthorityError {
+    #[error("fresh host approval for this exact root scope was denied")]
+    ApprovalDenied,
     #[error("authority path set exceeds its item bound")]
     TooManyWritePaths,
     #[error("authority path exceeds its byte bound")]

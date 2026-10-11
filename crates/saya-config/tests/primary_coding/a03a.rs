@@ -40,6 +40,7 @@ fn coding_config_precedence_and_invalid_bounds() {
     let project = ConfigFile::from_toml("[coding]\nmax_children = 2\n").unwrap();
     let cli = CliOverrides {
         coding: CodingFile {
+            extensions: None,
             enabled: Some(false),
             max_children: Some(3),
             max_concurrent_model_requests: Some(4),

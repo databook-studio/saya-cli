@@ -1,0 +1,139 @@
+use super::{CodingMessage, CodingPanel};
+use crate::{
+    cli::CodingCommand,
+    commands::coding::{
+        CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, dispatch_coding,
+    },
+    config::runtime::RuntimeConfig,
+};
+use async_trait::async_trait;
+use saya_agent::{ApprovalDecider, CancellationToken, NoopEventSink, ToolDefinition};
+use saya_store::SqliteStateStore;
+use serde_json::Value;
+use std::{path::PathBuf, sync::mpsc};
+struct PanelApproval {
+    sender: mpsc::SyncSender<CodingMessage>,
+    token: CancellationToken,
+    id: String,
+}
+#[async_trait]
+impl ApprovalDecider for PanelApproval {
+    async fn approve(&self, tool: &ToolDefinition, arguments: &Value) -> bool {
+        if tool.name != "coding_job" {
+            return false;
+        }
+        let (respond, answer) = tokio::sync::oneshot::channel();
+        let text = format!(
+            "Approve native coding job {} with this exact scope:\n{}\nUse /coding approve {} or /coding deny {}.",
+            self.id, arguments, self.id, self.id
+        );
+        if self
+            .sender
+            .try_send(CodingMessage::Approval { text, respond })
+            .is_err()
+        {
+            return false;
+        }
+        tokio::select! { _=self.token.cancelled()=>false, answer=tokio::time::timeout(std::time::Duration::from_secs(120),answer)=>matches!(answer,Ok(Ok(true))) }
+    }
+}
+pub(super) fn spawn(
+    command: CodingCommand,
+    runtime: RuntimeConfig,
+    store: SqliteStateStore,
+    repository: PathBuf,
+) -> CodingPanel {
+    let (tx, rx) = mpsc::sync_channel(128);
+    let (done_tx, done) = mpsc::sync_channel(1);
+    let (commands, control) = tokio::sync::mpsc::channel(16);
+    let cancellation = CancellationToken::new();
+    let token = cancellation.clone();
+    let id = match &command {
+        CodingCommand::Start { id, .. } => Some(id.clone()),
+        _ => None,
+    };
+    let worker = std::thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())
+            .and_then(|runtime_owner| {
+                runtime_owner
+                    .block_on(work(
+                        command, runtime, store, repository, token, tx, control,
+                    ))
+                    .map_err(|error| error.to_string())
+            });
+        let _ = done_tx.send(result);
+    });
+    CodingPanel {
+        id,
+        rx,
+        done,
+        commands,
+        cancellation,
+        pending: None,
+        worker: Some(worker),
+        active: true,
+    }
+}
+async fn work(
+    command: CodingCommand,
+    runtime: RuntimeConfig,
+    store: SqliteStateStore,
+    repository: PathBuf,
+    token: CancellationToken,
+    tx: mpsc::SyncSender<CodingMessage>,
+    mut controls: tokio::sync::mpsc::Receiver<CodingCommand>,
+) -> Result<String, CodingError> {
+    let application = CodingApplication::session(runtime, store, &repository, &token).await?;
+    let CodingCommand::Start {
+        id,
+        task,
+        write_paths,
+        programs,
+        approve,
+    } = command
+    else {
+        return dispatch_coding(&application, command)
+            .await
+            .map(|value| value.to_string());
+    };
+    let request = CodingJobRequest::new(
+        saya_types::JobId::parse(&id).map_err(CodingError::owner)?,
+        task,
+        write_paths,
+        programs,
+    )?;
+    let approval: Box<dyn ApprovalDecider> = if approve {
+        Box::new(CodingAuthorization::scoped(
+            &application.propose(&request).await?,
+        )?)
+    } else {
+        Box::new(PanelApproval {
+            sender: tx.clone(),
+            token: token.clone(),
+            id,
+        })
+    };
+    let job = application
+        .create(request, approval.as_ref(), token)
+        .await?;
+    let mut progress = job.subscribe();
+    let run = job.run(&NoopEventSink);
+    tokio::pin!(run);
+    loop {
+        tokio::select! {
+            result=&mut run=>return result.map(|output|output.answer),
+            Some(command)=controls.recv()=>{
+                let result=job.control_command(command).await;
+                let text=match result {Ok(value)=>value.to_string(),Err(error)=>error.to_string()};
+                let _=tx.try_send(CodingMessage::Activity(text));
+            },
+            progress=progress.recv()=>{
+                let text=match progress {Ok(event)=>serde_json::to_string(&event).map_err(CodingError::owner)?,Err(tokio::sync::broadcast::error::RecvError::Lagged(count))=>format!("{count} activity updates omitted; durable results remain available"),Err(_)=>continue};
+                let _=tx.try_send(CodingMessage::Activity(text));
+            },
+        }
+    }
+}

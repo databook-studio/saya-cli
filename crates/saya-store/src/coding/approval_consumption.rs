@@ -69,6 +69,14 @@ impl SqliteStateStore {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|_| StoreError::Unavailable)?;
+        super::runtime::ensure_not_cancelled(&mut transaction, reservation_event.job_id()).await?;
+        if let Some(active) =
+            super::runtime::authority_in_tx(&mut transaction, reservation_event.job_id()).await?
+            && (active.epoch != current_context.revocation_epoch
+                || active.policy_digest != current_context.policy_sha256)
+        {
+            return Err(StoreError::Conflict);
+        }
         let outcome = match append_event_in_tx(&mut transaction, reservation_event).await {
             Err(error) => Err(error),
             Ok(reservation_append) => {

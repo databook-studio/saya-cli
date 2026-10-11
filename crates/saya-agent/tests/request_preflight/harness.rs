@@ -105,6 +105,7 @@ impl ApprovalDecider for RecordingApproval {
 
 #[derive(Default)]
 pub(super) struct RecordingSink {
+    pub(super) compactions: Mutex<Vec<saya_agent::ContextCompaction>>,
     events: Mutex<Vec<AgentEvent>>,
     pub(super) observations: Mutex<Vec<AnsweringObservation>>,
     pub(super) metrics: Mutex<Vec<AgentMetric>>,
@@ -112,6 +113,9 @@ pub(super) struct RecordingSink {
 
 #[async_trait]
 impl AgentEventSink for RecordingSink {
+    fn observe_compaction(&self, observation: saya_agent::ContextCompaction) {
+        self.compactions.lock().unwrap().push(observation);
+    }
     async fn emit(&self, event: AgentEvent) {
         self.events.lock().unwrap().push(event);
     }

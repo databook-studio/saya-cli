@@ -46,7 +46,12 @@ impl ApprovalDecider for ChildApprovalDecider {
         if matches!(tool.effect.local_state, LocalStateEffect::WriteWorkspace) {
             return match tool.name.as_str() {
                 "workspace_write" | "workspace_edit" => self.workspace_writes,
-                "run_program" => self.commands,
+                "coding_mcp"
+                | "coding_lsp"
+                | "run_program"
+                | "coding_check"
+                | "coding_command_start"
+                | "coding_command_stop" => self.commands,
                 _ => false,
             };
         }

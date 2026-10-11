@@ -164,7 +164,7 @@ pub(crate) fn now() -> Result<i64, StoreError> {
     i64::try_from(milliseconds).map_err(|_| StoreError::LimitExceeded)
 }
 
-fn job_record(row: &sqlx::sqlite::SqliteRow) -> Result<CodingJobRecord, StoreError> {
+pub(super) fn job_record(row: &sqlx::sqlite::SqliteRow) -> Result<CodingJobRecord, StoreError> {
     Ok(CodingJobRecord {
         job_id: JobId::parse(&text(row, "job_id")?).map_err(|_| StoreError::Invalid)?,
         repository_id: RepositoryId::parse(&text(row, "repository_id")?)

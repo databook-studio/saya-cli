@@ -12,6 +12,11 @@ impl JobBudgetLedger {
     pub async fn snapshot(&self) -> BudgetSnapshot {
         let state = self.inner.lock().await;
         let mut view = state.snapshot.clone();
+        view.tokens_charged = state.token_policy.as_ref().map(|_| state.counts.tokens);
+        view.token_limit = state
+            .token_policy
+            .as_ref()
+            .map(|policy| policy.data().total_tokens);
         view.logical_requests = state.counts.logical;
         view.transport_attempts = state.counts.transport;
         view.tool_calls = state.counts.tools;

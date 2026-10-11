@@ -69,6 +69,7 @@ impl AnsweringScope {
 
 /// Inputs for the controlled answering API, grouped to keep its call surface small.
 pub struct AgentRunControl<'a> {
+    pub(super) mailbox: Option<super::steering::AgentMailbox>,
     pub(super) limits: AgentLimits,
     pub(super) answering_scope: AnsweringScope,
     pub(super) approval: &'a dyn ApprovalDecider,
@@ -88,6 +89,7 @@ impl<'a> AgentRunControl<'a> {
         cancellation: CancellationToken,
     ) -> Self {
         Self {
+            mailbox: None,
             limits,
             answering_scope: AnsweringScope::new(answering, cancellation.clone()),
             approval,
@@ -97,6 +99,13 @@ impl<'a> AgentRunControl<'a> {
             effect_admission: None,
             require_physical_effect_admission: false,
         }
+    }
+
+    /// Receives bounded steering and pause requests at the existing turn boundary.
+    #[must_use]
+    pub fn with_mailbox(mut self, mailbox: super::steering::AgentMailbox) -> Self {
+        self.mailbox = Some(mailbox);
+        self
     }
 
     /// Reuses one question's admission counts and stop signal across
@@ -141,6 +150,7 @@ pub(super) struct AgentRunInvocation<'a> {
     pub(super) tools: &'a dyn ToolExecutor,
     pub(super) request: AgentRequest,
     pub(super) definitions: Vec<ToolDefinition>,
+    pub(super) mailbox: Option<super::steering::AgentMailbox>,
     pub(super) limits: AgentLimits,
     pub(super) approval: &'a dyn ApprovalDecider,
     pub(super) sink: &'a dyn AgentEventSink,

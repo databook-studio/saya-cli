@@ -89,19 +89,22 @@ async fn send_stream_inner(
                     .await?;
                 return Err(ProviderError::Cancelled.into());
             }
-            control.dispatch_started()?;
         }
         let response = tokio::select! {
             biased;
             _ = cancellation.cancelled() => {
                 if let Some(control) = attempts.as_deref_mut() {
-                    control.settle_active(EffectOutcome::Unknown, None, false).await?;
+                    control.settle_cancelled().await?;
                 }
                 return Err(ProviderError::Cancelled.into());
             }
-            response = tokio::time::timeout(establishment_timeout, build().send()) => match response {
-                Ok(Ok(response)) => Ok(response),
-                Ok(Err(_)) => Err(AttemptError::Network),
+            response = tokio::time::timeout(establishment_timeout, async {
+                if let Some(control) = attempts.as_deref_mut() { control.dispatch_started()?; }
+                Ok::<_, ControlledProviderError>(build().send().await)
+            }) => match response {
+                Ok(Ok(Ok(response))) => Ok(response),
+                Ok(Ok(Err(_))) => Err(AttemptError::Network),
+                Ok(Err(error)) => return Err(error),
                 Err(_) => Err(AttemptError::Timeout),
             },
         };

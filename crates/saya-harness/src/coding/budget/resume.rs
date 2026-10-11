@@ -46,6 +46,15 @@ pub(super) async fn resume_ledger(
     job: JobId,
     limits: super::ledger::CountLimits,
 ) -> Result<JobBudgetLedger, BudgetLedgerError> {
+    let token_policy = store
+        .get_coding_token_policy(&job)
+        .await
+        .map_err(map_resume_store)?;
+    let runtime_authority = store
+        .coding_recovery_status(&job)
+        .await
+        .map_err(map_resume_store)?
+        .authority;
     let proposed = super::fresh::proposed_policy(&limits)?;
     let stored = store
         .get_coding_budget_policy(&job)
@@ -65,12 +74,22 @@ pub(super) async fn resume_ledger(
         deadline: policy.deadline(),
     };
     let folded = fold(&store, &job).await?;
+    if token_policy
+        .as_ref()
+        .is_some_and(|policy| folded.counts.tokens > policy.data().total_tokens)
+    {
+        return Err(BudgetLedgerError::ResumeRecordCorrupt);
+    }
     let sequence = super::fresh::resume_sequence(&store, &job).await?;
     let started = Instant::now();
     let cancellation = CancellationToken::new();
     Ok(JobBudgetLedger {
         schedule: Arc::new(tokio::sync::Semaphore::new(1)),
         inner: Arc::new(Mutex::new(State {
+            token_policy,
+            quiescent: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            runtime_authority,
+            runtime_renewal_required: true,
             store,
             job,
             limits: durable,
@@ -142,6 +161,23 @@ fn fold_record(
     for charge in record.reservation.charges() {
         let amount = charge.reserved().get();
         match charge.dimension() {
+            BudgetDimension::InputTokens | BudgetDimension::OutputTokens => {
+                let charged = record
+                    .settlement
+                    .as_ref()
+                    .and_then(|settlement| {
+                        settlement
+                            .observations()
+                            .iter()
+                            .find(|observation| observation.dimension() == charge.dimension())
+                    })
+                    .and_then(|observation| match observation.value() {
+                        BudgetObservationValue::Measured(value) => Some(value),
+                        _ => None,
+                    })
+                    .unwrap_or(amount);
+                add(&mut folded.counts.tokens, charged)?;
+            }
             BudgetDimension::LogicalRequests => add(&mut folded.counts.logical, amount)?,
             BudgetDimension::TransportAttempts => add(&mut folded.counts.transport, amount)?,
             BudgetDimension::ToolCalls => add(&mut folded.counts.tools, amount)?,
@@ -192,6 +228,9 @@ fn fold_record(
                         folded.usage_ever_unknown = true;
                     }
                     BudgetDimension::ToolCalls => add(&mut folded.unknown_tool_calls, amount)?,
+                    BudgetDimension::InputTokens | BudgetDimension::OutputTokens => {
+                        folded.usage_ever_unknown = true;
+                    }
                     // D5 residual: an Uncertain slot settlement is unresumable; R04 reconciles.
                     _ => return Err(BudgetLedgerError::ResumeRecordCorrupt),
                 }

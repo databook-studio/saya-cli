@@ -110,3 +110,6 @@ async fn check_receipt_binds_real_exit_and_source() {
         ))
     ));
 }
+
+#[path = "c04.rs"]
+mod diagnostics;

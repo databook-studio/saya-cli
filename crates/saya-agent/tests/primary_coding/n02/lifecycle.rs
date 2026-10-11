@@ -49,6 +49,10 @@ async fn cancellation_before_and_after_send_keeps_distinct_effect_outcomes() {
             })
     );
 
+    let before_observation = before.observations.lock().unwrap()[0].2.clone();
+    assert_eq!(before_observation.dispatch_started_ns(), None);
+    assert_eq!(before_observation.outcome(), EffectOutcome::NotStarted);
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let after_token = CancellationToken::new();
@@ -95,6 +99,14 @@ async fn cancellation_before_and_after_send_keeps_distinct_effect_outcomes() {
                 )
             })
     );
+    let after_observation = after.observations.lock().unwrap()[0].2.clone();
+    assert_eq!(
+        before_observation.clock_domain(),
+        after_observation.clock_domain()
+    );
+    assert_eq!(after_observation.outcome(), EffectOutcome::Unknown);
+    assert!(after_observation.finished_ns() >= after_observation.dispatch_started_ns().unwrap());
+    assert!(!after_observation.usage_complete());
 }
 
 #[tokio::test]

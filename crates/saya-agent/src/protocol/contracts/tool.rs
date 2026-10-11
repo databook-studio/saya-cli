@@ -92,6 +92,16 @@ pub struct ToolExecutionContext {
 
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
+    /// Invocation owners call this after the agent loop returns, including errors
+    /// and cancellation, before reporting joined completion. Executors retaining
+    /// processes must stop and join them here; uncertain cleanup returns an error.
+    /// Pause boundaries call this too; implementations must be idempotent and
+    /// permit new work after a successful settlement and explicit resume.
+    /// Stateless executors have no retained work to settle.
+    async fn settle_invocation(&self) -> Result<(), ToolError> {
+        Ok(())
+    }
+
     async fn execute(
         &self,
         name: &str,

@@ -1,5 +1,8 @@
 fn command_help_memory_runs(name: &str) -> Option<&'static str> {
     match name {
+        "coding" => Some(
+            "/coding start <id> <task> [--write path] [--program name] [--approve]\n/coding list|show|cancel|doctor|worktrees\nEach job needs fresh scope approval; children use isolated managed checkouts.",
+        ),
         "contracts" => Some(
             "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
         ),

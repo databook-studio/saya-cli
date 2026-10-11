@@ -114,9 +114,10 @@ impl GeminiProvider {
         &self,
         request: ChatRequest,
         cancellation: CancellationToken,
-        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+        mut attempts: Option<&mut PhysicalAttemptControl<'_>>,
     ) -> Result<serde_json::Value, ControlledProviderError> {
         let model = request.model.clone();
+        let request_model = model.clone();
         let body = gemini_request::build_body(
             request,
             self.settings.max_output_tokens,
@@ -129,6 +130,14 @@ impl GeminiProvider {
             .unwrap_or("https://generativelanguage.googleapis.com/v1beta")
             .trim_end_matches('/');
         let url = format!("{root}/models/{model}:generateContent");
+        if let Some(control) = attempts.as_deref_mut() {
+            control.bind_request(crate::PhysicalRequestMetadata::new(
+                "gemini",
+                &request_model,
+                &url,
+                self.settings.max_output_tokens,
+            )?)?;
+        }
         let client = &self.client;
         let key = self.api_key.as_deref();
 

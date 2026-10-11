@@ -10,6 +10,8 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct CodingFile {
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub extensions: Option<BTreeMap<String, crate::coding::ExtensionProfile>>,
     pub max_children: Option<usize>,
     pub max_concurrent_model_requests: Option<usize>,
     pub max_concurrent_commands: Option<usize>,

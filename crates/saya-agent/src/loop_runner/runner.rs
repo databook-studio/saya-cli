@@ -26,6 +26,7 @@ async fn run_agent_loop(
     admission: &mut admission::Admission,
 ) -> Result<AgentOutput, AgentError> {
     let control::AgentRunInvocation {
+        mut mailbox,
         provider,
         tools,
         request,
@@ -85,6 +86,11 @@ async fn run_agent_loop(
         designation: super::designation::State::new(),
     };
     loop {
+        if let Some(mailbox) = mailbox.as_mut() {
+            mailbox
+                .boundary(&state.cancellation, &mut state.messages, state.tools)
+                .await?;
+        }
         if let Err(error) = admission.check(&state.cancellation) {
             if let Some(dimension) = admission.stopped_dimension(&error, &state.cancellation) {
                 return Ok(budget_output(

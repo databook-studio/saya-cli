@@ -47,12 +47,27 @@ pub(in crate::loop_runner) fn trim_to_budget(
     messages: &mut Vec<crate::ChatMessage>,
     budget: usize,
     protected_prefix_len: usize,
+    sink: Option<&dyn crate::AgentEventSink>,
 ) {
     let total = messages.iter().map(super::message_size).sum::<usize>();
     if total <= budget {
         return;
     }
-    compact(messages, budget, protected_prefix_len);
+    let protected = messages[..protected_prefix_len.min(messages.len())].to_vec();
+    let (evicted, truncated) = compact(messages, budget, protected_prefix_len);
+    if (evicted > 0 || truncated > 0)
+        && let Some(sink) = sink
+    {
+        sink.observe_compaction(crate::ContextCompaction {
+            before_bytes: total as u64,
+            after_bytes: messages.iter().map(super::message_size).sum::<usize>() as u64,
+            evicted_tool_groups: evicted as u64,
+            truncated_tool_messages: truncated as u64,
+            protected_prefix_messages: protected_prefix_len as u64,
+            protected_prefix_unchanged: messages.get(..protected.len())
+                == Some(protected.as_slice()),
+        });
+    }
 }
 
 /// One compaction: evict the oldest tool-result groups (and any prior digest),
@@ -61,18 +76,24 @@ pub(in crate::loop_runner) fn trim_to_budget(
 /// assembly-owned protected prefix. If keeping only the newest group with the
 /// digest still does not fit, truncate its largest `tool` result (the one part
 /// not yet sent) rather than rewrite a seen message.
-fn compact(messages: &mut Vec<crate::ChatMessage>, budget: usize, protected_prefix_len: usize) {
+fn compact(
+    messages: &mut Vec<crate::ChatMessage>,
+    budget: usize,
+    protected_prefix_len: usize,
+) -> (usize, usize) {
     let groups = tool_groups(messages, protected_prefix_len);
     let n = groups.len();
     if n <= 1 {
         // No older group to evict: the newest group alone is over budget (plus
         // any prior digest). Truncate its `tool` result; do not insert a digest
         // for nothing.
-        truncate_newest_group(messages, budget, protected_prefix_len);
-        return;
+        return (
+            0,
+            truncate_newest_group(messages, budget, protected_prefix_len),
+        );
     }
     let Some(region_start) = first_evictable_index(messages, &groups, protected_prefix_len) else {
-        return;
+        return (0, 0);
     };
     // Keep the most recent groups that fit with a single digest replacing the
     // evicted prefix. Try the largest keep count first; evict at least one.
@@ -87,7 +108,7 @@ fn compact(messages: &mut Vec<crate::ChatMessage>, budget: usize, protected_pref
         let kept: usize = messages[kept_start..].iter().map(super::message_size).sum();
         if head + super::message_size(&digest) + kept <= budget {
             replace_with_digest(messages, region_start, kept_start, digest);
-            return;
+            return (n - keep, 0);
         }
     }
     // Evicting all but the newest group still does not fit: evict every group
@@ -96,7 +117,10 @@ fn compact(messages: &mut Vec<crate::ChatMessage>, budget: usize, protected_pref
     let kept_start = groups[n - 1].start;
     let digest = crate::loop_runner::compaction::build_digest(&messages[region_start..kept_start]);
     replace_with_digest(messages, region_start, kept_start, digest);
-    truncate_newest_group(messages, budget, protected_prefix_len);
+    (
+        n - 1,
+        truncate_newest_group(messages, budget, protected_prefix_len),
+    )
 }
 
 /// Drains `messages[start..end)` and inserts `digest` at `start` in its place.
@@ -143,33 +167,35 @@ fn truncate_newest_group(
     messages: &mut [crate::ChatMessage],
     budget: usize,
     protected_prefix_len: usize,
-) {
+) -> usize {
+    let mut truncated = 0;
     loop {
         let total = messages.iter().map(super::message_size).sum::<usize>();
         if total <= budget {
-            return;
+            return truncated;
         }
         let Some(newest) = tool_groups(messages, protected_prefix_len).last().cloned() else {
-            return;
+            return truncated;
         };
         let Some(idx) = (newest.start + 1..newest.end)
             .filter(|&i| messages[i].role == "tool")
             .max_by_key(|&i| messages[i].content.len())
         else {
-            return;
+            return truncated;
         };
         let content_len = messages[idx].content.len();
         let overhead = total - content_len;
         let target = budget.saturating_sub(overhead + TRUNCATED_MARKER.len());
         if target >= content_len {
-            return;
+            return truncated;
         }
         let bound = crate::loop_runner::tools::floor_boundary(&messages[idx].content, target);
         if bound + TRUNCATED_MARKER.len() >= content_len {
-            return;
+            return truncated;
         }
         messages[idx].content.truncate(bound);
         messages[idx].content.push_str(TRUNCATED_MARKER);
+        truncated += 1;
     }
 }
 

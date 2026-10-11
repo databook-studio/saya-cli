@@ -17,6 +17,7 @@ pub(crate) fn tick_workers(app: &mut App, store: &FsSessionStore, state: &mut Se
     poll_session_save(app, store, state);
 
     app.poll_run_panel(state.show_thinking);
+    app.poll_coding();
 
     // Poll the /compact worker (non-blocking): apply its result when ready.
     if app.compact_task.is_some() {

@@ -7,6 +7,9 @@ pub mod skills;
 
 pub mod child {
     mod factory;
+    pub(crate) mod failure;
+    mod mailbox;
+    pub use mailbox::ChildControl;
 
     pub use factory::{
         ChildComponents, ChildExecutionSpec, ChildFactory, ChildFactoryError, ChildSpecError,
@@ -20,6 +23,16 @@ pub mod commands;
 
 pub mod coordinator {
     mod admit;
+    mod cancel;
+    mod recovery;
+    mod resume;
+    pub use recovery::inspect_recovery;
+    pub use resume::{ResumeError, resume_job};
+    mod notify;
+    mod results;
+    pub use cancel::CHILD_CANCEL_JOIN_GRACE;
+    pub use notify::{acknowledge_completion, replay_completions};
+    pub use results::CompletionError;
     mod api;
     mod event_projection;
     mod events;
@@ -46,3 +59,5 @@ pub mod git;
 pub mod integration;
 pub mod snapshot;
 pub mod worktree;
+
+pub mod extensions;

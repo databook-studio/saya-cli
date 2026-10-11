@@ -1,6 +1,8 @@
 use clap::{Args, Parser, ValueEnum};
 
+mod coding;
 mod command;
+pub use coding::CodingCommand;
 mod connection;
 mod foundation;
 mod investigation;

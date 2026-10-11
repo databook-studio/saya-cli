@@ -64,6 +64,9 @@ terminal-colorsaurus.workspace = true
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 libc = "0.2"
 insta.workspace = true

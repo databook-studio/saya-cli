@@ -20,6 +20,7 @@ mod status_fields;
 mod status_parser;
 mod validation;
 mod worktree;
+mod worktree_index;
 mod worktree_parser;
 
 pub use command::{

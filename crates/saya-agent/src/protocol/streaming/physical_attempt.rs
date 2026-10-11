@@ -29,6 +29,7 @@ pub enum ControlledProviderError {
 /// after their stream has been consumed by the agent loop.
 pub struct PhysicalAttemptControl<'a> {
     owner: &'a dyn EffectAdmission,
+    request_metadata: Option<crate::PhysicalRequestMetadata>,
     cancellation: &'a CancellationToken,
     parent: EffectPermit,
     kind: EffectCallKind,
@@ -36,6 +37,7 @@ pub struct PhysicalAttemptControl<'a> {
     active: Option<(PhysicalAttempt, EffectPermit, bool)>,
     pending_response: Option<(PhysicalAttempt, EffectPermit)>,
     dispatched_any: bool,
+    dispatch_started_ns: Option<u64>,
     usage_complete: bool,
 }
 
@@ -48,6 +50,7 @@ impl<'a> PhysicalAttemptControl<'a> {
     ) -> Self {
         Self {
             owner,
+            request_metadata: None,
             cancellation,
             parent,
             kind,
@@ -55,8 +58,21 @@ impl<'a> PhysicalAttemptControl<'a> {
             active: None,
             pending_response: None,
             dispatched_any: false,
+            dispatch_started_ns: None,
             usage_complete: true,
         }
+    }
+
+    /// Builtin providers bind the actual final endpoint/model/output projection.
+    pub fn bind_request(
+        &mut self,
+        request: crate::PhysicalRequestMetadata,
+    ) -> Result<(), ControlledProviderError> {
+        if self.active.is_some() || self.pending_response.is_some() {
+            return Err(self.contract_violation());
+        }
+        self.request_metadata = Some(request);
+        Ok(())
     }
 
     /// Reserves the next physical send. The caller must settle it or retain it
@@ -75,7 +91,11 @@ impl<'a> PhysicalAttemptControl<'a> {
         }
         let attempt = PhysicalAttempt::new(self.parent, self.kind, self.next_ordinal);
         self.next_ordinal += 1;
-        let permit = match self.owner.admit_physical_attempt(attempt).await {
+        let permit = match self
+            .owner
+            .admit_physical_request(attempt, self.request_metadata.as_ref())
+            .await
+        {
             Ok(permit) => permit,
             Err(EffectAdmissionError::Denied) => {
                 return Err(ControlledProviderError::AdmissionDenied);
@@ -106,9 +126,20 @@ impl<'a> PhysicalAttemptControl<'a> {
         if *dispatched {
             return Err(self.contract_violation());
         }
+        self.dispatch_started_ns = Some(super::physical_observation::stamp()?);
         *dispatched = true;
         self.dispatched_any = true;
         Ok(())
+    }
+
+    /// The biased cancellation branch can win before the send future is polled.
+    pub async fn settle_cancelled(&mut self) -> Result<(), ControlledProviderError> {
+        let outcome = if self.dispatch_started_ns.is_some() {
+            EffectOutcome::Unknown
+        } else {
+            EffectOutcome::NotStarted
+        };
+        self.settle_active(outcome, None, false).await
     }
 
     /// Settles a send that did not return a successful response body stream.
@@ -195,6 +226,20 @@ impl<'a> PhysicalAttemptControl<'a> {
         reported_usage: Option<TokenUsage>,
         usage_complete: bool,
     ) -> Result<(), ControlledProviderError> {
+        let observation = super::physical_observation::PhysicalAttemptObservation::finish(
+            self.dispatch_started_ns.take(),
+            outcome,
+            reported_usage,
+            usage_complete,
+        )?;
+        self.owner
+            .observe_physical_attempt(permit, attempt, observation)
+            .await
+            .map_err(|error| {
+                self.cancellation
+                    .cancel_with_reason(CancellationReason::OwnerFailure);
+                ControlledProviderError::OwnerFailure(error)
+            })?;
         self.usage_complete &= usage_complete;
         self.owner
             .settle(

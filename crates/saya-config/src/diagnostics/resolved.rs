@@ -44,6 +44,7 @@ pub struct ResolvedDiagnostics {
     pub coding_max_known_tokens: u64,
     pub coding_max_elapsed_seconds: u64,
     /// Safe effective profile summaries; argv bodies are never included.
+    pub coding_extensions: BTreeMap<String, serde_json::Value>,
     pub coding_check_profiles: BTreeMap<String, CheckProfileDiagnostics>,
     pub jobs_wall_clock_seconds: Option<u64>,
     pub jobs_tokens_per_endpoint: BTreeMap<String, u64>,
@@ -101,6 +102,12 @@ impl ResolvedConfig {
             coding_max_tool_calls: self.coding.max_tool_calls,
             coding_max_known_tokens: self.coding.max_known_tokens,
             coding_max_elapsed_seconds: self.coding.max_elapsed_seconds,
+            coding_extensions: self
+                .coding
+                .extensions
+                .iter()
+                .map(|(name, profile)| (name.clone(), profile.redacted_diagnostics()))
+                .collect(),
             coding_check_profiles: self
                 .coding
                 .check_profiles

@@ -7,6 +7,10 @@ use thiserror::Error;
 /// leak the bytes it declined to admit.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SkillLoadError {
+    #[error("invalid, repeated, or cyclic skill resource reference")]
+    InvalidResourceReference,
+    #[error("skill resource count exceeds its bound")]
+    TooManyResources,
     /// The entry's root index does not address one of the supplied roots.
     #[error("skill root index is out of range for the supplied roots")]
     UnknownRoot,

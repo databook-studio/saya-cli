@@ -8,7 +8,7 @@ use super::*;
 use saya_agent::{ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::policy::{
     ChildAuthorityRequest, ChildAuthorityView, ChildRole, CommandCheckoutProfile, PlatformSupport,
-    RootDelegationInput, RootDelegationScope,
+    RootDelegationInput,
 };
 use saya_harness::workspace::Workspace;
 use saya_types::{
@@ -33,7 +33,7 @@ fn write_capabilities() -> Capabilities {
 /// An Implementer narrowed to exactly `paths` with the workspace_write
 /// capability on a platform that permits workspace edits.
 pub(super) fn implementer_view(checkout: &ManagedCheckoutId, paths: &[&str]) -> ChildAuthorityView {
-    RootDelegationScope::new(RootDelegationInput {
+    super::approval_test_support::approved_root(RootDelegationInput {
         job_id: JobId::parse("job").unwrap(),
         agent_id: AgentId::parse("agent").unwrap(),
         invocation_id: InvocationId::parse("invocation").unwrap(),

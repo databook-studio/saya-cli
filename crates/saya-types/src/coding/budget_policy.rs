@@ -21,9 +21,9 @@ pub const BUDGET_POLICY_VERSION: u32 = 1;
 /// bytes — and therefore the digest — are deterministic. No field may ever be
 /// a map or `serde_json::Value`, which could reorder keys and change bytes.
 ///
-/// Token, cost, and byte ceilings are structurally absent: no truthful
-/// producer exists today, so they are Unavailable and this policy never
-/// claims them. The deadline is stored as integer milliseconds; wall-clock
+/// Token, cost, and byte ceilings are absent from this count policy.
+/// Optional verified token bounds are recorded through TokenBudgetPolicyV1;
+/// this record never implies optional token enforcement. The deadline is stored as integer milliseconds; wall-clock
 /// elapsed continuity across a restart is not claimed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BudgetLimitPolicyV1 {

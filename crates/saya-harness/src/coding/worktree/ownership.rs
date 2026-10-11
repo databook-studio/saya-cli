@@ -99,6 +99,8 @@ pub enum OwnershipError {
     NotActive,
     #[error("the managed checkout is owned by another job")]
     WrongOwner,
+    #[error("the live repository identity differs from recorded ownership")]
+    RepositoryMismatch,
     #[error("the managed checkout path does not match the ownership record")]
     PathMismatch,
     #[error("the published snapshot does not match the ownership record")]
@@ -114,6 +116,14 @@ pub enum OwnershipError {
 pub async fn verify_owned_checkout(
     input: &OwnershipInput<'_>,
     cancellation: &CancellationToken,
+) -> Result<VerifiedCheckout, OwnershipError> {
+    verify_checkout_state(input, cancellation, ManagedCheckoutLifecycle::Active).await
+}
+
+pub(super) async fn verify_checkout_state(
+    input: &OwnershipInput<'_>,
+    cancellation: &CancellationToken,
+    expected: ManagedCheckoutLifecycle,
 ) -> Result<VerifiedCheckout, OwnershipError> {
     if let Some(owner) = input
         .store
@@ -131,11 +141,21 @@ pub async fn verify_owned_checkout(
     else {
         return Err(OwnershipError::NotFound);
     };
-    if record.current_lifecycle != ManagedCheckoutLifecycle::Active {
+    if record.current_lifecycle != expected {
         return Err(OwnershipError::NotActive);
     }
     if record.ownership.managed_path() != &input.service.managed_path(input.checkout_id)? {
         return Err(OwnershipError::PathMismatch);
+    }
+    let inventory = input
+        .service
+        .inventory_repository(input.repository, cancellation)
+        .await
+        .map_err(|_| OwnershipError::RepositoryMismatch)?;
+    if inventory.identity().repository_id() != record.ownership.repository_id()
+        || inventory.identity().common_dir_sha256() != record.ownership.common_dir_sha256()
+    {
+        return Err(OwnershipError::RepositoryMismatch);
     }
     let _adopted = input
         .service

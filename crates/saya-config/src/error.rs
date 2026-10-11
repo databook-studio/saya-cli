@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("coding extension profile is invalid or exceeds its bounds")]
+    InvalidCodingExtension,
     #[error("invalid TOML: {0}")]
     Parse(String),
     #[error("config file has {bytes} bytes; maximum is {max_bytes}")]

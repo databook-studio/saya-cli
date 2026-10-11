@@ -4,6 +4,9 @@ fn finish_action(
     approvals_set: bool,
     ctx: &mut TurnContext,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+    if let SessionAction::Coding(command) = action {
+        return handle_coding(command, ctx);
+    }
     if let SessionAction::Setup = action {
         return handle_setup(ctx);
     }

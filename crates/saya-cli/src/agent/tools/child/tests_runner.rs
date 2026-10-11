@@ -11,7 +11,7 @@ use super::{ChildToolsError, child_toolset, child_toolset_with_runner};
 use saya_agent::{ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::policy::{
     ChildAuthorityRequest, ChildAuthorityView, ChildRole, CommandCheckoutProfile, PlatformSupport,
-    RootDelegationInput, RootDelegationScope,
+    RootDelegationInput,
 };
 use saya_harness::runner::sandbox::{RunSandbox, SandboxProvision};
 use saya_harness::runner::{RunProgram, StaticCredentialSource};
@@ -51,7 +51,7 @@ fn runner_view_for_paths(
     root_capabilities.runner = Some(scope());
     let mut request_capabilities = root_capabilities.clone();
     request_capabilities.runner = Some(scope());
-    RootDelegationScope::new(RootDelegationInput {
+    super::approval_test_support::approved_root(RootDelegationInput {
         job_id: JobId::parse("job").unwrap(),
         agent_id: AgentId::parse("agent").unwrap(),
         invocation_id: InvocationId::parse("invocation").unwrap(),

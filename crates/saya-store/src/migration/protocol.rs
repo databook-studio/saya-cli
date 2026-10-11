@@ -31,6 +31,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         1 => {
@@ -49,6 +51,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         2 => {
@@ -66,6 +70,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         3 => {
@@ -82,6 +88,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         4 => {
@@ -97,6 +105,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         5 => {
@@ -111,6 +121,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         6 => {
@@ -124,6 +136,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         7 => {
@@ -136,6 +150,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         8 => {
@@ -147,6 +163,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         9 => {
@@ -157,6 +175,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         10 => {
@@ -166,6 +186,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         11 => {
@@ -174,6 +196,8 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         12 => {
@@ -181,24 +205,41 @@ pub(crate) async fn migrate(pool: &SqlitePool) -> Result<(), StoreError> {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         13 => {
             coding::schema::step14(&mut connection).await?;
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         14 => {
             coding::schema::step15(&mut connection).await?;
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
         15 => {
             coding::schema::step16(&mut connection).await?;
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
             true
         }
-        16 => false,
+        16 => {
+            coding::schema::step17(&mut connection).await?;
+            coding::schema::step18(&mut connection).await?;
+            true
+        }
+        17 => {
+            coding::schema::step18(&mut connection).await?;
+            true
+        }
+        18 => false,
         _ => {
             sqlx::query("ROLLBACK").execute(&mut *connection).await.ok();
             return Err(StoreError::VersionUnsupported);

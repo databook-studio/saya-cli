@@ -64,8 +64,9 @@ impl OllamaProvider {
         &self,
         request: ChatRequest,
         cancellation: CancellationToken,
-        attempts: Option<&mut PhysicalAttemptControl<'_>>,
+        mut attempts: Option<&mut PhysicalAttemptControl<'_>>,
     ) -> Result<ProviderStream, ControlledProviderError> {
+        let request_model = request.model.clone();
         let body: OllamaRequest = ollama_request(request).with_options(
             Some(self.settings.temperature),
             Some(self.settings.max_output_tokens),
@@ -81,6 +82,14 @@ impl OllamaProvider {
             "api/chat"
         };
         let url = endpoint(Some(base), "", suffix);
+        if let Some(control) = attempts.as_deref_mut() {
+            control.bind_request(crate::PhysicalRequestMetadata::new(
+                "ollama",
+                &request_model,
+                &url,
+                self.settings.max_output_tokens,
+            )?)?;
+        }
         let client = &self.client;
         let build = || client.post(&url).json(&body);
         let response = if let Some(control) = attempts {

@@ -4,6 +4,12 @@ use saya_types::{AgentId, BudgetDimension, InvocationId};
 use std::num::NonZeroU64;
 
 pub(super) fn check_base(state: &mut State, slots: usize) -> Result<(), EffectAdmissionError> {
+    if state.quiescent.load(std::sync::atomic::Ordering::Acquire)
+        || (state.runtime_renewal_required
+            && (state.runtime_authority.is_some() || state.token_policy.is_some()))
+    {
+        return Err(EffectAdmissionError::Denied);
+    }
     if state.snapshot.poisoned {
         return Err(state.owner_failure());
     }

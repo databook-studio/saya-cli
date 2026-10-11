@@ -18,6 +18,10 @@ mod r03b;
 mod r03b_extra;
 #[path = "primary_coding/r03b_extra2.rs"]
 mod r03b_extra2;
+#[path = "primary_coding/r10.rs"]
+mod r10;
+#[path = "primary_coding/r12.rs"]
+mod r12;
 #[path = "primary_coding/r13a.rs"]
 mod r13a;
 #[path = "primary_coding/r13a_admission.rs"]
@@ -32,3 +36,7 @@ mod r13a_policy;
 mod r13a_pricing;
 #[path = "primary_coding/r13a_values.rs"]
 mod r13a_values;
+#[path = "primary_coding/token_policy.rs"]
+mod token_policy;
+#[path = "primary_coding/transport.rs"]
+mod transport;

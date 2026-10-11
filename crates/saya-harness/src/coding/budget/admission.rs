@@ -142,8 +142,9 @@ pub(super) async fn admit_model(
 pub(super) async fn admit_physical(
     state: &mut State,
     attempt: PhysicalAttempt,
-    agent: AgentId,
-    invocation: InvocationId,
+    agent: Option<AgentId>,
+    invocation: Option<InvocationId>,
+    request: Option<&saya_agent::PhysicalRequestMetadata>,
 ) -> Result<EffectPermit, EffectAdmissionError> {
     check_base(state, 1)?;
     check_id_capacity(state, 1)?;
@@ -152,7 +153,7 @@ pub(super) async fn admit_physical(
     let Some(parent) = state.permits.get(&parent_id).cloned() else {
         return Err(state.owner_failure());
     };
-    if parent.agent.as_ref() != Some(&agent) || parent.invocation.as_ref() != Some(&invocation) {
+    if parent.agent != agent || parent.invocation != invocation {
         return Err(state.owner_failure());
     }
     let PermitKind::Model {
@@ -170,13 +171,24 @@ pub(super) async fn admit_physical(
     {
         return Err(state.owner_failure());
     }
+    let token_bounds = super::token::reserve_amount(state, request)?;
+    let mut charges = vec![(BudgetDimension::TransportAttempts, 1)];
+    if let Some((input, output)) = token_bounds {
+        charges.extend([
+            (BudgetDimension::InputTokens, input),
+            (BudgetDimension::OutputTokens, output),
+        ]);
+    }
     let sequence = state
-        .reserve(
-            vec![(BudgetDimension::TransportAttempts, 1)],
-            Some(agent.clone()),
-            Some(invocation.clone()),
-        )
+        .reserve(charges, agent.clone(), invocation.clone())
         .await?;
+    if let Some((input, output)) = token_bounds {
+        state.counts.tokens = state
+            .counts
+            .tokens
+            .checked_add(input + output)
+            .ok_or_else(|| state.owner_failure())?;
+    }
     bump(state, BudgetDimension::TransportAttempts, 1)?;
     let id = allocate(state)?;
     let Some(parent) = state.permits.get_mut(&parent_id) else {
@@ -195,8 +207,8 @@ pub(super) async fn admit_physical(
                 parent: parent_id,
                 attempt,
             },
-            agent: Some(agent),
-            invocation: Some(invocation),
+            agent,
+            invocation,
         },
     );
     Ok(effect_permit(id)?)

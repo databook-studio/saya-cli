@@ -138,6 +138,28 @@ pub trait EffectAdmission: Send + Sync {
         Err(EffectAdmissionError::UnsupportedPhysicalCoverage)
     }
 
+    /// Native strict owners validate producer-supplied actual wire settings.
+    /// Missing metadata remains compatible only for non-token-constrained owners.
+    async fn admit_physical_request(
+        &self,
+        attempt: PhysicalAttempt,
+        _request: Option<&crate::PhysicalRequestMetadata>,
+    ) -> Result<EffectPermit, EffectAdmissionError> {
+        self.admit_physical_attempt(attempt).await
+    }
+
+    /// Source dispatch/finish observation for an admitted physical attempt.
+    /// Default owners collect no spans; durable consumers must report missing
+    /// observations as incomplete. This never grants or settles an effect.
+    async fn observe_physical_attempt(
+        &self,
+        _permit: EffectPermit,
+        _attempt: PhysicalAttempt,
+        _observation: crate::PhysicalAttemptObservation,
+    ) -> Result<(), EffectOwnerFailure> {
+        Ok(())
+    }
+
     async fn settle(
         &self,
         permit: EffectPermit,

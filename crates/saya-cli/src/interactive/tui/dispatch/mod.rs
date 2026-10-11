@@ -82,6 +82,7 @@ pub(crate) fn dispatch(
     match parsed {
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
         Ok(Some(command)) => match command {
+            SlashCommand::Coding(command) => return Dispatch::Coding(command),
             SlashCommand::Columns(arg) => {
                 result = Dispatch::SetColumns(arg);
             }

@@ -247,7 +247,14 @@ pub async fn create_managed_checkout(
                 .await
         }
     };
-    settle_git_outcome(input, open_operation, created).await?;
+    let worktree = settle_git_outcome(input, open_operation, created).await?;
+    // --no-checkout leaves no index. Initialize only this still-Creating
+    // checkout's private index; existing staged content is never overwritten.
+    // An interrupted initialization keeps the create intent open for replay.
+    input
+        .service
+        .initialize_materialization_index(&worktree, cancellation)
+        .await?;
 
     // Git created the managed directory with the process umask; materialize
     // and reset require process-owned mode 0700. Privatize the target on

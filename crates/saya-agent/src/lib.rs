@@ -14,11 +14,13 @@ pub use agent_entry::run_agent;
 pub use history::{build_messages, turn_bytes};
 pub use history_context::render_untrusted_block;
 pub use loop_runner::{
-    AgentError, AgentLimits, AgentOutput, AgentRunControl, AnsweringLimits, AnsweringScope,
-    DESIGNATE_ANSWER_TOOL, EnvBudgets, MAX_CLARIFICATION_OPTION_CHARS, MAX_CLARIFICATION_OPTIONS,
-    MAX_CLARIFICATION_QUESTION_CHARS, MAX_TOOL_MESSAGE_BYTES, REQUEST_CLARIFICATION_TOOL,
-    RequestPreflightConfig, ShapedToolResult, budgets_from_env, run_agent_with_control,
-    run_agent_with_sink, shape_tool_result, tool_message_cap,
+    AgentError, AgentLimits, AgentMailbox, AgentOutput, AgentRunControl, AgentSteering,
+    AnsweringLimits, AnsweringScope, DESIGNATE_ANSWER_TOOL, EnvBudgets,
+    MAX_CLARIFICATION_OPTION_CHARS, MAX_CLARIFICATION_OPTIONS, MAX_CLARIFICATION_QUESTION_CHARS,
+    MAX_STEERING_MESSAGE_BYTES, MAX_STEERING_MESSAGES, MAX_TOOL_MESSAGE_BYTES,
+    REQUEST_CLARIFICATION_TOOL, RequestPreflightConfig, ShapedToolResult, SteeringError,
+    agent_mailbox, budgets_from_env, run_agent_with_control, run_agent_with_sink,
+    shape_tool_result, tool_message_cap,
 };
 pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{
@@ -47,3 +49,9 @@ pub use protocol::streaming::{
 pub use providers::{
     AnthropicProvider, GeminiProvider, OllamaProvider, OpenAiCompatibleProvider, ProviderSettings,
 };
+
+pub use protocol::streaming::PhysicalAttemptObservation;
+
+pub use protocol::event_sink::ContextCompaction;
+
+pub use protocol::streaming::PhysicalRequestMetadata;

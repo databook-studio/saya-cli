@@ -54,9 +54,13 @@ use clap::Parser;
 
 pub use app::run;
 pub use cli::{
-    ClaimKindArg, Cli, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
+    ClaimKindArg, Cli, CodingCommand, Command, ConfigCommand, ConnectionCommand, ContractsCommand,
     ForgetReasonArg, FormatArg, GlobalOptions, InvestigationCommand, ReviewDecisionArg, RunCommand,
     ThemeArg,
+};
+pub use commands::coding::{
+    CodingApplication, CodingApprovalRequest, CodingAuthorization, CodingError, CodingJobRequest,
+    CodingReview, CodingTask, NativeCodingJob, dispatch_coding,
 };
 pub use commands::{
     Replay, RunOutcome, capture_output_start, capture_output_take, run_contracts,
