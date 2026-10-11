@@ -1,3 +1,4 @@
+mod child_concurrency;
 mod child_support;
 mod consumer;
 mod coverage;

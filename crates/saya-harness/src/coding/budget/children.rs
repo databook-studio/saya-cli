@@ -13,11 +13,14 @@ impl JobBudgetLedger {
             return Err(EffectAdmissionError::Denied);
         }
         let mut state = self.inner.lock().await;
+        // One active turn per logical child, including attempted invocation rotation.
+        // Ordinary contention must not poison the owner or cancel its first turn.
         if state
             .local
-            .contains_key(&(agent.clone(), invocation.clone()))
+            .keys()
+            .any(|(active_agent, _)| active_agent == agent)
         {
-            return Err(state.owner_failure());
+            return Err(EffectAdmissionError::Denied);
         }
         let permit = state
             .admit_one(
