@@ -6,6 +6,8 @@ mod commands;
 mod continuation;
 #[path = "coding_lifecycle/controls.rs"]
 mod controls;
+#[path = "coding_lifecycle/git_process_export.rs"]
+mod git_process_export;
 #[path = "coding_lifecycle/native.rs"]
 mod native;
 #[path = "coding_lifecycle/provider.rs"]
