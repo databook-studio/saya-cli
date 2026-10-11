@@ -176,7 +176,9 @@ impl Fixture {
             .coding
             .extensions;
         }
-        let personal_instructions = extras.personal_enabled.map(|_| root.join("personal-instructions"));
+        let personal_instructions = extras
+            .personal_enabled
+            .map(|_| root.join("personal-instructions"));
         if let Some(output) = extras.diagnostic_output {
             let argument = serde_json::to_string(output).unwrap();
             let file = saya_config::ConfigFile::from_toml(&format!(
