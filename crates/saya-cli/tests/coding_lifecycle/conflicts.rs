@@ -115,6 +115,23 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     assert_eq!(inspected["authority"], "none");
     assert_eq!(inspected["resolution"], "not_implemented");
     assert_eq!(inspected["fresh_revalidation_required"], true);
+    let manual_edit = &inspected["manual_edit"];
+    assert_eq!(manual_edit["candidate_checkout_id"], candidate.as_str());
+    assert_eq!(
+        manual_edit["next_action"],
+        "edit_owned_candidate_then_run_fresh_review"
+    );
+    assert_eq!(
+        manual_edit["review_command"],
+        "coding review native-conflicts conflict-candidate --approve"
+    );
+    assert_eq!(manual_edit["fresh_review"]["snapshot"], true);
+    assert_eq!(manual_edit["fresh_review"]["configured_checks"], true);
+    assert_eq!(manual_edit["fresh_review"]["source_binding"], true);
+    assert_eq!(manual_edit["retained_record_mutated"], false);
+    assert_eq!(manual_edit["applies_to_original"], false);
+    assert_eq!(manual_edit["later_apply_requires_fresh_approval"], true);
+    assert_eq!(manual_edit["later_apply_requires_valid_receipts"], true);
     assert_eq!(
         inspected["conflict"]["pairs"].as_array().unwrap().len(),
         276

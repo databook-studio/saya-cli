@@ -74,11 +74,24 @@ impl CodingApplication {
         }
         Ok(match found {
             Some((conflict, provenance)) => {
-                json!({"job_id":job,"candidate_checkout_id":candidate,"status":"retained","record_status_at_capture":"open","current_state":"unknown_requires_fresh_revalidation","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"provenance":provenance,"conflict":conflict})
+                json!({"job_id":job,"candidate_checkout_id":candidate,"status":"retained","record_status_at_capture":"open","current_state":"unknown_requires_fresh_revalidation","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"manual_edit":manual_edit(job,candidate),"provenance":provenance,"conflict":conflict})
             }
             None => unknown(job, candidate),
         })
     }
+}
+
+fn manual_edit(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
+    json!({
+        "candidate_checkout_id":candidate,
+        "next_action":"edit_owned_candidate_then_run_fresh_review",
+        "review_command":format!("coding review {job} {candidate} --approve"),
+        "fresh_review":{"snapshot":true,"configured_checks":true,"source_binding":true},
+        "retained_record_mutated":false,
+        "applies_to_original":false,
+        "later_apply_requires_fresh_approval":true,
+        "later_apply_requires_valid_receipts":true
+    })
 }
 
 fn unknown(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
