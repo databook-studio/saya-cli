@@ -41,6 +41,7 @@ pub struct PlanStatusFact {
 }
 
 pub struct PlanIndex {
+    digest: Sha256Digest,
     index: HashMap<String, PlanIndexEntry>,
     status: HashMap<String, PlanStatusFact>,
 }
@@ -86,7 +87,15 @@ impl PlanIndex {
                 },
             );
         }
-        Ok(Self { index, status })
+        Ok(Self {
+            digest: computed,
+            index,
+            status,
+        })
+    }
+
+    pub fn digest(&self) -> &Sha256Digest {
+        &self.digest
     }
 
     pub fn index_entry(&self, path: &str) -> Option<&PlanIndexEntry> {

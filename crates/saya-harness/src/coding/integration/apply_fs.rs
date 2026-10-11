@@ -108,6 +108,54 @@ fn open_parent<'a>(root_fd: RawFd, rel: &'a str) -> Result<(OwnedFd, &'a str), A
     Ok((parent, last))
 }
 
+/// Make bytes, mode, and all directory entries durable before journal completion.
+#[cfg(unix)]
+pub(super) fn sync_applied_entry(
+    workspace: &Workspace,
+    rel: &str,
+    deleted: bool,
+) -> Result<(), ApplyError> {
+    let mut parts = rel.split('/');
+    let last = parts.next_back().ok_or(ApplyError::Fs)?;
+    let root = open_dir_at(workspace.root_dir_fd().as_raw_fd(), OsStr::new("."))
+        .map_err(|_| ApplyError::Fs)?;
+    let mut parents = vec![root];
+    for part in parts {
+        let parent = parents.last().ok_or(ApplyError::Fs)?;
+        let next = open_dir_at(parent.as_raw_fd(), OsStr::new(part)).map_err(|_| ApplyError::Fs)?;
+        parents.push(next);
+    }
+    if !deleted {
+        let parent = parents.last().ok_or(ApplyError::Fs)?;
+        let file = open_file_at(
+            parent.as_raw_fd(),
+            OsStr::new(last),
+            libc::O_RDONLY | libc::O_NONBLOCK,
+            0,
+        )
+        .map_err(|_| ApplyError::Fs)?;
+        if !file.metadata().map_err(|_| ApplyError::Fs)?.is_file() {
+            return Err(ApplyError::Fs);
+        }
+        file.sync_all().map_err(|_| ApplyError::Fs)?;
+    }
+    for parent in parents.into_iter().rev() {
+        std::fs::File::from(parent)
+            .sync_all()
+            .map_err(|_| ApplyError::Fs)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(super) fn sync_applied_entry(
+    _workspace: &Workspace,
+    _rel: &str,
+    _deleted: bool,
+) -> Result<(), ApplyError> {
+    Err(ApplyError::Fs)
+}
+
 #[cfg(not(unix))]
 pub(super) fn read_child_file(_workspace: &Workspace, _rel: &str) -> Result<ChildFile, ApplyError> {
     Err(ApplyError::Fs)

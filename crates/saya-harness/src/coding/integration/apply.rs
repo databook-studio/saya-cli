@@ -200,32 +200,48 @@ pub fn apply_delta(
         if cancellation.is_cancelled() {
             return Err(ApplyError::Cancelled);
         }
-        if entry.kind() == DeltaKind::Deleted {
-            let baseline_hex = baseline_hex(baseline, entry.path())?;
-            workspace
-                .remove_guarded(entry.path(), baseline_hex)
-                .map_err(|_| ApplyError::Fs)?;
-            continue;
-        }
-        if entry.bytes() > MAX_IO_BYTES as u64 {
-            return Err(ApplyError::Oversize);
-        }
-        let file = super::apply_fs::read_child_file(&child_workspace, entry.path())?;
-        if Some(file.sha256_hex.as_str()) != entry.content_sha256().map(|d| d.as_str()) {
-            return Err(ApplyError::ContentMismatch);
-        }
-        if entry.kind() == DeltaKind::Added {
-            workspace
-                .create_new(entry.path(), &file.bytes)
-                .map_err(|_| ApplyError::Fs)?;
-        } else {
-            let baseline_hex = baseline_hex(baseline, entry.path())?;
-            workspace
-                .write_guarded(entry.path(), baseline_hex, &file.bytes)
-                .map_err(|_| ApplyError::Fs)?;
-        }
-        super::apply_fs::set_candidate_mode(&workspace, entry.path(), file.executable)?;
+        apply_entry(&workspace, &child_workspace, entry, baseline)?;
     }
+    Ok(())
+}
+
+/// Applies one delta entry into `workspace`, reading the child bytes from
+/// `child_workspace` and re-verifying them against the receipt digest at
+/// apply time; a drifted child fails closed and files over the 8 MiB write
+/// bound are refused whole. Every access starts from the descriptor each
+/// workspace pinned at open, so a replaced directory cannot redirect the
+/// chmod or the stat. Deletions skip the mode fix-up: the entry is removed.
+pub(super) fn apply_entry(
+    workspace: &Workspace,
+    child_workspace: &Workspace,
+    entry: &PathDelta,
+    baseline: &CapturedSnapshot,
+) -> Result<(), ApplyError> {
+    if entry.kind() == DeltaKind::Deleted {
+        let baseline_hex = baseline_hex(baseline, entry.path())?;
+        workspace
+            .remove_guarded(entry.path(), baseline_hex)
+            .map_err(|_| ApplyError::Fs)?;
+        return Ok(());
+    }
+    if entry.bytes() > MAX_IO_BYTES as u64 {
+        return Err(ApplyError::Oversize);
+    }
+    let file = super::apply_fs::read_child_file(child_workspace, entry.path())?;
+    if Some(file.sha256_hex.as_str()) != entry.content_sha256().map(|d| d.as_str()) {
+        return Err(ApplyError::ContentMismatch);
+    }
+    if entry.kind() == DeltaKind::Added {
+        workspace
+            .create_new(entry.path(), &file.bytes)
+            .map_err(|_| ApplyError::Fs)?;
+    } else {
+        let baseline_hex = baseline_hex(baseline, entry.path())?;
+        workspace
+            .write_guarded(entry.path(), baseline_hex, &file.bytes)
+            .map_err(|_| ApplyError::Fs)?;
+    }
+    super::apply_fs::set_candidate_mode(workspace, entry.path(), file.executable)?;
     Ok(())
 }
 

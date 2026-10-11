@@ -24,3 +24,5 @@ mod w08;
 mod w09;
 #[path = "primary_coding/w10.rs"]
 mod w10;
+#[path = "primary_coding/w11.rs"]
+mod w11;

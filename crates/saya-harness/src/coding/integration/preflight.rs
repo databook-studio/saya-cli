@@ -6,6 +6,7 @@ use super::delta_types::DEFAULT_DELTA_DEADLINE;
 use super::index::{PlanError, PlanIndex};
 use crate::coding::git::{GitInventoryError, GitRepository, GitService};
 use crate::coding::snapshot::CapturedSnapshot;
+use crate::workspace::Workspace;
 use saya_agent::CancellationToken;
 use std::fmt;
 
@@ -17,8 +18,6 @@ use super::preflight_fs::{ReadState, classify_worktree};
 use crate::coding::git::{GitPathStatus, SnapshotIndexInput};
 #[cfg(unix)]
 use crate::coding::snapshot::{SnapshotFileMode, SnapshotSelection};
-#[cfg(unix)]
-use crate::workspace::fd::open_root_fd;
 #[cfg(unix)]
 use saya_types::Sha256Digest;
 #[cfg(unix)]
@@ -133,6 +132,17 @@ pub async fn preflight_apply_back(
     cancellation: &CancellationToken,
     bounds: PreflightBounds,
 ) -> Result<ApplyBackPreflight, PreflightError> {
+    let original = Workspace::open(input.repository.root()).map_err(|_| PreflightError::Io)?;
+    preflight_apply_back_at(input, &original, cancellation, bounds).await
+}
+
+#[cfg(unix)]
+pub(super) async fn preflight_apply_back_at(
+    input: &PreflightInput<'_>,
+    original: &Workspace,
+    cancellation: &CancellationToken,
+    bounds: PreflightBounds,
+) -> Result<ApplyBackPreflight, PreflightError> {
     let deadline = Instant::now()
         .checked_add(bounds.deadline)
         .unwrap_or_else(|| Instant::now() + DEFAULT_DELTA_DEADLINE);
@@ -152,8 +162,7 @@ pub async fn preflight_apply_back(
             tokio::time::Instant::from_std(deadline),
         )
         .await?;
-    let root_fd =
-        open_root_fd(input.repository.root().as_os_str()).map_err(|_| PreflightError::Io)?;
+    let root_fd = original.root_dir_fd();
     let mut baselines: HashMap<&str, (&Sha256Digest, bool)> = HashMap::new();
     for entry in input.baseline.entries() {
         let executable = entry.mode() == SnapshotFileMode::Executable;
@@ -200,6 +209,16 @@ pub async fn preflight_apply_back(
         collisions,
         overflow,
     })
+}
+
+#[cfg(not(unix))]
+pub(super) async fn preflight_apply_back_at(
+    _input: &PreflightInput<'_>,
+    _original: &Workspace,
+    _cancellation: &CancellationToken,
+    _bounds: PreflightBounds,
+) -> Result<ApplyBackPreflight, PreflightError> {
+    Err(PreflightError::Io)
 }
 
 #[cfg(not(unix))]
