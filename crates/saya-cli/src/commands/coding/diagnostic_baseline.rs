@@ -329,13 +329,9 @@ pub(super) fn commit_pending(
         baselines: entries,
     };
     let bytes = serde_json::to_vec(&marker).map_err(CodingError::owner)?;
-    let publication_absent = std::fs::symlink_metadata(&publication).is_err();
     if let Err(error) =
         super::context::write_new(&publication, &bytes, MAX_DIAGNOSTIC_BASELINE_BYTES)
     {
-        if publication_absent {
-            let _ = std::fs::remove_file(&publication);
-        }
         for path in written {
             let _ = std::fs::remove_file(path);
         }
