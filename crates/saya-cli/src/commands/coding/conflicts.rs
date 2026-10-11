@@ -74,7 +74,7 @@ impl CodingApplication {
         }
         Ok(match found {
             Some((conflict, provenance)) => {
-                json!({"job_id":job,"candidate_checkout_id":candidate,"status":"open","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"provenance":provenance,"conflict":conflict})
+                json!({"job_id":job,"candidate_checkout_id":candidate,"status":"retained","record_status_at_capture":"open","current_state":"unknown_requires_fresh_revalidation","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"provenance":provenance,"conflict":conflict})
             }
             None => unknown(job, candidate),
         })

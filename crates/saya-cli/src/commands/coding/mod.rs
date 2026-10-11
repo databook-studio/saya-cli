@@ -10,6 +10,7 @@ mod doctor_probe;
 mod worktrees;
 pub use cli::dispatch as dispatch_coding;
 mod conflict_record;
+mod conflict_resolution;
 mod controls;
 mod create;
 mod delegate;

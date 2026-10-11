@@ -34,6 +34,9 @@ impl Provider {
     pub fn conflicts() -> Self {
         Self::script(false, 3)
     }
+    pub fn pair_conflicts() -> Self {
+        Self::script(false, 5)
+    }
     fn script(injection: bool, mode: u8) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -88,7 +91,7 @@ impl Provider {
                     pending.push((stream, response));
                     continue;
                 }
-                if actor != "parent" && current == 0 && mode != 3 {
+                if actor != "parent" && current == 0 && mode != 3 && mode != 5 {
                     pending.push((stream, response));
                     if pending.len() == 2 {
                         overlapped.store(true, Ordering::Release);
@@ -146,10 +149,11 @@ fn read_request(stream: &mut TcpStream) -> String {
 fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
     if actor == "parent" {
         return match stage {
-            0 if mode == 3 => {
-                let tasks = (0..24).map(|index| {
-                    let id = format!("child-{index:02}");
-                    let dependencies = (index > 0).then(|| vec![format!("child-{:02}", index - 1)]).unwrap_or_default();
+            0 if mode == 3 || mode == 5 => {
+                let count = if mode == 3 { 24 } else { 2 };
+                let tasks = (0..count).map(|index| {
+                    let id = if mode == 3 { format!("child-{index:02}") } else if index == 0 { "child-a".into() } else { "child-b".into() };
+                    let dependencies = if index == 0 { Vec::new() } else if mode == 3 { vec![format!("child-{:02}", index - 1)] } else { vec!["child-a".into()] };
                     json!({"agent_id":id,"task":format!("write for {id}"),"write_paths":["shared.txt","rename-before.txt","rename-after.txt"],"dependencies":dependencies})
                 }).collect::<Vec<_>>();
                 tool("delegate", json!({"tasks":tasks}))
@@ -171,19 +175,19 @@ fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
             json!({"program":"sleep","argv":["20"],"timeout_seconds":30}),
         );
     }
-    if mode == 3 && stage == 0 {
+    if (mode == 3 || mode == 5) && stage == 0 {
         return tool(
             "workspace_write",
             json!({"path":"shared.txt","content":format!("{actor}\n")}),
         );
     }
-    if mode == 3 && actor == "child-00" && stage == 1 {
+    if (mode == 3 && actor == "child-00" || mode == 5 && actor == "child-a") && stage == 1 {
         return tool(
             "workspace_write",
             json!({"path":"rename-before.txt","content":"stable rename bytes\n"}),
         );
     }
-    if mode == 3 {
+    if mode == 3 || mode == 5 {
         return answer("child work complete");
     }
     if mode != 0 {

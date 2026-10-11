@@ -190,4 +190,20 @@ pub enum CodingCommand {
         /// Candidate checkout id.
         candidate: String,
     },
+    /// Rebuild a fresh candidate using an explicit choice against exact retained provenance.
+    ResolveConflict {
+        /// Durable job id.
+        id: String,
+        /// Candidate whose retained record is being revalidated.
+        candidate: String,
+        /// Explicit choice: keep-first or keep-second.
+        #[arg(long, value_parser = ["keep-first", "keep-second"])]
+        choice: String,
+        /// Exact v2 record SHA-256 printed by `coding conflicts`.
+        #[arg(long)]
+        record_sha256: String,
+        /// Explicitly approve this one candidate rebuild.
+        #[arg(long)]
+        approve: bool,
+    },
 }

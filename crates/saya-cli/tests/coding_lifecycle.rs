@@ -11,6 +11,8 @@ mod support;
 
 #[path = "coding_lifecycle/budget_regressions.rs"]
 mod budget_regressions;
+#[path = "coding_lifecycle/conflict_resolution.rs"]
+mod conflict_resolution;
 #[path = "coding_lifecycle/conflicts.rs"]
 mod conflicts;
 #[path = "coding_lifecycle/project_preferences.rs"]

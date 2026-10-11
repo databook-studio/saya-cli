@@ -1,12 +1,21 @@
 use super::{CodingError, CodingReview, CodingTask, NativeCodingJob, context};
 use saya_harness::coding::{
     integration::{
-        AcceptedDelta, AssignedPaths, ConflictQueue, DEFAULT_DELTA_DEADLINE, EvidenceBinding,
-        IntegrateError, IntegrateInput, compute_delta, evaluate_receipt, integrate_candidate,
+        AcceptedDelta, AssignedPaths, ChangeReceipt, CheckoutDelta, ConflictQueue,
+        DEFAULT_DELTA_DEADLINE, EvidenceBinding, IntegrateError, IntegrateInput, compute_delta,
+        evaluate_receipt, integrate_candidate,
     },
-    worktree::verify_owned_checkout,
+    snapshot::CapturedSnapshot,
+    worktree::{VerifiedCheckout, verify_owned_checkout},
 };
 use saya_types::{JobState, ManagedCheckoutId};
+
+pub(super) struct AcceptedSource {
+    pub(super) verified: VerifiedCheckout,
+    pub(super) delta: CheckoutDelta,
+    pub(super) receipt: ChangeReceipt,
+    pub(super) binding: EvidenceBinding,
+}
 impl NativeCodingJob {
     /// Builds one candidate from actual completed-child deltas under their exact
     /// recorded assignments. Overlaps remain typed conflicts with work retained.
@@ -14,6 +23,73 @@ impl NativeCodingJob {
         if self.active.lock().await.is_some() {
             return Err(CodingError::Busy);
         }
+        let (baseline, sources) = self.collect_sources().await?;
+        let host = &self.application;
+        self.create_checkout(candidate).await?;
+        let verified = verify_owned_checkout(&self.ownership(candidate), &self.cancellation)
+            .await
+            .map_err(CodingError::owner)?;
+        let candidate_binding =
+            EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
+                .map_err(CodingError::owner)?;
+        let accepted = sources
+            .iter()
+            .map(|source| AcceptedDelta::new(&source.verified, &source.receipt, &source.delta))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(CodingError::owner)?;
+        let result = integrate_candidate(
+            &IntegrateInput {
+                store: &host.store,
+                sequencer: &self.ledger.sequencer(),
+                job_id: self.job_id(),
+                agent_id: None,
+                candidate: &verified,
+                baseline: &baseline,
+                accepted: &accepted,
+            },
+            &self.cancellation,
+            DEFAULT_DELTA_DEADLINE,
+        )
+        .await;
+        match result {
+            Ok(_) => {}
+            Err(IntegrateError::Overlap(conflict)) => {
+                let mut queue = ConflictQueue::new();
+                queue
+                    .record(candidate, &accepted, &conflict)
+                    .map_err(CodingError::owner)?;
+                let retained = queue
+                    .open_for(candidate)
+                    .ok_or(CodingError::InvalidRequest)?;
+                let bindings = sources
+                    .iter()
+                    .map(|source| source.binding.clone())
+                    .collect::<Vec<_>>();
+                let bytes = super::conflicts::retained_bytes(
+                    self.job_id(),
+                    retained,
+                    &candidate_binding,
+                    &bindings,
+                )?;
+                super::conflicts::validate_retained_bytes(&bytes, self.job_id())?;
+                context::append_line(
+                    &self.records.join("conflicts.jsonl"),
+                    &bytes,
+                    super::conflicts::MAX_LOG_BYTES,
+                )?;
+                return Err(CodingError::ConflictRetained {
+                    job: self.job_id().to_string(),
+                    candidate: candidate.to_string(),
+                });
+            }
+            Err(error) => return Err(CodingError::owner(error)),
+        }
+        self.review_existing(candidate).await
+    }
+
+    pub(super) async fn collect_sources(
+        &self,
+    ) -> Result<(CapturedSnapshot, Vec<AcceptedSource>), CodingError> {
         let host = &self.application;
         let children = host
             .store
@@ -98,67 +174,13 @@ impl NativeCodingJob {
             let binding =
                 EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
                     .map_err(CodingError::owner)?;
-            sources.push((verified, delta, receipt, binding));
+            sources.push(AcceptedSource {
+                verified,
+                delta,
+                receipt,
+                binding,
+            });
         }
-        self.create_checkout(candidate).await?;
-        let verified = verify_owned_checkout(&self.ownership(candidate), &self.cancellation)
-            .await
-            .map_err(CodingError::owner)?;
-        let candidate_binding =
-            EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
-                .map_err(CodingError::owner)?;
-        let accepted = sources
-            .iter()
-            .map(|(verified, delta, receipt, _)| AcceptedDelta::new(verified, receipt, delta))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(CodingError::owner)?;
-        let result = integrate_candidate(
-            &IntegrateInput {
-                store: &host.store,
-                sequencer: &self.ledger.sequencer(),
-                job_id: self.job_id(),
-                agent_id: None,
-                candidate: &verified,
-                baseline: &baseline,
-                accepted: &accepted,
-            },
-            &self.cancellation,
-            DEFAULT_DELTA_DEADLINE,
-        )
-        .await;
-        match result {
-            Ok(_) => {}
-            Err(IntegrateError::Overlap(conflict)) => {
-                let mut queue = ConflictQueue::new();
-                queue
-                    .record(candidate, &accepted, &conflict)
-                    .map_err(CodingError::owner)?;
-                let retained = queue
-                    .open_for(candidate)
-                    .ok_or(CodingError::InvalidRequest)?;
-                let bindings = sources
-                    .iter()
-                    .map(|(_, _, _, binding)| binding.clone())
-                    .collect::<Vec<_>>();
-                let bytes = super::conflicts::retained_bytes(
-                    self.job_id(),
-                    retained,
-                    &candidate_binding,
-                    &bindings,
-                )?;
-                super::conflicts::validate_retained_bytes(&bytes, self.job_id())?;
-                context::append_line(
-                    &self.records.join("conflicts.jsonl"),
-                    &bytes,
-                    super::conflicts::MAX_LOG_BYTES,
-                )?;
-                return Err(CodingError::ConflictRetained {
-                    job: self.job_id().to_string(),
-                    candidate: candidate.to_string(),
-                });
-            }
-            Err(error) => return Err(CodingError::owner(error)),
-        }
-        self.review_existing(candidate).await
+        Ok((baseline, sources))
     }
 }

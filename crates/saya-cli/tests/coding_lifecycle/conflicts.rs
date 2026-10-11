@@ -107,7 +107,11 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
         .conflicts(job.job_id(), &candidate)
         .await
         .unwrap();
-    assert_eq!(inspected["status"], "open");
+    assert_eq!(inspected["status"], "retained");
+    assert_eq!(
+        inspected["current_state"],
+        "unknown_requires_fresh_revalidation"
+    );
     assert_eq!(inspected["authority"], "none");
     assert_eq!(inspected["resolution"], "not_implemented");
     assert_eq!(inspected["fresh_revalidation_required"], true);
