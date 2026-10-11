@@ -68,3 +68,7 @@ impl ApprovalDecider for ChildIssuanceApproval {
             && arguments == &self.expected
     }
 }
+
+#[cfg(test)]
+#[path = "approval_tests.rs"]
+mod approval_tests;
