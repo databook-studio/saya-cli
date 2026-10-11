@@ -119,7 +119,19 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     assert_eq!(manual_edit["candidate_checkout_id"], candidate.as_str());
     assert_eq!(
         manual_edit["next_action"],
-        "edit_owned_candidate_then_run_fresh_review"
+        "run_review_to_locate_candidate_edit_then_rerun_fresh_review"
+    );
+    assert_eq!(
+        manual_edit["locate_candidate"]["command"],
+        "coding review native-conflicts conflict-candidate --approve"
+    );
+    assert_eq!(
+        manual_edit["locate_candidate"]["path_field"],
+        "candidate_path"
+    );
+    assert_eq!(
+        manual_edit["edit_scope"],
+        "only_the_returned_candidate_path"
     );
     assert_eq!(
         manual_edit["review_command"],
