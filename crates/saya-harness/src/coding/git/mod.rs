@@ -9,6 +9,7 @@ mod metadata_scan;
 mod parser;
 mod process;
 mod process_group;
+mod process_journal;
 mod process_observer;
 mod repository;
 mod repository_check;

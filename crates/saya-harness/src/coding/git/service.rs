@@ -14,6 +14,7 @@ use super::{
     command::{GitError, GitOperation, GitRepository, require_success},
     environment::GitEnvironment,
     process::{self, GitOutput},
+    process_journal::GitProcessJournal,
     process_observer::{GitProcessObserver, GitProcessSnapshot},
     repository_check,
     request::GitRequest,
@@ -56,13 +57,17 @@ impl GitService {
             if !metadata.is_file() || metadata.mode() & 0o111 == 0 {
                 return Err(GitError::InvalidGitExecutable);
             }
+            let environment = GitEnvironment::new(executable, state_root.as_ref())?;
+            let identity = format!(
+                "git-service-{}-{}",
+                std::process::id(),
+                NEXT_SERVICE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let (journal, journal_state) = GitProcessJournal::open(&environment.root)
+                .map_err(|_| GitError::InvalidStateRoot)?;
             Ok(Self {
-                environment: GitEnvironment::new(executable, state_root.as_ref())?,
-                observer: GitProcessObserver::new(format!(
-                    "git-service-{}-{}",
-                    std::process::id(),
-                    NEXT_SERVICE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                )),
+                environment,
+                observer: GitProcessObserver::new(identity, journal, journal_state),
                 operation_lock: Mutex::new(()),
             })
         }

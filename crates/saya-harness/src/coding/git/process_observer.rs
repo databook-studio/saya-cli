@@ -6,6 +6,7 @@ use std::{
 use super::{
     command::{GitError, GitOperation},
     process::GitOutput,
+    process_journal::{GitProcessJournal, JournalAppendError, JournalState},
 };
 
 const MAX_RECEIPTS: usize = 256;
@@ -34,22 +35,22 @@ pub enum GitProcessEffect {
 
 #[derive(Debug, Clone)]
 pub struct GitProcessReceipt {
-    version: u32,
-    service_identity: String,
-    sequence: u64,
-    request_kind: &'static str,
-    operation: GitOperation,
-    pid: Option<u32>,
-    exit_code: Option<i32>,
-    signal: Option<i32>,
-    outcome: GitProcessOutcome,
-    effect: GitProcessEffect,
-    killed_orphans: Option<bool>,
-    duration_ms: u64,
-    stdout_bytes: u64,
-    stderr_bytes: u64,
-    stdout_truncated: bool,
-    stderr_truncated: bool,
+    pub(super) version: u32,
+    pub(super) service_identity: String,
+    pub(super) sequence: u64,
+    pub(super) request_kind: &'static str,
+    pub(super) operation: GitOperation,
+    pub(super) pid: Option<u32>,
+    pub(super) exit_code: Option<i32>,
+    pub(super) signal: Option<i32>,
+    pub(super) outcome: GitProcessOutcome,
+    pub(super) effect: GitProcessEffect,
+    pub(super) killed_orphans: Option<bool>,
+    pub(super) duration_ms: u64,
+    pub(super) stdout_bytes: u64,
+    pub(super) stderr_bytes: u64,
+    pub(super) stdout_truncated: bool,
+    pub(super) stderr_truncated: bool,
 }
 
 impl GitProcessReceipt {
@@ -109,6 +110,7 @@ pub struct GitProcessSnapshot {
     receipts: Vec<GitProcessReceipt>,
     omitted: u64,
     omitted_bytes: u64,
+    incomplete: bool,
 }
 
 impl GitProcessSnapshot {
@@ -125,12 +127,13 @@ impl GitProcessSnapshot {
         self.omitted_bytes
     }
     pub fn complete(&self) -> bool {
-        self.omitted == 0
+        self.omitted == 0 && !self.incomplete
     }
 }
 
 pub(super) struct GitProcessObserver {
     identity: String,
+    journal: Arc<GitProcessJournal>,
     state: Mutex<State>,
 }
 
@@ -140,18 +143,33 @@ struct State {
     omitted: u64,
     retained_bytes: usize,
     omitted_bytes: u64,
+    incomplete: bool,
 }
 
 impl GitProcessObserver {
-    pub(super) fn new(identity: String) -> Arc<Self> {
+    pub(super) fn new(
+        identity: String,
+        journal: Arc<GitProcessJournal>,
+        journal_state: JournalState,
+    ) -> Arc<Self> {
+        let next_sequence = journal_state
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.service_identity == identity)
+            .map(|receipt| receipt.sequence)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
         Arc::new(Self {
             identity,
+            journal,
             state: Mutex::new(State {
-                next_sequence: 1,
-                receipts: Vec::new(),
-                omitted: 0,
-                retained_bytes: 0,
+                next_sequence,
+                retained_bytes: journal_state.receipts.iter().map(receipt_bytes).sum(),
+                receipts: journal_state.receipts,
+                omitted: u64::from(journal_state.incomplete),
                 omitted_bytes: 0,
+                incomplete: journal_state.incomplete,
             }),
         })
     }
@@ -196,12 +214,21 @@ impl GitProcessObserver {
             receipts: state.receipts.clone(),
             omitted: state.omitted,
             omitted_bytes: state.omitted_bytes,
+            incomplete: state.incomplete,
         }
     }
 
     fn push(&self, receipt: GitProcessReceipt) {
+        let persisted = self.journal.append(&receipt);
         let mut state = self.lock();
         let bytes = receipt_bytes(&receipt);
+        if let Err(error) = persisted {
+            state.incomplete = true;
+            if !matches!(error, JournalAppendError::AlreadyIncomplete) {
+                state.omitted = state.omitted.saturating_add(1);
+                state.omitted_bytes = state.omitted_bytes.saturating_add(bytes as u64);
+            }
+        }
         if state.receipts.len() == MAX_RECEIPTS
             || bytes > MAX_RECEIPT_BYTES
             || state.retained_bytes.saturating_add(bytes) > MAX_JOURNAL_BYTES
