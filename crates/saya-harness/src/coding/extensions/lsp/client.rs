@@ -76,7 +76,9 @@ impl LspClient {
             result = tokio::time::timeout(Duration::from_secs(10), self.wait_diagnostics(&uri, version)) => result.unwrap_or(Err(ExtensionError::Timeout)),
         };
         if result.is_err() {
-            self.process.shutdown().await?;
+            // Cleanup owns the process receipt; it must not replace the
+            // diagnostic operation's typed cause when graceful shutdown fails.
+            let _ = self.process.shutdown().await;
         }
         result
     }

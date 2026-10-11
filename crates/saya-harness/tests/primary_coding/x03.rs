@@ -97,7 +97,11 @@ async fn lsp_cancelled_diagnostics_settle_the_started_process() {
     .await
     .unwrap();
     let cancelled = CancellationToken::new();
-    cancelled.cancel();
+    let trigger = cancelled.clone();
+    let cancellation = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        trigger.cancel();
+    });
 
     assert!(matches!(
         client
@@ -105,6 +109,7 @@ async fn lsp_cancelled_diagnostics_settle_the_started_process() {
             .await,
         Err(ExtensionError::Cancelled)
     ));
+    cancellation.await.unwrap();
     x03_support::assert_joined_and_reaped(&observer);
 }
 
@@ -148,10 +153,14 @@ async fn lsp_server_proposed_outside_edit_is_refused_without_touching_file() {
         edit.len(),
         edit
     );
+    let observer = std::sync::Arc::new(x03_support::ObservedProcesses::default());
     let token = CancellationToken::new();
-    let mut client = LspClient::connect(fixture.config(&script), &token)
-        .await
-        .unwrap();
+    let mut client = LspClient::connect(
+        fixture.config(&script).with_observer(observer.clone()),
+        &token,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
         client
             .diagnostics(&document, "rust", 1, "fn main() {}", &token)
@@ -159,4 +168,5 @@ async fn lsp_server_proposed_outside_edit_is_refused_without_touching_file() {
         Err(ExtensionError::Protocol)
     ));
     assert_eq!(std::fs::read_to_string(original).unwrap(), "user content");
+    x03_support::assert_joined_and_reaped(&observer);
 }
