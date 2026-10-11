@@ -1,8 +1,8 @@
 use super::{CodingError, CodingReview, CodingTask, NativeCodingJob, context};
 use saya_harness::coding::{
     integration::{
-        AcceptedDelta, AssignedPaths, DEFAULT_DELTA_DEADLINE, IntegrateInput, compute_delta,
-        evaluate_receipt, integrate_candidate,
+        AcceptedDelta, AssignedPaths, ConflictQueue, DEFAULT_DELTA_DEADLINE, IntegrateError,
+        IntegrateInput, compute_delta, evaluate_receipt, integrate_candidate,
     },
     worktree::verify_owned_checkout,
 };
@@ -106,7 +106,7 @@ impl NativeCodingJob {
             .map(|(verified, delta, receipt)| AcceptedDelta::new(verified, receipt, delta))
             .collect::<Result<Vec<_>, _>>()
             .map_err(CodingError::owner)?;
-        integrate_candidate(
+        let result = integrate_candidate(
             &IntegrateInput {
                 store: &host.store,
                 sequencer: &self.ledger.sequencer(),
@@ -119,8 +119,34 @@ impl NativeCodingJob {
             &self.cancellation,
             DEFAULT_DELTA_DEADLINE,
         )
-        .await
-        .map_err(CodingError::owner)?;
+        .await;
+        match result {
+            Ok(_) => {}
+            Err(IntegrateError::Overlap(conflict)) => {
+                let mut queue = ConflictQueue::new();
+                queue
+                    .record(candidate, &accepted, &conflict)
+                    .map_err(CodingError::owner)?;
+                let retained = queue
+                    .open_for(candidate)
+                    .ok_or(CodingError::InvalidRequest)?;
+                let value = super::conflicts::retained_value(self.job_id(), retained);
+                let bytes = serde_json::to_vec(&value).map_err(CodingError::owner)?;
+                if bytes.len() > super::conflicts::MAX_RECORD_BYTES {
+                    return Err(CodingError::InvalidRequest);
+                }
+                context::append_line(
+                    &self.records.join("conflicts.jsonl"),
+                    &bytes,
+                    super::conflicts::MAX_LOG_BYTES,
+                )?;
+                return Err(CodingError::ConflictRetained {
+                    job: self.job_id().to_string(),
+                    candidate: candidate.to_string(),
+                });
+            }
+            Err(error) => return Err(CodingError::owner(error)),
+        }
         self.review_existing(candidate).await
     }
 }

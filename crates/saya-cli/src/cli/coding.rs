@@ -183,4 +183,11 @@ pub enum CodingCommand {
         /// Durable job id.
         id: String,
     },
+    /// Inspect retained metadata for an overlapping candidate; this grants no resolution authority.
+    Conflicts {
+        /// Durable job id.
+        id: String,
+        /// Candidate checkout id.
+        candidate: String,
+    },
 }

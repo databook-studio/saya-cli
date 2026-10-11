@@ -31,6 +31,9 @@ impl Provider {
     pub fn commands() -> Self {
         Self::script(false, 2)
     }
+    pub fn conflicts() -> Self {
+        Self::script(false, 3)
+    }
     fn script(injection: bool, mode: u8) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -81,7 +84,7 @@ impl Provider {
                     pending.push((stream, response));
                     continue;
                 }
-                if actor != "parent" && current == 0 {
+                if actor != "parent" && current == 0 && mode != 3 {
                     pending.push((stream, response));
                     if pending.len() == 2 {
                         overlapped.store(true, Ordering::Release);
@@ -139,6 +142,13 @@ fn read_request(stream: &mut TcpStream) -> String {
 fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
     if actor == "parent" {
         return match stage {
+            0 if mode == 3 => tool(
+                "delegate",
+                json!({"tasks":[
+                    {"agent_id":"child-a","task":"write for child-a","write_paths":["shared.txt"]},
+                    {"agent_id":"child-b","task":"write for child-b","write_paths":["shared.txt"],"dependencies":["child-a"]}
+                ]}),
+            ),
             0 => tool(
                 "delegate",
                 json!({"tasks":[{"agent_id":"child-a","task":"write for child-a","write_paths":["new-a.txt"]},{"agent_id":"child-b","task":"write for child-b","write_paths":["new-b.txt"]}]}),
@@ -155,6 +165,15 @@ fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
             "coding_command_start",
             json!({"program":"sleep","argv":["20"],"timeout_seconds":30}),
         );
+    }
+    if mode == 3 && stage == 0 {
+        return tool(
+            "workspace_write",
+            json!({"path":"shared.txt","content":if actor == "child-a" { "first child\n" } else { "second child\n" }}),
+        );
+    }
+    if mode == 3 {
+        return answer("child work complete");
     }
     if mode != 0 {
         return answer("child command evidence obtained");

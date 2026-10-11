@@ -18,6 +18,7 @@ mod operations;
 mod parent;
 mod project_context;
 pub use delegate::CodingTask;
+mod conflicts;
 mod context;
 mod continuation;
 mod host;
@@ -61,6 +62,10 @@ pub enum CodingError {
     NotOwned,
     #[error("coding work is already running")]
     Busy,
+    #[error(
+        "overlap retained for candidate {candidate}; inspect with coding conflicts {job} {candidate}"
+    )]
+    ConflictRetained { job: String, candidate: String },
     #[error("native coding operation failed")]
     Owner(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

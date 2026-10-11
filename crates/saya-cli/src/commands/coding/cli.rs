@@ -170,6 +170,15 @@ pub async fn dispatch(
                 .worktrees(&JobId::parse(&id).map_err(CodingError::owner)?)
                 .await
         }
+        CodingCommand::Conflicts { id, candidate } => {
+            application
+                .conflicts(
+                    &JobId::parse(&id).map_err(CodingError::owner)?,
+                    &saya_types::ManagedCheckoutId::parse(&candidate)
+                        .map_err(CodingError::owner)?,
+                )
+                .await
+        }
     }
 }
 
