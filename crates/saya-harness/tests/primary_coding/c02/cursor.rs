@@ -46,7 +46,12 @@ pub(crate) async fn join_exits_cleanly(session: CommandSession) {
 /// once the sink has finished with the cursor at the stored length. The
 /// helper sleeps 20 ms between drip lines, so with the 5 ms poll below a
 /// non-empty read necessarily lands while `output_status` is still `None`;
-/// `saw_live_nonempty` asserts that concurrent-append premise.
+/// `saw_live_nonempty` asserts that concurrent-append premise. The drip
+/// volume must exceed the redactor's stage-B holdback
+/// (`MIN_KEEP + KEEP_SLACK`, coding/commands/output_redact.rs): a stream
+/// shorter than that window stores nothing until the writer closes, so
+/// 200 lines (~2.5 KB) keep the emission cut open well before the run
+/// ends.
 #[tokio::test]
 async fn cursor_reads_resume_across_concurrent_appends() {
     let Some(fixture) = fixture() else { return };
@@ -55,7 +60,7 @@ async fn cursor_reads_resume_across_concurrent_appends() {
         .start_with_output(
             fixture.run_program(),
             HELPER.to_owned(),
-            vec!["drip".into(), "40".into()],
+            vec!["drip".into(), "200".into()],
             NonZeroU64::new(30).unwrap(),
             fixture.marker("cursor-drip"),
         )
@@ -90,7 +95,7 @@ async fn cursor_reads_resume_across_concurrent_appends() {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let expected: String = (0..40).map(|i| format!("c02-drip {i}\n")).collect();
+    let expected: String = (0..200).map(|i| format!("c02-drip {i}\n")).collect();
     assert_eq!(text, expected, "concatenation is the helper's exact lines");
     assert!(
         saw_live_nonempty,
