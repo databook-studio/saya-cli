@@ -28,9 +28,24 @@ fn path(value: &str) -> WorkspacePath {
 /// the runner exactly `programs`: both the root input and the request
 /// capabilities carry the same runner scope, on a platform with an isolated
 /// private command checkout.
-fn runner_view(checkout: &ManagedCheckoutId, programs: &[&str]) -> ChildAuthorityView {
+pub(super) fn runner_view(checkout: &ManagedCheckoutId, programs: &[&str]) -> ChildAuthorityView {
+    runner_view_for_paths(checkout, programs, &["a/ok.txt"])
+}
+
+pub(super) fn command_only_view(
+    checkout: &ManagedCheckoutId,
+    programs: &[&str],
+) -> ChildAuthorityView {
+    runner_view_for_paths(checkout, programs, &[])
+}
+
+fn runner_view_for_paths(
+    checkout: &ManagedCheckoutId,
+    programs: &[&str],
+    paths: &[&str],
+) -> ChildAuthorityView {
     let scope = || RunnerScope::new(programs.iter().map(|p| p.to_string()).collect()).unwrap();
-    let write_paths = || vec![path("a/ok.txt")];
+    let write_paths = || paths.iter().map(|value| path(value)).collect::<Vec<_>>();
     let mut root_capabilities = Capabilities::default();
     root_capabilities.workspace_write = true;
     root_capabilities.runner = Some(scope());

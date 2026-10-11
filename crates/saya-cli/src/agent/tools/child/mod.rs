@@ -1,6 +1,7 @@
 //! The child tool surface: workspace tools bound to one verified managed checkout.
-#![allow(dead_code)] // consumed by R05b2
+#![allow(dead_code)] // composition entrypoint is wired by the caller-facing child run slice
 
+mod compose;
 mod executor;
 mod factory;
 #[cfg(test)]
@@ -10,8 +11,11 @@ mod tests_edit;
 #[cfg(test)]
 mod tests_factory;
 #[cfg(test)]
+mod tests_loop;
+#[cfg(test)]
 mod tests_runner;
 
+pub(crate) use compose::{ChildComposeError, ChildComposeRequest, ChildComposition, compose_child};
 pub(crate) use executor::{ChildTools, child_toolset, child_toolset_with_runner};
 pub(crate) use factory::CliChildFactory;
 
