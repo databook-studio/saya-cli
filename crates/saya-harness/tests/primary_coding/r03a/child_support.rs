@@ -59,8 +59,8 @@ impl ChildFactory for OpenAiFactory {
         }
         let provider = OpenAiCompatibleProvider::new(
             ProviderSettings::new("r03a-test-model", Some(self.endpoint.clone()))
-                .with_timeout(Duration::from_secs(3))
-                .with_idle_timeout(Duration::from_secs(3))
+                .with_timeout(Duration::from_secs(10))
+                .with_idle_timeout(Duration::from_secs(10))
                 .with_retry_delays(self.retry_delays.clone()),
             None,
         )

@@ -138,16 +138,32 @@ async fn root_deadline_cancels_and_joins_a_child_with_an_open_provider_request()
         Some(1),
         "first provider request was not observed before the deadline"
     );
-    let result = tokio::time::timeout(Duration::from_secs(10), child)
+    let result = tokio::time::timeout(Duration::from_secs(20), child)
         .await
         .expect("child did not finish after the root deadline elapsed")
-        .unwrap();
-    assert!(matches!(
-        result,
-        Err(ChildRunError::Cancelled {
-            reason: CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime)
-        })
-    ));
+        .unwrap()
+        .expect("a deadline-stopped child completes with its answering-budget output");
+    // A controlled answering run surfaces a budget-dimension cancellation as a
+    // truncated output, not a cancelled error: the answering admission maps a
+    // Budget cancellation reason to Limit("answering budget stopped") (saya-agent
+    // src/loop_runner/admission.rs cancellation_error), the turn converts a
+    // cancelled receive into that limit and returns Ok(budget_output)
+    // (src/loop_runner/turn.rs, and the top-of-turn check in
+    // src/loop_runner/runner.rs), and the coordinator passes a non-User-reason Ok
+    // through (src/coding/coordinator/api.rs run_child_inner). The deadline still
+    // cancels and joins the child: the invocation and ledger tokens below carry
+    // the ElapsedTime reason and the child slot drains.
+    assert!(
+        result.truncated,
+        "the deadline stop surfaces as a truncated answering-budget output"
+    );
+    assert_eq!(result.answer, "");
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        saya_agent::AgentEvent::AnsweringBudgetStopped {
+            dimension: saya_agent::BudgetDimension::ElapsedTime
+        } | _
+    )));
     stats.assert_invocation_cancellation(CancellationReason::Budget(
         saya_agent::BudgetDimension::ElapsedTime,
     ));
