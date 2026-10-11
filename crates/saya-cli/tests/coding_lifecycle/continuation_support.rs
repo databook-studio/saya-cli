@@ -73,9 +73,16 @@ fn serve(listener: TcpListener, requests: Arc<Mutex<Vec<String>>>, stop: Arc<Ato
             Err(_) => break,
         };
         // macOS accept() inherits the listener's O_NONBLOCK, so reads would
-        // return EAGAIN instantly; restore blocking mode.
+        // return EAGAIN instantly; restore blocking mode. A connection that
+        // stays silent across its read windows is a client that gave up
+        // without closing; drain it and keep serving.
         stream.set_nonblocking(false).unwrap();
-        let request = read_request(&mut stream);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let Some(request) = read_request(&mut stream) else {
+            continue;
+        };
         requests.lock().unwrap().push(request.clone());
         let actor = actor(&request);
         let turn = turns.entry(actor.clone()).or_default();
@@ -143,11 +150,23 @@ fn response(actor: &str, turn: usize) -> String {
     )
 }
 
-fn read_request(stream: &mut TcpStream) -> String {
+fn read_request(stream: &mut TcpStream) -> Option<String> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
+    let mut stalling = 0usize;
     loop {
-        let read = stream.read(&mut buffer).unwrap();
+        let read = match stream.read(&mut buffer) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                stalling += 1;
+                if stalling > 6 {
+                    return None;
+                }
+                continue;
+            }
+            Err(error) => panic!("provider request read failed: {error}"),
+        };
+        stalling = 0;
         bytes.extend_from_slice(&buffer[..read]);
         if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
             let headers = String::from_utf8_lossy(&bytes[..end]);
@@ -157,7 +176,7 @@ fn read_request(stream: &mut TcpStream) -> String {
                     .and_then(|value| value.trim().parse::<usize>().ok())
             });
             if let Some(length) = length.filter(|length| bytes.len() >= end + 4 + length) {
-                return String::from_utf8(bytes[end + 4..end + 4 + length].to_vec()).unwrap();
+                return Some(String::from_utf8(bytes[end + 4..end + 4 + length].to_vec()).unwrap());
             }
         }
     }

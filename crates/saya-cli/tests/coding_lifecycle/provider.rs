@@ -67,9 +67,13 @@ impl Provider {
                     .unwrap();
                 // macOS accept() inherits the listener's O_NONBLOCK, so the
                 // read timeout would be ignored and reads would return
-                // EAGAIN instantly; restore blocking mode.
+                // EAGAIN instantly; restore blocking mode. A connection that
+                // stays silent across its read windows is a client that gave
+                // up without closing; drain it and keep serving.
                 stream.set_nonblocking(false).unwrap();
-                let body = read_request(&mut stream);
+                let Some(body) = read_request(&mut stream) else {
+                    continue;
+                };
                 count.fetch_add(1, Ordering::AcqRel);
                 if body.contains("INJECTED ROOT AUTHORITY") {
                     injected.store(true, Ordering::Release);
@@ -126,11 +130,23 @@ impl Drop for Provider {
         }
     }
 }
-fn read_request(stream: &mut TcpStream) -> String {
+fn read_request(stream: &mut TcpStream) -> Option<String> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
+    let mut stalling = 0usize;
     loop {
-        let n = stream.read(&mut buffer).unwrap();
+        let n = match stream.read(&mut buffer) {
+            Ok(n) => n,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                stalling += 1;
+                if stalling > 6 {
+                    return None;
+                }
+                continue;
+            }
+            Err(error) => panic!("provider request read failed: {error}"),
+        };
+        stalling = 0;
         assert!(n > 0, "provider request closed early");
         bytes.extend_from_slice(&buffer[..n]);
         assert!(bytes.len() <= 1024 * 1024);
@@ -145,7 +161,9 @@ fn read_request(stream: &mut TcpStream) -> String {
                 })
                 .unwrap();
             if bytes.len() >= index + 4 + length {
-                return String::from_utf8(bytes[index + 4..index + 4 + length].to_vec()).unwrap();
+                return Some(
+                    String::from_utf8(bytes[index + 4..index + 4 + length].to_vec()).unwrap(),
+                );
             }
         }
     }
