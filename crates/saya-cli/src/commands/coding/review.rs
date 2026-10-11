@@ -1,4 +1,4 @@
-use super::{CodingError, NativeCodingJob};
+use super::{CodingError, NativeCodingJob, diagnostic_baseline::DiagnosticDeltaState};
 use saya_harness::coding::{
     checks::{CheckDiagnostics, CheckReceipt},
     integration::{
@@ -29,7 +29,13 @@ impl ReviewCheck {
             Self::Diagnostics(evidence) => evidence.receipt(),
         }
     }
-    fn preview(&self) -> Value {
+    pub(super) fn diagnostics(&self) -> Option<&CheckDiagnostics> {
+        match self {
+            Self::Diagnostics(evidence) => Some(evidence),
+            Self::Plain(_) => None,
+        }
+    }
+    fn preview(&self, delta: Option<&DiagnosticDeltaState>) -> Value {
         let mut preview = json!({
             "profile":self.receipt().profile_id(),
             "outcome":self.receipt().outcome(),
@@ -40,13 +46,18 @@ impl ReviewCheck {
             Self::Plain(_) => {
                 super::checks::merge_json(&mut preview, super::checks::diagnostic_facts(None, None))
             }
-            Self::Diagnostics(evidence) => super::checks::merge_json(
-                &mut preview,
-                super::checks::diagnostic_facts(
-                    Some(evidence.format()),
-                    Some(evidence.diagnostics()),
-                ),
-            ),
+            Self::Diagnostics(evidence) => {
+                super::checks::merge_json(
+                    &mut preview,
+                    super::checks::diagnostic_facts(
+                        Some(evidence.format()),
+                        Some(evidence.diagnostics()),
+                    ),
+                );
+                if let Some(delta) = delta {
+                    super::checks::merge_json(&mut preview, delta.preview());
+                }
+            }
         }
         preview
     }
@@ -86,6 +97,7 @@ impl NativeCodingJob {
         let binding = EvidenceBinding::bind(&verified, &self.cancellation, DEFAULT_DELTA_DEADLINE)
             .map_err(CodingError::owner)?;
         let checks = self.candidate_checks(checkout).await?;
+        let diagnostic_deltas = self.prepare_diagnostic_deltas(checkout, &checks).await?;
         binding
             .verify_at_use(
                 Path::new(verified.path().as_str()),
@@ -97,8 +109,8 @@ impl NativeCodingJob {
         let diagnostics_configured = checks
             .iter()
             .any(|check| matches!(check, ReviewCheck::Diagnostics(_)));
-        let preview = json!({"candidate":checkout,"candidate_path":verified.path().as_str(),"source_sha256":binding.source_sha256(),"changes":delta.entries().iter().map(|entry|json!({"path":entry.path(),"kind":format!("{:?}",entry.kind()),"bytes":entry.bytes()})).collect::<Vec<_>>(),"diff":diff,
-            "checks":checks.iter().map(ReviewCheck::preview).collect::<Vec<_>>(),"checks_configured":!checks.is_empty(),"diagnostics_configured":diagnostics_configured,"diagnostic_delta":{"available":false,"reason":"comparable_baseline_not_minted"},"apply_requires_fresh_approval":true});
+        let mut preview = json!({"candidate":checkout,"candidate_path":verified.path().as_str(),"source_sha256":binding.source_sha256(),"changes":delta.entries().iter().map(|entry|json!({"path":entry.path(),"kind":format!("{:?}",entry.kind()),"bytes":entry.bytes()})).collect::<Vec<_>>(),"diff":diff,
+            "checks":checks.iter().zip(diagnostic_deltas.iter()).map(|(check,delta)|check.preview(delta.as_ref())).collect::<Vec<_>>(),"checks_configured":!checks.is_empty(),"diagnostics_configured":diagnostics_configured,"diagnostic_delta":super::diagnostic_baseline::summary(&diagnostic_deltas),"apply_requires_fresh_approval":true});
         super::context::append_line(
             &self
                 .records
@@ -106,6 +118,23 @@ impl NativeCodingJob {
             &serde_json::to_vec(&preview).map_err(CodingError::owner)?,
             1024 * 1024,
         )?;
+        if super::diagnostic_baseline::commit_pending(&mut diagnostic_deltas)? {
+            preview["checks"] = json!(
+                checks
+                    .iter()
+                    .zip(diagnostic_deltas.iter())
+                    .map(|(check, delta)| check.preview(delta.as_ref()))
+                    .collect::<Vec<_>>()
+            );
+            preview["diagnostic_delta"] = super::diagnostic_baseline::summary(&diagnostic_deltas);
+            super::context::append_line(
+                &self
+                    .records
+                    .join(format!("review-{}.jsonl", checkout.as_str())),
+                &serde_json::to_vec(&preview).map_err(CodingError::owner)?,
+                1024 * 1024,
+            )?;
+        }
         Ok(CodingReview {
             job: self.job_id().clone(),
             epoch: self.epoch,

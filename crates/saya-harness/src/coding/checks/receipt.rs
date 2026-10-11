@@ -20,14 +20,14 @@ mod outcome_tests;
 
 /// Immutable evidence returned only after an owned check process was joined.
 pub struct CheckReceipt {
-    wire: CheckReceiptV1,
-    checkout_id: ManagedCheckoutId,
-    profile_id: String,
-    program: String,
-    process: CheckProcessOutcome,
-    output: CheckOutputReference,
-    lineage: CheckLineage,
-    toolchain: Option<String>,
+    pub(super) wire: CheckReceiptV1,
+    pub(super) checkout_id: ManagedCheckoutId,
+    pub(super) profile_id: String,
+    pub(super) program: String,
+    pub(super) process: CheckProcessOutcome,
+    pub(super) output: CheckOutputReference,
+    pub(super) lineage: CheckLineage,
+    pub(super) toolchain: Option<String>,
 }
 
 impl fmt::Debug for CheckReceipt {

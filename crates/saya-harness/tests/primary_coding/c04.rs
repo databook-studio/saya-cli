@@ -8,6 +8,8 @@ use fixture_helpers::{invocation, run};
 use saya_agent::CancellationToken;
 use saya_harness::coding::commands::CommandOwner;
 use saya_types::{CheckDiagnosticFormat, CodingCheckOutcome};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 #[tokio::test]
 async fn existing_warning_does_not_hide_new_failure() {
@@ -28,10 +30,15 @@ async fn existing_warning_does_not_hide_new_failure() {
         assert_eq!(baseline_check.diagnostics().unwrap().entries().len(), 1);
         let ownership = fixture.ownership();
         let baseline = baseline_check.baseline(&ownership, &token).await.unwrap();
+        let persisted = baseline_check.persisted_baseline(&baseline).unwrap();
+        let persisted_bytes = persisted.to_bytes().unwrap();
+        let persisted =
+            saya_harness::coding::checks::PersistedDiagnosticBaseline::from_bytes(&persisted_bytes)
+                .unwrap();
         fixture.change_candidate_source();
         let current = run(&fixture, &owner, &invocation).await;
         let delta = current
-            .compare_baseline(&baseline, &ownership, &token)
+            .compare_persisted_baseline(&persisted, &ownership, &token)
             .await
             .unwrap();
         assert_eq!(delta.unchanged().len(), 1);
@@ -46,7 +53,45 @@ async fn existing_warning_does_not_hide_new_failure() {
         );
         assert!(!delta.current_successful());
         assert!(!current.receipt().is_successful());
+        let mut tampered = persisted_bytes;
+        tampered[0] = b'!';
+        assert!(
+            saya_harness::coding::checks::PersistedDiagnosticBaseline::from_bytes(&tampered)
+                .is_err()
+        );
     }
+}
+
+#[tokio::test]
+async fn persisted_baseline_refuses_noncanonical_diagnostic_order() {
+    let fixture = support::diagnostic_fixture("c04-baseline-order").await;
+    fixture.change_candidate_source();
+    let owner = CommandOwner::new(1).unwrap();
+    let check = run(
+        &fixture,
+        &owner,
+        &invocation(CheckDiagnosticFormat::RustcJson, false, None),
+    )
+    .await;
+    let token = CancellationToken::new();
+    let ownership = fixture.ownership();
+    let baseline = check.baseline(&ownership, &token).await.unwrap();
+    let persisted = check.persisted_baseline(&baseline).unwrap();
+    let bytes = persisted.to_bytes().unwrap();
+    let mut envelope: Value = serde_json::from_slice(&bytes).unwrap();
+    envelope["payload"]["diagnostics"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    let payload = serde_json::to_vec(&envelope["payload"]).unwrap();
+    let digest = Sha256::digest(payload);
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    envelope["payload_sha256"] = json!(hex);
+    let tampered = serde_json::to_vec(&envelope).unwrap();
+    assert!(matches!(
+        saya_harness::coding::checks::PersistedDiagnosticBaseline::from_bytes(&tampered),
+        Err(saya_harness::coding::checks::DiagnosticBaselineWireError::Malformed)
+    ));
 }
 
 #[tokio::test]

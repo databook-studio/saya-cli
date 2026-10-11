@@ -14,6 +14,7 @@ mod conflict_resolution;
 mod controls;
 mod create;
 mod delegate;
+mod diagnostic_baseline;
 mod export;
 mod observations;
 mod operations;
