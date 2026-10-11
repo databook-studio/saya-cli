@@ -67,15 +67,16 @@ impl Provider {
                 if body.contains("INJECTED ROOT AUTHORITY") {
                     injected.store(true, Ordering::Release);
                 }
-                let actor = if body.contains("UNTRUSTED CHILD TASK") {
-                    if body.contains("write for child-a") {
-                        "child-a"
-                    } else {
-                        "child-b"
-                    }
-                } else {
-                    "parent"
-                };
+                let actor = body
+                    .split("UNTRUSTED CHILD TASK")
+                    .nth(1)
+                    .and_then(|task| task.split("write for ").nth(1))
+                    .and_then(|task| task.split_whitespace().next())
+                    .map(|task| {
+                        task.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+                    })
+                    .filter(|task| task.starts_with("child-"))
+                    .unwrap_or("parent");
                 let stage = turns.entry(actor.into()).or_default();
                 let current = *stage;
                 *stage += 1;
@@ -142,13 +143,14 @@ fn read_request(stream: &mut TcpStream) -> String {
 fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
     if actor == "parent" {
         return match stage {
-            0 if mode == 3 => tool(
-                "delegate",
-                json!({"tasks":[
-                    {"agent_id":"child-a","task":"write for child-a","write_paths":["shared.txt"]},
-                    {"agent_id":"child-b","task":"write for child-b","write_paths":["shared.txt"],"dependencies":["child-a"]}
-                ]}),
-            ),
+            0 if mode == 3 => {
+                let tasks = (0..24).map(|index| {
+                    let id = format!("child-{index:02}");
+                    let dependencies = (index > 0).then(|| vec![format!("child-{:02}", index - 1)]).unwrap_or_default();
+                    json!({"agent_id":id,"task":format!("write for {id}"),"write_paths":["shared.txt"],"dependencies":dependencies})
+                }).collect::<Vec<_>>();
+                tool("delegate", json!({"tasks":tasks}))
+            }
             0 => tool(
                 "delegate",
                 json!({"tasks":[{"agent_id":"child-a","task":"write for child-a","write_paths":["new-a.txt"]},{"agent_id":"child-b","task":"write for child-b","write_paths":["new-b.txt"]}]}),
@@ -169,7 +171,7 @@ fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
     if mode == 3 && stage == 0 {
         return tool(
             "workspace_write",
-            json!({"path":"shared.txt","content":if actor == "child-a" { "first child\n" } else { "second child\n" }}),
+            json!({"path":"shared.txt","content":format!("{actor}\n")}),
         );
     }
     if mode == 3 {

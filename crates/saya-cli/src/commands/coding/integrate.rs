@@ -132,9 +132,7 @@ impl NativeCodingJob {
                     .ok_or(CodingError::InvalidRequest)?;
                 let value = super::conflicts::retained_value(self.job_id(), retained);
                 let bytes = serde_json::to_vec(&value).map_err(CodingError::owner)?;
-                if bytes.len() > super::conflicts::MAX_RECORD_BYTES {
-                    return Err(CodingError::InvalidRequest);
-                }
+                super::conflicts::validate_retained_bytes(&bytes, self.job_id())?;
                 context::append_line(
                     &self.records.join("conflicts.jsonl"),
                     &bytes,

@@ -60,12 +60,18 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
             std::path::Path::new(record.ownership.managed_path().as_str()).join("shared.txt")
         })
         .collect();
-    assert_eq!(child_paths.len(), 2);
+    assert_eq!(child_paths.len(), 24);
     let contents: Vec<_> = child_paths
         .iter()
         .map(|path| std::fs::read_to_string(path).unwrap())
         .collect();
-    assert_ne!(contents[0], contents[1]);
+    assert_eq!(
+        contents
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        24
+    );
     assert!(!fixture.repository.join("shared.txt").exists());
     assert_eq!(
         std::fs::read(fixture.repository.join("tracked.txt")).unwrap(),
@@ -99,8 +105,15 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     assert_eq!(inspected["authority"], "none");
     assert_eq!(inspected["resolution"], "not_implemented");
     assert_eq!(inspected["fresh_revalidation_required"], true);
+    assert_eq!(
+        inspected["conflict"]["pairs"].as_array().unwrap().len(),
+        276
+    );
     assert_eq!(inspected["conflict"]["pairs"][0]["path"], "shared.txt");
-    assert_eq!(inspected["conflict"]["inputs"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        inspected["conflict"]["inputs"].as_array().unwrap().len(),
+        24
+    );
     let metadata = fixture
         .root
         .join("coding")

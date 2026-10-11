@@ -56,6 +56,19 @@ pub(super) fn retained_value(job: &JobId, conflict: &RetainedConflict) -> Value 
     })
 }
 
+pub(super) fn validate_retained_bytes(bytes: &[u8], job: &JobId) -> Result<(), CodingError> {
+    parse_retained_record(bytes, job).map(|_| ())
+}
+
+fn parse_retained_record(bytes: &[u8], job: &JobId) -> Result<Record, CodingError> {
+    if bytes.len() > MAX_RECORD_BYTES {
+        return Err(CodingError::InvalidRequest);
+    }
+    let record: Record = serde_json::from_slice(bytes).map_err(CodingError::owner)?;
+    validate_record(&record, job)?;
+    Ok(record)
+}
+
 impl CodingApplication {
     pub async fn conflicts(
         &self,
@@ -98,11 +111,8 @@ impl CodingApplication {
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty())
         {
-            if line.len() > MAX_RECORD_BYTES {
-                return Err(CodingError::InvalidRequest);
-            }
-            let record: Record = serde_json::from_slice(line).map_err(CodingError::owner)?;
-            validate(&record, job, &ownership)?;
+            let record = parse_retained_record(line, job)?;
+            validate_ownership(&record, &ownership)?;
             if record.candidate_checkout_id == candidate.as_str() {
                 found = Some(serde_json::to_value(record).map_err(CodingError::owner)?);
             }
@@ -119,11 +129,7 @@ impl CodingApplication {
 fn unknown(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
     json!({"job_id":job,"candidate_checkout_id":candidate,"status":"not_retained","authority":"none","resolution":"not_implemented","fresh_revalidation_required":true,"conflict":null})
 }
-fn validate(
-    record: &Record,
-    job: &JobId,
-    ownership: &BTreeMap<String, bool>,
-) -> Result<(), CodingError> {
+fn validate_record(record: &Record, job: &JobId) -> Result<(), CodingError> {
     if record.version != 1
         || record.job_id != job.as_str()
         || record.status != "open"
@@ -131,20 +137,15 @@ fn validate(
         || record.resolution != "not_implemented"
         || !record.fresh_revalidation_required
         || record.pairs.is_empty()
-        || record.pairs.len() > 256
         || record.inputs.len() < 2
         || record.inputs.len() > 100
-        || ownership.get(&record.candidate_checkout_id) != Some(&false)
     {
         return Err(CodingError::InvalidRequest);
     }
     ManagedCheckoutId::parse(&record.candidate_checkout_id).map_err(CodingError::owner)?;
     for input in &record.inputs {
         ManagedCheckoutId::parse(&input.checkout_id).map_err(CodingError::owner)?;
-        if ownership.get(&input.checkout_id) != Some(&true)
-            || input.total_bytes > 64 * 1024 * 1024
-            || input.content_sha256s.len() > 100_000
-        {
+        if input.total_bytes > 64 * 1024 * 1024 || input.content_sha256s.len() > 100_000 {
             return Err(CodingError::InvalidRequest);
         }
         for digest in input.content_sha256s.iter().flatten() {
@@ -160,6 +161,20 @@ fn validate(
         {
             return Err(CodingError::InvalidRequest);
         }
+    }
+    Ok(())
+}
+fn validate_ownership(
+    record: &Record,
+    ownership: &BTreeMap<String, bool>,
+) -> Result<(), CodingError> {
+    if ownership.get(&record.candidate_checkout_id) != Some(&false)
+        || record
+            .inputs
+            .iter()
+            .any(|input| ownership.get(&input.checkout_id) != Some(&true))
+    {
+        return Err(CodingError::InvalidRequest);
     }
     Ok(())
 }
