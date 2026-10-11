@@ -2,6 +2,8 @@
 #![cfg(unix)]
 #[path = "coding_lifecycle/commands.rs"]
 mod commands;
+#[path = "coding_lifecycle/continuation.rs"]
+mod continuation;
 #[path = "coding_lifecycle/native.rs"]
 mod native;
 #[path = "coding_lifecycle/provider.rs"]
