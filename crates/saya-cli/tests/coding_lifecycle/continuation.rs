@@ -211,7 +211,6 @@ async fn append_completion_history(fixture: &Fixture, job: &JobId) -> NonZeroU64
     let mut sequence = events.events.last().unwrap().sequence().get();
     for index in 0..34 {
         sequence += 1;
-        let sequence = NonZeroU64::new(sequence).unwrap();
         let agent = AgentId::parse(&format!("history-{index:02}")).unwrap();
         let invocation = InvocationId::parse(&format!("inv-history-{index:02}")).unwrap();
         fixture
@@ -223,6 +222,19 @@ async fn append_completion_history(fixture: &Fixture, job: &JobId) -> NonZeroU64
             })
             .await
             .unwrap();
+        let running = CodingEventV1::new(
+            NonZeroU64::new(sequence).unwrap(),
+            job.clone(),
+            Some(agent.clone()),
+            Some(invocation.clone()),
+            CodingEventKind::StateChanged {
+                state: JobState::Running,
+            },
+        )
+        .unwrap();
+        fixture.store.append_coding_event(running).await.unwrap();
+        sequence += 1;
+        let sequence = NonZeroU64::new(sequence).unwrap();
         let result = JoinedResultV1::new(
             job.clone(),
             agent.clone(),

@@ -116,3 +116,40 @@ async fn stale_snapshot_proposal_refuses_before_creating_job_and_fresh_retry_suc
         b"user changed before approval\n"
     );
 }
+
+#[tokio::test]
+async fn refused_foreign_removal_leaves_managed_work_listed_for_recovery() {
+    let fixture = Fixture::new("retained-recovery").await;
+    let job_id = JobId::parse("job-retained").unwrap();
+    let request =
+        CodingJobRequest::new(job_id.clone(), "inspect only".into(), vec![], vec![]).unwrap();
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    let job = fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    let own = ManagedCheckoutId::parse("retained-candidate").unwrap();
+    job.create_checkout(&own).await.unwrap();
+    let foreign = ManagedCheckoutId::parse("foreign").unwrap();
+    assert!(job.remove_checkout(&foreign).await.is_err());
+    let listed = fixture.application.worktrees(&job_id).await.unwrap();
+    let checkouts = listed["checkouts"].as_array().unwrap();
+    assert_eq!(checkouts.len(), 1);
+    assert_eq!(checkouts[0]["checkout_id"], own.as_str());
+    assert!(checkouts[0]["lifecycle"].is_string());
+    assert_eq!(listed["next_cursor"], serde_json::Value::Null);
+    let conflict = fixture.application.conflicts(&job_id, &own).await.unwrap();
+    assert_eq!(conflict["status"], "not_retained");
+    assert_eq!(conflict["conflict"], serde_json::Value::Null);
+    assert!(matches!(
+        fixture.application.conflicts(&job_id, &foreign).await,
+        Err(CodingError::NotOwned)
+    ));
+    assert!(fixture.repository.join(".git").exists());
+    assert_eq!(
+        std::fs::read(fixture.repository.join("tracked.txt")).unwrap(),
+        b"original\n"
+    );
+}

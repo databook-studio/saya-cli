@@ -247,3 +247,54 @@ async fn native_review_keeps_process_evidence_when_diagnostics_cannot_parse() {
     assert_eq!(check["diagnostics"], serde_json::Value::Null);
     assert_eq!(review.preview()["diagnostic_delta"]["available"], false);
 }
+
+#[tokio::test]
+async fn review_apply_after_user_drift_refuses_and_keeps_both_edits() {
+    let output = r#"{"reason":"compiler-message","message":{"message":"drift fixture","code":{"code":"unused_variables"},"level":"warning","spans":[{"file_name":"tracked.txt","line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true}]}}"#;
+    let fixture = Fixture::with_diagnostic_output("review-user-drift", output).await;
+    let request = CodingJobRequest::new(
+        JobId::parse("job-review-user-drift").unwrap(),
+        "review user drift".into(),
+        vec!["tracked.txt".into()],
+        vec!["printf".into()],
+    )
+    .unwrap();
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    let job = fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    let candidate = ManagedCheckoutId::parse("review-user-drift-candidate").unwrap();
+    job.create_checkout(&candidate).await.unwrap();
+    let record = fixture
+        .store
+        .get_managed_checkout(job.job_id(), &candidate)
+        .await
+        .unwrap()
+        .unwrap();
+    let candidate_root = std::path::Path::new(record.ownership.managed_path().as_str());
+    std::fs::write(candidate_root.join("tracked.txt"), b"candidate change\n").unwrap();
+    let review = job.review_existing(&candidate).await.unwrap();
+    assert_eq!(review.preview()["checks"][0]["successful"], true);
+    std::fs::write(fixture.repository.join("tracked.txt"), b"user edit\n").unwrap();
+    let Err(refusal) = job.apply_review(&review, true).await else {
+        panic!("apply must be refused after the user edited the repository");
+    };
+    let CodingError::Owner(source) = &refusal else {
+        panic!("unexpected refusal variant: {refusal}");
+    };
+    assert_eq!(
+        source.to_string(),
+        "the original working tree no longer matches the captured baseline"
+    );
+    assert_eq!(
+        std::fs::read(fixture.repository.join("tracked.txt")).unwrap(),
+        b"user edit\n"
+    );
+    assert_eq!(
+        std::fs::read(candidate_root.join("tracked.txt")).unwrap(),
+        b"candidate change\n"
+    );
+}
