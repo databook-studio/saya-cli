@@ -20,9 +20,11 @@ mod resolve;
 mod secret;
 mod values;
 
-pub use coding::ResolvedCoding;
+pub use coding::{ResolvedCheckProfile, ResolvedCoding};
 pub use context_window::context_window_tokens;
-pub use diagnostics::{EndpointDiagnostics, RedactedDiagnostics, ResolvedDiagnostics};
+pub use diagnostics::{
+    CheckProfileDiagnostics, EndpointDiagnostics, RedactedDiagnostics, ResolvedDiagnostics,
+};
 pub use endpoints::{MAX_ENDPOINT_STRING_CHARS, ORCHESTRATOR_ROLE, ResolvedEndpoint};
 pub use env_file::parse_explicit_env_file;
 pub use error::ConfigError;
@@ -39,8 +41,8 @@ pub use jobs::{
 };
 pub use memory::ResolvedMemory;
 pub use model::{
-    CodingFile, ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile, HostCommandsFile,
-    JobsFile, SessionCommandsFile,
+    CheckProfileFile, CodingFile, ConfigFile, ConnectionsFile, EndpointFile, FetchJobsFile,
+    HostCommandsFile, JobsFile, MAX_CONFIG_FILE_BYTES, SessionCommandsFile,
 };
 pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};

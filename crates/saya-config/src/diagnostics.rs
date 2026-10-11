@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::{ColorChoice, CompactionMode, ConfigFile, MemoryMode, OutputFormat, ThemeChoice};
+use crate::{
+    ColorChoice, CompactionMode, ConfigFile, MemoryMode, OutputFormat, ThemeChoice,
+    coding::ResolvedCheckProfile, model::CheckProfileFile,
+};
 use std::collections::BTreeMap;
 
 /// A display-safe view of what a config *file* declares; references are
@@ -53,6 +56,9 @@ pub struct RedactedDiagnostics {
     pub coding_max_tool_calls: Option<usize>,
     pub coding_max_known_tokens: Option<u64>,
     pub coding_max_elapsed_seconds: Option<u64>,
+    /// Safe profile summaries; argv bodies are never included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coding_check_profiles: Option<BTreeMap<String, CheckProfileDiagnostics>>,
     pub jobs_wall_clock_seconds: Option<u64>,
     pub jobs_tokens_per_endpoint: Option<BTreeMap<String, u64>>,
     pub jobs_turns: Option<u64>,
@@ -97,6 +103,14 @@ impl RedactedDiagnostics {
             coding_max_tool_calls: file.coding.max_tool_calls,
             coding_max_known_tokens: file.coding.max_known_tokens,
             coding_max_elapsed_seconds: file.coding.max_elapsed_seconds,
+            coding_check_profiles: file.coding.check_profiles.as_ref().map(|profiles| {
+                profiles
+                    .iter()
+                    .map(|(name, profile)| {
+                        (name.clone(), CheckProfileDiagnostics::from_file(profile))
+                    })
+                    .collect()
+            }),
             jobs_wall_clock_seconds: file.jobs.wall_clock_seconds,
             jobs_tokens_per_endpoint: file.jobs.tokens_per_endpoint.clone(),
             jobs_turns: file.jobs.turns,
@@ -138,6 +152,41 @@ impl RedactedDiagnostics {
                     )
                 })
                 .collect(),
+        }
+    }
+}
+
+/// Display-safe identity and bounds for a configured coding check.
+#[derive(Debug, Clone, Serialize)]
+pub struct CheckProfileDiagnostics {
+    pub command_id: String,
+    pub program: String,
+    pub argv_count: usize,
+    pub timeout_seconds: u64,
+    pub toolchain_reference: Option<String>,
+    pub environment_profile_reference: String,
+}
+
+impl CheckProfileDiagnostics {
+    fn from_file(profile: &CheckProfileFile) -> Self {
+        Self {
+            command_id: profile.command_id.clone(),
+            program: profile.program.clone(),
+            argv_count: profile.argv.len(),
+            timeout_seconds: profile.timeout_seconds,
+            toolchain_reference: profile.toolchain.clone(),
+            environment_profile_reference: profile.environment_profile.clone(),
+        }
+    }
+
+    pub(crate) fn from_resolved(profile: &ResolvedCheckProfile) -> Self {
+        Self {
+            command_id: profile.command_id().to_owned(),
+            program: profile.program().to_owned(),
+            argv_count: profile.argv_count(),
+            timeout_seconds: profile.timeout_seconds(),
+            toolchain_reference: profile.toolchain_reference().map(str::to_owned),
+            environment_profile_reference: profile.environment_profile_reference().to_owned(),
         }
     }
 }

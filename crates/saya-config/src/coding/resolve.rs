@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use crate::{CodingFile, ConfigError};
 
+use super::check_profiles::{ResolvedCheckProfile, resolve_check_profiles};
 use super::limits::{
     MAX_CHILDREN, MAX_CONCURRENT_COMMANDS, MAX_CONCURRENT_MODEL_REQUESTS, MAX_ELAPSED_SECONDS,
     MAX_KNOWN_TOKENS, MAX_LOGICAL_MODEL_REQUESTS, MAX_PHYSICAL_TRANSPORT_ATTEMPTS, MAX_TOOL_CALLS,
@@ -19,6 +22,8 @@ pub struct ResolvedCoding {
     pub max_tool_calls: usize,
     pub max_known_tokens: u64,
     pub max_elapsed_seconds: u64,
+    /// Validated fixed check data; it does not grant process or path authority.
+    pub check_profiles: BTreeMap<String, ResolvedCheckProfile>,
 }
 
 impl Default for ResolvedCoding {
@@ -33,7 +38,22 @@ impl Default for ResolvedCoding {
             max_tool_calls: MAX_TOOL_CALLS,
             max_known_tokens: MAX_KNOWN_TOKENS,
             max_elapsed_seconds: MAX_ELAPSED_SECONDS,
+            check_profiles: BTreeMap::new(),
         }
+    }
+}
+
+impl ResolvedCoding {
+    /// Selects one exact configured profile. Unknown or malformed IDs are not
+    /// included in the returned error because callers may pass model text.
+    pub fn select_check_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<&ResolvedCheckProfile, ConfigError> {
+        self.check_profiles
+            .get(profile_id)
+            .filter(|profile| profile.profile_id() == profile_id)
+            .ok_or(ConfigError::UnknownCheckProfile)
     }
 }
 
@@ -98,6 +118,7 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
         "coding.max_elapsed_seconds",
         MAX_ELAPSED_SECONDS,
     )?;
+    let check_profiles = resolve_check_profiles(file.check_profiles.as_ref())?;
 
     Ok(ResolvedCoding {
         enabled: file.enabled.unwrap_or(defaults.enabled),
@@ -109,5 +130,6 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
         max_tool_calls,
         max_known_tokens,
         max_elapsed_seconds,
+        check_profiles,
     })
 }

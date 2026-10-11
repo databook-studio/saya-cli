@@ -46,6 +46,7 @@ const USER_FACING_DIAGNOSTICS: &[(&str, &str)] = &[
     ("coding_max_tool_calls", "coding.max_tool_calls"),
     ("coding_max_known_tokens", "coding.max_known_tokens"),
     ("coding_max_elapsed_seconds", "coding.max_elapsed_seconds"),
+    ("coding_check_profiles", "coding.check_profiles"),
     ("query_timeout_seconds", "run.query_timeout_seconds"),
     ("jobs_wall_clock_seconds", "jobs.wall_clock_seconds"),
     ("jobs_tokens_per_endpoint", "jobs.tokens_per_endpoint"),

@@ -20,8 +20,8 @@ mod jobs;
 mod presentation;
 
 pub use ai::{AiFile, EndpointFile};
-pub use coding::CodingFile;
-pub use config::{ConfigFile, ConnectionsFile};
+pub use coding::{CheckProfileFile, CodingFile};
+pub use config::{ConfigFile, ConnectionsFile, MAX_CONFIG_FILE_BYTES};
 pub use jobs::RunFile;
 pub use jobs::{
     FetchJobsFile, HostCommandsFile, InterpreterJobsFile, JobsFile, RunnerJobsFile,

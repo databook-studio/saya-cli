@@ -23,6 +23,7 @@ fn core_defaults_are_opt_in_and_bounded() {
     assert_eq!(coding.max_tool_calls, 300);
     assert_eq!(coding.max_known_tokens, 400_000);
     assert_eq!(coding.max_elapsed_seconds, 1_200);
+    assert!(coding.check_profiles.is_empty());
     assert_eq!(
         resolved
             .provenance
@@ -48,6 +49,7 @@ fn coding_config_precedence_and_invalid_bounds() {
             max_tool_calls: Some(300),
             max_known_tokens: Some(400_000),
             max_elapsed_seconds: Some(1_200),
+            check_profiles: None,
         },
         trust_project_config: true,
         ..Default::default()

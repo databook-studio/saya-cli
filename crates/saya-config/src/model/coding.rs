@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+use std::fmt;
+
 use serde::Deserialize;
 
 /// Raw trusted `[coding]` settings. Every field stays optional until layers
@@ -14,4 +17,33 @@ pub struct CodingFile {
     pub max_tool_calls: Option<usize>,
     pub max_known_tokens: Option<u64>,
     pub max_elapsed_seconds: Option<u64>,
+    #[serde(default)]
+    pub check_profiles: Option<BTreeMap<String, CheckProfileFile>>,
+}
+
+/// Raw fixed command data for one named coding check profile.
+#[derive(Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CheckProfileFile {
+    pub(crate) command_id: String,
+    pub(crate) program: String,
+    #[serde(default)]
+    pub(crate) argv: Vec<String>,
+    pub(crate) timeout_seconds: u64,
+    pub(crate) toolchain: Option<String>,
+    pub(crate) environment_profile: String,
+}
+
+impl fmt::Debug for CheckProfileFile {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CheckProfileFile")
+            .field("command_id", &self.command_id)
+            .field("program", &self.program)
+            .field("argv_count", &self.argv.len())
+            .field("timeout_seconds", &self.timeout_seconds)
+            .field("toolchain", &self.toolchain)
+            .field("environment_profile", &self.environment_profile)
+            .finish()
+    }
 }
