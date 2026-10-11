@@ -162,7 +162,7 @@ async fn root_deadline_cancels_and_joins_a_child_with_an_open_provider_request()
         event,
         saya_agent::AgentEvent::AnsweringBudgetStopped {
             dimension: saya_agent::BudgetDimension::ElapsedTime
-        } | _
+        }
     )));
     stats.assert_invocation_cancellation(CancellationReason::Budget(
         saya_agent::BudgetDimension::ElapsedTime,
