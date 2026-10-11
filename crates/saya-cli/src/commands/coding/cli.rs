@@ -48,6 +48,7 @@ pub async fn dispatch(
             Ok(json!({"events":page.events,"next_cursor":page.next_cursor}))
         }
         command @ (CodingCommand::Review { .. }
+        | CodingCommand::ReviewExisting { .. }
         | CodingCommand::Apply { .. }
         | CodingCommand::ResolveConflict { .. }
         | CodingCommand::RemoveCheckout { .. }

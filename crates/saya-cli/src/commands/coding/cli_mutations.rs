@@ -10,6 +10,7 @@ pub(super) async fn run(
 ) -> Result<Value, CodingError> {
     let (id, approved) = match &command {
         CodingCommand::Review { id, approve, .. }
+        | CodingCommand::ReviewExisting { id, approve, .. }
         | CodingCommand::Apply { id, approve, .. }
         | CodingCommand::ResolveConflict { id, approve, .. }
         | CodingCommand::RemoveCheckout { id, approve, .. }
@@ -51,6 +52,10 @@ pub(super) async fn run(
         CodingCommand::Review { candidate, .. } => {
             let candidate = ManagedCheckoutId::parse(&candidate).map_err(CodingError::owner)?;
             Ok(job.review(&candidate).await?.preview().clone())
+        }
+        CodingCommand::ReviewExisting { candidate, .. } => {
+            let candidate = ManagedCheckoutId::parse(&candidate).map_err(CodingError::owner)?;
+            Ok(job.review_existing(&candidate).await?.preview().clone())
         }
         CodingCommand::Apply {
             candidate,

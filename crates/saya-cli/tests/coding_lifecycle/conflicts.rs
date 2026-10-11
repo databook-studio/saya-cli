@@ -119,11 +119,11 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     assert_eq!(manual_edit["candidate_checkout_id"], candidate.as_str());
     assert_eq!(
         manual_edit["next_action"],
-        "run_review_to_locate_candidate_edit_then_rerun_fresh_review"
+        "run_review_existing_to_locate_candidate_edit_then_rerun_fresh_review"
     );
     assert_eq!(
         manual_edit["locate_candidate"]["command"],
-        "coding review native-conflicts conflict-candidate --approve"
+        "coding review-existing native-conflicts conflict-candidate --approve"
     );
     assert_eq!(
         manual_edit["locate_candidate"]["path_field"],
@@ -135,7 +135,11 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     );
     assert_eq!(
         manual_edit["review_command"],
-        "coding review native-conflicts conflict-candidate --approve"
+        "coding review-existing native-conflicts conflict-candidate --approve"
+    );
+    assert_eq!(
+        manual_edit["apply_command"],
+        "coding apply native-conflicts conflict-candidate --source-sha256 <review source_sha256> --approve"
     );
     assert_eq!(manual_edit["fresh_review"]["snapshot"], true);
     assert_eq!(manual_edit["fresh_review"]["configured_checks"], true);

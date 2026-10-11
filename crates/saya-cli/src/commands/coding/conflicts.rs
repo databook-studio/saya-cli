@@ -82,13 +82,16 @@ impl CodingApplication {
 }
 
 fn manual_edit(job: &JobId, candidate: &ManagedCheckoutId) -> Value {
-    let review_command = format!("coding review {job} {candidate} --approve");
+    let review_command = format!("coding review-existing {job} {candidate} --approve");
+    let apply_command =
+        format!("coding apply {job} {candidate} --source-sha256 <review source_sha256> --approve");
     json!({
         "candidate_checkout_id":candidate,
-        "next_action":"run_review_to_locate_candidate_edit_then_rerun_fresh_review",
+        "next_action":"run_review_existing_to_locate_candidate_edit_then_rerun_fresh_review",
         "locate_candidate":{"command":review_command,"path_field":"candidate_path"},
         "edit_scope":"only_the_returned_candidate_path",
         "review_command":review_command,
+        "apply_command":apply_command,
         "fresh_review":{"snapshot":true,"configured_checks":true,"source_binding":true},
         "retained_record_mutated":false,
         "applies_to_original":false,

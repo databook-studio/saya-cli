@@ -32,6 +32,16 @@ pub enum CodingCommand {
         #[arg(long)]
         approve: bool,
     },
+    /// Review an existing owned candidate after manual edits without rebuilding it.
+    ReviewExisting {
+        /// Durable job id.
+        id: String,
+        /// Existing candidate checkout id.
+        candidate: String,
+        /// Renew the job's exact scope for review and checks.
+        #[arg(long)]
+        approve: bool,
+    },
     /// Apply a reviewed candidate only if its digest, checks and original tree are fresh.
     Apply {
         /// Durable job id.
