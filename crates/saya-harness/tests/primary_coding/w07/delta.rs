@@ -14,6 +14,9 @@ use super::create_support::CreateCheckoutFixture;
 
 /// One real Active managed checkout, verified, with its published baseline.
 pub(super) struct Active {
+    // Never read directly, but holding the fixture keeps its store and temp
+    // directory alive for as long as the Active checkout lives.
+    #[allow(dead_code)]
     pub(super) fixture: CreateCheckoutFixture,
     pub(super) verified: VerifiedCheckout,
     pub(super) snapshot: CapturedSnapshot,

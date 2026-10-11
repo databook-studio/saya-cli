@@ -13,12 +13,18 @@ use saya_types::{
 };
 use std::sync::Arc;
 
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "../w08/support.rs"]
 mod active;
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "../w05/create_support.rs"]
 mod create_support;
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "../w02_support.rs"]
-mod support;
+mod w02_shared;
+// The shared create fixture imports its git helpers as `super::support::`;
+// keep that path resolving for this copy under the renamed module.
+use w02_shared as support;
 
 pub(super) struct Fixture {
     active: active::Active,
@@ -219,5 +225,6 @@ impl Fixture {
     }
 }
 
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[path = "../approval_support.rs"]
 mod approval_support;

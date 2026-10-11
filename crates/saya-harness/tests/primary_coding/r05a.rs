@@ -318,5 +318,6 @@ fn unsupported_platform_strips_otherwise_authorized_effects() {
     ));
 }
 
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[path = "approval_support.rs"]
 mod approval_support;

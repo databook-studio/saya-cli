@@ -312,7 +312,7 @@ async fn credential_written_in_two_writes_with_a_pause_never_reaches_the_store()
 async fn flood_with_unwritable_store_drains_child_and_reports_store_error() {
     let Some(fixture) = fixture() else { return };
     if let Some(done) = env::var_os(FILE_FAIL_CHILD_ENV) {
-        run_file_fail_scenario(&fixture, PathBuf::from(done)).await;
+        run_file_fail_scenario(fixture, PathBuf::from(done)).await;
         return;
     }
     let done_parent = fixture.marker("store-file-fail");

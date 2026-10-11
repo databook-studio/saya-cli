@@ -11,13 +11,17 @@ mod candidate;
 mod integrate;
 #[path = "w08/proof.rs"]
 mod proof;
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "w08/support.rs"]
 mod support_active;
 
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w05/create_support.rs"]
 mod create_support;
 
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w02_support.rs"]
 mod support;

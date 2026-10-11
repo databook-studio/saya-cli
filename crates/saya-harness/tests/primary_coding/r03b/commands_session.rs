@@ -15,6 +15,7 @@ use saya_types::{
 
 use super::support::{Fixture, limits};
 
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "../c01a/support.rs"]
 mod c01a_support;
 
@@ -79,7 +80,7 @@ async fn budgeted_start_spawns_real_process_under_charge() {
     ));
     c01a_support::wait_for_file(&marker).await;
     let joined = session.join().await;
-    assert!(matches!(joined.command, Ok(_)));
+    assert!(joined.command.is_ok());
     assert!(joined.settlement.is_ok());
     assert_eq!(ledger.snapshot().await.command_slots_active, 0);
     fixture.close().await;
@@ -160,7 +161,7 @@ async fn budgeted_start_denied_before_any_spawn() {
     }
     for session in [first, second] {
         let joined = session.stop_and_join().await;
-        assert!(matches!(joined.command, Ok(_)));
+        assert!(joined.command.is_ok());
         assert!(joined.settlement.is_ok());
     }
     assert_eq!(ledger.snapshot().await.command_slots_active, 0);

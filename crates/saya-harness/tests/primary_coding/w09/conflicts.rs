@@ -56,8 +56,7 @@ fn overlapping_deltas(
 async fn overlap_conflict(input: IntegrateInput<'_>, token: &CancellationToken) -> OverlapConflict {
     let err = integrate_candidate(&input, token, DEFAULT_DELTA_DEADLINE)
         .await
-        .err()
-        .expect("the overlapping slice must be rejected");
+        .expect_err("the overlapping slice must be rejected");
     match err {
         IntegrateError::Overlap(conflict) => conflict,
         _ => panic!("expected an overlap conflict"),
@@ -152,8 +151,7 @@ async fn no_automatic_resolution() {
     let input = integrate_input(&t, &accepted);
     let err = integrate_candidate(&input, &token, DEFAULT_DELTA_DEADLINE)
         .await
-        .err()
-        .expect("must still be rejected");
+        .expect_err("must still be rejected");
     assert!(matches!(err, IntegrateError::Overlap(_)));
     assert!(queue.open_for(&candidate).is_some());
 }
@@ -203,7 +201,7 @@ async fn queue_is_bounded_and_resolution_errors_fail_closed() {
         accepted_for(&t.a, &a_delta, &a_receipt),
         accepted_for(&t.b, &b_delta, &b_receipt),
     ];
-    let conflict = detect_overlaps(&accepted).err().expect("expected overlap");
+    let conflict = detect_overlaps(&accepted).expect_err("expected overlap");
     let mut queue = ConflictQueue::new();
     for i in 0..MAX_RETAINED_CONFLICTS {
         let id = ManagedCheckoutId::parse(&format!("cand-{i:02}")).unwrap();
@@ -230,7 +228,7 @@ async fn queue_is_bounded_and_resolution_errors_fail_closed() {
         accepted_for(&t.b, &b_delta, &b_receipt),
         accepted_for(&t.a, &a_delta, &a_receipt),
     ];
-    let chained_conflict = detect_overlaps(&chained).err().expect("expected overlap");
+    let chained_conflict = detect_overlaps(&chained).expect_err("expected overlap");
     let mut chain_queue = ConflictQueue::new();
     let chain_candidate = ManagedCheckoutId::parse(&format!("{label}-chain")).unwrap();
     chain_queue

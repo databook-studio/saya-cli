@@ -19,7 +19,7 @@ async fn independent_owner_cannot_resequence_after_a_competing_writer() {
     let right = second.root_view();
     let (one, two) = tokio::join!(left.admit_model_request(), right.admit_model_request());
     assert_eq!(usize::from(one.is_ok()) + usize::from(two.is_ok()), 1);
-    assert!(matches!(&one, Ok(_)) || matches!(&two, Ok(_)));
+    assert!(one.is_ok() || two.is_ok());
     assert!(
         matches!(&one, Err(EffectAdmissionError::OwnerFailure(_)))
             || matches!(&two, Err(EffectAdmissionError::OwnerFailure(_)))

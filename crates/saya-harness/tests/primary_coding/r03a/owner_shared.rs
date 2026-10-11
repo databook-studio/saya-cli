@@ -142,7 +142,7 @@ async fn one_tool_batch_has_one_durable_amount_and_dropped_member_stays_unknown(
         )
         .await
         .unwrap();
-    drop(permits[1]);
+    let _ = permits[1];
     let before_finish = ledger.snapshot().await;
     assert_eq!(before_finish.tool_calls, 2);
     assert_eq!(before_finish.tool_permits_pending, 1);

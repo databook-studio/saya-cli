@@ -2,11 +2,13 @@
 
 #[path = "w11b/admission.rs"]
 mod admission;
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w08/apply_support.rs"]
 mod apply_support;
 #[path = "w11b/binding.rs"]
 mod binding;
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w05/create_support.rs"]
 mod create_support;
@@ -14,9 +16,11 @@ mod create_support;
 mod identity;
 #[path = "w11b/recovery.rs"]
 mod recovery;
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w02_support.rs"]
 mod support;
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w11/support.rs"]
 mod support_w11;

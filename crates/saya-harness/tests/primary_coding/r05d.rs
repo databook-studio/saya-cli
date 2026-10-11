@@ -215,5 +215,6 @@ fn refusal_detail_is_fixed_and_names_nothing() {
     assert!(!first.contains("sql_like"));
 }
 
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[path = "approval_support.rs"]
 mod approval_support;

@@ -180,7 +180,7 @@ async fn capped_stream_read_ends_at_marker_with_truncated() {
     wait_for_status(&session).await;
     let mut cursor = CommandOutputCursor::start(OutputStream::Stdout);
     let mut text: Vec<u8> = Vec::new();
-    let mut dropped_bytes = 0u64;
+    let mut dropped_bytes;
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         assert!(Instant::now() < deadline, "capped drains within 15 s");

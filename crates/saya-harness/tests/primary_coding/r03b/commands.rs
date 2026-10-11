@@ -78,7 +78,7 @@ async fn command_settlement_known_releases_slot() {
     assert_eq!(snapshot.command_slots_active, 0);
     assert!(!snapshot.poisoned);
     let next = ledger.begin_command().await;
-    assert!(matches!(next, Ok(_)));
+    assert!(next.is_ok());
     fixture.close().await;
 }
 
@@ -98,7 +98,7 @@ async fn command_not_started_settlement_releases_slot() {
     assert_eq!(snapshot.command_slots_active, 0);
     assert!(!snapshot.poisoned);
     let next = ledger.begin_command().await;
-    assert!(matches!(next, Ok(_)));
+    assert!(next.is_ok());
     fixture.close().await;
 }
 

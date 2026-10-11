@@ -11,6 +11,7 @@ mod materialize_cleanup;
 mod materialize_gitfile;
 #[path = "w04b/materialize_refusals.rs"]
 mod materialize_refusals;
+#[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
 #[path = "w02_support.rs"]
 mod support;
