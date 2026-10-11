@@ -97,7 +97,10 @@ pub use confinement::{ConfinedCheckout, ConfinementError, confine_checkout};
 pub use create::{CreateCheckoutInput, CreatedCheckout, create_managed_checkout};
 pub use create_error::CreateCheckoutError;
 pub use environment::{ChildEnvironment, ChildEnvironmentError, ChildNetworkPolicy};
-pub use ownership::{OwnershipError, OwnershipInput, VerifiedCheckout, verify_owned_checkout};
+pub use ownership::{
+    OwnershipError, OwnershipInput, VerifiedCheckout, verify_admitted_checkout,
+    verify_owned_checkout,
+};
 
 mod cleanup;
 mod reconcile;

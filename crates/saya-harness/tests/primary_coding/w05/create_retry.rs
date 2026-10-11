@@ -114,7 +114,6 @@ async fn retry_with_different_base_commit_is_refused() {
         record.current_lifecycle,
         ManagedCheckoutLifecycle::Creating
     ));
-    let worktrees_before = fixture.git_output(&fixture.repo_root, &["worktree", "list"]);
     fs::write(
         fixture.repo_root.join("second.txt"),
         b"second commit bytes\n",
@@ -148,6 +147,10 @@ async fn retry_with_different_base_commit_is_refused() {
     )
     .unwrap();
     assert_ne!(second_commit, fixture.base_commit);
+    // Capture after the base-changing commit: the commit moves the original
+    // worktree's HEAD, which is part of `git worktree list` output, while the
+    // refusal contract covers only what the refused create itself does.
+    let worktrees_before = fixture.git_output(&fixture.repo_root, &["worktree", "list"]);
     let error = create_managed_checkout(
         &fixture.input_with_base(&checkout, &second_commit),
         &CancellationToken::new(),

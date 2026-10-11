@@ -3,7 +3,7 @@
 use saya_agent::CancellationToken;
 
 use super::transaction::{ApplyBackError, ApplyBackInput};
-use crate::coding::worktree::{OwnershipInput, VerifiedCheckout, verify_owned_checkout};
+use crate::coding::worktree::{OwnershipInput, VerifiedCheckout, verify_admitted_checkout};
 
 pub(super) async fn verify_apply_back_checkouts(
     input: &ApplyBackInput<'_>,
@@ -25,7 +25,7 @@ async fn reverify(
     verified: &VerifiedCheckout,
     cancellation: &CancellationToken,
 ) -> Result<(), ApplyBackError> {
-    let fresh = verify_owned_checkout(
+    let fresh = verify_admitted_checkout(
         &OwnershipInput {
             store: input.store,
             service: input.service,
