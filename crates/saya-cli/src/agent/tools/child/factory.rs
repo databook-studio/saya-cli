@@ -41,9 +41,8 @@ pub(crate) struct CliChildFactory {
 }
 
 impl CliChildFactory {
-    /// Assembles the factory from already-prepared pieces. The composition
-    /// flow itself (confine -> narrow -> project -> factory) is a later
-    /// slice; this constructor only receives its results.
+    /// Assembles the factory from pieces prepared by `compose_child` in the
+    /// same use-time verification flow.
     pub(crate) fn new(
         pair: TrustedCheckoutPair,
         runner: Option<Arc<RunProgram>>,
