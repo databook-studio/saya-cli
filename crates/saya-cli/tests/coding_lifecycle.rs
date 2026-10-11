@@ -24,3 +24,5 @@ mod conflict_resolution;
 mod conflicts;
 #[path = "coding_lifecycle/project_preferences.rs"]
 mod project_preferences;
+#[path = "coding_lifecycle/reload_settings.rs"]
+mod reload_settings;

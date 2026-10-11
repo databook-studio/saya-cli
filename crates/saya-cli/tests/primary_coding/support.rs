@@ -1,5 +1,5 @@
 use saya_agent::CancellationToken;
-use saya_cli::{CodingApplication, GlobalOptions, load_with_sources};
+use saya_cli::{CodingApplication, GlobalOptions, RuntimeConfig, load_with_sources};
 use saya_store::SqliteStateStore;
 use std::{
     collections::BTreeMap,
@@ -15,6 +15,9 @@ pub struct Fixture {
     pub application: Arc<CodingApplication>,
     pub store: SqliteStateStore,
     pub personal_instructions: Option<PathBuf>,
+    pub runtime: RuntimeConfig,
+    pub git: PathBuf,
+    pub program_dir: PathBuf,
 }
 struct Extras<'a> {
     diagnostic_output: Option<&'a str>,
@@ -226,7 +229,7 @@ impl Fixture {
             );
         }
         let application = CodingApplication::open(
-            runtime,
+            runtime.clone(),
             store.clone(),
             &repository,
             &root.join("coding"),
@@ -248,6 +251,9 @@ impl Fixture {
             application,
             store,
             personal_instructions,
+            runtime,
+            git,
+            program_dir: program_dir.to_path_buf(),
         }
     }
 }
