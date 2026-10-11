@@ -137,6 +137,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
     let path = |file: &str| root.join(file).display().to_string();
     let line = match name {
         "connect" => "/connect demo",
+        "coding" => "/coding export chain-sentinel",
         "connections" => "/connections",
         "include" => "/include demo",
         "exclude" => "/exclude demo",

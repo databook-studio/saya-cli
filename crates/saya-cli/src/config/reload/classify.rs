@@ -35,6 +35,21 @@ pub(crate) const CLASS_TABLE: &[(&str, Class)] = &[
     ("api_key_reference", Class::Live),
     ("base_url", Class::Reseedable(ReseedTarget::Endpoint)),
     ("candidates", Class::Live),
+    // Coding settings are read when a coding job is created or resumed —
+    // never by the running REPL — and `/reload` swaps the runtime handle
+    // before the next line, so the next job in this session observes them:
+    // live, with nothing pending and no restart owed.
+    ("coding_check_profiles", Class::Live),
+    ("coding_enabled", Class::Live),
+    ("coding_extensions", Class::Live),
+    ("coding_max_children", Class::Live),
+    ("coding_max_concurrent_commands", Class::Live),
+    ("coding_max_concurrent_model_requests", Class::Live),
+    ("coding_max_elapsed_seconds", Class::Live),
+    ("coding_max_known_tokens", Class::Live),
+    ("coding_max_logical_model_requests", Class::Live),
+    ("coding_max_physical_transport_attempts", Class::Live),
+    ("coding_max_tool_calls", Class::Live),
     ("compaction", Class::Live),
     ("context_byte_budget", Class::Live),
     ("context_window_tokens", Class::Live),
