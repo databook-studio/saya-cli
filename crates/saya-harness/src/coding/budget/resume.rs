@@ -139,10 +139,12 @@ async fn fold(store: &SqliteStateStore, job: &JobId) -> Result<Folded, BudgetLed
 /// A record with a settlement is folded unchanged from its charges and
 /// observations. A record whose `settlement` is `None` was interrupted
 /// mid-effect: its usage and outcome are UNKNOWN, so its reserved
-/// charges stay counted (never refunded), the reserved amounts also
+/// charges stay counted (never refunded) and the reserved amounts also
 /// count toward the matching unknown-usage counters for the count
-/// dimensions, the record counts as unsettled, and usage coverage may
-/// never read Complete again.
+/// dimensions. A record charging a usage dimension counts as unsettled
+/// and usage coverage may never read Complete again; a slot-only record
+/// (child or command slots) retains its charges as permanently consumed
+/// capacity but carries no usage, so it is neither.
 fn fold_record(
     folded: &mut Folded,
     record: &CodingBudgetReservationRecord,
@@ -198,8 +200,10 @@ fn fold_record(
         }
     }
     let Some(settlement) = &record.settlement else {
-        folded.usage_ever_unknown = true;
-        add(&mut folded.unsettled, 1)?;
+        if carries_usage(&record.reservation) {
+            folded.usage_ever_unknown = true;
+            add(&mut folded.unsettled, 1)?;
+        }
         for charge in record.reservation.charges() {
             let amount = charge.reserved().get();
             match charge.dimension() {
@@ -249,6 +253,22 @@ fn fold_record(
         }
     }
     Ok(())
+}
+
+/// Whether the reservation charges a usage dimension: the count
+/// dimensions and reported tokens. Slot dimensions retain their charges
+/// as consumed capacity without describing usage.
+fn carries_usage(reservation: &BudgetReservationV1) -> bool {
+    reservation.charges().iter().any(|charge| {
+        matches!(
+            charge.dimension(),
+            BudgetDimension::LogicalRequests
+                | BudgetDimension::TransportAttempts
+                | BudgetDimension::ToolCalls
+                | BudgetDimension::InputTokens
+                | BudgetDimension::OutputTokens
+        )
+    })
 }
 
 /// Refuses a settlement whose observation contradicts its effect state:
