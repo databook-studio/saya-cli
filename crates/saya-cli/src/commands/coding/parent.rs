@@ -53,22 +53,30 @@ impl NativeCodingJob {
             monitor: monitor_stop.clone(),
             armed: true,
         };
-        let monitor = self.watch_cancel(monitor_stop.clone());
-        let result =
-            run_agent_with_control(provider.as_ref(), &tools, request, definitions(), control)
-                .await
-                .map_err(CodingError::owner);
-        if result.is_err() {
-            self.cancel();
-        }
-        let pending = self.active.lock().await.is_some();
-        let joined = if pending {
-            Some(self.join().await)
-        } else {
-            None
+        // Both futures are owned in this scope. No monitor task can detach on
+        // an error return or when the caller drops this invocation.
+        let work = async {
+            let result =
+                run_agent_with_control(provider.as_ref(), &tools, request, definitions(), control)
+                    .await
+                    .map_err(CodingError::owner);
+            if result.is_err() && self.cancellation.reason().is_none() {
+                self.cancellation.cancel_with_reason(
+                    self.ledger
+                        .cancellation_token()
+                        .reason()
+                        .unwrap_or(saya_agent::CancellationReason::OwnerFailure),
+                );
+            }
+            let joined = if self.active.lock().await.is_some() {
+                Some(self.join().await)
+            } else {
+                None
+            };
+            monitor_stop.cancel();
+            (result, joined)
         };
-        monitor_stop.cancel();
-        let _ = monitor.await;
+        let ((result, joined), ()) = tokio::join!(work, self.watch_cancel(monitor_stop.clone()));
         let failed = self.child_failed.load(std::sync::atomic::Ordering::Acquire)
             || joined.as_ref().is_some_and(|result| {
                 result.as_ref().map_or(true, |report| {
@@ -108,35 +116,39 @@ impl NativeCodingJob {
         guard.armed = false;
         result
     }
-    fn watch_cancel(
-        self: &Arc<Self>,
-        stop: saya_agent::CancellationToken,
-    ) -> tokio::task::JoinHandle<()> {
-        let job = Arc::clone(self);
-        tokio::spawn(async move {
+    async fn watch_cancel(&self, stop: saya_agent::CancellationToken) {
+        use saya_agent::{BudgetDimension, CancellationReason};
+        let owner = self.ledger.cancellation_token();
+        let remaining = self.ledger.remaining().await;
+        let durable = async {
             loop {
-                tokio::select! { _=stop.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_millis(100))=>{} }
-                match job
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                match self
                     .application
                     .store
-                    .coding_cancel_requested(job.job_id())
+                    .coding_cancel_requested(self.job_id())
                     .await
                 {
                     Ok(false) => {}
-                    Ok(true) => {
-                        job.cancel();
-                        break;
-                    }
-                    Err(_) => {
-                        job.cancellation
-                            .cancel_with_reason(saya_agent::CancellationReason::OwnerFailure);
-                        break;
-                    }
+                    Ok(true) => break CancellationReason::User,
+                    Err(_) => break CancellationReason::OwnerFailure,
                 }
             }
-        })
+        };
+        let reason = tokio::select! {
+            biased;
+            _=owner.cancelled()=>owner.reason().unwrap_or(CancellationReason::OwnerFailure),
+            _=tokio::time::sleep(remaining)=>{
+                owner.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+                owner.reason().unwrap_or(CancellationReason::Budget(BudgetDimension::ElapsedTime))
+            },
+            _=stop.cancelled()=>return,
+            reason=durable=>reason,
+        };
+        self.cancellation.cancel_with_reason(reason);
     }
 }
+
 pub(super) fn agent_limits(config: &saya_config::ResolvedCoding) -> AgentLimits {
     AgentLimits {
         max_turns: Some(config.max_logical_model_requests),

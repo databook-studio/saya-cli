@@ -8,3 +8,6 @@ mod native;
 mod provider;
 #[path = "primary_coding/support.rs"]
 mod support;
+
+#[path = "coding_lifecycle/budget_regressions.rs"]
+mod budget_regressions;

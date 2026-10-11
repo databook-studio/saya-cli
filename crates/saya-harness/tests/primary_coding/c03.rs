@@ -37,6 +37,7 @@ async fn check_receipt_binds_real_exit_and_source() {
     let denied_ownership = fixture.ownership();
     assert!(matches!(
         execute_check(CheckExecutionInput {
+            ledger: fixture.ledger(),
             ownership: &denied_ownership,
             authority: fixture.authority(),
             invocation: &denied,
@@ -62,6 +63,7 @@ async fn check_receipt_binds_real_exit_and_source() {
     .unwrap();
     let ownership = fixture.ownership();
     let receipt = match execute_check(CheckExecutionInput {
+        ledger: fixture.ledger(),
         ownership: &ownership,
         authority: fixture.authority(),
         invocation: &invocation,

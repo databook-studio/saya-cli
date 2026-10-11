@@ -26,6 +26,21 @@ impl Fixture {
         Self::build(label, Some(endpoint), true).await
     }
     async fn build(label: &str, endpoint: Option<&str>, check: bool) -> Self {
+        Self::build_options(label, endpoint, check, false, false).await
+    }
+    pub async fn with_deadline(label: &str, endpoint: &str) -> Self {
+        Self::build_options(label, Some(endpoint), false, true, false).await
+    }
+    pub async fn with_slow_check(label: &str) -> Self {
+        Self::build_options(label, None, true, false, true).await
+    }
+    async fn build_options(
+        label: &str,
+        endpoint: Option<&str>,
+        check: bool,
+        deadline: bool,
+        slow: bool,
+    ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -82,8 +97,16 @@ impl Fixture {
             endpoint_config.base_url = Some(endpoint.into());
             endpoint_config.api_key = None;
         }
+        if deadline {
+            runtime.resolved.coding.max_elapsed_seconds = 1;
+        }
         if check {
             let file=saya_config::ConfigFile::from_toml("[coding.check_profiles.lint]\ncommand_id='false-check'\nprogram='false'\nargv=[]\ntimeout_seconds=5\nenvironment_profile='confined'\n").unwrap();
+            let file = if slow {
+                saya_config::ConfigFile::from_toml("[coding.check_profiles.lint]\ncommand_id='held-check'\nprogram='sleep'\nargv=['10']\ntimeout_seconds=15\nenvironment_profile='confined'\n").unwrap()
+            } else {
+                file
+            };
             runtime.resolved.coding.check_profiles = saya_config::resolve(
                 saya_config::ResolutionInput::new(saya_config::ConnectionsFile::default())
                     .with_user(file),

@@ -43,6 +43,7 @@ pub(super) async fn run(
 ) -> CheckDiagnostics {
     let ownership = fixture.ownership();
     execute_check_with_diagnostics(CheckExecutionInput {
+        ledger: fixture.ledger(),
         ownership: &ownership,
         authority: fixture.authority(),
         invocation,

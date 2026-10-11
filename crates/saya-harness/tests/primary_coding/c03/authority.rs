@@ -29,6 +29,7 @@ async fn unrelated_repository_or_snapshot_cannot_lend_a_program_grant() {
     for snapshot in [false, true] {
         let authority = fixture.unrelated_authority(snapshot);
         let result = execute_check(CheckExecutionInput {
+            ledger: fixture.ledger(),
             ownership: &ownership,
             authority: &authority,
             invocation: &invocation,

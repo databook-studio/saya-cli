@@ -38,6 +38,7 @@ pub(super) struct CreateCheckoutFixture {
     pub(super) plan: SnapshotManifest,
     pub(super) store: SqliteStateStore,
     pub(super) sequencer: JobEventSequencer,
+    pub(super) ledger: JobBudgetLedger,
     pub(super) job: JobId,
     pub(super) base_commit: GitObjectId,
 }
@@ -138,6 +139,7 @@ impl CreateCheckoutFixture {
             plan,
             store,
             sequencer,
+            ledger,
             job,
             base_commit,
         }

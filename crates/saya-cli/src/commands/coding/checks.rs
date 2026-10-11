@@ -17,6 +17,7 @@ pub(crate) struct ChildCodingOperations {
     pub(crate) job: JobId,
     pub(crate) checkout: ManagedCheckoutId,
     pub(crate) authority: ChildAuthorityView,
+    pub(crate) ledger: saya_harness::coding::budget::JobBudgetLedger,
     pub(crate) owner: Arc<CommandOwner>,
     pub(crate) records: PathBuf,
     pub(crate) failed: std::sync::atomic::AtomicBool,
@@ -49,6 +50,7 @@ impl ChildCodingOperations {
         let invocation = invocation(profile)?;
         let ownership = self.ownership();
         let input = CheckExecutionInput {
+            ledger: &self.ledger,
             ownership: &ownership,
             authority: &self.authority,
             invocation: &invocation,

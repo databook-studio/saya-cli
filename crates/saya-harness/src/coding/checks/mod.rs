@@ -52,6 +52,10 @@ pub enum CheckExecutionError {
     CommandStart(#[from] crate::coding::commands::CommandStartError),
     #[error("the supervised check did not settle within its bound")]
     CommandDidNotSettle,
+    #[error("durable command admission refused the check")]
+    CommandBudget(#[from] crate::coding::budget::BudgetedCommandStartError),
+    #[error("durable command settlement failed")]
+    CommandSettlement(#[source] saya_agent::EffectAdmissionError),
     #[error("the command output reference or status is unavailable")]
     OutputUnavailable,
     #[error("the supervised check failed before an outcome was available")]

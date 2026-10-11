@@ -202,6 +202,7 @@ impl NativeCodingJob {
             checkout,
             authority: composition.spec.authority().clone(),
             owner: Arc::clone(&self.command_owner),
+            ledger: self.ledger.clone(),
             records: self.records.clone(),
             failed: std::sync::atomic::AtomicBool::new(false),
             sessions: tokio::sync::Mutex::new(Vec::new()),
