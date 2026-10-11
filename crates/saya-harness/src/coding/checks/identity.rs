@@ -12,16 +12,16 @@ use saya_types::{
 
 #[derive(PartialEq, Eq)]
 pub(super) struct CheckLineage {
-    checkout: ManagedCheckoutId,
-    path: ManagedCheckoutPath,
-    repository: RepositoryId,
-    snapshot: SnapshotId,
-    snapshot_sha256: Sha256Digest,
-    plan_sha256: Sha256Digest,
-    base: GitObjectId,
-    agent: Option<AgentId>,
-    policy: Sha256Digest,
-    epoch: u64,
+    pub(super) checkout: ManagedCheckoutId,
+    pub(super) path: ManagedCheckoutPath,
+    pub(super) repository: RepositoryId,
+    pub(super) snapshot: SnapshotId,
+    pub(super) snapshot_sha256: Sha256Digest,
+    pub(super) plan_sha256: Sha256Digest,
+    pub(super) base: GitObjectId,
+    pub(super) agent: Option<AgentId>,
+    pub(super) policy: Sha256Digest,
+    pub(super) epoch: u64,
 }
 
 impl CheckLineage {

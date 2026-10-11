@@ -23,6 +23,41 @@ impl DiagnosticDelta {
         old_receipt: &CheckReceipt,
         current_receipt: &CheckReceipt,
     ) -> Self {
+        Self::between_sets(
+            previous,
+            current,
+            old_receipt.wire_receipt().source_sha256().clone(),
+            current_receipt.wire_receipt().source_sha256().clone(),
+            old_receipt.outcome(),
+            current_receipt,
+        )
+    }
+
+    pub(super) fn between_persisted(
+        previous: &DiagnosticSet,
+        current: &DiagnosticSet,
+        baseline_source: Sha256Digest,
+        baseline_outcome: CodingCheckOutcome,
+        current_receipt: &CheckReceipt,
+    ) -> Self {
+        Self::between_sets(
+            previous,
+            current,
+            baseline_source,
+            current_receipt.wire_receipt().source_sha256().clone(),
+            baseline_outcome,
+            current_receipt,
+        )
+    }
+
+    fn between_sets(
+        previous: &DiagnosticSet,
+        current: &DiagnosticSet,
+        baseline_source: Sha256Digest,
+        current_source: Sha256Digest,
+        baseline_outcome: CodingCheckOutcome,
+        current_receipt: &CheckReceipt,
+    ) -> Self {
         let mut introduced = Vec::new();
         let mut unchanged = Vec::new();
         let mut resolved = Vec::new();
@@ -53,9 +88,9 @@ impl DiagnosticDelta {
             introduced,
             unchanged,
             resolved,
-            baseline_source: old_receipt.wire_receipt().source_sha256().clone(),
-            current_source: current_receipt.wire_receipt().source_sha256().clone(),
-            baseline_outcome: old_receipt.outcome(),
+            baseline_source,
+            current_source,
+            baseline_outcome,
             current_outcome: current_receipt.outcome(),
             current_successful: current_receipt.is_successful(),
         }

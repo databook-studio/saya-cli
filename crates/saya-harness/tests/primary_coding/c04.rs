@@ -28,10 +28,15 @@ async fn existing_warning_does_not_hide_new_failure() {
         assert_eq!(baseline_check.diagnostics().unwrap().entries().len(), 1);
         let ownership = fixture.ownership();
         let baseline = baseline_check.baseline(&ownership, &token).await.unwrap();
+        let persisted = baseline_check.persisted_baseline(&baseline).unwrap();
+        let persisted_bytes = persisted.to_bytes().unwrap();
+        let persisted =
+            saya_harness::coding::checks::PersistedDiagnosticBaseline::from_bytes(&persisted_bytes)
+                .unwrap();
         fixture.change_candidate_source();
         let current = run(&fixture, &owner, &invocation).await;
         let delta = current
-            .compare_baseline(&baseline, &ownership, &token)
+            .compare_persisted_baseline(&persisted, &ownership, &token)
             .await
             .unwrap();
         assert_eq!(delta.unchanged().len(), 1);
@@ -46,6 +51,12 @@ async fn existing_warning_does_not_hide_new_failure() {
         );
         assert!(!delta.current_successful());
         assert!(!current.receipt().is_successful());
+        let mut tampered = persisted_bytes;
+        tampered[0] = b'!';
+        assert!(
+            saya_harness::coding::checks::PersistedDiagnosticBaseline::from_bytes(&tampered)
+                .is_err()
+        );
     }
 }
 
