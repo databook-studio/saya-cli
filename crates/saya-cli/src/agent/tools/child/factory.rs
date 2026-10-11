@@ -1,8 +1,8 @@
 //! The child composition boundary: the factory composes one child's provider,
 //! toolset, definitions and approval from ONE immutable authority view. The
-//! approval decider is the child's `ChildApprovalDecider`: it permits exactly
-//! the effects the view grants (workspace writes, process runs); per-call
-//! exact admission stays in the executor.
+//! approval decider wraps the child's coarse effect gate with exact write-path
+//! admission, so a refused write is denied before execution; the executor
+//! keeps the same admission as defense in depth.
 
 use std::sync::Arc;
 
@@ -10,10 +10,11 @@ use saya_config::{ResolvedAi, SecretResolver};
 use saya_harness::coding::child::{
     ChildComponents, ChildExecutionSpec, ChildFactory, ChildFactoryError,
 };
-use saya_harness::coding::policy::ChildApprovalDecider;
 use saya_harness::runner::RunProgram;
 
-use super::{ChildToolsError, TrustedCheckoutPair, child_toolset, child_toolset_with_runner};
+use super::{
+    ChildToolsError, TrustedCheckoutPair, child_toolset, child_toolset_with_runner, decider,
+};
 use crate::agent::provider;
 
 /// Composes one verified, confined child's runtime dependencies from pieces
@@ -21,9 +22,11 @@ use crate::agent::provider;
 /// runner already confined by `ConfinedCheckout::runner_tool(..)` (or none),
 /// the resolved AI configuration, and the secret resolver providers need.
 ///
-/// The approval decider is the child's `ChildApprovalDecider`: it permits
-/// exactly the effects the view grants (workspace writes, process runs);
-/// per-call exact admission stays in the executor.
+/// The approval decider is the child's coarse effect gate wrapped with exact
+/// write-path admission (`decider::ExactWriteChildApproval`): a refused write
+/// is denied before execution, so it admits no permit and settles no
+/// uncertain effect; the executor keeps the same admission as defense in
+/// depth.
 pub(crate) struct CliChildFactory {
     /// The trusted pairing of the exact checkout id with the exact workspace
     /// root; the factory never re-derives it from model input.
@@ -72,9 +75,10 @@ impl ChildFactory for CliChildFactory {
     /// Builds the provider, toolset, definitions and approval for one child
     /// from its immutable authority view.
     ///
-    /// The approval decider is the child's `ChildApprovalDecider`: it permits
-    /// exactly the effects the view grants (workspace writes, process runs);
-    /// per-call exact admission stays in the executor.
+    /// The approval decider wraps the child's coarse effect gate with exact
+    /// write-path admission, so an unassigned write is denied before any
+    /// permit is admitted; the executor's identical admission stays as
+    /// defense in depth.
     ///
     /// Commands exist only where the view grants them: a command scope on the
     /// view without a proven runner is refused, and a prepared runner is
@@ -109,7 +113,10 @@ impl ChildFactory for CliChildFactory {
             provider,
             Box::new(tools),
             definitions,
-            Box::new(ChildApprovalDecider::from_view(view)),
+            Box::new(decider::ExactWriteChildApproval::new(
+                view,
+                self.pair.checkout_id().clone(),
+            )),
         ))
     }
 }
