@@ -1,7 +1,44 @@
+use crate::commands::coding::CodingError;
 use crate::commands::coding::checks::ChildCodingOperations;
 use saya_agent::{CancellationToken, ToolDefinition, ToolError};
 use serde_json::{Value, json};
 use std::sync::Arc;
+
+#[cfg(test)]
+#[path = "child_refusal_tests.rs"]
+mod refusal_tests;
+
+/// Deterministic pre-effect refusals of the supervised-command surface are
+/// the tool's data: nothing was spawned, read, or mutated, so no effect
+/// permit may settle uncertain. `start` fails only before any spawn —
+/// program admission, argument bounds, the two-session cap, checkout
+/// evidence, the ledger's command-slot denial, the owner's concurrency
+/// refusal (a refused owner start settles its permit `NotStarted`); `read`
+/// fails only before anything is read; `stop`'s unknown-id refusal fires
+/// before any process exists, while a stop that joined a real command keeps
+/// its genuinely uncertain error.
+fn command_refusal_data(name: &str, error: &CodingError) -> Option<Value> {
+    let pre_effect = match name {
+        "coding_command_start" | "coding_command_read" => true,
+        "coding_command_stop" => matches!(error, CodingError::NotOwned),
+        _ => false,
+    };
+    pre_effect.then(|| json!({"outcome":"refused","reason":reason_chain(error)}))
+}
+
+/// The refusal text carries the source chain: the owner error's own display
+/// is generic ("native coding operation failed") while the useful cause — a
+/// budget denial, a capacity refusal — lives in its source.
+fn reason_chain(error: &CodingError) -> String {
+    let mut text = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
 pub(crate) fn definitions(commands: bool) -> Vec<ToolDefinition> {
     let mut definitions = vec![
         super::definition(
@@ -98,18 +135,24 @@ pub(crate) async fn execute(
         "coding_notes" => ops.application.notes(&ops.job).await,
         "coding_check" => ops.check(text("profile")?, token).await,
         "coding_command_start" => {
-            let argv: Vec<String> =
-                serde_json::from_value(args.get("argv").cloned().unwrap_or(Value::Null))
-                    .map_err(|_| ToolError::Runner("argv must be a string array".into()))?;
-            ops.start(
-                text("program")?,
-                argv,
-                args.get("timeout_seconds")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                token,
-            )
-            .await
+            match serde_json::from_value::<Vec<String>>(
+                args.get("argv").cloned().unwrap_or(Value::Null),
+            ) {
+                // A non-array argv is a deterministic refusal of an argument
+                // bound: the classifier turns it into data below.
+                Ok(argv) => {
+                    ops.start(
+                        text("program")?,
+                        argv,
+                        args.get("timeout_seconds")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0),
+                        token,
+                    )
+                    .await
+                }
+                Err(_) => Err(CodingError::InvalidRequest),
+            }
         }
         "coding_command_read" => {
             ops.read(
@@ -124,5 +167,11 @@ pub(crate) async fn execute(
         }
         _ => return Err(ToolError::UnsupportedTool),
     };
-    result.map_err(|error| ToolError::Runner(error.to_string()))
+    match result {
+        Ok(value) => Ok(value),
+        Err(error) => match command_refusal_data(name, &error) {
+            Some(data) => Ok(data),
+            None => Err(ToolError::Runner(error.to_string())),
+        },
+    }
 }

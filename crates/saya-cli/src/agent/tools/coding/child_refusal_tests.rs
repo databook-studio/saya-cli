@@ -1,0 +1,64 @@
+//! The child coding-command executor answers deterministic pre-effect
+//! refusals as tool data; only errors that leave a real command's outcome
+//! unknown stay errors. A refusal that happened before any process existed
+//! can never make an effect uncertain, so settling it Unknown would fail a
+//! job for a refusal the model can simply correct.
+
+use super::command_refusal_data;
+use crate::commands::coding::CodingError;
+use serde_json::json;
+
+#[test]
+fn start_refusals_are_data() {
+    let busy = command_refusal_data("coding_command_start", &CodingError::Busy)
+        .expect("the two-session cap refuses before any spawn, so it is data");
+    assert_eq!(busy["outcome"], json!("refused"));
+    assert_eq!(busy["reason"], json!("coding work is already running"));
+
+    let budget = CodingError::owner(std::io::Error::other("command budget admission failed"));
+    let data = command_refusal_data("coding_command_start", &budget)
+        .expect("a refused slot admission spawns no process, so it is data");
+    assert_eq!(data["outcome"], json!("refused"));
+    let reason = data["reason"].as_str().expect("reason text");
+    assert!(
+        reason.contains("native coding operation failed"),
+        "{reason}"
+    );
+    assert!(
+        reason.contains("command budget admission failed"),
+        "the reason carries the source chain: {reason}"
+    );
+}
+
+#[test]
+fn read_refusals_are_data() {
+    let data = command_refusal_data("coding_command_read", &CodingError::NotOwned)
+        .expect("an unknown command id is refused before anything is read, so it is data");
+    assert_eq!(data["outcome"], json!("refused"));
+    assert_eq!(
+        data["reason"],
+        json!("coding job is not owned by this application or has no active runtime")
+    );
+}
+
+#[test]
+fn stop_refuses_only_pre_effect_ids_as_data() {
+    let data = command_refusal_data("coding_command_stop", &CodingError::NotOwned)
+        .expect("stopping an unknown id performed no effect, so it is data");
+    assert_eq!(data["outcome"], json!("refused"));
+
+    let joined = CodingError::owner(std::io::Error::other("join failed"));
+    assert!(
+        command_refusal_data("coding_command_stop", &joined).is_none(),
+        "a stop that joined a real command may leave its outcome unknown"
+    );
+}
+
+#[test]
+fn other_tools_keep_their_errors() {
+    assert!(
+        command_refusal_data("coding_check", &CodingError::Busy).is_none(),
+        "only the supervised-command surface classifies refusals"
+    );
+    assert!(command_refusal_data("coding_notes", &CodingError::NotOwned).is_none());
+}

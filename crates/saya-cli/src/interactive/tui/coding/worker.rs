@@ -49,6 +49,7 @@ pub(super) fn spawn(
     repository: PathBuf,
 ) -> CodingPanel {
     let (tx, rx) = mpsc::sync_channel(128);
+    let (receipt_tx, receipts) = mpsc::sync_channel(64);
     let (done_tx, done) = mpsc::sync_channel(1);
     let (commands, control) = tokio::sync::mpsc::channel(16);
     let cancellation = CancellationToken::new();
@@ -65,7 +66,7 @@ pub(super) fn spawn(
             .and_then(|runtime_owner| {
                 runtime_owner
                     .block_on(work(
-                        command, runtime, store, repository, token, tx, control,
+                        command, runtime, store, repository, token, tx, receipt_tx, control,
                     ))
                     .map_err(|error| error.to_string())
             });
@@ -74,6 +75,7 @@ pub(super) fn spawn(
     CodingPanel {
         id,
         rx,
+        receipts,
         done,
         commands,
         cancellation,
@@ -82,10 +84,14 @@ pub(super) fn spawn(
         active: true,
     }
 }
-/// Operator-visible outcomes (control receipts, pause acknowledgements) must reach the panel: block until the bounded queue has room (the panel drains it every tick); a dropped receiver means the panel is gone, so the send is ignored.
-/// The blocking `send` inside a `pause_acks` task holds that runtime thread until the panel drains it on the next UI tick, which is what unblocks the send.
-fn deliver_outcome(tx: &mpsc::SyncSender<CodingMessage>, text: String) {
-    let _ = tx.send(CodingMessage::Activity(text));
+/// Operator-visible outcomes (control receipts, pause acknowledgements) ride
+/// their own bounded queue and the send blocks until it has room: a dropped
+/// receiver means the panel is gone, so the send is ignored. They must not
+/// share the activity queue — a same-tick burst of progress events pushed
+/// behind a receipt scrolls it above the viewport before any frame draws it,
+/// and the receipt is never painted.
+fn deliver_outcome(receipts: &mpsc::SyncSender<CodingMessage>, text: String) {
+    let _ = receipts.send(CodingMessage::Activity(text));
 }
 async fn work(
     command: CodingCommand,
@@ -94,6 +100,7 @@ async fn work(
     repository: PathBuf,
     token: CancellationToken,
     tx: mpsc::SyncSender<CodingMessage>,
+    receipts: mpsc::SyncSender<CodingMessage>,
     mut controls: tokio::sync::mpsc::Receiver<CodingCommand>,
 ) -> Result<String, CodingError> {
     let application = CodingApplication::session(runtime, store, &repository, &token).await?;
@@ -151,7 +158,7 @@ async fn work(
                     && let Some(ticket) = receipt["pause_requested"].as_u64()
                 {
                     let job = Arc::clone(&job);
-                    let activity = tx.clone();
+                    let receipts = receipts.clone();
                     let stop = pause_stop.clone();
                     pause_acks.spawn(async move {
                         let acknowledged = tokio::select! {
@@ -159,14 +166,14 @@ async fn work(
                             _ = stop.cancelled() => false,
                         };
                         deliver_outcome(
-                            &activity,
+                            &receipts,
                             json!({"pause_requested":ticket,"pause_acknowledged":acknowledged,"target":agent})
                                 .to_string(),
                         );
                     });
                 }
                 let text=match result {Ok(value)=>value.to_string(),Err(error)=>error.to_string()};
-                deliver_outcome(&tx, text);
+                deliver_outcome(&receipts, text);
             },
             result = pause_acks.join_next(), if !pause_acks.is_empty() => {
                 let _ = result;
