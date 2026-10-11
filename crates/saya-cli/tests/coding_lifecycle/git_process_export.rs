@@ -25,7 +25,7 @@ async fn export_projects_pre_job_local_git_evidence_without_claiming_global_comp
         .unwrap();
     let export = fixture
         .application
-        .export(&request.job_id(), None, None)
+        .export(request.job_id(), None, None)
         .await
         .unwrap();
     let local = &export["local_git_processes"];
@@ -74,7 +74,7 @@ async fn export_projects_pre_job_local_git_evidence_without_claiming_global_comp
     .await
     .unwrap();
     let reopened_export = reopened
-        .export(&request.job_id(), None, None)
+        .export(request.job_id(), None, None)
         .await
         .unwrap();
     let reopened_local = &reopened_export["local_git_processes"];
