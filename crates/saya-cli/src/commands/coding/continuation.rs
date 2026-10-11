@@ -7,7 +7,6 @@ use saya_agent::{ApprovalDecider, CancellationToken};
 use saya_harness::{
     coding::{
         commands::CommandOwner,
-        context::OriginalProjectContext,
         coordinator::{inspect_recovery, resume_job},
         snapshot::{MAX_SNAPSHOT_MANIFEST_BYTES, SnapshotManifest},
     },
@@ -83,6 +82,8 @@ impl CodingApplication {
         {
             return Err(CodingError::NotOwned);
         }
+        let workspace = Workspace::open(self.repository.root()).map_err(CodingError::owner)?;
+        let project = self.capture_original_project_context(&workspace).await?;
         let policy_digest = digest(&serde_json::to_vec(&proposed).map_err(CodingError::owner)?)?;
         let ledger = resume_job(
             self.store.clone(),
@@ -95,9 +96,6 @@ impl CodingApplication {
         )
         .await
         .map_err(CodingError::owner)?;
-        let workspace = Workspace::open(self.repository.root()).map_err(CodingError::owner)?;
-        let project = OriginalProjectContext::capture(&workspace, None, vec![])
-            .map_err(CodingError::owner)?;
         let (root_steering, root_mailbox) = saya_agent::agent_mailbox();
         Ok(Arc::new(NativeCodingJob {
             observation_sequence: std::sync::atomic::AtomicU64::new(1),

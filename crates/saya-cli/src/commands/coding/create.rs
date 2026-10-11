@@ -4,10 +4,7 @@ use super::{
 };
 use saya_agent::{ApprovalDecider, CancellationToken};
 use saya_harness::{
-    coding::{
-        budget::{CountLimits, JobBudgetLedger},
-        context::OriginalProjectContext,
-    },
+    coding::budget::{CountLimits, JobBudgetLedger},
     workspace::Workspace,
 };
 use saya_store::NewCodingJob;
@@ -38,12 +35,11 @@ impl CodingApplication {
             return Err(CodingError::ApprovalRequired);
         }
         let workspace = Workspace::open(self.repository.root()).map_err(CodingError::owner)?;
+        let project = self.capture_original_project_context(&workspace).await?;
         let captured = self
             .service
             .capture_snapshot(&self.repository, &workspace, &plan, &self.artifacts, &token)
             .await
-            .map_err(CodingError::owner)?;
-        let project = OriginalProjectContext::capture(&workspace, None, vec![])
             .map_err(CodingError::owner)?;
         let repository_id = captured.repository_id().clone();
         self.store

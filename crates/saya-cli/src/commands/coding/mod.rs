@@ -16,6 +16,7 @@ mod export;
 mod observations;
 mod operations;
 mod parent;
+mod project_context;
 pub use delegate::CodingTask;
 mod context;
 mod continuation;

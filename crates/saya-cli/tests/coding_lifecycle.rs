@@ -11,3 +11,5 @@ mod support;
 
 #[path = "coding_lifecycle/budget_regressions.rs"]
 mod budget_regressions;
+#[path = "coding_lifecycle/project_preferences.rs"]
+mod project_preferences;
