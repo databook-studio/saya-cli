@@ -15,10 +15,7 @@
 //! pattern redaction cannot recognise a bare value, measured by the M5-7
 //! battery) and then the pattern pass (`redact()`).
 
-use std::{
-    collections::VecDeque, io, io::Read, path::Path, sync::Mutex, time::SystemTime,
-    time::UNIX_EPOCH,
-};
+use std::{collections::VecDeque, io::Read, sync::Mutex};
 
 #[path = "output_scrub.rs"]
 mod scrub;
@@ -26,7 +23,7 @@ pub(crate) use scrub::secret_spans;
 
 use saya_types::redact;
 
-use super::error::RunnerError;
+pub use super::record::record_outcome;
 
 /// The byte cap per captured stream. Large enough for a real program's
 /// diagnostics, small enough that a runaway child cannot fill the model's
@@ -177,23 +174,6 @@ pub(crate) fn scrub_secrets(text: &str, secrets: &[String]) -> String {
 /// boundary.
 pub(crate) fn redact_chunk(chunk: &str, secrets: &[String]) -> String {
     redact(&scrub_secrets(chunk, secrets))
-}
-
-/// Persists the redacted outcome into the run workspace — the disk record
-/// the model's copy mirrors. Nothing unredacted exists to write: the record
-/// serialises what `capture` already redacted.
-pub fn record_outcome(dir: &Path, outcome: &ProgramOutcome) -> Result<String, RunnerError> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    std::fs::create_dir_all(dir).map_err(|source| RunnerError::RecordFailed { source })?;
-    let path = dir.join(format!("{}-{}.json", nanos, outcome.program));
-    let body = serde_json::to_vec_pretty(outcome).map_err(|error| RunnerError::RecordFailed {
-        source: io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
-    })?;
-    std::fs::write(&path, body).map_err(|source| RunnerError::RecordFailed { source })?;
-    Ok(path.display().to_string())
 }
 
 /// What one child run reported: the two captured streams and the honest

@@ -22,6 +22,7 @@ pub mod error;
 pub mod nested_saya;
 pub mod output;
 mod process_state;
+mod record;
 pub mod refuse;
 pub mod sandbox;
 pub(crate) mod spawn;
