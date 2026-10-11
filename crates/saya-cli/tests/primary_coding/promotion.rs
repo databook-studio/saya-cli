@@ -53,15 +53,24 @@ async fn child_claim_requires_explicit_promotion() {
         .list_coding_events(&job_id, None, 100)
         .await
         .unwrap();
-    let sequence = NonZeroU64::new(
-        events
-            .events
-            .last()
-            .map(|event| event.sequence().get())
-            .unwrap_or(0)
-            + 1,
+    let last = events
+        .events
+        .last()
+        .map(|event| event.sequence().get())
+        .unwrap_or(0);
+    let running_sequence = NonZeroU64::new(last + 1).unwrap();
+    let sequence = NonZeroU64::new(last + 2).unwrap();
+    let running = CodingEventV1::new(
+        running_sequence,
+        job_id.clone(),
+        Some(agent.clone()),
+        Some(invocation.clone()),
+        CodingEventKind::StateChanged {
+            state: JobState::Running,
+        },
     )
     .unwrap();
+    fixture.store.append_coding_event(running).await.unwrap();
     let event = CodingEventV1::new(
         sequence,
         job_id.clone(),
