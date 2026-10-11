@@ -4,7 +4,7 @@ use saya_config::{ExtensionProtocol, ExtensionToolEffect};
 use saya_harness::{
     coding::{
         extensions::{
-            ExtensionConfig,
+            ExtensionConfig, ExtensionError,
             lsp::LspClient,
             mcp::{McpClient, McpPolicy, McpToolEffect},
         },
@@ -41,8 +41,13 @@ impl ChildCodingOperations {
         let root = PathBuf::from(verified.path().as_str());
         let sandbox =
             RunSandbox::new([root.clone()], std::iter::empty()).map_err(CodingError::owner)?;
-        let spawn = match sandbox
-            .prepare(&self.application.program_dir)
+        // The startup probe measures this host with real sandboxed children;
+        // that measurement is synchronous and slow, so it runs on the
+        // blocking pool and never stalls the job's runtime.
+        let program_dir = self.application.program_dir.clone();
+        let spawn = match tokio::task::spawn_blocking(move || sandbox.prepare(&program_dir))
+            .await
+            .map_err(CodingError::owner)?
             .map_err(CodingError::owner)?
         {
             SandboxProvision::Proven { spawn, .. } => spawn,
@@ -88,8 +93,12 @@ impl ChildCodingOperations {
                 .collect(),
         )
         .map_err(CodingError::owner)?;
-        if let Some(tool) = tool {
-            policy.authorize(tool).map_err(CodingError::owner)?;
+        if let Some(tool) = tool
+            && let Err(error) = policy.authorize(tool)
+        {
+            // No server was contacted and no process spawned: the refusal is
+            // the tool's whole result, and no effect permit stays uncertain.
+            return Ok(denial_outcome(&error));
         }
         let mut client = McpClient::connect(config, token)
             .await
@@ -104,7 +113,16 @@ impl ChildCodingOperations {
         .await;
         let shutdown = client.shutdown().await;
         shutdown.map_err(CodingError::owner)?;
-        result.map_err(CodingError::owner)
+        match result {
+            Ok(value) => Ok(value),
+            // A bounded exchange ends deterministically: the policy refused,
+            // or the client's bound rejected a listing or response. The
+            // spawned process still settled through the receipt, so the
+            // effect is known — the denial is data for the model, the way a
+            // check's receipt carries a known nonzero exit.
+            Err(error) if bounded_denial(&error) => Ok(denial_outcome(&error)),
+            Err(error) => Err(CodingError::owner(error)),
+        }
     }
     pub(crate) async fn lsp(
         &self,
@@ -147,4 +165,33 @@ impl ChildCodingOperations {
             json!({"path":path,"document_sha256":document.digest,"version":diagnostics.version,"diagnostics":diagnostics.diagnostics.iter().map(|item|json!({"line":item.line,"character":item.character,"severity":item.severity,"message":saya_types::redact(&item.message)})).collect::<Vec<_>>(),"edits_applied":false}),
         )
     }
+}
+
+/// Whether one MCP exchange error is a bounded, deterministic denial rather
+/// than a job-failing uncertainty: the trusted policy refused the tool, the
+/// client's own bound rejected a listing or response, or the server broke the
+/// exchange (pipe or timeout) while the spawned process still settles through
+/// its receipt. Cancellation, configuration, and platform gaps stay errors.
+fn bounded_denial(error: &ExtensionError) -> bool {
+    matches!(
+        error,
+        ExtensionError::UntrustedTool
+            | ExtensionError::ApprovalRequired
+            | ExtensionError::Protocol
+            | ExtensionError::Limit
+            | ExtensionError::Process
+            | ExtensionError::Timeout
+    )
+}
+
+/// The denial as the tool's data result: what the bounded exchange decided
+/// and the fixed reason text. No server content rides in a denial.
+fn denial_outcome(error: &ExtensionError) -> Value {
+    let outcome = match error {
+        ExtensionError::UntrustedTool | ExtensionError::ApprovalRequired => "refused",
+        ExtensionError::Limit => "dropped",
+        ExtensionError::Process | ExtensionError::Timeout => "failed",
+        _ => "rejected",
+    };
+    json!({"outcome":outcome,"reason":error.to_string()})
 }

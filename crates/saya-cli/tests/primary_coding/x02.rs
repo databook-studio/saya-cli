@@ -26,9 +26,9 @@ async fn coding_mcp_dispatches_only_an_explicit_read_only_profile() {
 async fn coding_mcp_refuses_untrusted_effects_before_server_side_effects() {
     for effect in [None, Some("unknown"), Some("mutating")] {
         let script = x02_support::server(x02_support::listed("inspect"), x02_support::result());
-        let profile = effect.map_or_else(String::new, |effect| {
-            x02_support::profile(&script, Some(effect))
-        });
+        // Every iteration configures the server profile; `None` declares no
+        // trusted tool policy at all, so any tool call must be refused.
+        let profile = x02_support::profile(&script, effect);
         let run = invoke(&profile).await;
 
         assert!(!run.checkout.join("mcp-called").exists(), "{effect:?}");
@@ -99,7 +99,7 @@ async fn invoke(profile: &str) -> Invocation {
         .create(request, &approval, CancellationToken::new())
         .await
         .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(20), job.run(&NoopEventSink))
+    tokio::time::timeout(std::time::Duration::from_secs(60), job.run(&NoopEventSink))
         .await
         .unwrap()
         .unwrap();
