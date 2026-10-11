@@ -87,9 +87,13 @@ async fn native_review_shows_complete_current_diagnostic_evidence() {
         "tracked.txt"
     );
     assert_eq!(check["diagnostic_delta"]["available"], false);
+    // The first review of a diagnostics-configured candidate mints and
+    // commits its baseline (review.rs prepare_diagnostic_deltas +
+    // commit_pending), so the summary names the mint — the same flow the
+    // mints_then_reuses test asserts on its first review.
     assert_eq!(
         review.preview()["diagnostic_delta"]["reason"],
-        "comparable_baseline_not_minted"
+        "baseline_minted_for_future_review"
     );
 }
 
