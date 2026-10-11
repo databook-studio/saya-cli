@@ -76,12 +76,25 @@ fn redact_markers(value: &str) -> String {
         };
         output.push_str(&value[cursor..start + marker.len()]);
         let value_start = start + marker.len();
-        let end = value[value_start..]
-            .find(|character: char| {
-                character.is_whitespace() || character == '&' || character == ';'
-            })
-            .map(|offset| value_start + offset)
-            .unwrap_or(value.len());
+        let rest = &value[value_start..];
+        let end = match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let after_open = value_start + quote.len_utf8();
+                value[after_open..]
+                    .find(quote)
+                    .map(|offset| after_open + offset + quote.len_utf8())
+                    .unwrap_or(value.len())
+            }
+            _ => rest
+                .find(|character: char| {
+                    character.is_whitespace()
+                        || character == '&'
+                        || character == ';'
+                        || character == '"'
+                })
+                .map(|offset| value_start + offset)
+                .unwrap_or(value.len()),
+        };
         output.push_str("[redacted]");
         cursor = end;
     }
