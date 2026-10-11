@@ -6,6 +6,8 @@ use super::{
 use saya_agent::CancellationToken;
 use serde_json::{Value, json};
 
+const PROTOCOL_VERSION: &str = "2025-06-18";
+
 /// One serialized, bounded MCP stdio connection. No external agent fallback.
 pub struct McpClient {
     process: ProtocolProcess,
@@ -24,13 +26,13 @@ impl McpClient {
             .request(
                 "initialize",
                 json!({
-                    "protocolVersion":"2024-11-05", "capabilities":{},
+                    "protocolVersion":PROTOCOL_VERSION, "capabilities":{},
                     "clientInfo":{"name":"saya", "version":"0.5.0"}
                 }),
                 cancel,
             )
             .await?;
-        if response.get("protocolVersion").and_then(Value::as_str) != Some("2024-11-05") {
+        if response.get("protocolVersion").and_then(Value::as_str) != Some(PROTOCOL_VERSION) {
             process.shutdown().await?;
             return Err(ExtensionError::Protocol);
         }
