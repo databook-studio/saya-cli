@@ -223,7 +223,11 @@ async fn resume_unknown_or_unsettled_keeps_charged_and_slots_consumed() {
         )
         .await;
     assert!(matches!(child_denied, Err(EffectAdmissionError::Denied)));
-    // The fold leaves the durable records untouched.
+    // The fold leaves the durable records untouched: four reservations —
+    // the child slot from `begin_child`, both model requests, and the
+    // physical attempt — of which three were never settled: the child run
+    // was never finished, so its slot record stays settlement-less and
+    // its charge retained as consumed capacity.
     let reservations = store
         .list_coding_budget_reservations(&fixture.job, None, 100)
         .await
@@ -235,7 +239,7 @@ async fn resume_unknown_or_unsettled_keeps_charged_and_slots_consumed() {
             .iter()
             .filter(|row| row.settlement.is_none())
             .count(),
-        2
+        3
     );
     assert_eq!(
         reservations
