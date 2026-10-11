@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-use super::{EndpointDiagnostics, redact_endpoint};
+use super::{CheckProfileDiagnostics, EndpointDiagnostics, redact_endpoint};
 use crate::{ColorChoice, CompactionMode, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice};
 
 /// A display-safe view of the *effective* runtime settings, with no resolved
@@ -43,6 +43,8 @@ pub struct ResolvedDiagnostics {
     pub coding_max_tool_calls: usize,
     pub coding_max_known_tokens: u64,
     pub coding_max_elapsed_seconds: u64,
+    /// Safe effective profile summaries; argv bodies are never included.
+    pub coding_check_profiles: BTreeMap<String, CheckProfileDiagnostics>,
     pub jobs_wall_clock_seconds: Option<u64>,
     pub jobs_tokens_per_endpoint: BTreeMap<String, u64>,
     pub jobs_turns: Option<u64>,
@@ -99,6 +101,17 @@ impl ResolvedConfig {
             coding_max_tool_calls: self.coding.max_tool_calls,
             coding_max_known_tokens: self.coding.max_known_tokens,
             coding_max_elapsed_seconds: self.coding.max_elapsed_seconds,
+            coding_check_profiles: self
+                .coding
+                .check_profiles
+                .iter()
+                .map(|(name, profile)| {
+                    (
+                        name.clone(),
+                        CheckProfileDiagnostics::from_resolved(profile),
+                    )
+                })
+                .collect(),
             jobs_wall_clock_seconds: self.jobs.wall_clock_seconds,
             jobs_tokens_per_endpoint: self.jobs.tokens_per_endpoint.clone(),
             jobs_turns: self.jobs.turns,

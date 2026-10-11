@@ -1,5 +1,7 @@
 use super::*;
 
+pub const MAX_CONFIG_FILE_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
@@ -41,16 +43,46 @@ pub struct ConfigFile {
 
 impl ConfigFile {
     pub fn from_toml(value: &str) -> Result<Self, ConfigError> {
+        if value.len() > MAX_CONFIG_FILE_BYTES {
+            return Err(ConfigError::ConfigFileTooLarge {
+                bytes: value.len(),
+                max_bytes: MAX_CONFIG_FILE_BYTES,
+            });
+        }
         toml::from_str(value).map_err(|error| {
-            inline_secret_hint(value)
-                .map(ConfigError::Parse)
-                .unwrap_or_else(|| ConfigError::Parse(error.to_string()))
+            let message =
+                inline_secret_hint(value).unwrap_or_else(|| safe_parse_message(value, &error));
+            ConfigError::Parse(message)
         })
     }
 
     pub fn redacted_diagnostics(&self) -> RedactedDiagnostics {
         RedactedDiagnostics::from_file(self)
     }
+}
+
+fn safe_parse_message(source: &str, error: &toml::de::Error) -> String {
+    let message = error.message();
+    let safe = if message.starts_with("unknown field ")
+        || message.starts_with("missing field ")
+        || message.starts_with("duplicate field ")
+    {
+        message.to_owned()
+    } else if let Some((_, expected)) = message.rsplit_once(", expected ") {
+        format!("invalid TOML value, expected {expected}")
+    } else {
+        "invalid TOML input".to_owned()
+    };
+    let Some(span) = error.span() else {
+        return safe;
+    };
+    let prefix = source.get(..span.start).unwrap_or_default();
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit('\n')
+        .next()
+        .map_or(1, |line| line.chars().count() + 1);
+    format!("{safe} at line {line}, column {column}")
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

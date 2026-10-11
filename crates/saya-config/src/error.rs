@@ -4,6 +4,14 @@ use thiserror::Error;
 pub enum ConfigError {
     #[error("invalid TOML: {0}")]
     Parse(String),
+    #[error("config file has {bytes} bytes; maximum is {max_bytes}")]
+    ConfigFileTooLarge { bytes: usize, max_bytes: usize },
+    #[error("invalid setting coding.check_profiles.{field}")]
+    InvalidCheckProfile { field: &'static str },
+    #[error("coding check profile map has {value} entries; maximum is {max}")]
+    TooManyCheckProfiles { value: usize, max: usize },
+    #[error("configured coding check profile was not found")]
+    UnknownCheckProfile,
     #[error("invalid environment value for {name}: {reason}")]
     InvalidEnvironment { name: String, reason: String },
     #[error("no connection profile was selected")]
