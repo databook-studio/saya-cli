@@ -55,14 +55,14 @@ pub struct PersistedDiagnosticBaseline {
 }
 
 impl PersistedDiagnosticBaseline {
-    pub(crate) fn from_minted(
-        evidence: &CheckDiagnostics,
-        _baseline: &DiagnosticBaseline<'_>,
+    pub(crate) fn from_proof(
+        baseline: &DiagnosticBaseline<'_>,
     ) -> Result<Self, DiagnosticEvidenceError> {
+        let evidence = baseline.evidence();
         let diagnostics = evidence
             .diagnostics()
             .map_err(|_| DiagnosticEvidenceError::Incomplete)?
-            .clone();
+            .map(redacted_diagnostics);
         Ok(Self {
             key: BaselineIdentity::from_receipt(evidence),
             format: evidence.format(),
@@ -115,8 +115,6 @@ impl PersistedDiagnosticBaseline {
         if diagnostics.len() > MAX_DIAGNOSTICS {
             return Err(DiagnosticBaselineWireError::Malformed);
         }
-        let mut diagnostics = diagnostics;
-        diagnostics.sort();
         if diagnostics.windows(2).any(|pair| pair[0] > pair[1]) {
             return Err(DiagnosticBaselineWireError::Malformed);
         }
@@ -249,6 +247,23 @@ pub(crate) fn receipt_matches(receipt: &CheckReceipt, baseline: &BaselineIdentit
         && receipt.profile_id == baseline.profile_id
         && receipt.wire.job_id() == &baseline.job_id
         && receipt_identity_digest(receipt) == baseline.comparison_sha256
+}
+
+pub(crate) fn redacted_diagnostics(diagnostics: &DiagnosticSet) -> DiagnosticSet {
+    DiagnosticSet::new(
+        diagnostics
+            .entries()
+            .iter()
+            .map(|diagnostic| {
+                Diagnostic::new(
+                    diagnostic.severity(),
+                    diagnostic.code().map(str::to_owned),
+                    saya_types::redact(diagnostic.message()),
+                    diagnostic.locations().to_vec(),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn valid_reference(value: &str) -> bool {

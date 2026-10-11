@@ -118,6 +118,7 @@ impl NativeCodingJob {
             &serde_json::to_vec(&preview).map_err(CodingError::owner)?,
             1024 * 1024,
         )?;
+        super::diagnostic_baseline::commit_pending(&diagnostic_deltas)?;
         Ok(CodingReview {
             job: self.job_id().clone(),
             epoch: self.epoch,

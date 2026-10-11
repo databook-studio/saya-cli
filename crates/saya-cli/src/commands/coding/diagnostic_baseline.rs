@@ -11,7 +11,10 @@ const BASELINE_PREFIX: &str = "checks-diagnostic-baseline-";
 
 #[derive(Debug)]
 pub(super) enum DiagnosticDeltaState {
-    BaselineMinted,
+    BaselinePending {
+        path: PathBuf,
+        record: PersistedDiagnosticBaseline,
+    },
     Available(DiagnosticDelta),
     Unavailable(&'static str),
 }
@@ -19,7 +22,7 @@ pub(super) enum DiagnosticDeltaState {
 impl DiagnosticDeltaState {
     pub(super) fn preview(&self) -> Value {
         match self {
-            Self::BaselineMinted => {
+            Self::BaselinePending { .. } => {
                 json!({"available":false,"reason":"baseline_minted_for_future_review"})
             }
             Self::Unavailable(reason) => json!({"available":false,"reason":reason}),
@@ -111,16 +114,16 @@ impl NativeCodingJob {
             Ok(record) => record,
             Err(_) => return DiagnosticDeltaState::Unavailable("baseline_unavailable"),
         };
-        let bytes = match record.to_bytes() {
-            Ok(bytes) => bytes,
-            Err(_) => return DiagnosticDeltaState::Unavailable("baseline_oversized"),
-        };
-        if bytes.len() > MAX_DIAGNOSTIC_BASELINE_BYTES {
+        if record
+            .to_bytes()
+            .map(|bytes| bytes.len() <= MAX_DIAGNOSTIC_BASELINE_BYTES)
+            != Ok(true)
+        {
             return DiagnosticDeltaState::Unavailable("baseline_oversized");
         }
-        match super::context::write_new(path, &bytes, MAX_DIAGNOSTIC_BASELINE_BYTES) {
-            Ok(()) => DiagnosticDeltaState::BaselineMinted,
-            Err(_) => DiagnosticDeltaState::Unavailable("baseline_persist_failed"),
+        DiagnosticDeltaState::BaselinePending {
+            path: path.to_owned(),
+            record,
         }
     }
 
@@ -156,6 +159,24 @@ impl NativeCodingJob {
     }
 }
 
+pub(super) fn commit_pending(states: &[Option<DiagnosticDeltaState>]) -> Result<(), CodingError> {
+    let mut written = Vec::new();
+    for state in states.iter().filter_map(Option::as_ref) {
+        let DiagnosticDeltaState::BaselinePending { path, record } = state else {
+            continue;
+        };
+        let bytes = record.to_bytes().map_err(|_| CodingError::InvalidRequest)?;
+        if let Err(error) = super::context::write_new(path, &bytes, MAX_DIAGNOSTIC_BASELINE_BYTES) {
+            for path in written {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(error);
+        }
+        written.push(path.clone());
+    }
+    Ok(())
+}
+
 pub(super) fn summary(states: &[Option<DiagnosticDeltaState>]) -> Value {
     let states = states.iter().filter_map(Option::as_ref).collect::<Vec<_>>();
     if states.is_empty() {
@@ -176,7 +197,9 @@ pub(super) fn summary(states: &[Option<DiagnosticDeltaState>]) -> Value {
     let reason = states
         .iter()
         .find_map(|state| match state {
-            DiagnosticDeltaState::BaselineMinted => Some("baseline_minted_for_future_review"),
+            DiagnosticDeltaState::BaselinePending { .. } => {
+                Some("baseline_minted_for_future_review")
+            }
             DiagnosticDeltaState::Unavailable(reason) => Some(*reason),
             _ => None,
         })

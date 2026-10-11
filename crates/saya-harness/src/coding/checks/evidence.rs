@@ -52,6 +52,12 @@ pub struct DiagnosticBaseline<'a> {
     evidence: &'a CheckDiagnostics,
 }
 
+impl<'a> DiagnosticBaseline<'a> {
+    pub(crate) fn evidence(&self) -> &'a CheckDiagnostics {
+        self.evidence
+    }
+}
+
 pub(super) fn diagnostic_stream(
     format: CheckDiagnosticFormat,
 ) -> Result<OutputStream, CheckExecutionError> {
@@ -143,7 +149,7 @@ impl CheckDiagnostics {
         &self,
         baseline: &DiagnosticBaseline<'_>,
     ) -> Result<PersistedDiagnosticBaseline, DiagnosticEvidenceError> {
-        PersistedDiagnosticBaseline::from_minted(self, baseline)
+        PersistedDiagnosticBaseline::from_proof(baseline)
     }
 
     pub async fn compare_persisted_baseline(
@@ -153,7 +159,7 @@ impl CheckDiagnostics {
         token: &CancellationToken,
     ) -> Result<DiagnosticDelta, DiagnosticEvidenceError> {
         self.receipt.verify_at_use(ownership, token).await?;
-        let current = self.complete()?;
+        let current = super::diagnostics::baseline_wire::redacted_diagnostics(self.complete()?);
         if self.format != baseline.format
             || current.parser_revision() != baseline.parser_revision
             || !super::diagnostics::baseline_wire::receipt_matches(&self.receipt, &baseline.key)
@@ -162,7 +168,7 @@ impl CheckDiagnostics {
         }
         Ok(DiagnosticDelta::between_persisted(
             &baseline.diagnostics,
-            current,
+            &current,
             baseline.key.source_sha256.clone(),
             baseline.key.outcome,
             &self.receipt,

@@ -136,7 +136,7 @@ async fn native_review_mints_then_reuses_a_diagnostic_baseline() {
 
 #[tokio::test]
 async fn corrupt_diagnostic_baseline_stays_unavailable_and_is_not_overwritten() {
-    let output = r#"{"reason":"compiler-message","message":{"message":"unused variable x","code":{"code":"unused_variables"},"level":"warning","spans":[{"file_name":"tracked.txt","line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true}]}}"#;
+    let output = r#"{"reason":"compiler-message","message":{"message":"password=hunter2","code":{"code":"unused_variables"},"level":"warning","spans":[{"file_name":"tracked.txt","line_start":1,"line_end":1,"column_start":1,"column_end":2,"is_primary":true}]}}"#;
     let fixture = Fixture::with_diagnostic_output("review-baseline-corrupt", output).await;
     let request = CodingJobRequest::new(
         JobId::parse("job-review-baseline-corrupt").unwrap(),
@@ -166,6 +166,7 @@ async fn corrupt_diagnostic_baseline_stays_unavailable_and_is_not_overwritten() 
                 .is_some_and(|name| name.starts_with("checks-diagnostic-baseline-"))
         })
         .expect("review should persist a diagnostic baseline");
+    assert!(!String::from_utf8_lossy(&std::fs::read(&baseline).unwrap()).contains("hunter2"));
     std::fs::write(&baseline, b"tampered").unwrap();
 
     let review = job.review_existing(&candidate).await.unwrap();
