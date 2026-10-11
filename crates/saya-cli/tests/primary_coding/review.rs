@@ -57,7 +57,7 @@ async fn native_review_shows_complete_current_diagnostic_evidence() {
         JobId::parse("job-review-diagnostics").unwrap(),
         "review diagnostics".into(),
         vec!["tracked.txt".into()],
-        vec![],
+        vec!["printf".into()],
     )
     .unwrap();
     let approval =
@@ -101,7 +101,7 @@ async fn native_review_keeps_process_evidence_when_diagnostics_cannot_parse() {
         JobId::parse("job-review-malformed").unwrap(),
         "review malformed diagnostics".into(),
         vec!["tracked.txt".into()],
-        vec![],
+        vec!["printf".into()],
     )
     .unwrap();
     let approval =
