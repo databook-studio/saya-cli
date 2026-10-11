@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use saya_agent::{ToolDefinition, ToolError, ToolExecutor};
+use saya_agent::{LocalStateEffect, ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::policy::ChildAuthorityView;
 use saya_harness::runner::RunProgram;
 use saya_types::{ManagedCheckoutId, WorkspacePath};
@@ -26,6 +26,9 @@ pub(crate) struct ChildTools {
 
 /// Builds the definitions and the executor for one child from one view: the
 /// two stay in agreement because `permit` is computed once and used for both.
+/// Write-shaped child tools always go through the child decider; the loop's
+/// own `permit_workspace_writes` limit is projected from the view by the
+/// composition root.
 pub(crate) fn child_toolset(
     view: &ChildAuthorityView,
     pair: &TrustedCheckoutPair,
@@ -38,6 +41,7 @@ pub(crate) fn child_toolset(
     let permit = view.managed_checkout_id().is_some() && !view.write_paths().is_empty();
     let mut definitions = Vec::new();
     workspace::append_definitions(&mut definitions, permit);
+    require_decider_for_writes(&mut definitions);
     let tools = DatabaseTools::for_child_checkout(Arc::clone(&pair.root));
     Ok((
         definitions,
@@ -51,12 +55,30 @@ pub(crate) fn child_toolset(
     ))
 }
 
+/// Write-shaped child tools always go through the child decider: every
+/// definition whose effect is a workspace write is marked so the loop
+/// consults the child's decider before running it; the loop's own
+/// `permit_workspace_writes` limit is projected from the view by the
+/// composition root.
+fn require_decider_for_writes(definitions: &mut [ToolDefinition]) {
+    for definition in definitions {
+        if matches!(
+            definition.effect.local_state,
+            LocalStateEffect::WriteWorkspace
+        ) {
+            definition.effect.requires_approval = true;
+        }
+    }
+}
+
 /// Builds the workspace half with [`child_toolset`] and, when the view's
 /// scope admits process work at all, adds the composition root's
 /// already-confined runner: its definition is appended and the executor
 /// routes `run_program` to it after admission. Refused when the view grants
 /// neither a runner nor an interpreter scope, so the tool is never surfaced
-/// without admission behind it.
+/// without admission behind it. Write-shaped child tools always go through
+/// the child decider; the loop's own `permit_workspace_writes` limit is
+/// projected from the view by the composition root.
 pub(crate) fn child_toolset_with_runner(
     view: &ChildAuthorityView,
     pair: &TrustedCheckoutPair,
@@ -67,6 +89,7 @@ pub(crate) fn child_toolset_with_runner(
         return Err(ChildToolsError::RunnerNotAdmitted);
     }
     definitions.push(runner.definition());
+    require_decider_for_writes(&mut definitions);
     tools.runner = Some(runner);
     Ok((definitions, tools))
 }
