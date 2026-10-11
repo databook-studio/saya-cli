@@ -144,6 +144,10 @@ async fn detached_worktree_neutralizes_helpers_and_preserves_original_state() {
         .await
         .unwrap();
     assert!(!worktree_path.exists());
+    // Read before any further Git command in the original repository: a
+    // `git status` with the now-configured `core.fsmonitor` itself rewrites
+    // the index (FSMN extension) without touching this operation's contract.
+    assert_eq!(fs::read(repo.root.join(".git/index")).unwrap(), index);
     assert_eq!(
         run_git(
             &git,
@@ -155,7 +159,6 @@ async fn detached_worktree_neutralizes_helpers_and_preserves_original_state() {
         ),
         status
     );
-    assert_eq!(fs::read(repo.root.join(".git/index")).unwrap(), index);
 }
 
 #[path = "w01_limits.rs"]
