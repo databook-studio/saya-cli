@@ -16,29 +16,19 @@ mod refusal_tests;
 /// refusal (a refused owner start settles its permit `NotStarted`); `read`
 /// fails only before anything is read; `stop`'s unknown-id refusal fires
 /// before any process exists, while a stop that joined a real command keeps
-/// its genuinely uncertain error.
+/// its genuinely uncertain error. The reason is the error's own display only:
+/// `CodingError::Owner` can wrap arbitrary filesystem, checkout, confinement
+/// or I/O errors, so its source chain (internal paths, implementation text)
+/// is never model-facing data.
 fn command_refusal_data(name: &str, error: &CodingError) -> Option<Value> {
     let pre_effect = match name {
         "coding_command_start" | "coding_command_read" => true,
         "coding_command_stop" => matches!(error, CodingError::NotOwned),
         _ => false,
     };
-    pre_effect.then(|| json!({"outcome":"refused","reason":reason_chain(error)}))
+    pre_effect.then(|| json!({"outcome":"refused","reason":error.to_string()}))
 }
 
-/// The refusal text carries the source chain: the owner error's own display
-/// is generic ("native coding operation failed") while the useful cause — a
-/// budget denial, a capacity refusal — lives in its source.
-fn reason_chain(error: &CodingError) -> String {
-    let mut text = error.to_string();
-    let mut source = std::error::Error::source(error);
-    while let Some(cause) = source {
-        text.push_str(": ");
-        text.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    text
-}
 pub(crate) fn definitions(commands: bool) -> Vec<ToolDefinition> {
     let mut definitions = vec![
         super::definition(

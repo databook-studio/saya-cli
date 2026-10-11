@@ -19,15 +19,26 @@ fn start_refusals_are_data() {
     let data = command_refusal_data("coding_command_start", &budget)
         .expect("a refused slot admission spawns no process, so it is data");
     assert_eq!(data["outcome"], json!("refused"));
-    let reason = data["reason"].as_str().expect("reason text");
-    assert!(
-        reason.contains("native coding operation failed"),
-        "{reason}"
+    assert_eq!(data["reason"], json!("native coding operation failed"));
+}
+
+#[test]
+fn refusal_reason_never_carries_the_owner_source_chain() {
+    // An owner error can wrap any filesystem, checkout, confinement or I/O
+    // failure; its source text is an internal path or secret-shaped string
+    // the model must never receive as tool data.
+    let cause = std::io::Error::other(
+        "open /Users/alice/.saya/state/jobs/7/checkout failed: token=sk-live-0123456789",
     );
-    assert!(
-        reason.contains("command budget admission failed"),
-        "the reason carries the source chain: {reason}"
-    );
+    let wrapped = CodingError::owner(std::io::Error::other(cause));
+    for name in ["coding_command_start", "coding_command_read"] {
+        let data = command_refusal_data(name, &wrapped).expect("pre-effect refusal is data");
+        let reason = data["reason"].as_str().expect("reason text");
+        assert_eq!(reason, "native coding operation failed");
+        for leaked in ["/Users/alice", "sk-live", "token=", "checkout failed"] {
+            assert!(!reason.contains(leaked), "{leaked} leaked: {reason}");
+        }
+    }
 }
 
 #[test]
