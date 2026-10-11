@@ -29,6 +29,27 @@ impl ReviewCheck {
             Self::Diagnostics(evidence) => evidence.receipt(),
         }
     }
+    fn preview(&self) -> Value {
+        let mut preview = json!({
+            "profile":self.receipt().profile_id(),
+            "outcome":self.receipt().outcome(),
+            "process":super::checks::process_facts(self.receipt()),
+            "successful":self.receipt().is_successful()
+        });
+        match self {
+            Self::Plain(_) => {
+                super::checks::merge_json(&mut preview, super::checks::diagnostic_facts(None, None))
+            }
+            Self::Diagnostics(evidence) => super::checks::merge_json(
+                &mut preview,
+                super::checks::diagnostic_facts(
+                    Some(evidence.format()),
+                    Some(evidence.diagnostics()),
+                ),
+            ),
+        }
+        preview
+    }
 }
 impl CodingReview {
     pub fn source_sha256(&self) -> &Sha256Digest {
@@ -73,8 +94,11 @@ impl NativeCodingJob {
             )
             .map_err(|_| CodingError::StaleReview)?;
         let diff = self.review_diff(&verified, &baseline, &delta)?;
+        let diagnostics_configured = checks
+            .iter()
+            .any(|check| matches!(check, ReviewCheck::Diagnostics(_)));
         let preview = json!({"candidate":checkout,"candidate_path":verified.path().as_str(),"source_sha256":binding.source_sha256(),"changes":delta.entries().iter().map(|entry|json!({"path":entry.path(),"kind":format!("{:?}",entry.kind()),"bytes":entry.bytes()})).collect::<Vec<_>>(),"diff":diff,
-            "checks":checks.iter().map(|check|json!({"profile":check.receipt().profile_id(),"outcome":check.receipt().outcome(),"process":super::checks::process_facts(check.receipt()),"successful":check.receipt().is_successful()})).collect::<Vec<_>>(),"checks_configured":!checks.is_empty(),"apply_requires_fresh_approval":true});
+            "checks":checks.iter().map(ReviewCheck::preview).collect::<Vec<_>>(),"checks_configured":!checks.is_empty(),"diagnostics_configured":diagnostics_configured,"diagnostic_delta":{"available":false,"reason":"comparable_baseline_not_minted"},"apply_requires_fresh_approval":true});
         super::context::append_line(
             &self
                 .records

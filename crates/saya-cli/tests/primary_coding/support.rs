@@ -25,14 +25,17 @@ impl Fixture {
     pub async fn with_check(label: &str, endpoint: &str) -> Self {
         Self::build(label, Some(endpoint), true).await
     }
+    pub async fn with_diagnostic_output(label: &str, output: &str) -> Self {
+        Self::build_options(label, None, false, false, false, Some(output)).await
+    }
     async fn build(label: &str, endpoint: Option<&str>, check: bool) -> Self {
-        Self::build_options(label, endpoint, check, false, false).await
+        Self::build_options(label, endpoint, check, false, false, None).await
     }
     pub async fn with_deadline(label: &str, endpoint: &str) -> Self {
-        Self::build_options(label, Some(endpoint), false, true, false).await
+        Self::build_options(label, Some(endpoint), false, true, false, None).await
     }
     pub async fn with_slow_check(label: &str) -> Self {
-        Self::build_options(label, None, true, false, true).await
+        Self::build_options(label, None, true, false, true, None).await
     }
     async fn build_options(
         label: &str,
@@ -40,6 +43,7 @@ impl Fixture {
         check: bool,
         deadline: bool,
         slow: bool,
+        diagnostic_output: Option<&str>,
     ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let stamp = SystemTime::now()
@@ -100,7 +104,20 @@ impl Fixture {
         if deadline {
             runtime.resolved.coding.max_elapsed_seconds = 1;
         }
-        if check {
+        if let Some(output) = diagnostic_output {
+            let argument = serde_json::to_string(output).unwrap();
+            let file = saya_config::ConfigFile::from_toml(&format!(
+                "[coding.check_profiles.lint]\ncommand_id='diagnostic-check'\nprogram='printf'\nargv=[{argument}]\ntimeout_seconds=5\nenvironment_profile='confined'\ndiagnostic_format='cargo_json'\n"
+            ))
+            .unwrap();
+            runtime.resolved.coding.check_profiles = saya_config::resolve(
+                saya_config::ResolutionInput::new(saya_config::ConnectionsFile::default())
+                    .with_user(file),
+            )
+            .unwrap()
+            .coding
+            .check_profiles;
+        } else if check {
             let file=saya_config::ConfigFile::from_toml("[coding.check_profiles.lint]\ncommand_id='false-check'\nprogram='false'\nargv=[]\ntimeout_seconds=5\nenvironment_profile='confined'\n").unwrap();
             let file = if slow {
                 saya_config::ConfigFile::from_toml("[coding.check_profiles.lint]\ncommand_id='held-check'\nprogram='sleep'\nargv=['10']\ntimeout_seconds=15\nenvironment_profile='confined'\n").unwrap()

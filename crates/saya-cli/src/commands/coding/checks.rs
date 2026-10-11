@@ -1,12 +1,15 @@
 use super::{CodingApplication, CodingError};
 use saya_agent::CancellationToken;
 use saya_harness::coding::{
-    checks::{CheckExecutionInput, CheckInvocation, execute_check, execute_check_with_diagnostics},
+    checks::{
+        CheckDiagnosticError, CheckExecutionInput, CheckInvocation, DiagnosticSet, execute_check,
+        execute_check_with_diagnostics,
+    },
     commands::CommandOwner,
     policy::ChildAuthorityView,
     worktree::OwnershipInput,
 };
-use saya_types::{JobId, ManagedCheckoutId};
+use saya_types::{CheckDiagnosticFormat, JobId, ManagedCheckoutId};
 use serde_json::{Value, json};
 use std::{num::NonZeroU64, path::PathBuf, sync::Arc};
 
@@ -64,11 +67,17 @@ impl ChildCodingOperations {
             let result = execute_check_with_diagnostics(input)
                 .await
                 .map_err(CodingError::owner)?;
-            json!({"receipt":result.receipt().wire_receipt(),"process":process_facts(result.receipt()),"successful":result.receipt().is_successful(),
-                "diagnostics_complete":result.diagnostics().is_ok(),"diagnostic_count":result.diagnostics().ok().map(|set|set.entries().len()),"diagnostics":result.diagnostics().ok().map(|set|set.entries().iter().map(|entry|json!({"severity":format!("{:?}",entry.severity()),"code":entry.code(),"message":saya_types::redact(entry.message()),"locations":entry.locations().iter().map(|location|json!({"path":location.path(),"line":location.line_start(),"column":location.column_start()})).collect::<Vec<_>>()})).collect::<Vec<_>>())})
+            let mut output = json!({"receipt":result.receipt().wire_receipt(),"process":process_facts(result.receipt()),"successful":result.receipt().is_successful()});
+            merge_json(
+                &mut output,
+                diagnostic_facts(Some(result.format()), Some(result.diagnostics())),
+            );
+            output
         } else {
             let receipt = execute_check(input).await.map_err(CodingError::owner)?;
-            json!({"receipt":receipt.wire_receipt(),"process":process_facts(&receipt),"successful":receipt.is_successful(),"diagnostics_complete":false})
+            let mut output = json!({"receipt":receipt.wire_receipt(),"process":process_facts(&receipt),"successful":receipt.is_successful()});
+            merge_json(&mut output, diagnostic_facts(None, None));
+            output
         };
         result["checkout_id"] = json!(self.checkout);
         result["snapshot_id"] = json!(self.authority.snapshot_id());
@@ -107,4 +116,55 @@ pub(super) fn invocation(
 pub(super) fn process_facts(receipt: &saya_harness::coding::checks::CheckReceipt) -> Value {
     let process = receipt.process();
     json!({"pid":process.pid(),"exit_code":process.exit_code(),"signal":process.signal(),"timed_out":process.timed_out(),"cancelled":process.cancelled(),"killed_orphans":process.killed_orphans(),"joined":true})
+}
+
+pub(super) fn diagnostic_facts(
+    format: Option<CheckDiagnosticFormat>,
+    evidence: Option<Result<&DiagnosticSet, &CheckDiagnosticError>>,
+) -> Value {
+    let format_name = format.map(|format| match format {
+        CheckDiagnosticFormat::RustcJson => "rustc_json",
+        CheckDiagnosticFormat::CargoJson => "cargo_json",
+        _ => "unsupported",
+    });
+    let has_evidence = evidence.is_some();
+    let set = evidence
+        .as_ref()
+        .and_then(|result| result.as_ref().ok().copied());
+    let unavailable_reason = evidence
+        .and_then(|result| {
+            result.err().map(|error| match error {
+                CheckDiagnosticError::Capture(_) => "capture_failed",
+                CheckDiagnosticError::Parse(_) => "parse_failed",
+                CheckDiagnosticError::ProcessUncertain => "process_uncertain",
+                CheckDiagnosticError::OriginMismatch => "origin_mismatch",
+                _ => "evidence_unavailable",
+            })
+        })
+        .or_else(|| (format.is_some() && !has_evidence).then_some("evidence_unavailable"));
+    let entries = set.map(|set| {
+        set.entries()
+            .iter()
+            .map(|entry| {
+                json!({"severity":format!("{:?}",entry.severity()),"code":entry.code(),"message":saya_types::redact(entry.message()),"locations":entry.locations().iter().map(|location|json!({"path":location.path(),"line":location.line_start(),"column":location.column_start()})).collect::<Vec<_>>()})
+            })
+            .collect::<Vec<_>>()
+    });
+    json!({
+        "diagnostic_format":format_name,
+        "diagnostics_state":if format.is_none() { "not_configured" } else if set.is_some() { "complete" } else { "unavailable" },
+        "diagnostic_unavailable_reason":unavailable_reason,
+        "diagnostics_complete":set.is_some(),
+        "diagnostic_count":set.map(|set|set.entries().len()),
+        "diagnostics":entries,
+        "diagnostic_delta":{"available":false,"reason":"comparable_baseline_not_minted"}
+    })
+}
+
+pub(super) fn merge_json(target: &mut Value, fields: Value) {
+    if let (Some(target), Some(fields)) = (target.as_object_mut(), fields.as_object()) {
+        for (key, value) in fields {
+            target.insert(key.clone(), value.clone());
+        }
+    }
 }
