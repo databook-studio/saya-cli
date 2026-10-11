@@ -59,6 +59,10 @@ pub(super) fn spawn(
         _ => None,
     };
     let worker = std::thread::spawn(move || {
+        let senders = PanelSenders {
+            activity: tx,
+            receipts: receipt_tx,
+        };
         let result = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -66,7 +70,7 @@ pub(super) fn spawn(
             .and_then(|runtime_owner| {
                 runtime_owner
                     .block_on(work(
-                        command, runtime, store, repository, token, tx, receipt_tx, control,
+                        command, runtime, store, repository, token, senders, control,
                     ))
                     .map_err(|error| error.to_string())
             });
@@ -93,16 +97,23 @@ pub(super) fn spawn(
 fn deliver_outcome(receipts: &mpsc::SyncSender<CodingMessage>, text: String) {
     let _ = receipts.send(CodingMessage::Activity(text));
 }
+struct PanelSenders {
+    activity: mpsc::SyncSender<CodingMessage>,
+    receipts: mpsc::SyncSender<CodingMessage>,
+}
 async fn work(
     command: CodingCommand,
     runtime: RuntimeConfig,
     store: SqliteStateStore,
     repository: PathBuf,
     token: CancellationToken,
-    tx: mpsc::SyncSender<CodingMessage>,
-    receipts: mpsc::SyncSender<CodingMessage>,
+    senders: PanelSenders,
     mut controls: tokio::sync::mpsc::Receiver<CodingCommand>,
 ) -> Result<String, CodingError> {
+    let PanelSenders {
+        activity: tx,
+        receipts,
+    } = senders;
     let application = CodingApplication::session(runtime, store, &repository, &token).await?;
     let CodingCommand::Start {
         id,
