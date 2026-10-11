@@ -37,7 +37,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[]}}'
     let token = CancellationToken::new();
     let mut client = McpClient::connect(config, &token).await.unwrap();
     client.list_tools(&token).await.unwrap();
-    client.shutdown_with_receipt().await.unwrap();
+    assert!(client.shutdown_with_receipt().await.unwrap().joined);
 }
 
 #[tokio::test]
