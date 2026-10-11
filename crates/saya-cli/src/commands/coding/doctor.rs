@@ -32,8 +32,9 @@ impl CodingApplication {
         };
         let extensions_proven = !extension_health.is_empty()
             && extension_health.iter().all(|item| item["healthy"] == true);
-        // Remove only this unique empty probe directory; never a user checkout.
-        let writable = std::fs::remove_dir(&probe).is_ok();
+        // Remove only this unique probe directory (created above as doctor-<pid>-<n>);
+        // the sandbox battery leaves canary entries in it. Never a user checkout.
+        let writable = std::fs::remove_dir_all(&probe).is_ok();
         let extensions=coding.extensions.iter().map(|(name,profile)|json!({"name":name,"protocol":format!("{:?}",profile.protocol()),"installed":self.program_dir.join(profile.program()).is_file(),"tool_policy_count":profile.tools().len()})).collect::<Vec<_>>();
         let extensions_installed = extensions.iter().all(|item| item["installed"] == true);
         let required_protocols = coding
