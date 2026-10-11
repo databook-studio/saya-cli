@@ -5,6 +5,7 @@ use super::{provider::Provider, support::Fixture};
 use continuation_support::CaptureProvider;
 use saya_agent::{CancellationToken, NoopEventSink};
 use saya_cli::{CodingAuthorization, CodingError, CodingJobRequest};
+use saya_store::NewCodingChild;
 use saya_types::{
     AgentId, CodingEventKind, CodingEventV1, CodingResultOutcome, InvocationId, JobId, JobState,
     JoinedResultV1, ManagedCheckoutId,
@@ -213,6 +214,15 @@ async fn append_completion_history(fixture: &Fixture, job: &JobId) -> NonZeroU64
         let sequence = NonZeroU64::new(sequence).unwrap();
         let agent = AgentId::parse(&format!("history-{index:02}")).unwrap();
         let invocation = InvocationId::parse(&format!("inv-history-{index:02}")).unwrap();
+        fixture
+            .store
+            .create_coding_child(NewCodingChild {
+                job_id: job.clone(),
+                agent_id: agent.clone(),
+                current_invocation_id: invocation.clone(),
+            })
+            .await
+            .unwrap();
         let result = JoinedResultV1::new(
             job.clone(),
             agent.clone(),
