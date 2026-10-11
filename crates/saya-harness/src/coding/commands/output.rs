@@ -83,7 +83,7 @@ impl OutputStream {
 
 /// Why command output could not be stored or read: `Debug` and `Display`
 /// never leak message text, which could echo stored output or path details.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 #[non_exhaustive]
 pub enum CommandOutputError {
     #[error("this command session was not started with an output store")]

@@ -1,0 +1,172 @@
+use std::fs;
+
+use saya_harness::coding::{
+    policy::{
+        ChildAuthorityRequest, ChildRole, CommandCheckoutProfile, PlatformSupport,
+        RootDelegationInput, RootDelegationScope,
+    },
+    worktree::OwnershipInput,
+};
+use saya_harness::runner::{SharedCredentialSource, StaticCredentialSource};
+use saya_types::{
+    AgentId, Capabilities, InvocationId, RepositoryId, RunnerScope, Sha256Digest, SnapshotId,
+};
+use std::sync::Arc;
+
+#[path = "../w08/support.rs"]
+mod active;
+#[path = "../w05/create_support.rs"]
+mod create_support;
+#[path = "../w02_support.rs"]
+mod support;
+
+pub(super) struct Fixture {
+    active: active::Active,
+    authority: saya_harness::coding::policy::ChildAuthorityView,
+    pub(super) commands: &'static super::c02_support::Fixture,
+    pub(super) output_root: std::path::PathBuf,
+}
+
+pub(super) async fn fixture(label: &str) -> Option<Fixture> {
+    let commands = super::c02_support::fixture()?;
+    let active = active::active(label, "checkout-c03-real-exit").await;
+    let checkout = active.verified.checkout_id().clone();
+    let runner = RunnerScope::new(vec![super::c02_support::HELPER.to_owned()]).unwrap();
+    let capabilities = Capabilities {
+        runner: Some(runner),
+        ..Capabilities::default()
+    };
+    let root = RootDelegationScope::new(RootDelegationInput {
+        job_id: active.fixture.job.clone(),
+        agent_id: AgentId::parse("agent-c03").unwrap(),
+        invocation_id: InvocationId::parse("invocation-c03").unwrap(),
+        repository_id: active.fixture.captured.repository_id().clone(),
+        snapshot_id: active.verified.snapshot_id().clone(),
+        managed_checkout_id: Some(checkout),
+        policy_digest: Sha256Digest::parse(&"a".repeat(64)).unwrap(),
+        revocation_epoch: 0,
+        write_paths: Vec::new(),
+        capabilities: capabilities.clone(),
+        database_profiles: Vec::new(),
+    })
+    .unwrap();
+    let authority = root
+        .narrow(
+            ChildAuthorityRequest::new(
+                ChildRole::Implementer,
+                Vec::new(),
+                capabilities,
+                Vec::new(),
+            )
+            .unwrap(),
+            PlatformSupport {
+                command_profile: Some(CommandCheckoutProfile::IsolatedPrivateCheckout),
+                ..PlatformSupport::default()
+            },
+        )
+        .unwrap();
+    let output_root = active.fixture.temp.path().join("c03-output");
+    super::c02_support::create_private_dir(&output_root);
+    let output_root = fs::canonicalize(output_root).unwrap();
+    Some(Fixture {
+        active,
+        authority,
+        commands,
+        output_root,
+    })
+}
+
+impl Fixture {
+    pub(super) fn ownership(&self) -> OwnershipInput<'_> {
+        OwnershipInput {
+            store: &self.active.fixture.store,
+            service: &self.active.fixture.service,
+            repository: &self.active.fixture.repository,
+            artifacts: &self.active.fixture.artifacts,
+            job_id: &self.active.fixture.job,
+            checkout_id: self.active.verified.checkout_id(),
+        }
+    }
+
+    pub(super) fn authority(&self) -> &saya_harness::coding::policy::ChildAuthorityView {
+        &self.authority
+    }
+
+    pub(super) fn unrelated_authority(
+        &self,
+        snapshot: bool,
+    ) -> saya_harness::coding::policy::ChildAuthorityView {
+        let view = &self.authority;
+        let root = RootDelegationScope::new(RootDelegationInput {
+            job_id: view.job_id().clone(),
+            agent_id: view.agent_id().clone(),
+            invocation_id: view.invocation_id().clone(),
+            repository_id: if snapshot {
+                view.repository_id().clone()
+            } else {
+                RepositoryId::parse("unrelated-repository").unwrap()
+            },
+            snapshot_id: if snapshot {
+                SnapshotId::parse("unrelated-snapshot").unwrap()
+            } else {
+                view.snapshot_id().clone()
+            },
+            managed_checkout_id: view.managed_checkout_id().cloned(),
+            policy_digest: view.policy_digest().clone(),
+            revocation_epoch: view.revocation_epoch(),
+            write_paths: Vec::new(),
+            capabilities: view.capabilities().clone(),
+            database_profiles: Vec::new(),
+        })
+        .unwrap();
+        root.narrow(
+            ChildAuthorityRequest::new(
+                ChildRole::Implementer,
+                Vec::new(),
+                view.capabilities().clone(),
+                Vec::new(),
+            )
+            .unwrap(),
+            PlatformSupport {
+                command_profile: Some(CommandCheckoutProfile::IsolatedPrivateCheckout),
+                ..PlatformSupport::default()
+            },
+        )
+        .unwrap()
+    }
+
+    pub(super) fn commit_original_candidate_source(&self) {
+        fs::write(
+            self.active.root.join("tracked.txt"),
+            b"modified tracked bytes\n",
+        )
+        .unwrap();
+        self.active
+            .fixture
+            .git_output(&self.active.root, &["add", "-A"]);
+        self.active.fixture.git_output(
+            &self.active.root,
+            &[
+                "-c",
+                "user.name=saya",
+                "-c",
+                "user.email=saya@example.com",
+                "commit",
+                "-m",
+                "move candidate HEAD",
+            ],
+        );
+    }
+
+    pub(super) fn change_candidate_source(&self) {
+        fs::write(
+            self.active.root.join("tracked.txt"),
+            b"changed after check\n",
+        )
+        .unwrap();
+    }
+
+    pub(super) fn resolver(&self) -> SharedCredentialSource {
+        Arc::new(StaticCredentialSource::new(Vec::<(String, String)>::new()))
+    }
+}
