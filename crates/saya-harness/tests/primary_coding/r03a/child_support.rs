@@ -90,7 +90,7 @@ pub(super) fn tool_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
-        concurrency: ToolConcurrency::Serial,
+        concurrency: ToolConcurrency::Concurrent,
         completion: Some("inspection complete".to_owned()),
     }
 }
