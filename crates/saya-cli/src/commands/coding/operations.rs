@@ -35,6 +35,21 @@ impl CodingApplication {
             .map_err(CodingError::owner)?;
         Ok(json!({"job_id":job,"cancel_requested":true,"new_request":recorded}))
     }
+    pub async fn list(&self, after: Option<&JobId>) -> Result<Value, CodingError> {
+        let page = self
+            .store
+            .list_coding_jobs(after, 100)
+            .await
+            .map_err(CodingError::owner)?;
+        let identity = self
+            .service
+            .inventory_repository(&self.repository, &saya_agent::CancellationToken::new())
+            .await
+            .map_err(CodingError::owner)?;
+        Ok(
+            json!({"jobs":page.items.iter().filter(|record| &record.repository_id==identity.identity().repository_id()).map(|record|json!({"job_id":record.job_id,"state":record.state})).collect::<Vec<_>>(),"next_cursor":page.next_cursor}),
+        )
+    }
 }
 impl NativeCodingJob {
     pub async fn status(&self) -> Result<Value, CodingError> {
