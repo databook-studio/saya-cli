@@ -4,6 +4,8 @@
 mod commands;
 #[path = "coding_lifecycle/continuation.rs"]
 mod continuation;
+#[path = "coding_lifecycle/controls.rs"]
+mod controls;
 #[path = "coding_lifecycle/native.rs"]
 mod native;
 #[path = "coding_lifecycle/provider.rs"]

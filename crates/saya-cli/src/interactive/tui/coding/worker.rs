@@ -9,8 +9,11 @@ use crate::{
 use async_trait::async_trait;
 use saya_agent::{ApprovalDecider, CancellationToken, NoopEventSink, ToolDefinition};
 use saya_store::SqliteStateStore;
-use serde_json::Value;
-use std::{path::PathBuf, sync::mpsc};
+use serde_json::{Value, json};
+use std::{
+    path::PathBuf,
+    sync::{Arc, mpsc},
+};
 struct PanelApproval {
     sender: mpsc::SyncSender<CodingMessage>,
     token: CancellationToken,
@@ -120,15 +123,42 @@ async fn work(
         .create(request, approval.as_ref(), token)
         .await?;
     let mut progress = job.subscribe();
+    let pause_stop = CancellationToken::new();
+    let mut pause_acks = tokio::task::JoinSet::new();
     let run = job.run(&NoopEventSink);
     tokio::pin!(run);
     loop {
         tokio::select! {
-            result=&mut run=>return result.map(|output|output.answer),
+            result=&mut run=>{
+                pause_stop.cancel();
+                while pause_acks.join_next().await.is_some() {}
+                return result.map(|output|output.answer)
+            },
             Some(command)=controls.recv()=>{
+                let pause = match &command {
+                    CodingCommand::Pause { id, agent } => Some((id.clone(), agent.clone())),
+                    _ => None,
+                };
                 let result=job.control_command(command).await;
+                if let (Ok(receipt), Some((id, agent))) = (&result, pause) {
+                    if let Some(ticket) = receipt["pause_requested"].as_u64() {
+                        let job = Arc::clone(&job);
+                        let activity = tx.clone();
+                        let stop = pause_stop.clone();
+                        pause_acks.spawn(async move {
+                            let acknowledged = tokio::select! {
+                                result = job.wait_pause(&id, &agent, ticket) => result.unwrap_or(false),
+                                _ = stop.cancelled() => false,
+                            };
+                            let _ = activity.try_send(CodingMessage::Activity(json!({"pause_requested":ticket,"pause_acknowledged":acknowledged,"target":agent}).to_string()));
+                        });
+                    }
+                }
                 let text=match result {Ok(value)=>value.to_string(),Err(error)=>error.to_string()};
                 let _=tx.try_send(CodingMessage::Activity(text));
+            },
+            result = pause_acks.join_next(), if !pause_acks.is_empty() => {
+                let _ = result;
             },
             progress=progress.recv()=>{
                 let text=match progress {Ok(event)=>serde_json::to_string(&event).map_err(CodingError::owner)?,Err(tokio::sync::broadcast::error::RecvError::Lagged(count))=>format!("{count} activity updates omitted; durable results remain available"),Err(_)=>continue};
