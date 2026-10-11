@@ -75,6 +75,15 @@ async fn finish_turn(
         AgentError::InvalidHistory => {
             AgentRuntimeError::Agent("conversation history is invalid".into())
         }
+        // The harness classifies these agent-layer failures as provider
+        // failures (see `failure_code` in saya-harness); the user-visible
+        // message is the error's own display string either way, and the turn
+        // fails rather than succeeding.
+        AgentError::EffectAdmissionDenied
+        | AgentError::UnsupportedPhysicalCoverage
+        | AgentError::EffectOwnerFailure(_) => {
+            AgentRuntimeError::Provider(error.to_string())
+        }
         AgentError::Cancelled => AgentRuntimeError::Agent("request cancelled".into()),
     })
 }
