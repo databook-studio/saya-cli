@@ -24,7 +24,11 @@ struct PanelApproval {
 #[async_trait]
 impl ApprovalDecider for PanelApproval {
     async fn approve(&self, tool: &ToolDefinition, arguments: &Value) -> bool {
-        if tool.name != "coding_job" {
+        // The panel answers for exactly one job: a proposal that names any
+        // other job (or none) is never put to the operator as this job's.
+        if tool.name != "coding_job"
+            || arguments.get("job_id").and_then(Value::as_str) != Some(&self.id)
+        {
             return false;
         }
         let (respond, answer) = tokio::sync::oneshot::channel();
