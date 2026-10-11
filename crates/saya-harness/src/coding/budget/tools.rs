@@ -46,6 +46,7 @@ pub(super) async fn admit_tools(
     let sequence = state
         .reserve(
             vec![(BudgetDimension::ToolCalls, amount)],
+            None,
             agent.clone(),
             invocation.clone(),
         )
