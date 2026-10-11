@@ -240,12 +240,28 @@ impl CommandSession {
 
     /// Stops this command, then waits until the existing runner reports after
     /// process cleanup and reaping.
+    ///
+    /// The owner requested this stop and the supervision task is joined, so the
+    /// terminal state it reports is known rather than unknown: when the joined
+    /// task failed before any process existed — the watch still reports
+    /// `NotSpawned` — the stop hands back that known not-started outcome
+    /// (`StoppedBeforeSpawn`) instead of an opaque runner error. A failure
+    /// after the process existed (`Unknown { pid }`) or a supervision-task
+    /// join failure still leaves the outcome genuinely unknown.
     pub async fn stop_and_join(self) -> Result<ProgramOutcome, CommandSessionError> {
         if let Some(input) = &self.input {
             input.close_if_open();
         }
         self.cancellation.0.cancel();
-        join_task(self.task).await
+        let result = join_task(self.task).await;
+        match result {
+            Err(CommandSessionError::Runner(source))
+                if *self.process_state.borrow() == CommandProcessState::NotSpawned =>
+            {
+                Err(CommandSessionError::StoppedBeforeSpawn { source })
+            }
+            other => other,
+        }
     }
 }
 

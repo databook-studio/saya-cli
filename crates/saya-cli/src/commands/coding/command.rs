@@ -3,7 +3,7 @@ use saya_agent::CancellationToken;
 use saya_harness::{
     coding::{
         budget::{BudgetedCommandSession, BudgetedJoin, start_budgeted_with_output},
-        commands::{CommandOutputCursor, OutputStream},
+        commands::{CommandOutputCursor, CommandSessionError, OutputStream},
         worktree::{confine_checkout, verify_owned_checkout},
     },
     runner::StaticCredentialSource,
@@ -120,6 +120,15 @@ impl ChildCodingOperations {
             }
             Ok(joined) => match joined.command {
                 Ok(outcome) => outcome,
+                // The owner stopped a session whose runner refused before any
+                // process existed. The terminal state is known — the command
+                // never started — so this is not an owner failure and there is
+                // no process receipt to append.
+                Err(CommandSessionError::StoppedBeforeSpawn { .. }) => {
+                    return Ok(
+                        json!({"cancelled":true,"timed_out":false,"killed_orphans":false,"started":false}),
+                    );
+                }
                 Err(error) => {
                     self.failed
                         .store(true, std::sync::atomic::Ordering::Release);

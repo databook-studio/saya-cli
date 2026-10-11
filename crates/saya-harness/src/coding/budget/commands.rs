@@ -240,7 +240,16 @@ fn command_outcome(command: &Result<ProgramOutcome, CommandSessionError>) -> Eff
         // D3: the embedded outcome proves the process spawned and was reaped.
         Err(CommandSessionError::InputIncomplete { .. })
         | Err(CommandSessionError::InputWriteFailed { .. }) => EffectOutcome::Succeeded,
-        Err(CommandSessionError::CancelledBeforeStart) => EffectOutcome::NotStarted,
+        Err(CommandSessionError::CancelledBeforeStart)
+        // The owner requested the stop and the supervision task was joined, so
+        // a runner refusal that happened before any process existed is a known
+        // not-started terminal state, never unknown (`StoppedBeforeSpawn` is
+        // produced only by `stop_and_join`). Unknown stays reserved for
+        // genuinely unknown outcomes: a natural join of a failed session (the
+        // caller never asked to stop it) and a runner failure after the
+        // process existed (the child may outlive the wait), plus supervision
+        // join failures.
+        | Err(CommandSessionError::StoppedBeforeSpawn { .. }) => EffectOutcome::NotStarted,
         Err(CommandSessionError::Runner(_)) | Err(CommandSessionError::Join(_)) => {
             EffectOutcome::Unknown
         } // Exhaustive on purpose: a future CommandSessionError variant must choose its settlement here (conservatively Unknown) instead of silently defaulting.
