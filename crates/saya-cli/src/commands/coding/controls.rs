@@ -1,4 +1,5 @@
 use super::{CodingError, NativeCodingJob, delegate::CodingTask};
+use saya_agent::SteeringError;
 use saya_harness::coding::{
     child::ChildControl,
     coordinator::{ScheduleLimits, ScheduleReport, run_schedule},
@@ -99,22 +100,13 @@ impl NativeCodingJob {
     }
 
     pub async fn message(&self, agent: &AgentId, text: &str) -> Result<(), CodingError> {
-        self.control(agent)
-            .await?
-            .send(text)
-            .map_err(CodingError::owner)
+        self.control(agent).await?.send(text).map_err(control_error)
     }
     pub async fn pause(&self, agent: &AgentId) -> Result<u64, CodingError> {
-        self.control(agent)
-            .await?
-            .pause()
-            .map_err(CodingError::owner)
+        self.control(agent).await?.pause().map_err(control_error)
     }
     pub async fn resume_child(&self, agent: &AgentId) -> Result<(), CodingError> {
-        self.control(agent)
-            .await?
-            .resume()
-            .map_err(CodingError::owner)
+        self.control(agent).await?.resume().map_err(control_error)
     }
     pub async fn cancel_child(&self, agent: &AgentId) -> Result<(), CodingError> {
         self.control(agent).await?.cancel();
@@ -137,6 +129,9 @@ impl NativeCodingJob {
         command: crate::cli::CodingCommand,
     ) -> Result<serde_json::Value, CodingError> {
         use crate::cli::CodingCommand;
+        if self.cancellation.is_cancelled() {
+            return Err(CodingError::NotOwned);
+        }
         let (id, agent) = match &command {
             CodingCommand::Message { id, agent, .. }
             | CodingCommand::Pause { id, agent }
@@ -148,20 +143,23 @@ impl NativeCodingJob {
             return Err(CodingError::NotOwned);
         }
         if agent == "coordinator" {
+            if self.root_mailbox.lock().await.is_some() {
+                return Err(CodingError::NotOwned);
+            }
             return match command {
                 CodingCommand::Message { text, .. } => {
-                    self.root_steering.send(&text).map_err(CodingError::owner)?;
+                    self.root_steering.send(&text).map_err(control_error)?;
                     Ok(serde_json::json!({"queued":true,"target":"coordinator"}))
                 }
                 CodingCommand::Pause { .. } => {
-                    let ticket = self.root_steering.pause().map_err(CodingError::owner)?;
+                    let ticket = self.root_steering.pause().map_err(control_error)?;
                     Ok(
                         serde_json::json!({"pause_requested":ticket,"acknowledged":false,"target":"coordinator"}),
                     )
                 }
                 CodingCommand::Continue { .. } => {
-                    self.root_steering.resume().map_err(CodingError::owner)?;
-                    Ok(serde_json::json!({"resumed":true,"target":"coordinator"}))
+                    self.root_steering.resume().map_err(control_error)?;
+                    Ok(serde_json::json!({"continue_requested":true,"target":"coordinator"}))
                 }
                 _ => Err(CodingError::InvalidRequest),
             };
@@ -178,7 +176,7 @@ impl NativeCodingJob {
             }
             CodingCommand::Continue { .. } => {
                 self.resume_child(&agent).await?;
-                Ok(serde_json::json!({"resumed":true}))
+                Ok(serde_json::json!({"continue_requested":true}))
             }
             CodingCommand::CancelChild { .. } => {
                 self.cancel_child(&agent).await?;
@@ -186,5 +184,32 @@ impl NativeCodingJob {
             }
             _ => Err(CodingError::InvalidRequest),
         }
+    }
+
+    pub async fn wait_pause(
+        &self,
+        id: &str,
+        agent: &str,
+        ticket: u64,
+    ) -> Result<bool, CodingError> {
+        if id != self.job_id().as_str() || self.cancellation.is_cancelled() {
+            return Err(CodingError::NotOwned);
+        }
+        if agent == "coordinator" {
+            if self.root_mailbox.lock().await.is_some() {
+                return Err(CodingError::NotOwned);
+            }
+            return Ok(self.root_steering.wait_paused(ticket).await);
+        }
+        let agent = AgentId::parse(agent).map_err(CodingError::owner)?;
+        Ok(self.control(&agent).await?.wait_paused(ticket).await)
+    }
+}
+
+fn control_error(error: SteeringError) -> CodingError {
+    if matches!(error, SteeringError::Closed) {
+        CodingError::NotOwned
+    } else {
+        CodingError::owner(error)
     }
 }
