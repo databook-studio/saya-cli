@@ -129,10 +129,9 @@ pub(super) async fn verify_checkout_state(
         .store
         .managed_checkout_owner(input.checkout_id)
         .await?
+        && owner != *input.job_id
     {
-        if owner != *input.job_id {
-            return Err(OwnershipError::WrongOwner);
-        }
+        return Err(OwnershipError::WrongOwner);
     }
     let Some(record) = input
         .store

@@ -28,7 +28,6 @@ use crate::workspace::fd::{open_dir_at, stat_at};
 /// owned by the effective user. A foreign directory is never chmod-ed into
 /// privacy — it is refused outright.
 pub(super) fn ensure_private_root(metadata: &fs::Metadata) -> Result<(), SnapshotError> {
-    use std::os::unix::fs::MetadataExt as _;
     if metadata.file_type().is_symlink() || !metadata.is_dir() || !owned_private(metadata) {
         return Err(SnapshotError::ArtifactRootRefused);
     }

@@ -174,12 +174,13 @@ fn intersect_capabilities(
     let interpreter = commands_allowed
         .then(|| intersect_interpreter(root, request))
         .flatten();
-    let endpoints = EndpointBindings::new(root.endpoints.as_map().iter().filter_map(
-        |(role, endpoint)| {
-            (request.endpoints.get(role) == Some(endpoint.as_str()))
-                .then(|| (role.clone(), endpoint.clone()))
-        },
-    ))
+    let endpoints = EndpointBindings::new(
+        root.endpoints
+            .as_map()
+            .iter()
+            .filter(|&(role, endpoint)| request.endpoints.get(role) == Some(endpoint.as_str()))
+            .map(|(role, endpoint)| (role.clone(), endpoint.clone())),
+    )
     .map_err(|_| AuthorityError::InvalidCapabilityShape)?;
     let mut intersected = Capabilities::default();
     intersected.workspace_write = false;

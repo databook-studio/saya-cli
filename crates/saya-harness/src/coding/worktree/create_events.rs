@@ -155,8 +155,7 @@ pub(super) async fn record_outcome(
     // and any real build — can only fail into the `SequenceMismatch`
     // caller-bug class.
     let probe_sequence =
-        NonZeroU64::new(operation_sequence.get().checked_add(1).unwrap_or(u64::MAX))
-            .unwrap_or(NonZeroU64::MIN);
+        NonZeroU64::new(operation_sequence.get().saturating_add(1)).unwrap_or(NonZeroU64::MIN);
     let probe = outcome_event(input, operation_sequence, state, probe_sequence)?;
     input
         .sequencer

@@ -21,6 +21,10 @@ use super::{
 
 const SNAPSHOT_DEADLINE: Duration = Duration::from_secs(30);
 
+/// One selection candidate: the workspace-relative path plus the git entry
+/// it came from when the path is tracked.
+type SelectionCandidate = (String, Option<(GitObjectId, u32, u64)>);
+
 impl GitService {
     pub async fn plan_snapshot(
         &self,
@@ -111,7 +115,7 @@ impl GitService {
             }
         }
         let tree = inputs.tree_entries.unwrap_or_default();
-        let candidates: Vec<(String, Option<(GitObjectId, u32, u64)>)> = match selection {
+        let candidates: Vec<SelectionCandidate> = match selection {
             SnapshotSelection::Head => tree
                 .into_iter()
                 .map(|item| {

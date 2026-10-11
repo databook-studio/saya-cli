@@ -127,8 +127,8 @@ fn value_straddling_the_cut_is_held_whole() {
 /// whole and is redacted — no U+FFFD, no fragment >= 8.
 #[test]
 fn four_byte_char_split_inside_is_still_redacted() {
-    let secret = format!("AAA\u{1F980}BBB");
-    let bytes = secret.as_bytes();
+    let secret = "AAA\u{1F980}BBB".to_string();
+    let _bytes = secret.as_bytes();
     for split in [4usize, 5, 6] {
         let text = fed_split(&secret, 2048, split);
         assert!(
@@ -192,7 +192,7 @@ fn unsound_values_are_refused_and_sealed() {
         "abc".to_string(),
         String::new(),
     ] {
-        let mut redactor = Redactor::new(&[secret.clone()]);
+        let mut redactor = Redactor::new(std::slice::from_ref(&secret));
         assert!(redactor.is_refused(), "{secret:?} was accepted");
         assert!(redactor.push(b"any output at all").is_empty());
         assert!(redactor.finish().is_empty());
