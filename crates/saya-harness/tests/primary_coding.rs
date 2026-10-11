@@ -1,5 +1,8 @@
 #[path = "primary_coding/a04.rs"]
 mod a04;
+#[cfg(all(unix, any(target_os = "macos", target_os = "linux")))]
+#[path = "primary_coding/c03.rs"]
+mod c03;
 #[path = "primary_coding/r05a.rs"]
 mod r05a;
 #[path = "primary_coding/r05a_boundaries.rs"]

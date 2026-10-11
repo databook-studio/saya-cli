@@ -241,6 +241,11 @@ pub struct Fixture {
 }
 
 impl Fixture {
+    /// Directory holding the fixture's compiled helper executable.
+    pub fn program_dir(&self) -> &Path {
+        self.spawn.program_dir()
+    }
+
     /// One `RunProgram` allowlisting the helper, carrying the fixture's one
     /// declared credential: only its resolved value can reach a child's
     /// environment, and only that value is what the redaction gate must catch.
