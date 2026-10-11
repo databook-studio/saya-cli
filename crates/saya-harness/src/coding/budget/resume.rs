@@ -83,6 +83,7 @@ pub(super) async fn resume_ledger(
     let sequence = super::fresh::resume_sequence(&store, &job).await?;
     let started = Instant::now();
     let cancellation = CancellationToken::new();
+    let snapshot = resumed_snapshot(&folded);
     Ok(JobBudgetLedger {
         schedule: Arc::new(tokio::sync::Semaphore::new(1)),
         inner: Arc::new(Mutex::new(State {
@@ -102,7 +103,7 @@ pub(super) async fn resume_ledger(
             groups: HashMap::new(),
             local: HashMap::new(),
             cancellation: cancellation.clone(),
-            snapshot: resumed_snapshot(&folded),
+            snapshot,
             usage_ever_unknown: folded.usage_ever_unknown,
             usage_ever_incomplete: folded.usage_ever_incomplete,
         })),

@@ -2,7 +2,8 @@ use super::{CodingError, checks::ChildCodingOperations};
 use saya_agent::CancellationToken;
 use saya_harness::{
     coding::{
-        commands::{CommandOutputCursor, CommandSession, OutputStream},
+        budget::{BudgetedCommandSession, BudgetedJoin, start_budgeted_with_output},
+        commands::{CommandOutputCursor, OutputStream},
         worktree::{confine_checkout, verify_owned_checkout},
     },
     runner::StaticCredentialSource,
@@ -12,15 +13,8 @@ use std::{num::NonZeroU64, sync::Arc, time::Duration};
 
 pub(crate) struct ActiveCommand {
     id: u64,
-    session: Option<CommandSession>,
-    joining: Option<
-        tokio::task::JoinHandle<
-            Result<
-                saya_harness::runner::ProgramOutcome,
-                saya_harness::coding::commands::CommandSessionError,
-            >,
-        >,
-    >,
+    session: Option<BudgetedCommandSession>,
+    joining: Option<tokio::task::JoinHandle<BudgetedJoin>>,
     stdout: CommandOutputCursor,
     stderr: CommandOutputCursor,
 }
@@ -56,16 +50,17 @@ impl ChildCodingOperations {
                 self.records.clone(),
             )
             .with_cancellation(token.clone());
-        let session = self
-            .owner
-            .start_with_output(
-                runner,
-                program.into(),
-                argv,
-                NonZeroU64::new(timeout).ok_or(CodingError::InvalidRequest)?,
-                self.records.clone(),
-            )
-            .map_err(CodingError::owner)?;
+        let session = start_budgeted_with_output(
+            &self.ledger,
+            &self.owner,
+            runner,
+            program.into(),
+            argv,
+            NonZeroU64::new(timeout).ok_or(CodingError::InvalidRequest)?,
+            self.records.clone(),
+        )
+        .await
+        .map_err(CodingError::owner)?;
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         sessions.push(ActiveCommand {
@@ -92,6 +87,7 @@ impl ChildCodingOperations {
             .session
             .as_ref()
             .ok_or(CodingError::Busy)?
+            .session()
             .read_output(*cursor, 4096)
             .map_err(CodingError::owner)?;
         *cursor = read.next_cursor();
@@ -115,12 +111,21 @@ impl ChildCodingOperations {
         active.joining.take();
         sessions.remove(index);
         let outcome = match result {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(error)) => {
+            Ok(joined) if joined.settlement.is_err() => {
                 self.failed
                     .store(true, std::sync::atomic::Ordering::Release);
-                return Err(CodingError::owner(error));
+                return Err(CodingError::owner(
+                    joined.settlement.expect_err("matched settlement failure"),
+                ));
             }
+            Ok(joined) => match joined.command {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    self.failed
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    return Err(CodingError::owner(error));
+                }
+            },
             Err(error) => {
                 self.failed
                     .store(true, std::sync::atomic::Ordering::Release);

@@ -34,6 +34,7 @@ async fn recorded_policy_and_epoch_must_match_even_with_identical_source() {
             epoch,
         );
         let current = execute_check_with_diagnostics(CheckExecutionInput {
+            ledger: fixture.ledger(),
             ownership: &ownership,
             authority: &authority,
             invocation: &invocation,
@@ -72,6 +73,7 @@ async fn missing_format_is_refused_before_command_admission() {
     let ownership = fixture.ownership();
     let token = CancellationToken::new();
     let result = execute_check_with_diagnostics(CheckExecutionInput {
+        ledger: fixture.ledger(),
         ownership: &ownership,
         authority: fixture.authority(),
         invocation: &invocation,

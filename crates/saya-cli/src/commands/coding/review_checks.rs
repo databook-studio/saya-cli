@@ -70,6 +70,7 @@ impl NativeCodingJob {
         for profile in profiles.values() {
             let invocation = super::checks::invocation(profile)?;
             let input = CheckExecutionInput {
+                ledger: &self.ledger,
                 ownership: &ownership,
                 authority: &authority,
                 invocation: &invocation,

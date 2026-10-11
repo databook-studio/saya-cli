@@ -104,6 +104,10 @@ async fn fixture_with_program(label: &str, program: &str) -> Option<Fixture> {
 }
 
 impl Fixture {
+    pub(super) fn ledger(&self) -> &saya_harness::coding::budget::JobBudgetLedger {
+        &self.active.fixture.ledger
+    }
+
     pub(super) fn ownership(&self) -> OwnershipInput<'_> {
         OwnershipInput {
             store: &self.active.fixture.store,

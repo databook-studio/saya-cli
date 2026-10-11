@@ -8,6 +8,7 @@ use saya_types::{InterpreterScope, RunnerScope};
 
 use crate::{
     coding::{
+        budget::{JobBudgetLedger, start_budgeted_with_output},
         commands::{CommandOutputCapture, CommandOutputError, CommandOwner, OutputStream},
         integration::{DEFAULT_DELTA_DEADLINE, candidate_source_digest},
         policy::ChildAuthorityView,
@@ -34,6 +35,7 @@ pub struct CheckExecutionInput<'a> {
     pub authority: &'a ChildAuthorityView,
     pub invocation: &'a CheckInvocation,
     pub owner: &'a CommandOwner,
+    pub ledger: &'a JobBudgetLedger,
     pub cancellation: &'a CancellationToken,
     /// Trusted host-owned executable directory; profile data never selects it.
     pub program_dir: &'a Path,
@@ -78,6 +80,9 @@ async fn execute_owned(
     input: CheckExecutionInput<'_>,
     stream: Option<OutputStream>,
 ) -> Result<ExecutedCheck, CheckExecutionError> {
+    if &input.ledger.job_id().await != input.ownership.job_id {
+        return Err(CheckExecutionError::AuthorityMismatch);
+    }
     let verified = verify_owned_checkout(input.ownership, input.cancellation).await?;
     let snapshot = input
         .ownership
@@ -152,20 +157,23 @@ async fn execute_owned(
             output_root.clone(),
         )
         .with_cancellation(input.cancellation.clone());
-    let session = input.owner.start_with_output(
+    let session = start_budgeted_with_output(
+        input.ledger,
+        input.owner,
         runner,
         input.invocation.program().to_owned(),
         input.invocation.argv().to_vec(),
         input.invocation.timeout_seconds(),
         output_root.clone(),
-    )?;
-    let Some(output_dir) = session.output_dir() else {
+    )
+    .await?;
+    let Some(output_dir) = session.session().output_dir() else {
         let _ = session.stop_and_join().await;
         return Err(CheckExecutionError::OutputUnavailable);
     };
-    let output_status = wait_for_output_status(&session, timeout).await;
+    let output_status = wait_for_output_status(session.session(), timeout).await;
     // Capture is data, including typed failure. Always join before producing evidence.
-    let capture = stream.map(|stream| session.capture_output(stream));
+    let capture = stream.map(|stream| session.session().capture_output(stream));
     let joined = match output_status {
         SettledOutput::Ready(status) => (Some(status), session.join().await),
         SettledOutput::Missing => (None, session.join().await),
@@ -192,7 +200,11 @@ async fn execute_owned(
     if after != before {
         return Err(CheckExecutionError::SourceChanged);
     }
-    let outcome = joined.1?;
+    joined
+        .1
+        .settlement
+        .map_err(CheckExecutionError::CommandSettlement)?;
+    let outcome = joined.1.command?;
     if outcome.program != input.invocation.program() {
         return Err(CheckExecutionError::InvalidInvocation);
     }
