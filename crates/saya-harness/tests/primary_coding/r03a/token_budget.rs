@@ -73,11 +73,7 @@ async fn root_child_and_retry_share_conservative_tokens_and_unknown_survives_res
         EffectSettlement::PhysicalAttempt {
             attempt: root_attempt,
             outcome: EffectOutcome::Succeeded,
-            reported_usage: Some(TokenUsage {
-                input_tokens: 2,
-                output_tokens: 3,
-                ..Default::default()
-            }),
+            reported_usage: Some(TokenUsage::new(2, 3)),
             usage_complete: true,
         },
     )
@@ -131,11 +127,7 @@ async fn reported_bound_violation_preserves_actual_usage_and_fences_admission() 
             EffectSettlement::PhysicalAttempt {
                 attempt,
                 outcome: EffectOutcome::Succeeded,
-                reported_usage: Some(TokenUsage {
-                    input_tokens: 40,
-                    output_tokens: 3,
-                    ..Default::default()
-                }),
+                reported_usage: Some(TokenUsage::new(40, 3)),
                 usage_complete: true
             }
         )

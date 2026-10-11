@@ -7,8 +7,7 @@ use std::{num::NonZeroU64, time::Duration};
 
 use saya_agent::{EffectAdmissionError, EffectOutcome};
 use saya_harness::coding::budget::JobBudgetLedger;
-use saya_types::coding::{BudgetCharge, BudgetReservationV1};
-use saya_types::{BudgetDimension, CodingEventKind};
+use saya_types::{BudgetCharge, BudgetDimension, BudgetReservationV1, CodingEventKind};
 
 use super::support::{Fixture, limits};
 

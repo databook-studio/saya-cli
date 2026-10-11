@@ -46,11 +46,10 @@ fn root(
 }
 
 fn command_capabilities() -> Capabilities {
-    Capabilities {
-        runner: Some(RunnerScope::new(vec!["git".into()]).unwrap()),
-        interpreter: Some(InterpreterScope::new(vec!["python3".into()]).unwrap()),
-        ..Capabilities::default()
-    }
+    let mut capabilities = Capabilities::default();
+    capabilities.runner = Some(RunnerScope::new(vec!["git".into()]).unwrap());
+    capabilities.interpreter = Some(InterpreterScope::new(vec!["python3".into()]).unwrap());
+    capabilities
 }
 
 fn command_support(profile: CommandCheckoutProfile) -> PlatformSupport {

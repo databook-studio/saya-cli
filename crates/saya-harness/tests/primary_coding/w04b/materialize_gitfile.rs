@@ -58,9 +58,7 @@ async fn dot_git_file_only_target_materializes() {
     // `.git` file pointing at the repository's admin area.
     let target = empty_private_target(temp.path(), "materialized");
     fs::write(target.join(".git"), POINTER).unwrap();
-    materialize_snapshot(&artifacts, &id, &target, &CancellationToken::new())
-        .await
-        .unwrap();
+    materialize_snapshot(&artifacts, &id, &target, &CancellationToken::new()).unwrap();
     // The pointer file survives with byte-identical content, beside the
     // materialized entries.
     assert_eq!(fs::read(target.join(".git")).unwrap(), POINTER);
@@ -85,7 +83,6 @@ async fn extra_entry_beside_dot_git_still_refuses() {
     fs::write(target.join(".git"), POINTER).unwrap();
     fs::write(target.join("extra.txt"), b"extra\n").unwrap();
     let refused = materialize_snapshot(&artifacts, &id, &target, &CancellationToken::new())
-        .await
         .expect_err("an entry beside the `.git` pointer refuses materialization");
     assert!(matches!(refused, SnapshotError::MaterializeTargetInvalid));
     // Nothing changed: the target still holds exactly the pointer file and
@@ -107,7 +104,6 @@ async fn dot_git_symlink_or_directory_refuses() {
     let symlinked = empty_private_target(temp.path(), "materialized-symlink");
     std::os::unix::fs::symlink(temp.path().join("elsewhere"), symlinked.join(".git")).unwrap();
     let refused = materialize_snapshot(&artifacts, &id, &symlinked, &CancellationToken::new())
-        .await
         .expect_err("a symlinked `.git` refuses materialization");
     assert!(matches!(refused, SnapshotError::MaterializeTargetInvalid));
     assert_eq!(target_entries(&symlinked), vec![".git"]);
@@ -115,7 +111,6 @@ async fn dot_git_symlink_or_directory_refuses() {
     let directory = empty_private_target(temp.path(), "materialized-dir");
     fs::create_dir(directory.join(".git")).unwrap();
     let refused = materialize_snapshot(&artifacts, &id, &directory, &CancellationToken::new())
-        .await
         .expect_err("a directory `.git` refuses materialization");
     assert!(matches!(refused, SnapshotError::MaterializeTargetInvalid));
     assert_eq!(target_entries(&directory), vec![".git"]);
@@ -141,7 +136,6 @@ async fn rollback_preserves_dot_git() {
     let target = empty_private_target(temp.path(), "materialized");
     fs::write(target.join(".git"), POINTER).unwrap();
     let refused = materialize_snapshot(&artifacts, &id, &target, &CancellationToken::new())
-        .await
         .expect_err("a corrupted last object refuses materialization");
     assert!(matches!(refused, SnapshotError::ObjectDigestMismatch));
     // The rollback removed every entry the run created and left the target

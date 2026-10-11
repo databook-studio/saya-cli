@@ -18,7 +18,8 @@ use super::fixtures::digest;
 /// environment.
 fn fixture_command(executable: &Path, root: &Path, args: &[&str]) -> Command {
     let home = git_home(root.parent().expect("the repository has a parent"));
-    Command::new(executable)
+    let mut command = Command::new(executable);
+    command
         .env_clear()
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &home)
@@ -43,7 +44,8 @@ fn fixture_command(executable: &Path, root: &Path, args: &[&str]) -> Command {
                 .join("empty-hooks")
                 .display()
         ))
-        .args(git_args(root, args))
+        .args(git_args(root, args));
+    command
 }
 
 /// Runs Git with the support fixture environment and returns the raw
