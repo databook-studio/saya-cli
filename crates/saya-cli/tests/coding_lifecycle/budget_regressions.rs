@@ -24,7 +24,15 @@ async fn held_root_provider_is_cancelled_at_shared_job_deadline() {
     let result = tokio::time::timeout(std::time::Duration::from_secs(3), job.run(&NoopEventSink))
         .await
         .expect("job deadline interrupts the held request before provider timeout");
-    assert!(result.is_err());
+    // A controlled run converts the shared deadline into a graceful budget
+    // stop, not an error: the latched Budget(ElapsedTime) reason surfaces as
+    // `Limit("answering budget stopped")` (loop admission), which the runner
+    // reports as an `Ok` output with `truncated` set.
+    let output = result.expect("the shared job deadline stops the held run gracefully");
+    assert!(
+        output.truncated,
+        "the elapsed-time budget stop marks the output truncated"
+    );
     assert!(
         provider.calls.load(std::sync::atomic::Ordering::Acquire) > 0,
         "provider was actually entered"

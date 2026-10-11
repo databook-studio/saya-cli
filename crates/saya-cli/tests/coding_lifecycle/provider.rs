@@ -52,7 +52,11 @@ impl Provider {
         let worker = thread::spawn(move || {
             let mut turns = BTreeMap::<String, usize>::new();
             let mut pending = Vec::new();
-            let deadline = Instant::now() + Duration::from_secs(25);
+            // A safety net only: the worker also exits when `Drop` sets
+            // `stop`. Sequenced-child jobs (for example 24 dependent children)
+            // run far longer than any fixed bound, so the net must outlast
+            // them instead of cutting the provider off mid-test.
+            let deadline = Instant::now() + Duration::from_secs(600);
             while !stopped.load(Ordering::Acquire) && Instant::now() < deadline {
                 let (mut stream, _) = match listener.accept() {
                     Ok(pair) => pair,
@@ -62,6 +66,9 @@ impl Provider {
                     }
                     Err(_) => break,
                 };
+                // macOS hands out sockets that inherit the listener's O_NONBLOCK;
+                // the request read below must block instead of racing the writer.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();

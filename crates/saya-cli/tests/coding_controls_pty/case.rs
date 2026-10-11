@@ -7,6 +7,11 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     let mut provider = Provider::new();
     let config = config(&provider);
     let mut session = Session::new("selected", &config, &provider);
+    session.wait_for("? for help", INTERACTIVE);
+    // The TUI must own the terminal in raw mode before input is typed: a line
+    // written earlier is still under the canonical tty, whose ICRNL turns the
+    // trailing \r into \n, which the raw-mode reader drops instead of
+    // treating as Enter — so the command would never submit.
     session.send(b"/coding start pty-job 'controlled task' --write a.txt --write b.txt --program sleep --approve\r");
     provider.wait_for_children(2, INTERACTIVE);
     session.send(b"/coding message pty-job child-a inspect\r");
