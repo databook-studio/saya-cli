@@ -14,7 +14,8 @@ pub(super) async fn run(
         | CodingCommand::Apply { id, approve, .. }
         | CodingCommand::ResolveConflict { id, approve, .. }
         | CodingCommand::RemoveCheckout { id, approve, .. }
-        | CodingCommand::ReconcileCheckout { id, approve, .. } => (id, *approve),
+        | CodingCommand::ReconcileCheckout { id, approve, .. }
+        | CodingCommand::RetainCheckout { id, approve, .. } => (id, *approve),
         _ => return Err(CodingError::InvalidRequest),
     };
     if !approved {
@@ -93,6 +94,11 @@ pub(super) async fn run(
                 &ManagedCheckoutId::parse(&checkout).map_err(CodingError::owner)?,
             )
             .await
+        }
+        CodingCommand::RetainCheckout { checkout, .. } => {
+            job.retain_checkout(&ManagedCheckoutId::parse(&checkout).map_err(CodingError::owner)?)
+                .await?;
+            Ok(json!({"retained":checkout}))
         }
         _ => Err(CodingError::InvalidRequest),
     }

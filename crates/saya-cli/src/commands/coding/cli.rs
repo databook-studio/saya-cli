@@ -52,7 +52,8 @@ pub async fn dispatch(
         | CodingCommand::Apply { .. }
         | CodingCommand::ResolveConflict { .. }
         | CodingCommand::RemoveCheckout { .. }
-        | CodingCommand::ReconcileCheckout { .. }) => {
+        | CodingCommand::ReconcileCheckout { .. }
+        | CodingCommand::RetainCheckout { .. }) => {
             super::cli_mutations::run(application, command).await
         }
         CodingCommand::Resume { id, approve } => {
@@ -152,19 +153,7 @@ pub async fn dispatch(
                 .map(JobId::parse)
                 .transpose()
                 .map_err(CodingError::owner)?;
-            let page = application
-                .store
-                .list_coding_jobs(after.as_ref(), 100)
-                .await
-                .map_err(CodingError::owner)?;
-            let identity = application
-                .service
-                .inventory_repository(&application.repository, &CancellationToken::new())
-                .await
-                .map_err(CodingError::owner)?;
-            Ok(
-                json!({"jobs":page.items.iter().filter(|record| &record.repository_id==identity.identity().repository_id()).map(|record|json!({"job_id":record.job_id,"state":record.state})).collect::<Vec<_>>(),"next_cursor":page.next_cursor}),
-            )
+            application.list(after.as_ref()).await
         }
         CodingCommand::Doctor { probe } => application.doctor(probe).await,
         CodingCommand::Worktrees { id } => {

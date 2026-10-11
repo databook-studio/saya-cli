@@ -153,3 +153,76 @@ async fn refused_foreign_removal_leaves_managed_work_listed_for_recovery() {
         b"original\n"
     );
 }
+
+#[tokio::test]
+async fn list_shows_only_jobs_of_this_repository() {
+    let fixture = Fixture::new("list-identity").await;
+    let request = CodingJobRequest::new(
+        JobId::parse("job-owned").unwrap(),
+        "inspect only".into(),
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    fixture
+        .store
+        .create_coding_job(saya_store::NewCodingJob {
+            job_id: JobId::parse("job-foreign").unwrap(),
+            repository_id: saya_types::RepositoryId::parse("foreign-repository").unwrap(),
+            snapshot_id: saya_types::SnapshotId::parse("foreign-snapshot").unwrap(),
+        })
+        .await
+        .unwrap();
+    let listed = dispatch_coding(&fixture.application, CodingCommand::List { after: None })
+        .await
+        .unwrap();
+    let jobs = listed["jobs"].as_array().unwrap();
+    assert!(jobs.iter().any(|job| job["job_id"] == "job-owned"));
+    assert!(!jobs.iter().any(|job| job["job_id"] == "job-foreign"));
+}
+
+#[tokio::test]
+async fn retain_routes_to_the_shared_operation() {
+    let fixture = Fixture::new("retain-route").await;
+    let request = CodingJobRequest::new(
+        JobId::parse("job-retain").unwrap(),
+        "inspect only".into(),
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    let approval =
+        CodingAuthorization::scoped(&fixture.application.propose(&request).await.unwrap()).unwrap();
+    let job = fixture
+        .application
+        .create(request, &approval, CancellationToken::new())
+        .await
+        .unwrap();
+    let candidate = ManagedCheckoutId::parse("retain-candidate").unwrap();
+    job.create_checkout(&candidate).await.unwrap();
+    let retained = dispatch_coding(
+        &fixture.application,
+        CodingCommand::RetainCheckout {
+            id: "job-retain".into(),
+            checkout: "retain-candidate".into(),
+            approve: true,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(retained["retained"], "retain-candidate");
+    let worktrees = fixture.application.worktrees(job.job_id()).await.unwrap();
+    let checkouts = worktrees["checkouts"].as_array().unwrap();
+    let record = checkouts
+        .iter()
+        .find(|checkout| checkout["checkout_id"] == "retain-candidate")
+        .unwrap();
+    assert_eq!(record["lifecycle"], "active");
+}
