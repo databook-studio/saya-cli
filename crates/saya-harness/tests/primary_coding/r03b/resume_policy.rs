@@ -1,8 +1,9 @@
 //! Resume tests for the policy proof: a job's recorded policy admits an
 //! identical construction, refuses changed limits, and a job with budget
 //! history but no policy row is never adopted. Also covers the typed
-//! refusals at the construction boundary: the bounded history scan and
-//! the checked deadline conversion.
+//! refusals at the construction boundary: the fresh-job history scan and
+//! the checked deadline conversion, plus a streamed resume history that
+//! exceeds the old scan bound.
 
 use std::{num::NonZeroU64, time::Duration};
 
@@ -146,14 +147,14 @@ async fn resume_without_policy_row_refuses() {
 }
 
 #[tokio::test]
-async fn resume_history_over_bound_refuses() {
+async fn resume_streams_a_history_beyond_the_old_scan_bound() {
     let fixture = Fixture::new("resume-history-bound").await;
     let owner_limits = limits(400, 8, 8, 2, 2, Duration::from_secs(30));
     let ledger = fixture.ledger(owner_limits).await.unwrap();
     let root = ledger.root_view();
     // 128 reserve+settle rounds produce 256 budget events; with the
-    // fixture's running event the durable history is 257 events, one over
-    // the bounded scan.
+    // fixture's running event the durable history is 257 events, beyond
+    // the old 256-event scan bound.
     for _ in 0..128 {
         let permit = root.admit_model_request().await.unwrap();
         root.settle(
@@ -171,11 +172,26 @@ async fn resume_history_over_bound_refuses() {
     fixture.close_store().await;
     drop(ledger);
     let store = fixture.reopen();
-    let refused = JobBudgetLedger::resume(store, fixture.job.clone(), owner_limits).await;
-    assert!(matches!(
-        refused,
-        Err(BudgetLedgerError::ResumeHistoryTooLong)
-    ));
+    let resumed = JobBudgetLedger::resume(store.clone(), fixture.job.clone(), owner_limits)
+        .await
+        .unwrap();
+    // The resumed ledger accounts the counters the history implies: 128
+    // admitted logical requests, never refunded by NotStarted outcomes.
+    let snapshot = resumed.snapshot().await;
+    assert_eq!(snapshot.logical_requests, 128);
+    // The resumed ledger admits one more request; its reservation event
+    // appends at sequence 258, proving the folded next sequence.
+    let root = resumed.root_view();
+    let _permit = root.admit_model_request().await.unwrap();
+    let events = store
+        .list_coding_events(&fixture.job, NonZeroU64::new(257), 10)
+        .await
+        .unwrap();
+    assert_eq!(events.events.len(), 1);
+    assert_eq!(events.events[0].sequence().get(), 258);
+    // The 65,536 refusal is a backstop that legal histories cannot reach
+    // (job states form a DAG; reservations are capped), so it has no
+    // black-box test.
     fixture.close().await;
 }
 

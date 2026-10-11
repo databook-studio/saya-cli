@@ -72,12 +72,11 @@ pub(super) fn proposed_policy(
     .map_err(|_| BudgetLedgerError::InvalidLimits)
 }
 
-/// The resume path's next event sequence, derived exactly as
-/// [`initial_sequence`] derives it: a bounded contiguous history of at
-/// most 256 events, allocated as last + 1. Over the bound the resume
-/// fails closed with [`BudgetLedgerError::ResumeHistoryTooLong`]; a
-/// non-contiguous history is
-/// [`BudgetLedgerError::ResumeRecordCorrupt`].
+/// The resume path's next event sequence: a contiguous history streamed
+/// in pages of 100 and allocated as last + 1. A history longer than
+/// 65,536 events is refused as a defensive backstop with
+/// [`BudgetLedgerError::ResumeHistoryTooLong`]; a non-contiguous history
+/// is [`BudgetLedgerError::ResumeRecordCorrupt`].
 pub(super) async fn resume_sequence(
     store: &SqliteStateStore,
     job: &JobId,
