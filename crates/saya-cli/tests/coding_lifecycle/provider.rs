@@ -89,14 +89,13 @@ impl Provider {
                     .split("UNTRUSTED CHILD TASK")
                     .nth(1)
                     .and_then(|task| task.split("write for ").nth(1))
-                    .map(|tail| {
+                    .and_then(|tail| {
                         let suffix = tail.strip_prefix("child-")?;
                         let end = suffix
                             .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
                             .unwrap_or(suffix.len());
                         (end > 0).then_some(&tail[.."child-".len() + end])
                     })
-                    .flatten()
                     .unwrap_or("parent");
                 let stage = turns.entry(actor.into()).or_default();
                 let current = *stage;

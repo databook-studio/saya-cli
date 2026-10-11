@@ -46,6 +46,7 @@ impl CaptureProvider {
             .unwrap()
             .iter()
             .rev()
+            .map(String::as_str)
             .find_map(context_body)
             .expect("resumed root request carries the continuation projection")
     }
@@ -91,7 +92,7 @@ fn serve(listener: TcpListener, requests: Arc<Mutex<Vec<String>>>, stop: Arc<Ato
     }
 }
 
-fn context_body(request: &String) -> Option<Value> {
+fn context_body(request: &str) -> Option<Value> {
     serde_json::from_str::<Value>(request).ok()?["messages"]
         .as_array()?
         .iter()
@@ -115,14 +116,13 @@ fn actor(request: &str) -> String {
         .split("UNTRUSTED CHILD TASK")
         .nth(1)
         .and_then(|task| task.split("write for ").nth(1))
-        .map(|tail| {
+        .and_then(|tail| {
             let suffix = tail.strip_prefix("child-")?;
             let end = suffix
                 .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
                 .unwrap_or(suffix.len());
             (end > 0).then_some(&tail[.."child-".len() + end])
         })
-        .flatten()
         .unwrap_or("parent")
         .to_owned()
 }

@@ -17,6 +17,7 @@ mod promotion;
 mod review;
 #[cfg(unix)]
 #[path = "primary_coding/support.rs"]
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 mod support;
 #[cfg(unix)]
 #[path = "primary_coding/x02.rs"]

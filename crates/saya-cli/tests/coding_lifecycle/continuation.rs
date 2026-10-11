@@ -10,7 +10,7 @@ use saya_types::{
     AgentId, CodingEventKind, CodingEventV1, CodingResultOutcome, InvocationId, JobId, JobState,
     JoinedResultV1, ManagedCheckoutId,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::num::NonZeroU64;
 use std::{io::Write, sync::atomic::Ordering};
 

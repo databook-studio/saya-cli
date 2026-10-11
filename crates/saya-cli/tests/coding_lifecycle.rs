@@ -13,6 +13,7 @@ mod native;
 #[path = "coding_lifecycle/provider.rs"]
 mod provider;
 #[path = "primary_coding/support.rs"]
+#[allow(dead_code)] // shared test harness: this file uses only part of it
 mod support;
 
 #[path = "coding_lifecycle/budget_regressions.rs"]
