@@ -70,12 +70,14 @@ impl Provider {
                 let actor = body
                     .split("UNTRUSTED CHILD TASK")
                     .nth(1)
-                    .and_then(|task| task.split("write for ").nth(1))
-                    .and_then(|task| task.split_whitespace().next())
-                    .map(|task| {
-                        task.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+                    .and_then(|task| task.split("write for child-").nth(1))
+                    .map(|tail| {
+                        let end = tail
+                            .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+                            .unwrap_or(tail.len());
+                        format!("child-{}", &tail[..end])
                     })
-                    .filter(|task| task.starts_with("child-"))
+                    .filter(|task| task.len() > "child-".len())
                     .unwrap_or("parent");
                 let stage = turns.entry(actor.into()).or_default();
                 let current = *stage;

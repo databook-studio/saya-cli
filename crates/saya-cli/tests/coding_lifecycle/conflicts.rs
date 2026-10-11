@@ -68,9 +68,11 @@ async fn sequential_same_path_overlap_is_retained_and_inspectable_without_mutati
     assert_eq!(
         contents
             .iter()
+            .map(|content| content.trim().to_owned())
+            .collect::<std::collections::HashSet<_>>(),
+        (0..24)
+            .map(|index| format!("child-{index:02}"))
             .collect::<std::collections::HashSet<_>>()
-            .len(),
-        24
     );
     assert!(!fixture.repository.join("shared.txt").exists());
     assert_eq!(
