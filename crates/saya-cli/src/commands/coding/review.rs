@@ -55,7 +55,10 @@ impl ReviewCheck {
                     ),
                 );
                 if let Some(delta) = delta {
-                    super::checks::merge_json(&mut preview, delta.preview());
+                    super::checks::merge_json(
+                        &mut preview,
+                        json!({"diagnostic_delta": delta.preview()}),
+                    );
                 }
             }
         }
