@@ -14,6 +14,8 @@ use std::{
     path::PathBuf,
     sync::{Arc, mpsc},
 };
+#[cfg(test)]
+mod worker_tests;
 struct PanelApproval {
     sender: mpsc::SyncSender<CodingMessage>,
     token: CancellationToken,
@@ -79,6 +81,11 @@ pub(super) fn spawn(
         worker: Some(worker),
         active: true,
     }
+}
+/// Operator-visible outcomes (control receipts, pause acknowledgements) must reach the panel: block until the bounded queue has room (the panel drains it every tick); a dropped receiver means the panel is gone, so the send is ignored.
+/// The blocking `send` inside a `pause_acks` task holds that runtime thread until the panel drains it on the next UI tick, which is what unblocks the send.
+fn deliver_outcome(tx: &mpsc::SyncSender<CodingMessage>, text: String) {
+    let _ = tx.send(CodingMessage::Activity(text));
 }
 async fn work(
     command: CodingCommand,
@@ -150,12 +157,16 @@ async fn work(
                                 result = job.wait_pause(&id, &agent, ticket) => result.unwrap_or(false),
                                 _ = stop.cancelled() => false,
                             };
-                            let _ = activity.try_send(CodingMessage::Activity(json!({"pause_requested":ticket,"pause_acknowledged":acknowledged,"target":agent}).to_string()));
+                            deliver_outcome(
+                                &activity,
+                                json!({"pause_requested":ticket,"pause_acknowledged":acknowledged,"target":agent})
+                                    .to_string(),
+                            );
                         });
                     }
                 }
                 let text=match result {Ok(value)=>value.to_string(),Err(error)=>error.to_string()};
-                let _=tx.try_send(CodingMessage::Activity(text));
+                deliver_outcome(&tx, text);
             },
             result = pause_acks.join_next(), if !pause_acks.is_empty() => {
                 let _ = result;
