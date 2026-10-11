@@ -162,6 +162,10 @@ impl Session {
         String::from_utf8_lossy(&output).into_owned()
     }
 
+    pub fn state_db(&self) -> PathBuf {
+        self.root.0.join("home/state.sqlite3")
+    }
+
     fn pump(&mut self) {
         if let Ok(chunk) = self.output.recv_timeout(IO_WAIT) {
             self.raw.extend_from_slice(&chunk);
@@ -177,11 +181,19 @@ impl Session {
     fn cleanup(&mut self, drain_for: Duration) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
-            let _ = child.wait();
+            let deadline = Instant::now() + drain_for;
+            while Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) => thread::sleep(Duration::from_millis(10)),
+                    Err(_) => break,
+                }
+            }
         }
         self.child = None;
         self.writer.take();
         let deadline = Instant::now() + drain_for;
+        let mut reader_finished = false;
         while Instant::now() < deadline {
             match self.output.recv_timeout(IO_WAIT) {
                 Ok(chunk) => {
@@ -190,10 +202,20 @@ impl Session {
                         break;
                     }
                 }
-                Err(_) => break,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    reader_finished = true;
+                    break;
+                }
             }
         }
-        self.reader.take();
+        if reader_finished {
+            if let Some(reader) = self.reader.take() {
+                let _ = reader.join();
+            }
+        } else {
+            self.reader.take();
+        }
     }
 }
 

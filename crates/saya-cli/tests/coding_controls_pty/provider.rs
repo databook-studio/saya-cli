@@ -6,7 +6,7 @@ use std::{
     net::{TcpListener, TcpStream},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -14,6 +14,7 @@ use std::{
 
 pub struct Provider {
     endpoint: String,
+    child_requests: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -31,10 +32,13 @@ impl Provider {
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
         let stop = Arc::new(AtomicBool::new(false));
+        let child_requests = Arc::new(AtomicUsize::new(0));
         let stopped = Arc::clone(&stop);
-        let worker = thread::spawn(move || serve(listener, stopped));
+        let received = Arc::clone(&child_requests);
+        let worker = thread::spawn(move || serve(listener, stopped, received));
         Self {
             endpoint,
+            child_requests,
             stop,
             worker: Some(worker),
         }
@@ -43,18 +47,31 @@ impl Provider {
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
+
+    pub fn wait_for_children(&self, minimum: usize, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.child_requests.load(Ordering::Acquire) >= minimum {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("provider did not receive {minimum} child requests");
+    }
 }
 
 impl Drop for Provider {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
         }
     }
 }
 
-fn serve(listener: TcpListener, stop: Arc<AtomicBool>) {
+fn serve(listener: TcpListener, stop: Arc<AtomicBool>, child_requests: Arc<AtomicUsize>) {
     let deadline = Instant::now() + DEADLINE;
     let mut parent_turn = 0;
     let mut child_turns = BTreeMap::<String, usize>::new();
@@ -69,6 +86,7 @@ fn serve(listener: TcpListener, stop: Arc<AtomicBool>) {
         };
         let request = read_request(&mut stream);
         let body = if request.contains("UNTRUSTED CHILD TASK") {
+            child_requests.fetch_add(1, Ordering::AcqRel);
             let actor = actor(&request);
             let turn = child_turns.entry(actor.clone()).or_default();
             let body = child_response(&actor, *turn);
@@ -88,8 +106,8 @@ fn parent_response(turn: usize) -> String {
         0 => tool(
             "delegate",
             json!({"tasks":[
-                {"agent_id":"child-a","task":"PTY_PROVIDER_LIVE child-a write for child-a","write_paths":["a.txt"]},
-                {"agent_id":"child-b","task":"PTY_PROVIDER_LIVE child-b write for child-b","write_paths":["b.txt"]}
+                {"agent_id":"child-a","task":"write for child-a","write_paths":["a.txt"]},
+                {"agent_id":"child-b","task":"write for child-b","write_paths":["b.txt"]}
             ]}),
         ),
         1 => tool("await_children", json!({})),
