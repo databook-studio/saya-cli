@@ -176,6 +176,21 @@ impl CommandSession {
         store.output_status()
     }
 
+    /// Captures complete raw redacted bytes from one settled private stream.
+    /// Both writers must be clean and uncapped. Bytes come from the immutable
+    /// writer snapshot, never the current file. The fixed byte cap is retained;
+    /// the cursor read limit is unchanged and no filesystem path is opened.
+    /// This does not certify process exit; call before consuming `join`.
+    pub fn capture_output(
+        &self,
+        stream: super::OutputStream,
+    ) -> Result<super::CommandOutputCapture, CommandOutputError> {
+        self.output
+            .as_ref()
+            .ok_or(CommandOutputError::Unavailable)?
+            .capture_complete(stream)
+    }
+
     /// Queues one bounded stdin chunk. Success means queued, not written to
     /// the kernel pipe or consumed by the command.
     pub fn send_stdin(&self, bytes: &[u8]) -> Result<StdinQueueReceipt, CommandInputError> {

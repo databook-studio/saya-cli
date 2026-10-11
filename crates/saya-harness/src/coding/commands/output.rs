@@ -86,6 +86,8 @@ impl OutputStream {
 #[derive(Debug, Clone, Error)]
 #[non_exhaustive]
 pub enum CommandOutputError {
+    #[error("command output is not complete or was truncated")]
+    OutputNotComplete,
     #[error("this command session was not started with an output store")]
     Unavailable,
     #[error("command output store is closed")]
@@ -201,7 +203,8 @@ impl CommandOutputStore {
 
     /// One stream's sink, for the cursor reader's finish-state query and
     /// running counters. Crate-private: exposes no file handles or paths.
-    #[cfg(unix)]
+    // Pure in-memory selection is shared by capture on every target. Store
+    // preparation remains Unix-only; this enables no new platform execution.
     pub(super) fn sink(&self, stream: OutputStream) -> &Arc<StoreSink> {
         match stream {
             OutputStream::Stdout => &self.streams[0],

@@ -27,6 +27,7 @@ use std::{
 
 use super::output::TRUNCATION_MARKER;
 use super::output_redact::Redactor;
+use super::output_snapshot::CapturedWrites;
 
 /// Chunks the pump may hand a writer before a full channel seals the sink.
 const CHANNEL_CAPACITY: usize = 32;
@@ -36,6 +37,8 @@ const WRITER_STOP_POLL: Duration = Duration::from_millis(20);
 
 /// What one writer thread did with its stream, typed without message text.
 pub(super) struct WriterResult {
+    /// Immutable host-memory bytes; never reconstructed from a mutable file.
+    pub(super) captured_bytes: Option<std::sync::Arc<[u8]>>,
     /// Redacted bytes actually written, from `write` return values.
     pub(super) stored_bytes: u64,
     /// The stream was sealed before its end: the cap was hit (the file is
@@ -85,6 +88,7 @@ impl StreamWriter {
     pub(super) fn join(self) -> WriterResult {
         drop(self.tx);
         self.handle.join().unwrap_or(WriterResult {
+            captured_bytes: None,
             stored_bytes: 0,
             capped: false,
             error: Some((io::ErrorKind::Other, None)),
@@ -106,6 +110,7 @@ impl StreamWriter {
         while !self.handle.is_finished() {
             if started.elapsed() >= deadline {
                 return WriterResult {
+                    captured_bytes: None,
                     stored_bytes: 0,
                     capped: false,
                     error: Some((io::ErrorKind::TimedOut, None)),
@@ -115,6 +120,7 @@ impl StreamWriter {
             thread::sleep(WRITER_STOP_POLL);
         }
         self.handle.join().unwrap_or(WriterResult {
+            captured_bytes: None,
             stored_bytes: 0,
             capped: false,
             error: Some((io::ErrorKind::Other, None)),
@@ -140,7 +146,7 @@ fn run_writer(
     cap: usize,
 ) -> WriterResult {
     let mut redactor = Redactor::new(&secrets);
-    let mut stored_bytes: u64 = 0;
+    let mut stored_bytes = CapturedWrites::new();
     let mut capped = redactor.is_refused();
     let mut error: Option<(io::ErrorKind, Option<i32>)> = None;
     let mut failed = false;
@@ -183,7 +189,12 @@ fn run_writer(
         }
     }
     WriterResult {
-        stored_bytes,
+        stored_bytes: stored_bytes.stored_bytes(),
+        captured_bytes: if capped || error.is_some() {
+            None
+        } else {
+            stored_bytes.into_bytes()
+        },
         capped,
         error,
         discarded_raw_bytes,
@@ -197,7 +208,7 @@ fn emit(
     file: &mut fs::File,
     bytes: &[u8],
     cap: usize,
-    stored_bytes: &mut u64,
+    stored_bytes: &mut CapturedWrites,
     capped: &mut bool,
     error: &mut Option<(io::ErrorKind, Option<i32>)>,
     failed: &mut bool,
@@ -205,7 +216,11 @@ fn emit(
     if *failed || *capped {
         return;
     }
-    if stored_bytes.saturating_add(bytes.len() as u64) > cap as u64 {
+    if stored_bytes
+        .stored_bytes()
+        .saturating_add(bytes.len() as u64)
+        > cap as u64
+    {
         *capped = true;
         write_counted(
             file,
@@ -225,7 +240,7 @@ fn emit(
 fn write_counted(
     file: &mut fs::File,
     bytes: &[u8],
-    stored_bytes: &mut u64,
+    stored_bytes: &mut CapturedWrites,
     error: &mut Option<(io::ErrorKind, Option<i32>)>,
     failed: &mut bool,
 ) {
@@ -238,8 +253,8 @@ fn write_counted(
                 return;
             }
             Ok(n) => {
+                stored_bytes.record(&bytes[written..written + n]);
                 written += n;
-                *stored_bytes = stored_bytes.saturating_add(n as u64);
             }
             Err(source) if source.kind() == io::ErrorKind::Interrupted => {}
             Err(source) => {
