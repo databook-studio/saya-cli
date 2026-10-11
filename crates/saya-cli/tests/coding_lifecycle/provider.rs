@@ -65,6 +65,10 @@ impl Provider {
                 stream
                     .set_read_timeout(Some(Duration::from_secs(3)))
                     .unwrap();
+                // macOS accept() inherits the listener's O_NONBLOCK, so the
+                // read timeout would be ignored and reads would return
+                // EAGAIN instantly; restore blocking mode.
+                stream.set_nonblocking(false).unwrap();
                 let body = read_request(&mut stream);
                 count.fetch_add(1, Ordering::AcqRel);
                 if body.contains("INJECTED ROOT AUTHORITY") {

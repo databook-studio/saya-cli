@@ -93,6 +93,9 @@ fn response(_actor: &str, turn: usize) -> String {
 }
 
 fn read_request(stream: &mut TcpStream) -> String {
+    // macOS accept() inherits the listener's O_NONBLOCK, so reads would
+    // return EAGAIN instantly; restore blocking mode.
+    stream.set_nonblocking(false).unwrap();
     let mut bytes = Vec::new();
     let mut buffer = [0; 4096];
     loop {

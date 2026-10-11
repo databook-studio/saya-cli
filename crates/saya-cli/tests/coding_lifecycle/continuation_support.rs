@@ -72,6 +72,9 @@ fn serve(listener: TcpListener, requests: Arc<Mutex<Vec<String>>>, stop: Arc<Ato
             }
             Err(_) => break,
         };
+        // macOS accept() inherits the listener's O_NONBLOCK, so reads would
+        // return EAGAIN instantly; restore blocking mode.
+        stream.set_nonblocking(false).unwrap();
         let request = read_request(&mut stream);
         requests.lock().unwrap().push(request.clone());
         let actor = actor(&request);
@@ -97,11 +100,22 @@ fn context_body(request: &String) -> Option<Value> {
 }
 
 fn actor(request: &str) -> String {
+    // The request body is JSON, so the prompt's newline is the two-character
+    // escape `\n` and whitespace-delimited parsing would swallow the rest of
+    // the body into the actor (a fresh turn key per request). Scan the
+    // agent-id shape directly instead, the way provider.rs does.
     request
         .split("UNTRUSTED CHILD TASK")
         .nth(1)
         .and_then(|task| task.split("write for ").nth(1))
-        .and_then(|tail| tail.split_whitespace().next())
+        .map(|tail| {
+            let suffix = tail.strip_prefix("child-")?;
+            let end = suffix
+                .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+                .unwrap_or(suffix.len());
+            (end > 0).then_some(&tail[.."child-".len() + end])
+        })
+        .flatten()
         .unwrap_or("parent")
         .to_owned()
 }
