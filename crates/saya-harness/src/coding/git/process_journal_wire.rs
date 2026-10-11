@@ -174,6 +174,20 @@ fn validate_wire(wire: WireReceipt) -> Option<JournalReceipt> {
     {
         return None;
     }
+    let exit_shape_valid = match outcome {
+        GitProcessOutcome::Exited => {
+            wire.pid.is_some()
+                && ((wire.exit_code.is_some() && wire.signal.is_none())
+                    || (wire.exit_code.is_none()
+                        && wire
+                            .signal
+                            .is_some_and(|signal| (1..=128).contains(&signal))))
+        }
+        _ => wire.exit_code.is_none() && wire.signal.is_none(),
+    };
+    if !exit_shape_valid {
+        return None;
+    }
     Some(JournalReceipt {
         version: wire.version,
         service_identity: wire.service_identity,

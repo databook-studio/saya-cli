@@ -300,6 +300,50 @@ async fn malformed_process_journal_stays_incomplete_without_reset() {
 }
 
 #[tokio::test]
+async fn malformed_signal_marks_shared_journal_incomplete() {
+    let temp = TempRoot::new("journal-signal");
+    let (git, _) = fake_git(temp.path(), "#!/bin/sh\nprintf 'git version 2.50.1\\n'\n");
+    let state = state_root(temp.path());
+    let service = GitService::new(&git, &state).unwrap();
+    service
+        .git_version(&CancellationToken::new())
+        .await
+        .unwrap();
+    drop(service);
+    let journal = state.join("git-processes.jsonl");
+    let line = fs::read_to_string(&journal).unwrap();
+    fs::write(&journal, line.replace("\"signal\":null", "\"signal\":0")).unwrap();
+    let reopened = GitService::new(&git, &state).unwrap();
+    assert!(!reopened.process_observations().complete());
+    assert!(reopened.process_observations().receipts().is_empty());
+}
+
+#[tokio::test]
+async fn two_services_share_the_journal_bound() {
+    let temp = TempRoot::new("journal-shared");
+    let (git, _) = fake_git(temp.path(), "#!/bin/sh\nprintf 'git version 2.50.1\\n'\n");
+    let state = state_root(temp.path());
+    let first = GitService::new(&git, &state).unwrap();
+    let second = GitService::new(&git, &state).unwrap();
+    for index in 0..255 {
+        let service = if index % 2 == 0 { &first } else { &second };
+        service
+            .git_version(&CancellationToken::new())
+            .await
+            .unwrap();
+    }
+    let first_snapshot = first.process_observations();
+    let second_snapshot = second.process_observations();
+    assert!(!first_snapshot.complete() || !second_snapshot.complete());
+    drop(first);
+    drop(second);
+    let reopened = GitService::new(&git, &state).unwrap();
+    let snapshot = reopened.process_observations();
+    assert!(!snapshot.complete());
+    assert!(snapshot.receipts().len() <= 256);
+}
+
+#[tokio::test]
 async fn process_journal_omission_survives_reopen() {
     let temp = TempRoot::new("journal-bound");
     let (git, _) = fake_git(temp.path(), "#!/bin/sh\nprintf 'git version 2.50.1\\n'\n");

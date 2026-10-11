@@ -92,9 +92,17 @@ fn append_locked(
     appendable: &mut bool,
 ) -> Result<(), JournalAppendError> {
     validate_file(file).map_err(|_| JournalAppendError::Io)?;
+    let (persisted, incomplete, persisted_bytes) =
+        read_records(file).map_err(|_| JournalAppendError::Io)?;
+    if incomplete {
+        *appendable = false;
+        return Err(JournalAppendError::AlreadyIncomplete);
+    }
+    *journal.lock(&journal.retained_records) = persisted.len();
+    *journal.lock(&journal.retained_bytes) = persisted_bytes;
     let length = file.metadata().map_err(|_| JournalAppendError::Io)?.len() as usize;
-    let count = *journal.lock(&journal.retained_records);
-    let retained = *journal.lock(&journal.retained_bytes);
+    let count = persisted.len();
+    let retained = persisted_bytes;
     if line.len() > wire::MAX_LINE
         || count >= MAX_RECEIPTS
         || retained.saturating_add(line.len()) > MAX_BYTES
