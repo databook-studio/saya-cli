@@ -1,3 +1,4 @@
+use super::{DEADLINE, Provider};
 use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
 use std::{
     fs,
@@ -23,7 +24,7 @@ impl Drop for Root {
 pub struct Session {
     root: Root,
     child: Option<Box<dyn Child + Send + Sync>>,
-    writer: Box<dyn Write + Send>,
+    writer: Option<Box<dyn Write + Send>>,
     output: mpsc::Receiver<Vec<u8>>,
     reader: Option<JoinHandle<()>>,
     raw: Vec<u8>,
@@ -48,6 +49,20 @@ impl Session {
             git.success(),
             "private PTY repository initialization succeeds"
         );
+        fs::write(root.join("repo/baseline.txt"), b"tracked baseline\n").unwrap();
+        for args in [
+            ["config", "user.name", "Saya PTY Fixture"],
+            ["config", "user.email", "pty@example.invalid"],
+            ["add", "baseline.txt"],
+            ["commit", "--quiet", "-m", "baseline"],
+        ] {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(root.join("repo"))
+                .status()
+                .expect("git baseline command starts");
+            assert!(status.success(), "git baseline command succeeds");
+        }
 
         let pty = native_pty_system();
         let pair = pty
@@ -67,6 +82,7 @@ impl Session {
             root.join("repo").to_str().unwrap(),
             "--approval-mode",
             "bypass",
+            "--verbose",
         ]);
         command.cwd(root.join("repo"));
         command.env("HOME", root.join("home"));
@@ -84,7 +100,7 @@ impl Session {
         Self {
             root: Root(root),
             child: Some(child),
-            writer,
+            writer: Some(writer),
             output,
             reader: Some(reader),
             raw: Vec::new(),
@@ -93,8 +109,9 @@ impl Session {
 
     pub fn send(&mut self, bytes: &[u8]) {
         assert!(bytes.len() <= INPUT_LIMIT, "one PTY input is bounded");
-        self.writer.write_all(bytes).unwrap();
-        self.writer.flush().unwrap();
+        let writer = self.writer.as_mut().expect("PTY writer remains live");
+        writer.write_all(bytes).unwrap();
+        writer.flush().unwrap();
     }
 
     pub fn wait_for(&mut self, needle: &str, timeout: Duration) {
@@ -108,7 +125,7 @@ impl Session {
         panic!("PTY did not show {needle:?}; tail:\n{}", self.tail());
     }
 
-    pub fn finish(mut self) -> Vec<u8> {
+    pub fn finish(&mut self) -> Vec<u8> {
         self.send(b"\x03\x03");
         let deadline = Instant::now() + DEADLINE;
         while Instant::now() < deadline {
@@ -123,8 +140,26 @@ impl Session {
             }
             self.pump();
         }
-        self.cleanup();
-        self.raw
+        self.cleanup(Duration::from_secs(2));
+        self.raw.clone()
+    }
+
+    pub fn records(&self, job: &str) -> String {
+        let root = self.root.0.join("home/coding").join(job);
+        let mut output = Vec::new();
+        let entries = fs::read_dir(root).expect("owned coding records directory exists");
+        for entry in entries.take(128) {
+            let entry = entry.unwrap();
+            if !entry.file_type().unwrap().is_file() {
+                continue;
+            }
+            let bytes = fs::read(entry.path()).unwrap();
+            if bytes.len() <= 1024 * 1024 {
+                output.extend_from_slice(&bytes);
+            }
+            assert!(output.len() <= 4 * 1024 * 1024, "records are bounded");
+        }
+        String::from_utf8_lossy(&output).into_owned()
     }
 
     fn pump(&mut self) {
@@ -139,21 +174,32 @@ impl Session {
         String::from_utf8_lossy(&self.raw[start..]).into_owned()
     }
 
-    fn cleanup(&mut self) {
+    fn cleanup(&mut self, drain_for: Duration) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
             let _ = child.wait();
         }
         self.child = None;
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+        self.writer.take();
+        let deadline = Instant::now() + drain_for;
+        while Instant::now() < deadline {
+            match self.output.recv_timeout(IO_WAIT) {
+                Ok(chunk) => {
+                    self.raw.extend_from_slice(&chunk);
+                    if self.raw.len() >= OUTPUT_LIMIT {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
         }
+        self.reader.take();
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        self.cleanup();
+        self.cleanup(Duration::from_millis(100));
     }
 }
 

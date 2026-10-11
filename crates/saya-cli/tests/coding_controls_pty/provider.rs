@@ -1,3 +1,4 @@
+use super::DEADLINE;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -19,7 +20,7 @@ pub struct Provider {
 
 pub fn config(provider: &Provider) -> String {
     format!(
-        "[ai]\nprovider = 'openai_compatible'\nbase_url = '{}'\nmodel = 'pty-fixture'\n\n[coding]\nenabled = true\n",
+        "[ai]\nprovider = 'openai_compatible'\nbase_url = '{}'\nmodel = 'pty-fixture'\n\n[coding]\nenabled = true\n\n[jobs.runner]\nprogram_dir = '/bin'\nallow = ['sleep']\n",
         provider.endpoint()
     )
 }
@@ -87,8 +88,8 @@ fn parent_response(turn: usize) -> String {
         0 => tool(
             "delegate",
             json!({"tasks":[
-                {"agent_id":"child-a","task":"write for child-a","write_paths":["a.txt"]},
-                {"agent_id":"child-b","task":"write for child-b","write_paths":["b.txt"]}
+                {"agent_id":"child-a","task":"PTY_PROVIDER_LIVE child-a write for child-a","write_paths":["a.txt"]},
+                {"agent_id":"child-b","task":"PTY_PROVIDER_LIVE child-b write for child-b","write_paths":["b.txt"]}
             ]}),
         ),
         1 => tool("await_children", json!({})),
@@ -112,7 +113,10 @@ fn child_response(actor: &str, turn: usize) -> String {
             json!({"program":"sleep","argv":["20"],"timeout_seconds":30}),
         )
     } else {
-        answer(&format!("{actor} child work complete"))
+        tool(
+            "coding_command_read",
+            json!({"command_id":1,"stderr":false,"marker":actor}),
+        )
     }
 }
 
