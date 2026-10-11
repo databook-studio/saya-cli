@@ -59,6 +59,12 @@ pub(super) async fn verify_linked_worktree(
     let path = super::repository_check::single_line(&output.stdout)
         .map_err(|_| GitInventoryError::UnsupportedWorktree)?;
     let git_dir = fs::canonicalize(path).map_err(|_| GitInventoryError::UnsupportedWorktree)?;
+    if git_dir == common_dir {
+        // The main worktree's git directory is the common directory itself.
+        // Its record is only non-current when the inventory runs from a
+        // linked worktree, and its identity is proven by this equality.
+        return Ok(());
+    }
     let registered_parent = common_dir.join("worktrees");
     if !fs::metadata(&git_dir).is_ok_and(|metadata| metadata.is_dir())
         || git_dir.parent() != Some(registered_parent.as_path())
