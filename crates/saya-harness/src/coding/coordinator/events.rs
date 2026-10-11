@@ -1,5 +1,4 @@
 use super::super::child::ChildExecutionSpec;
-use super::api::ChildRunError;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentMetric, AnsweringObservation, BudgetDimension,
     CancellationReason, CancellationToken, ProviderContinuationPhase, ProviderRecoveryPhase,

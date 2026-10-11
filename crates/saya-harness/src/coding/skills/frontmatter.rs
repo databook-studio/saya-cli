@@ -140,8 +140,8 @@ fn parse_description_block(
     let mut block = Vec::new();
     while *line_index + 1 < lines.len() {
         let line = lines[*line_index];
-        if line.starts_with("  ") {
-            block.push(&line[2..]);
+        if let Some(continuation) = line.strip_prefix("  ") {
+            block.push(continuation);
             *line_index += 1;
         } else if line.is_empty() {
             block.push("");

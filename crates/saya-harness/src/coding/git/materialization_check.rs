@@ -4,7 +4,7 @@ use saya_agent::CancellationToken;
 use saya_types::GitObjectId;
 
 use super::{
-    command::{GitConfigRisk, GitError, GitOperation, GitRepository, require_success},
+    command::{GitConfigRisk, GitError, GitRepository, require_success},
     request::GitRequest,
     service::GitService,
 };

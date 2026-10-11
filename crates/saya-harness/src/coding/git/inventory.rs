@@ -3,7 +3,7 @@ use std::{collections::HashSet, fs, path::PathBuf};
 use saya_agent::CancellationToken;
 
 use super::{
-    command::{GitError, GitRepository, require_success},
+    command::{GitRepository, require_success},
     index_parser::{GitIndexEntry, reject_sparse_index, validate_index_entries},
     inventory_deadline::InventoryDeadline,
     inventory_types::GitRepositoryInventory,

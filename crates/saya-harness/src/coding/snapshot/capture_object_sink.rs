@@ -15,7 +15,6 @@ use super::{SnapshotError, capture_staging::StagedSnapshot};
 use std::{
     ffi::{OsStr, OsString},
     fs, io,
-    io::Write as _,
     os::fd::AsRawFd,
 };
 

@@ -62,9 +62,11 @@ pub(super) async fn run(
         credentials,
         source,
         cancellation,
-        None,
-        None,
-        None,
+        Channels {
+            input: None,
+            process_state: None,
+            sinks: None,
+        },
     )
     .await
     .map(|result| result.outcome)
@@ -75,6 +77,15 @@ pub(super) struct CommandSpawnResult {
     pub(super) stdin: Option<StdinDelivery>,
 }
 
+/// The optional side-channels a supervised run can carry: stdin piping, the
+/// process-state publication the owner observes, and the output sinks the
+/// store writes through. A plain `run_program` call carries none of them.
+pub(super) struct Channels {
+    pub(super) input: Option<StdinInputPipe>,
+    pub(super) process_state: Option<watch::Sender<CommandProcessState>>,
+    pub(super) sinks: Option<OutputSinks>,
+}
+
 pub(super) async fn run_command(
     spawn: &RunnerSpawn,
     call: ValidatedCall,
@@ -82,9 +93,7 @@ pub(super) async fn run_command(
     credentials: &[Credential],
     source: &dyn super::env::CredentialSource,
     cancellation: &CancellationToken,
-    input: Option<StdinInputPipe>,
-    process_state: watch::Sender<CommandProcessState>,
-    sinks: Option<OutputSinks>,
+    channels: Channels,
 ) -> Result<CommandSpawnResult, RunnerError> {
     execute(
         spawn,
@@ -93,9 +102,7 @@ pub(super) async fn run_command(
         credentials,
         source,
         cancellation,
-        input,
-        Some(process_state),
-        sinks,
+        channels,
     )
     .await
 }
@@ -107,10 +114,13 @@ async fn execute(
     credentials: &[Credential],
     source: &dyn super::env::CredentialSource,
     cancellation: &CancellationToken,
-    input: Option<StdinInputPipe>,
-    process_state: Option<watch::Sender<CommandProcessState>>,
-    sinks: Option<OutputSinks>,
+    channels: Channels,
 ) -> Result<CommandSpawnResult, RunnerError> {
+    let Channels {
+        input,
+        process_state,
+        sinks,
+    } = channels;
     let mut command = spawn.command(&call.program_path);
     // Typed argv, verbatim: every element is one argv element on the
     // sandbox-exec (or confined) command line. There is no string here that

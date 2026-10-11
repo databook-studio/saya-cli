@@ -60,9 +60,11 @@ impl RunProgram {
             &self.credentials,
             self.resolver.as_ref(),
             &self.cancellation,
-            input,
-            process_state,
-            sinks,
+            spawn::Channels {
+                input,
+                process_state: Some(process_state),
+                sinks,
+            },
         )
         .await?;
         Ok(CommandRunOutcome {
@@ -114,10 +116,10 @@ impl RunProgram {
                             program: program.to_owned(),
                         });
                     };
-                    return Err(RunnerError::ProgramRefused {
+                    Err(RunnerError::ProgramRefused {
                         program: program.to_owned(),
                         reason,
-                    });
+                    })
                 }
             }
         }

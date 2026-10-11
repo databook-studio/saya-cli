@@ -236,10 +236,8 @@ fn fold_record(
                     _ => return Err(BudgetLedgerError::ResumeRecordCorrupt),
                 }
             }
-            BudgetObservationValue::Measured(amount) => {
-                if dimension == BudgetDimension::ToolCalls {
-                    add(&mut folded.measured_tool_calls, amount)?
-                }
+            BudgetObservationValue::Measured(amount) if dimension == BudgetDimension::ToolCalls => {
+                add(&mut folded.measured_tool_calls, amount)?
             }
             _ => {}
         }

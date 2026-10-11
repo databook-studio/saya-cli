@@ -34,4 +34,4 @@ pub use process_observer::{
 };
 pub use repository::{GitBranchState, GitHeadState, GitInventoryError, GitRepositoryIdentity};
 pub use service::GitService;
-pub(crate) use snapshot_input::{GitSnapshotInputs, SnapshotIndexInput, SnapshotTreeInput};
+pub(crate) use snapshot_input::SnapshotIndexInput;

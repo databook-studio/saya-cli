@@ -17,7 +17,7 @@ pub enum CommandSessionError {
         "command exited after only {written_bytes} of {accepted_bytes} queued stdin bytes reached its pipe"
     )]
     InputIncomplete {
-        outcome: ProgramOutcome,
+        outcome: Box<ProgramOutcome>,
         accepted_bytes: usize,
         written_bytes: usize,
     },
@@ -25,7 +25,7 @@ pub enum CommandSessionError {
         "command stdin write failed after {written_bytes} of {accepted_bytes} queued bytes reached its pipe: {source}"
     )]
     InputWriteFailed {
-        outcome: ProgramOutcome,
+        outcome: Box<ProgramOutcome>,
         accepted_bytes: usize,
         written_bytes: usize,
         #[source]
@@ -45,13 +45,13 @@ pub(super) fn input_result(
     };
     match stdin.source {
         Some(source) => Err(CommandSessionError::InputWriteFailed {
-            outcome,
+            outcome: Box::new(outcome),
             accepted_bytes: stdin.accepted_bytes,
             written_bytes: stdin.written_bytes,
             source,
         }),
         None => Err(CommandSessionError::InputIncomplete {
-            outcome,
+            outcome: Box::new(outcome),
             accepted_bytes: stdin.accepted_bytes,
             written_bytes: stdin.written_bytes,
         }),

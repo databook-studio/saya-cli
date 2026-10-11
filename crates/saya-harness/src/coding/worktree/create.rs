@@ -96,14 +96,15 @@ impl fmt::Debug for CreatedCheckout {
     }
 }
 
-/// Per-(job, checkout) in-process create serialization: the whole
+/// Per-(job, checkout) create serialization: the whole
 /// read–effect–outcome run for one id holds its lock, so a concurrent
 /// same-id call observes the settled record instead of racing the intent
 /// append. Cross-process serialization is not provided; the store itself
 /// still enforces one durable outcome. Entries are weak and pruned on
 /// every insert, so the map's bound is the number of in-flight keys.
-static CREATE_LOCKS: LazyLock<Mutex<HashMap<(String, String), Weak<tokio::sync::Mutex<()>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type CreateLockMap = HashMap<(String, String), Weak<tokio::sync::Mutex<()>>>;
+
+static CREATE_LOCKS: LazyLock<Mutex<CreateLockMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Creates (or idempotently replays) one managed checkout.
 ///

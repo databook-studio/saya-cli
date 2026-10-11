@@ -1,7 +1,4 @@
-use std::{
-    fmt, fs,
-    path::{Path, PathBuf},
-};
+use std::{fmt, fs, path::Path};
 
 use saya_agent::CancellationToken;
 use saya_types::{ManagedCheckoutId, ManagedCheckoutPath};

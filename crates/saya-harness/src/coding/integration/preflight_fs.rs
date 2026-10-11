@@ -54,7 +54,7 @@ pub(super) fn classify_worktree(
     let mut components = rel.split('/');
     let last = components.next_back().unwrap_or_default();
     let mut parent = root_fd;
-    let mut held: Option<OwnedFd> = None;
+    let mut held: Option<OwnedFd>;
     for component in components {
         held = Some(match open_dir_at(parent, OsStr::new(component)) {
             Ok(next) => next,

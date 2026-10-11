@@ -175,10 +175,11 @@ impl GitRequest<'_> {
                 arguments.push(format!("{}^{{commit}}", object.as_str()).into());
             }
             Self::VerifyCommits(_) => {}
-            Self::CheckFilterAttributes { source, .. } => {
-                if let Some(source) = source {
-                    arguments.insert(1, format!("--source={}", source.as_str()).into());
-                }
+            Self::CheckFilterAttributes {
+                source: Some(source),
+                ..
+            } => {
+                arguments.insert(1, format!("--source={}", source.as_str()).into());
             }
             Self::TreeEntries(object)
             | Self::ReadBlob(object)

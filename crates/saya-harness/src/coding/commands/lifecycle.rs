@@ -11,7 +11,9 @@ use tokio::sync::Semaphore;
 
 use crate::runner::RunProgram;
 
-use super::{CommandSession, input::CommandInput, output::CommandOutputStore};
+use super::{
+    CommandSession, input::CommandInput, output::CommandOutputStore, session::SupervisedRun,
+};
 
 pub const MAX_COMMAND_CONCURRENCY: usize = 2;
 
@@ -114,10 +116,12 @@ impl CommandOwner {
         }
         let input = stdin_enabled.then(|| CommandInput::channel(self.cancellation.clone()));
         Ok(CommandSession::spawn(
-            runner,
-            program,
-            argv,
-            timeout_seconds,
+            SupervisedRun {
+                runner,
+                program,
+                argv,
+                timeout_seconds,
+            },
             self.cancellation.clone(),
             permit,
             input,

@@ -45,12 +45,19 @@ impl fmt::Debug for CommandSession {
     }
 }
 
+/// The supervised run a session supervises: the already-authorized runner
+/// call plus the program specification it will execute. Bundled so the
+/// spawn seam stays a small, stable shape.
+pub(super) struct SupervisedRun {
+    pub(super) runner: RunProgram,
+    pub(super) program: String,
+    pub(super) argv: Vec<String>,
+    pub(super) timeout_seconds: NonZeroU64,
+}
+
 impl CommandSession {
     pub(super) fn spawn(
-        runner: RunProgram,
-        program: String,
-        argv: Vec<String>,
-        timeout_seconds: NonZeroU64,
+        run: SupervisedRun,
         owner_cancellation: CancellationToken,
         permit: OwnedSemaphorePermit,
         input: Option<(CommandInput, StdinInputPipe)>,
@@ -64,6 +71,12 @@ impl CommandSession {
         let (process_state_tx, process_state) = watch::channel(CommandProcessState::Pending);
         let task = tokio::spawn(async move {
             let _permit = permit;
+            let SupervisedRun {
+                runner,
+                program,
+                argv,
+                timeout_seconds,
+            } = run;
             let run_cancellation = runner.cancellation_token();
             if task_cancellation.is_cancelled()
                 || owner_cancellation.is_cancelled()

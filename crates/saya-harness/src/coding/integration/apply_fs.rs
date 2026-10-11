@@ -84,7 +84,7 @@ pub(super) fn set_candidate_mode_bits(
 /// component name. The root descriptor is only borrowed: the returned
 /// descriptor is always a fresh open, never the root itself.
 #[cfg(unix)]
-fn open_parent<'a>(root_fd: RawFd, rel: &'a str) -> Result<(OwnedFd, &'a str), ApplyError> {
+fn open_parent(root_fd: RawFd, rel: &str) -> Result<(OwnedFd, &str), ApplyError> {
     let mut components = rel.split('/');
     let last = match components.next_back() {
         Some(last) if !last.is_empty() => last,
