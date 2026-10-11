@@ -5,6 +5,7 @@ use super::support::Fixture;
 use control_support::ControlProvider;
 use saya_agent::CancellationToken;
 use saya_cli::{CodingAuthorization, CodingCommand, CodingError, CodingJobRequest, CodingTask};
+use saya_harness::coding::coordinator::{ChildRunError, ScheduleChildError};
 use saya_types::{AgentId, JobId};
 use std::time::Duration;
 
@@ -105,7 +106,25 @@ async fn live_controls_acknowledge_only_at_the_safe_boundary() {
         .unwrap()["cancel_requested"],
         true
     );
-    let _ = job.join().await;
+    let report = job.join().await.unwrap();
+    let child_a = report
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.agent_id.as_str() == "child-a")
+        .expect("child-a outcome is retained after join");
+    assert!(child_a.result.is_ok());
+    assert!(child_a.completion_sequence.is_some());
+    let child_b = report
+        .outcomes
+        .iter()
+        .find(|outcome| outcome.agent_id.as_str() == "child-b")
+        .expect("child-b outcome is retained after join");
+    assert!(matches!(
+        &child_b.result,
+        Err(ScheduleChildError::Run(ChildRunError::Cancelled {
+            reason: saya_agent::CancellationReason::User
+        }))
+    ));
 }
 
 fn task(agent: &str, path: &str) -> CodingTask {
