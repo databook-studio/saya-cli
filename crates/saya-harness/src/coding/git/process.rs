@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -15,6 +15,7 @@ use super::{
     command::{GitError, GitOperation},
     environment::GitEnvironment,
     process_group::GitProcessGroup,
+    process_observer::{GitProcessObserver, Observation},
     request::GitRequest,
 };
 
@@ -30,8 +31,17 @@ pub(super) async fn execute(
     current_dir: &Path,
     request: GitRequest<'_>,
     cancellation: &CancellationToken,
+    observer: &Arc<GitProcessObserver>,
 ) -> Result<GitOutput, GitError> {
-    execute_inner(environment, current_dir, request, cancellation, None).await
+    execute_inner(
+        environment,
+        current_dir,
+        request,
+        cancellation,
+        None,
+        observer,
+    )
+    .await
 }
 
 pub(super) async fn execute_until(
@@ -40,6 +50,7 @@ pub(super) async fn execute_until(
     request: GitRequest<'_>,
     cancellation: &CancellationToken,
     deadline: Instant,
+    observer: &Arc<GitProcessObserver>,
 ) -> Result<GitOutput, GitError> {
     execute_inner(
         environment,
@@ -47,6 +58,7 @@ pub(super) async fn execute_until(
         request,
         cancellation,
         Some(deadline),
+        observer,
     )
     .await
 }
@@ -57,6 +69,29 @@ async fn execute_inner(
     request: GitRequest<'_>,
     cancellation: &CancellationToken,
     deadline: Option<Instant>,
+    observer: &Arc<GitProcessObserver>,
+) -> Result<GitOutput, GitError> {
+    let mut observation = observer.begin(request.kind(), request.operation());
+    let result = execute_observed(
+        environment,
+        current_dir,
+        request,
+        cancellation,
+        deadline,
+        &mut observation,
+    )
+    .await;
+    observation.finish(&result);
+    result
+}
+
+async fn execute_observed(
+    environment: &GitEnvironment,
+    current_dir: &Path,
+    request: GitRequest<'_>,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+    observation: &mut Observation,
 ) -> Result<GitOutput, GitError> {
     let operation = request.operation();
     let (stdout_limit, stderr_limit) = request.output_limits();
@@ -84,6 +119,7 @@ async fn execute_inner(
     }
     let mut child = command.spawn().map_err(GitError::Spawn)?;
     let pid = child.id();
+    observation.pid(pid);
     let mut process_group = GitProcessGroup::new(pid);
     let Some(stdout_pipe) = child.stdout.take() else {
         let _ = crate::proc::kill_process_group(pid);
@@ -135,6 +171,13 @@ async fn execute_inner(
     } else {
         None
     };
+    observation.settled(settled.duration_ms, settled.killed_orphans);
+    observation.capture(
+        stdout.total_bytes(),
+        stderr.total_bytes(),
+        stdout.overflowed(),
+        stderr.overflowed(),
+    );
     if !matches!(stdout_result, Ok(Ok(()))) || !matches!(stderr_result, Ok(Ok(()))) {
         return Err(GitError::CaptureUnavailable);
     }
@@ -177,6 +220,7 @@ struct Capture {
     bytes: Mutex<Vec<u8>>,
     maximum: usize,
     overflowed: AtomicBool,
+    total_bytes: AtomicU64,
 }
 
 impl Capture {
@@ -185,6 +229,7 @@ impl Capture {
             bytes: Mutex::new(Vec::new()),
             maximum,
             overflowed: AtomicBool::new(false),
+            total_bytes: AtomicU64::new(0),
         }
     }
 
@@ -199,6 +244,7 @@ impl Capture {
                 }
                 Ok(read) => read,
             };
+            self.total_bytes.fetch_add(read as u64, Ordering::AcqRel);
             let mut bytes = self.lock();
             let remaining = self.maximum.saturating_sub(bytes.len());
             let accepted = read.min(remaining);
@@ -212,6 +258,10 @@ impl Capture {
 
     fn overflowed(&self) -> bool {
         self.overflowed.load(Ordering::Acquire)
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Acquire)
     }
 
     fn take_bytes(&self) -> Vec<u8> {

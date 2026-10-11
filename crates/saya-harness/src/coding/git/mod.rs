@@ -9,6 +9,7 @@ mod metadata_scan;
 mod parser;
 mod process;
 mod process_group;
+mod process_observer;
 mod repository;
 mod repository_check;
 mod request;
@@ -27,6 +28,9 @@ pub use command::{
     GitConfigRisk, GitError, GitObjectFormat, GitOperation, GitRepository, ManagedWorktree,
 };
 pub use inventory_types::{GitPathStatus, GitRepositoryInventory, GitWorktreeInventory};
+pub use process_observer::{
+    GitProcessEffect, GitProcessOutcome, GitProcessReceipt, GitProcessSnapshot,
+};
 pub use repository::{GitBranchState, GitHeadState, GitInventoryError, GitRepositoryIdentity};
 pub use service::GitService;
 pub(crate) use snapshot_input::{GitSnapshotInputs, SnapshotIndexInput, SnapshotTreeInput};

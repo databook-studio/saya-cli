@@ -55,6 +55,37 @@ pub(super) enum GitRequest<'a> {
 }
 
 impl GitRequest<'_> {
+    pub(super) fn kind(self) -> &'static str {
+        match self {
+            Self::Version => "version",
+            Self::IsBare => "is_bare",
+            Self::RepositoryRoot => "repository_root",
+            Self::GitDir => "git_dir",
+            Self::CommonDir => "common_dir",
+            Self::ObjectFormat => "object_format",
+            Self::LocalConfig => "local_config",
+            Self::VerifyCommit(_) => "verify_commit",
+            Self::VerifyCommits(_) => "verify_commits",
+            Self::CheckFilterAttributes { .. } => "check_filter_attributes",
+            Self::InitializeIndex(_) => "initialize_index",
+            Self::IndexEntries => "index_entries",
+            Self::IndexStageEntries => "index_stage_entries",
+            Self::TreeEntries(_) => "tree_entries",
+            Self::ReadBlob(_) => "read_blob",
+            Self::SnapshotBlob(_) => "snapshot_blob",
+            Self::Head => "head",
+            Self::Branch => "branch",
+            Self::UnstagedNames => "unstaged_names",
+            Self::StagedNames => "staged_names",
+            Self::Status => "status",
+            Self::WorktreeListPorcelainZ => "worktree_list",
+            Self::StatusPorcelainV2BranchZ => "status_branch",
+            Self::AddWorktree { .. } => "add_worktree",
+            Self::AddWorktreeNoCheckout { .. } => "add_worktree_no_checkout",
+            Self::RemoveWorktree { .. } => "remove_worktree",
+        }
+    }
+
     pub(super) fn operation(self) -> GitOperation {
         match self {
             Self::AddWorktree { .. }
