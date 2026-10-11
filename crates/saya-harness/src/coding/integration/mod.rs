@@ -17,6 +17,12 @@ mod paths;
 mod preflight;
 mod preflight_fs;
 mod receipt;
+mod transaction;
+mod transaction_events;
+mod transaction_identity;
+mod transaction_images;
+mod transaction_journal;
+mod transaction_journal_io;
 
 pub use apply::{
     AcceptedDelta, ApplyError, OverlapConflict, OverlapPair, apply_delta, detect_overlaps,
@@ -42,3 +48,7 @@ pub use preflight::{
 pub use receipt::{
     ChangeReceipt, ChangeScope, ReceiptChange, ReceiptOutcome, RejectionReason, evaluate_receipt,
 };
+pub use transaction::{
+    AppliedApplyBack, ApplyBackBounds, ApplyBackError, ApplyBackInput, apply_back,
+};
+pub use transaction_journal::{JournalError, apply_back_latest_dir};
