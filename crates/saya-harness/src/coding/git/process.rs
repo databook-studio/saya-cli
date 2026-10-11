@@ -23,6 +23,7 @@ const PUMP_CHUNK_BYTES: usize = 8 * 1024;
 
 pub(super) struct GitOutput {
     pub(super) exit_code: Option<i32>,
+    pub(super) signal: Option<i32>,
     pub(super) stdout: Vec<u8>,
 }
 
@@ -196,8 +197,22 @@ async fn execute_observed(
         crate::proc::WaitEnd::Cancelled => Err(GitError::Cancelled),
         crate::proc::WaitEnd::Exited => Ok(GitOutput {
             exit_code: settled.status.code(),
+            signal: signal(&settled.status),
             stdout: stdout.take_bytes(),
         }),
+    }
+}
+
+fn signal(status: &std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        status.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
     }
 }
 

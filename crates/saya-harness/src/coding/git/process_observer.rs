@@ -10,6 +10,8 @@ use super::{
 
 const MAX_RECEIPTS: usize = 256;
 const RECEIPT_VERSION: u32 = 1;
+const MAX_RECEIPT_BYTES: usize = 512;
+const MAX_JOURNAL_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitProcessOutcome {
@@ -26,7 +28,7 @@ pub enum GitProcessOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitProcessEffect {
     None,
-    Succeeded,
+    ProcessSucceeded,
     Unknown,
 }
 
@@ -39,9 +41,10 @@ pub struct GitProcessReceipt {
     operation: GitOperation,
     pid: Option<u32>,
     exit_code: Option<i32>,
+    signal: Option<i32>,
     outcome: GitProcessOutcome,
     effect: GitProcessEffect,
-    killed_orphans: bool,
+    killed_orphans: Option<bool>,
     duration_ms: u64,
     stdout_bytes: u64,
     stderr_bytes: u64,
@@ -71,13 +74,16 @@ impl GitProcessReceipt {
     pub fn exit_code(&self) -> Option<i32> {
         self.exit_code
     }
+    pub fn signal(&self) -> Option<i32> {
+        self.signal
+    }
     pub fn outcome(&self) -> GitProcessOutcome {
         self.outcome
     }
     pub fn effect(&self) -> GitProcessEffect {
         self.effect
     }
-    pub fn killed_orphans(&self) -> bool {
+    pub fn killed_orphans(&self) -> Option<bool> {
         self.killed_orphans
     }
     pub fn duration_ms(&self) -> u64 {
@@ -102,6 +108,7 @@ pub struct GitProcessSnapshot {
     service_identity: String,
     receipts: Vec<GitProcessReceipt>,
     omitted: u64,
+    omitted_bytes: u64,
 }
 
 impl GitProcessSnapshot {
@@ -113,6 +120,9 @@ impl GitProcessSnapshot {
     }
     pub fn omitted(&self) -> u64 {
         self.omitted
+    }
+    pub fn omitted_bytes(&self) -> u64 {
+        self.omitted_bytes
     }
     pub fn complete(&self) -> bool {
         self.omitted == 0
@@ -128,6 +138,8 @@ struct State {
     next_sequence: u64,
     receipts: Vec<GitProcessReceipt>,
     omitted: u64,
+    retained_bytes: usize,
+    omitted_bytes: u64,
 }
 
 impl GitProcessObserver {
@@ -138,6 +150,8 @@ impl GitProcessObserver {
                 next_sequence: 1,
                 receipts: Vec::new(),
                 omitted: 0,
+                retained_bytes: 0,
+                omitted_bytes: 0,
             }),
         })
     }
@@ -160,9 +174,10 @@ impl GitProcessObserver {
                 operation,
                 pid: None,
                 exit_code: None,
+                signal: None,
                 outcome: GitProcessOutcome::Unknown,
                 effect: effect(operation, GitProcessOutcome::Unknown, None),
-                killed_orphans: false,
+                killed_orphans: None,
                 duration_ms: 0,
                 stdout_bytes: 0,
                 stderr_bytes: 0,
@@ -180,14 +195,21 @@ impl GitProcessObserver {
             service_identity: self.identity.clone(),
             receipts: state.receipts.clone(),
             omitted: state.omitted,
+            omitted_bytes: state.omitted_bytes,
         }
     }
 
     fn push(&self, receipt: GitProcessReceipt) {
         let mut state = self.lock();
-        if state.receipts.len() == MAX_RECEIPTS {
+        let bytes = receipt_bytes(&receipt);
+        if state.receipts.len() == MAX_RECEIPTS
+            || bytes > MAX_RECEIPT_BYTES
+            || state.retained_bytes.saturating_add(bytes) > MAX_JOURNAL_BYTES
+        {
             state.omitted = state.omitted.saturating_add(1);
+            state.omitted_bytes = state.omitted_bytes.saturating_add(bytes as u64);
         } else {
+            state.retained_bytes += bytes;
             state.receipts.push(receipt);
         }
     }
@@ -212,7 +234,7 @@ impl Observation {
     }
     pub(super) fn settled(&mut self, duration_ms: u64, killed_orphans: bool) {
         self.receipt.duration_ms = duration_ms;
-        self.receipt.killed_orphans = killed_orphans;
+        self.receipt.killed_orphans = Some(killed_orphans);
     }
     pub(super) fn capture(
         &mut self,
@@ -238,6 +260,7 @@ impl Observation {
         match result {
             Ok(output) => {
                 self.receipt.exit_code = output.exit_code;
+                self.receipt.signal = output.signal;
                 self.receipt.outcome = GitProcessOutcome::Exited;
             }
             Err(error) => self.receipt.outcome = outcome(error),
@@ -289,8 +312,14 @@ fn effect(
     if matches!(operation, GitOperation::Read) {
         GitProcessEffect::None
     } else if outcome == GitProcessOutcome::Exited && exit_code == Some(0) {
-        GitProcessEffect::Succeeded
+        GitProcessEffect::ProcessSucceeded
     } else {
         GitProcessEffect::Unknown
     }
+}
+
+fn receipt_bytes(receipt: &GitProcessReceipt) -> usize {
+    128usize
+        .saturating_add(receipt.service_identity.len())
+        .saturating_add(receipt.request_kind.len())
 }
