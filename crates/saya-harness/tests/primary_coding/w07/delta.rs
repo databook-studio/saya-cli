@@ -14,7 +14,6 @@ use super::create_support::CreateCheckoutFixture;
 
 /// One real Active managed checkout, verified, with its published baseline.
 pub(super) struct Active {
-    pub(super) fixture: CreateCheckoutFixture,
     pub(super) verified: VerifiedCheckout,
     pub(super) snapshot: CapturedSnapshot,
     pub(super) root: PathBuf,
@@ -43,7 +42,6 @@ pub(super) async fn active(label: &str, id: &str) -> Active {
         .unwrap();
     let root = PathBuf::from(fixture.service.managed_path(&checkout).unwrap().as_str());
     Active {
-        fixture,
         verified,
         snapshot,
         root,

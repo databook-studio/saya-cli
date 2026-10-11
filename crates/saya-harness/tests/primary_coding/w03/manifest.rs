@@ -3,7 +3,7 @@ use std::fs;
 use saya_agent::CancellationToken;
 use saya_harness::coding::{
     git::GitService,
-    snapshot::{SnapshotContentSource, SnapshotError, SnapshotOmissionPolicy, SnapshotSelection},
+    snapshot::{SnapshotContentSource, SnapshotOmissionPolicy, SnapshotSelection},
 };
 use saya_types::{GitObjectId, SnapshotId};
 

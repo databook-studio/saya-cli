@@ -86,7 +86,7 @@ async fn candidate_digest_rejects_oversize_instead_of_truncating() {
     let big = a.root.join("big.bin");
     fs::File::create(&big)
         .unwrap()
-        .set_len((MAX_SNAPSHOT_FILE_BYTES + 1) as u64)
+        .set_len(MAX_SNAPSHOT_FILE_BYTES + 1)
         .unwrap();
     let err = candidate_source_digest(&a.root, &a.token, DEFAULT_DELTA_DEADLINE)
         .err()
