@@ -15,6 +15,7 @@ mod checkouts;
 mod events;
 mod policies;
 mod projection;
+mod reconciliation;
 mod records;
 mod replay;
 pub(crate) mod schema;

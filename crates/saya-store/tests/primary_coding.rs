@@ -22,6 +22,8 @@ mod r03b_extra2;
 mod r10;
 #[path = "primary_coding/r12.rs"]
 mod r12;
+#[path = "primary_coding/r12a.rs"]
+mod r12a;
 #[path = "primary_coding/r13a.rs"]
 mod r13a;
 #[path = "primary_coding/r13a_admission.rs"]
