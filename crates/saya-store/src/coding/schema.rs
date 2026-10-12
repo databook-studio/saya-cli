@@ -131,3 +131,17 @@ pub(crate) async fn step18(connection: &mut PoolConnection<Sqlite>) -> Result<()
         .map_err(|_| StoreError::Unavailable)?;
     Ok(())
 }
+
+/// Non-refunding reconciliation fact: the event that recorded an operator's
+/// reconciliation of an open or uncertain reservation. Additive and nullable.
+pub(crate) async fn step19(connection: &mut PoolConnection<Sqlite>) -> Result<(), StoreError> {
+    sqlx::query("ALTER TABLE coding_budget_reservations ADD COLUMN reconciled_by_sequence INTEGER")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    sqlx::query("PRAGMA user_version = 19")
+        .execute(&mut **connection)
+        .await
+        .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
+}

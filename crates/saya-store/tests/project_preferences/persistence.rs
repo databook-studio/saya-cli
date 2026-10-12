@@ -78,7 +78,7 @@ async fn fresh_database_reaches_version_fourteen_with_the_project_table() {
             .is_empty()
     );
     store.close().await;
-    assert_eq!(user_version(&db).await, 18);
+    assert_eq!(user_version(&db).await, 19);
     assert!(
         table_exists(&db, "project_preferences").await,
         "missing project_preferences"
@@ -172,7 +172,7 @@ async fn rewind_to_version_eight_recreates_the_project_table() {
             .is_empty()
     );
     reopened.close().await;
-    assert_eq!(user_version(&db).await, 18);
+    assert_eq!(user_version(&db).await, 19);
     assert!(table_exists(&db, "project_preferences").await);
     let survivor = SqliteStateStore::new(&db);
     let typed = survivor
