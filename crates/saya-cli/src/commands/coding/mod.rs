@@ -1,5 +1,6 @@
 //! One native coding application owner shared by terminal and tool adapters.
 mod approval;
+mod approval_audit;
 pub(crate) mod checks;
 pub(crate) mod cli;
 mod cli_mutations;

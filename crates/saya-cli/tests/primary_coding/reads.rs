@@ -168,15 +168,19 @@ async fn events_after_zero_is_refused_and_a_cursor_past_the_last_sequence_is_emp
     .await
     .unwrap();
     assert_eq!(page["next_cursor"], serde_json::Value::Null);
+    // Create records the job's running state and its audited start approval
+    // (request, then granted closure): three events, in order.
     let events = page["events"].as_array().unwrap();
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 3);
     assert_eq!(events[0]["sequence"], 1);
     assert_eq!(events[0]["job_id"], job.as_str());
+    assert_eq!(events[1]["event"]["type"], "approval_requested");
+    assert_eq!(events[2]["event"]["type"], "approval_closed");
     let past = dispatch_coding(
         &fixture.application,
         CodingCommand::Events {
             id: job.as_str().into(),
-            after: Some(1),
+            after: Some(3),
         },
     )
     .await

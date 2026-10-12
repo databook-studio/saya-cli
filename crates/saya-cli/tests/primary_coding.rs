@@ -1,6 +1,8 @@
 //! Native application owner contracts; runtime execution awaits final gates.
 #[path = "primary_coding/approval.rs"]
 mod approval;
+#[path = "primary_coding/audit.rs"]
+mod audit;
 #[cfg(unix)]
 #[path = "primary_coding/checkouts.rs"]
 mod checkouts;

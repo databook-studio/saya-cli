@@ -8,7 +8,9 @@ use saya_harness::{
     workspace::Workspace,
 };
 use saya_store::NewCodingJob;
-use saya_types::{CodingEventKind, CodingEventV1, JobState, Sha256Digest};
+use saya_types::{
+    ApprovalDisposition, CodingEventKind, CodingEventV1, JobApprovalAction, JobState, Sha256Digest,
+};
 use sha2::{Digest, Sha256};
 use std::{num::NonZeroU64, sync::Arc, time::Duration};
 
@@ -65,6 +67,16 @@ impl CodingApplication {
             )
             .await
             .map_err(CodingError::owner)?;
+        // The approval was given before the job existed, so its audit is
+        // recorded now, as a granted request, before the ledger takes over the
+        // event stream. A crash between the two events is cleaned at resume.
+        if let Some(audited) = self
+            .audit_request(&request.job_id, JobApprovalAction::Start, &proposed, 1)
+            .await?
+        {
+            self.audit_close(&request.job_id, audited, ApprovalDisposition::Granted)
+                .await?;
+        }
         let policy_digest = digest(&serde_json::to_vec(&proposed).map_err(CodingError::owner)?)?;
         let ledger = JobBudgetLedger::new(
             self.store.clone(),

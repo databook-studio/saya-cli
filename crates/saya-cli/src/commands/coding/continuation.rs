@@ -13,7 +13,7 @@ use saya_harness::{
     workspace::Workspace,
 };
 use saya_store::CodingRuntimeAuthority;
-use saya_types::{JobId, JobState};
+use saya_types::{ApprovalDisposition, JobApprovalAction, JobId, JobState};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -47,11 +47,32 @@ impl CodingApplication {
         self.status(job).await?;
         let request = self.continuation_request(job)?;
         let proposed = self.propose_resume(job).await?.value;
-        if !decider
+        // The audit is written before the question is asked and closed with
+        // the answer actually given; an abandoned earlier wait is cleaned first.
+        self.close_stale_approvals(job).await?;
+        let audited = self
+            .audit_request(
+                job,
+                JobApprovalAction::Resume,
+                &proposed,
+                proposed["revocation_epoch"].as_u64().unwrap_or(0),
+            )
+            .await?;
+        let granted = decider
             .approve(&CodingAuthorization::definition(), &proposed)
             .await
-            || token.is_cancelled()
-        {
+            && !token.is_cancelled();
+        if let Some(audited) = audited {
+            let disposition = if granted {
+                ApprovalDisposition::Granted
+            } else if token.is_cancelled() {
+                ApprovalDisposition::Cancelled
+            } else {
+                ApprovalDisposition::Denied
+            };
+            self.audit_close(job, audited, disposition).await?;
+        }
+        if !granted {
             return Err(CodingError::ApprovalRequired);
         }
         let status = inspect_recovery(&self.store, job)
