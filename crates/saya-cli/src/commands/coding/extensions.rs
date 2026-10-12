@@ -58,7 +58,9 @@ impl ChildCodingOperations {
             self.application.program_dir.join(profile.program()),
             profile.argv().to_vec(),
         )
-        .map_err(CodingError::owner)?;
+        // Checked before any server process exists; the usual cause is a
+        // symlinked program (a distribution's `sh` or `python3`).
+        .map_err(|_| CodingError::ExtensionProgramRefused)?;
         let config = config.with_observer(std::sync::Arc::new(
             super::extension_observer::ProcessObserver::new(self),
         ));

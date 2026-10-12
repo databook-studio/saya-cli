@@ -73,3 +73,23 @@ fn other_tools_keep_their_errors() {
     );
     assert!(command_refusal_data("coding_notes", &CodingError::NotOwned).is_none());
 }
+
+#[test]
+fn an_unusable_extension_program_is_refused_as_data_before_any_spawn() {
+    // The program path is checked before a server process exists, so the
+    // refusal can never make an effect uncertain and the model can correct it.
+    for name in ["coding_mcp", "coding_lsp"] {
+        let data = command_refusal_data(name, &CodingError::ExtensionProgramRefused)
+            .expect("a pre-spawn program refusal is data");
+        assert_eq!(data["outcome"], json!("refused"));
+        let reason = data["reason"].as_str().expect("reason text");
+        assert!(
+            reason.contains("symlink"),
+            "the reason names the cause: {reason}"
+        );
+        assert!(
+            command_refusal_data(name, &CodingError::Busy).is_none(),
+            "only the program refusal is known to precede the spawn"
+        );
+    }
+}

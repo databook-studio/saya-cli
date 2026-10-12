@@ -86,6 +86,10 @@ pub enum CodingError {
         "the job's model run failed and the job is recorded as failed: read its durable record with `coding events <job>`, and check the configured model with `coding setup --probe`"
     )]
     RunFailed,
+    #[error(
+        "the configured extension program is not usable: it must be a real executable, not a symlink, directly inside the trusted program directory; point the profile at the real file"
+    )]
+    ExtensionProgramRefused,
     #[error("native coding operation failed")]
     Owner(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

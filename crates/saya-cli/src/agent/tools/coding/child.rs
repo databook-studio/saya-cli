@@ -24,6 +24,8 @@ fn command_refusal_data(name: &str, error: &CodingError) -> Option<Value> {
     let pre_effect = match name {
         "coding_command_start" | "coding_command_read" => true,
         "coding_command_stop" => matches!(error, CodingError::NotOwned),
+        // The program path is checked before any server process exists.
+        "coding_mcp" | "coding_lsp" => matches!(error, CodingError::ExtensionProgramRefused),
         _ => false,
     };
     pre_effect.then(|| json!({"outcome":"refused","reason":error.to_string()}))
