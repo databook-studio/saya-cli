@@ -236,7 +236,14 @@ fn fold_record(
                     BudgetDimension::InputTokens | BudgetDimension::OutputTokens => {
                         folded.usage_ever_unknown = true;
                     }
-                    // D5 residual: an Uncertain slot settlement is unresumable; R04 reconciles.
+                    // An Uncertain slot settlement is unresumable until it is
+                    // reconciled; a reconciled one keeps its slot charge
+                    // consumed (never released: it is not `Settled`), exactly
+                    // as an open reservation does.
+                    BudgetDimension::ModelRequestSlots
+                    | BudgetDimension::ChildSlots
+                    | BudgetDimension::CommandSlots
+                        if record.reconciled => {}
                     _ => return Err(BudgetLedgerError::ResumeRecordCorrupt),
                 }
             }

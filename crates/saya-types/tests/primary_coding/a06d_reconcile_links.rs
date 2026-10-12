@@ -30,3 +30,18 @@ fn a_reconciliation_must_come_after_the_reservation_it_names() {
         );
     }
 }
+
+#[test]
+fn a_reconciliation_with_a_malformed_note_digest_is_refused_on_decode() {
+    let good = super::a06d_events::BUDGET_RECONCILED;
+    assert!(
+        CodingEventV1::from_json_bytes(good.as_bytes()).is_ok(),
+        "positive control"
+    );
+    let bad = good.replace(&"e".repeat(64), "not-a-digest");
+    assert_ne!(good, bad, "the fixture digest was replaced");
+    assert_eq!(
+        CodingEventV1::from_json_bytes(bad.as_bytes()).unwrap_err(),
+        CodingEventError::InvalidDigest
+    );
+}

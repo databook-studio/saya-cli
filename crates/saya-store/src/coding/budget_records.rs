@@ -12,6 +12,9 @@ const MAX_PAGE_SIZE: usize = 100;
 pub struct CodingBudgetReservationRecord {
     pub reservation: BudgetReservationV1,
     pub settlement: Option<BudgetSettlementV1>,
+    /// Whether a durable reconciliation fact exists for this reservation:
+    /// recovery no longer counts it unresolved, but its charges stay consumed.
+    pub reconciled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,8 +72,8 @@ impl SqliteStateStore {
     }
 }
 
-const SELECT_RECORD: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reservation_sequence=?";
-const LIST_RECORDS: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND (? IS NULL OR r.reservation_sequence > ?) ORDER BY r.reservation_sequence LIMIT ?";
+const SELECT_RECORD: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, r.reconciled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reservation_sequence=?";
+const LIST_RECORDS: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, r.reconciled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND (? IS NULL OR r.reservation_sequence > ?) ORDER BY r.reservation_sequence LIMIT ?";
 
 pub(super) fn record(
     row: &sqlx::sqlite::SqliteRow,
@@ -114,9 +117,14 @@ pub(super) fn record(
     {
         return Err(StoreError::Invalid);
     }
+    let reconciled = row
+        .try_get::<Option<i64>, _>("reconciled_by_sequence")
+        .map_err(|_| StoreError::Invalid)?
+        .is_some();
     Ok(CodingBudgetReservationRecord {
         reservation,
         settlement,
+        reconciled,
     })
 }
 

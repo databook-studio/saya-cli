@@ -204,7 +204,7 @@ pub enum CodingCommand {
         #[arg(long)]
         probe: bool,
     },
-    /// List what blocks a crashed job from resuming, or record those effects as reconciled; never refunds a charge or re-runs anything.
+    /// List what blocks an interrupted job from resuming, or record those effects as reconciled; never refunds a charge or re-runs anything. Use it only when the job is not running anywhere: a live in-flight effect looks the same as a crashed one.
     Reconcile {
         /// Durable job id.
         id: String,

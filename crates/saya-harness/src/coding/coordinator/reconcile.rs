@@ -117,10 +117,13 @@ pub async fn plan_reconciliation(
 /// stream sequence and the reservation is marked reconciled, so recovery
 /// stops counting it. Nothing here refunds a charge, releases a slot,
 /// re-runs an effect, or kills a process; resume afterwards still needs
-/// fresh approval. A live job that concurrently appended events loses
-/// this sequence race and fails closed through its own ledger; effects
-/// reconciled before the failure stay reconciled, and a fresh plan shows
-/// the remainder.
+/// fresh approval. Use it only for a job that is not running anywhere:
+/// the store cannot tell a crashed effect from a live in-flight one. If
+/// the job did append events since the plan, this call loses the race
+/// (`StalePlan`, or a store conflict) and writes nothing further; if this
+/// call appends first, the live job's next append conflicts and its own
+/// ledger fails closed. Effects reconciled before a failure stay
+/// reconciled, and a fresh plan shows the remainder.
 pub async fn reconcile_effects(
     store: &SqliteStateStore,
     job: &JobId,

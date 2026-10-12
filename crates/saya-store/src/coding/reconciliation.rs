@@ -46,7 +46,7 @@ impl SqliteStateStore {
 }
 
 const MAX_UNRESOLVED_PAGE: usize = 100;
-const LIST_UNRESOLVED: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reconciled_by_sequence IS NULL AND COALESCE(json_extract(settled.event_json,'$.event.settlement.effect_state'),'') != 'settled' AND (? IS NULL OR r.reservation_sequence > ?) ORDER BY r.reservation_sequence LIMIT ?";
+const LIST_UNRESOLVED: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, r.reconciled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reconciled_by_sequence IS NULL AND COALESCE(json_extract(settled.event_json,'$.event.settlement.effect_state'),'') != 'settled' AND (? IS NULL OR r.reservation_sequence > ?) ORDER BY r.reservation_sequence LIMIT ?";
 
 impl SqliteStateStore {
     /// The reservations recovery counts as unresolved, oldest first: open, or

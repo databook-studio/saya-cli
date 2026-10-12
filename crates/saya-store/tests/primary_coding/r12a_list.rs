@@ -111,3 +111,35 @@ async fn unresolved_listing_is_open_and_unreconciled_oldest_first_and_pages() {
     store.close().await;
     let _ = fs::remove_dir_all(root);
 }
+
+#[tokio::test]
+async fn unresolved_listing_refuses_a_zero_or_oversized_page() {
+    let root = temp_root("r12a-list-limits");
+    let store = SqliteStateStore::new(root.join("state.sqlite3"));
+    let job = create_job(&store, "r12a-list-limits").await;
+    assert_eq!(
+        store
+            .list_unresolved_coding_reservations(&job.job_id, None, 0)
+            .await
+            .unwrap_err(),
+        saya_store::StoreError::Invalid
+    );
+    assert_eq!(
+        store
+            .list_unresolved_coding_reservations(&job.job_id, None, 101)
+            .await
+            .unwrap_err(),
+        saya_store::StoreError::LimitExceeded
+    );
+    // Positive control: the largest allowed page is accepted.
+    assert!(
+        store
+            .list_unresolved_coding_reservations(&job.job_id, None, 100)
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    store.close().await;
+    let _ = fs::remove_dir_all(root);
+}
