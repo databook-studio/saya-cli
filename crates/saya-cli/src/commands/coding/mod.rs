@@ -30,6 +30,7 @@ mod integrate;
 mod notes;
 mod proposal;
 mod provider_binding;
+mod reconcile;
 mod request;
 mod setup;
 mod task_history;
@@ -74,6 +75,12 @@ pub enum CodingError {
         "overlap retained for candidate {candidate}; inspect with coding conflicts {job} {candidate}"
     )]
     ConflictRetained { job: String, candidate: String },
+    #[error(
+        "the unresolved effects changed since the list was made: run coding reconcile <job> again and use the new plan digest"
+    )]
+    ReconciliationStale,
+    #[error("effects cannot be reconciled: {0}")]
+    ReconciliationRefused(String),
     #[error("native coding operation failed")]
     Owner(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

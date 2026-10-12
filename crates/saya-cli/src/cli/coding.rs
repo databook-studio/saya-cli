@@ -204,6 +204,17 @@ pub enum CodingCommand {
         #[arg(long)]
         probe: bool,
     },
+    /// List what blocks a crashed job from resuming, or record those effects as reconciled; never refunds a charge or re-runs anything.
+    Reconcile {
+        /// Durable job id.
+        id: String,
+        /// Exact plan digest printed by the listing; with --approve, reconciles exactly that list.
+        #[arg(long)]
+        plan_sha256: Option<String>,
+        /// Explicitly approve reconciling the listed effects.
+        #[arg(long)]
+        approve: bool,
+    },
     /// List retained managed checkouts belonging to a native job.
     Worktrees {
         /// Durable job id.

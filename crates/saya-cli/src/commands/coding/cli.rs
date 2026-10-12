@@ -157,6 +157,23 @@ pub async fn dispatch(
         }
         CodingCommand::Doctor { probe } => application.doctor(probe).await,
         CodingCommand::Setup { probe } => application.setup(probe).await,
+        CodingCommand::Reconcile {
+            id,
+            plan_sha256,
+            approve,
+        } => {
+            let id = JobId::parse(&id).map_err(CodingError::owner)?;
+            match (plan_sha256, approve) {
+                (None, false) => application.reconcile_plan(&id).await,
+                (Some(digest), true) => {
+                    let digest =
+                        saya_types::Sha256Digest::parse(&digest).map_err(CodingError::owner)?;
+                    application.reconcile(&id, &digest).await
+                }
+                (Some(_), false) => Err(CodingError::ApprovalRequired),
+                (None, true) => Err(CodingError::InvalidRequest),
+            }
+        }
         CodingCommand::Worktrees { id } => {
             application
                 .worktrees(&JobId::parse(&id).map_err(CodingError::owner)?)

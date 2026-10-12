@@ -18,6 +18,8 @@ mod promotion;
 #[cfg(unix)]
 #[path = "primary_coding/reads.rs"]
 mod reads;
+#[path = "primary_coding/reconcile.rs"]
+mod reconcile;
 #[cfg(unix)]
 #[path = "primary_coding/review.rs"]
 mod review;

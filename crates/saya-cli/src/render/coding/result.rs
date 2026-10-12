@@ -17,6 +17,7 @@ pub(crate) fn render_coding_result(command: &CodingCommand, value: &Value) -> St
         CodingCommand::Conflicts { id, candidate } => conflicts(id, candidate, value),
         CodingCommand::Worktrees { id } => worktrees(id, value),
         CodingCommand::Show { .. } => show(value),
+        CodingCommand::Reconcile { .. } => reconcile(value),
         _ => None,
     };
     shaped.unwrap_or_else(|| value.to_string())
@@ -239,5 +240,57 @@ fn show(value: &Value) -> Option<String> {
     {
         lines.push("  … more child agents exist".into());
     }
+    Some(lines.join("\n"))
+}
+
+fn reconcile(value: &Value) -> Option<String> {
+    let job = value.get("job_id")?.as_str()?;
+    if let Some(done) = value.get("reconciled").and_then(Value::as_array) {
+        let sequences: Vec<String> = done.iter().map(text_of).collect();
+        return Some(format!(
+            "Reconciled {} effects for job {job} (reservations {}); nothing was refunded.\nNext: /coding resume {job} --approve",
+            done.len(),
+            sequences.join(", ")
+        ));
+    }
+    let effects = value.get("effects")?.as_array()?;
+    if effects.is_empty() {
+        return Some(format!(
+            "Nothing is unresolved for job {job}; use /coding resume {job} --approve."
+        ));
+    }
+    let digest = value.get("plan_sha256")?.as_str()?;
+    let mut lines = vec![format!(
+        "{} unresolved effects for job {job}",
+        effects.len()
+    )];
+    for effect in effects {
+        let state = if effect.get("settled_uncertain")?.as_bool()? {
+            "settled uncertain"
+        } else {
+            "open"
+        };
+        let charges: Vec<String> = effect
+            .get("reserved")?
+            .as_array()?
+            .iter()
+            .map(|charge| {
+                Some(format!(
+                    "{} {}",
+                    charge.get("dimension")?.as_str()?,
+                    charge.get("reserved")?
+                ))
+            })
+            .collect::<Option<_>>()?;
+        lines.push(format!(
+            "  reservation {}  {state}  {}",
+            effect.get("reservation_sequence")?,
+            charges.join(", ")
+        ));
+    }
+    lines.push("This listing changed nothing. Reconciling records each effect as reconciled: its charge stays consumed, nothing is refunded, killed or re-run, and resume still needs its own approval.".into());
+    lines.push(format!(
+        "Next: /coding reconcile {job} --plan-sha256 {digest} --approve"
+    ));
     Some(lines.join("\n"))
 }
