@@ -48,8 +48,17 @@ fn both_sources_admit_in_fixed_order_with_labels_and_receipts() {
     let _ = std::fs::remove_dir_all(root_of(&personal));
 }
 
+/// The stamped root that owns a `both_files` directory. It must sit strictly
+/// inside the temp directory: removing the temp directory itself would delete
+/// every other test's files.
 fn root_of(path: &Path) -> PathBuf {
-    path.ancestors().nth(2).unwrap().to_path_buf()
+    let root = path.ancestors().nth(1).unwrap().to_path_buf();
+    assert!(
+        root.starts_with(std::env::temp_dir()) && root != std::env::temp_dir(),
+        "a test root sits strictly inside the temp dir: {}",
+        root.display()
+    );
+    root
 }
 
 #[test]
