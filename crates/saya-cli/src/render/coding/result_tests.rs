@@ -141,3 +141,64 @@ fn setup_lists_every_step_and_the_action_for_each_blocked_one() {
     let text = render_coding_result(&CodingCommand::Setup { probe: true }, &ready);
     assert!(text.contains("Coding setup: ready"), "{text}");
 }
+
+fn conflicts_command() -> CodingCommand {
+    CodingCommand::Conflicts {
+        id: "job-1".into(),
+        candidate: "cand-1".into(),
+    }
+}
+
+#[test]
+fn a_retained_conflict_names_both_ways_out_and_grants_nothing() {
+    let sha = "c".repeat(64);
+    let value = json!({
+        "job_id":"job-1","candidate_checkout_id":"cand-1","status":"retained",
+        "authority":"none","fresh_revalidation_required":true,
+        "manual_edit":{"review_command":"coding review-existing job-1 cand-1 --approve"},
+        "provenance":{"record_sha256":sha},
+        "conflict":{}
+    });
+    let text = render_coding_result(&conflicts_command(), &value);
+    assert!(
+        text.contains("Conflict retained for candidate cand-1 (job job-1)"),
+        "{text}"
+    );
+    assert!(text.contains("grants no authority"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "/coding resolve-conflict job-1 cand-1 --choice keep-first --record-sha256 {sha} --approve"
+        )),
+        "{text}"
+    );
+    assert!(text.contains("keep-second"), "{text}");
+    assert!(
+        text.contains("coding review-existing job-1 cand-1 --approve"),
+        "the hand-edit route starts from the owner's review command: {text}"
+    );
+}
+
+#[test]
+fn a_conflict_that_is_not_retained_says_so() {
+    let value = json!({"job_id":"job-1","candidate_checkout_id":"cand-1","status":"not_retained","conflict":null});
+    let text = render_coding_result(&conflicts_command(), &value);
+    assert!(
+        text.contains("No conflict is retained for candidate cand-1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn worktrees_list_each_retained_checkout_with_its_lifecycle() {
+    let value = json!({"checkouts":[
+        {"checkout_id":"cand-1","lifecycle":"Retained"},
+        {"checkout_id":"cand-2","lifecycle":"Active"}
+    ],"next_cursor":null});
+    let text = render_coding_result(&CodingCommand::Worktrees { id: "job-1".into() }, &value);
+    assert!(text.contains("2 managed checkouts for job job-1"), "{text}");
+    assert!(text.contains("cand-1  Retained"), "{text}");
+    assert!(text.contains("cand-2  Active"), "{text}");
+    let more = json!({"checkouts":[],"next_cursor":"x"});
+    let text = render_coding_result(&CodingCommand::Worktrees { id: "job-1".into() }, &more);
+    assert!(text.contains("more checkouts exist"), "{text}");
+}

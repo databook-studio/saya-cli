@@ -14,6 +14,8 @@ pub(crate) fn render_coding_result(command: &CodingCommand, value: &Value) -> St
         | CodingCommand::ReviewExisting { id, candidate, .. } => review(id, candidate, value),
         CodingCommand::Apply { candidate, .. } => apply(candidate, value),
         CodingCommand::Setup { .. } => setup(value),
+        CodingCommand::Conflicts { id, candidate } => conflicts(id, candidate, value),
+        CodingCommand::Worktrees { id } => worktrees(id, value),
         _ => None,
     };
     shaped.unwrap_or_else(|| value.to_string())
@@ -139,5 +141,58 @@ fn setup(value: &Value) -> Option<String> {
         }
     }
     lines.push("Nothing was installed, enabled or written.".into());
+    Some(lines.join("\n"))
+}
+
+fn conflicts(id: &str, candidate: &str, value: &Value) -> Option<String> {
+    match value.get("status")?.as_str()? {
+        "not_retained" => Some(format!(
+            "No conflict is retained for candidate {candidate} (job {id})."
+        )),
+        "retained" => {
+            let record = value.get("provenance")?.get("record_sha256")?.as_str()?;
+            let review = value
+                .get("manual_edit")
+                .and_then(|edit| edit.get("review_command"))
+                .and_then(Value::as_str)
+                .unwrap_or("coding review-existing");
+            Some(
+                [
+                    format!("Conflict retained for candidate {candidate} (job {id})"),
+                    "This listing changed nothing and grants no authority to resolve; the retained record is revalidated freshly before anything is rebuilt.".into(),
+                    "Resolve by choice (rebuilds one fresh candidate, needs approval):".into(),
+                    format!("  /coding resolve-conflict {id} {candidate} --choice keep-first --record-sha256 {record} --approve"),
+                    "  … or --choice keep-second".into(),
+                    "Or edit by hand:".into(),
+                    format!("  1. /{review}"),
+                    "  2. edit only the candidate path it returns".into(),
+                    "  3. review again, then apply with the new digest".into(),
+                ]
+                .join("\n"),
+            )
+        }
+        _ => None,
+    }
+}
+
+fn worktrees(id: &str, value: &Value) -> Option<String> {
+    let checkouts = value.get("checkouts")?.as_array()?;
+    let mut lines = vec![format!(
+        "{} managed checkouts for job {id}",
+        checkouts.len()
+    )];
+    for checkout in checkouts {
+        lines.push(format!(
+            "  {}  {}",
+            checkout.get("checkout_id")?.as_str()?,
+            text_of(checkout.get("lifecycle")?)
+        ));
+    }
+    if value
+        .get("next_cursor")
+        .is_some_and(|cursor| !cursor.is_null())
+    {
+        lines.push("  … more checkouts exist; list again after the last id".into());
+    }
     Some(lines.join("\n"))
 }
