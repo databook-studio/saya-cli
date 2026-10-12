@@ -1,5 +1,5 @@
 #[path = "control_support.rs"]
-mod control_support;
+pub(crate) mod control_support;
 
 use super::support::Fixture;
 use control_support::ControlProvider;

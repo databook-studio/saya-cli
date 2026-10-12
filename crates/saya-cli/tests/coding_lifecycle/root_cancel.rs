@@ -1,8 +1,5 @@
-#[path = "control_support.rs"]
-mod control_support;
-
+use super::controls::control_support::ControlProvider;
 use super::support::Fixture;
-use control_support::ControlProvider;
 use saya_agent::{CancellationReason, CancellationToken};
 use saya_cli::{CodingAuthorization, CodingCommand, CodingError, CodingJobRequest, CodingTask};
 use saya_harness::coding::coordinator::{ChildRunError, ScheduleChildError, ScheduleStop};

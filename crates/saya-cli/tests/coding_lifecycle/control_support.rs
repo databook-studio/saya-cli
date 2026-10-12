@@ -11,15 +11,15 @@ use std::{
     time::Duration,
 };
 
-pub(super) struct ControlProvider {
-    pub(super) endpoint: String,
+pub(crate) struct ControlProvider {
+    pub(crate) endpoint: String,
     calls: Arc<AtomicUsize>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl ControlProvider {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -36,7 +36,7 @@ impl ControlProvider {
         }
     }
 
-    pub(super) async fn wait_for_calls(&self, minimum: usize) {
+    pub(crate) async fn wait_for_calls(&self, minimum: usize) {
         while self.calls.load(Ordering::Acquire) < minimum {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
