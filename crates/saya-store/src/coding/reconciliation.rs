@@ -3,6 +3,7 @@ use std::num::NonZeroU64;
 use saya_types::{CodingEventKind, CodingEventV1, JobId};
 use sqlx::{Row, Sqlite, Transaction};
 
+use super::budget_records::{CodingBudgetReservationPage, record};
 use super::events::{CodingEventAppend, append_event_in_tx};
 use crate::{SqliteStateStore, StoreError};
 
@@ -41,6 +42,48 @@ impl SqliteStateStore {
             Err(error) => Err(error),
         };
         finish(transaction, outcome).await
+    }
+}
+
+const MAX_UNRESOLVED_PAGE: usize = 100;
+const LIST_UNRESOLVED: &str = "SELECT r.job_id, r.reservation_sequence, r.settled_by_sequence, reserve.event_json AS reservation_json, settled.event_json AS settlement_json FROM coding_budget_reservations r LEFT JOIN coding_events reserve ON reserve.job_id=r.job_id AND reserve.sequence=r.reservation_sequence LEFT JOIN coding_events settled ON settled.job_id=r.job_id AND settled.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reconciled_by_sequence IS NULL AND COALESCE(json_extract(settled.event_json,'$.event.settlement.effect_state'),'') != 'settled' AND (? IS NULL OR r.reservation_sequence > ?) ORDER BY r.reservation_sequence LIMIT ?";
+
+impl SqliteStateStore {
+    /// The reservations recovery counts as unresolved, oldest first: open, or
+    /// settled uncertain, and not yet reconciled. Same predicate as
+    /// `coding_recovery_status`; a settlement reference that cannot be read
+    /// fails the read instead of being listed or skipped.
+    pub async fn list_unresolved_coding_reservations(
+        &self,
+        job_id: &JobId,
+        after: Option<NonZeroU64>,
+        limit: usize,
+    ) -> Result<CodingBudgetReservationPage, StoreError> {
+        if limit == 0 {
+            return Err(StoreError::Invalid);
+        }
+        if limit > MAX_UNRESOLVED_PAGE {
+            return Err(StoreError::LimitExceeded);
+        }
+        let cursor = after.map(sequence).transpose()?;
+        let rows = sqlx::query(LIST_UNRESOLVED)
+            .bind(job_id.as_str())
+            .bind(cursor)
+            .bind(cursor)
+            .bind(i64::try_from(limit + 1).map_err(|_| StoreError::LimitExceeded)?)
+            .fetch_all(self.pool().await?)
+            .await
+            .map_err(|_| StoreError::Unavailable)?;
+        let mut items = rows.iter().map(record).collect::<Result<Vec<_>, _>>()?;
+        let next_cursor = if items.len() > limit {
+            items.pop();
+            items
+                .last()
+                .map(|item| item.reservation.reservation_sequence())
+        } else {
+            None
+        };
+        Ok(CodingBudgetReservationPage { items, next_cursor })
     }
 }
 

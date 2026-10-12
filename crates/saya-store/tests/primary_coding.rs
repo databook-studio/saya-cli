@@ -26,6 +26,8 @@ mod r12;
 mod r12a;
 #[path = "primary_coding/r12a_corrupt.rs"]
 mod r12a_corrupt;
+#[path = "primary_coding/r12a_list.rs"]
+mod r12a_list;
 #[path = "primary_coding/r13a.rs"]
 mod r13a;
 #[path = "primary_coding/r13a_admission.rs"]
