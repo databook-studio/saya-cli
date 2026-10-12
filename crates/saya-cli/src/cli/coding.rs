@@ -198,6 +198,12 @@ pub enum CodingCommand {
         #[arg(long)]
         probe: bool,
     },
+    /// Check coding readiness step by step and print the one action that clears each blocked step; installs and enables nothing.
+    Setup {
+        /// Explicitly call the configured provider with a bounded inert native-tool probe.
+        #[arg(long)]
+        probe: bool,
+    },
     /// List retained managed checkouts belonging to a native job.
     Worktrees {
         /// Durable job id.

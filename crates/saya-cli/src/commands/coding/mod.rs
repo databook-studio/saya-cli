@@ -31,6 +31,7 @@ mod notes;
 mod proposal;
 mod provider_binding;
 mod request;
+mod setup;
 pub use proposal::CodingApprovalRequest;
 mod review;
 mod review_checks;

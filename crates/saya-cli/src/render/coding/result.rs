@@ -13,6 +13,7 @@ pub(crate) fn render_coding_result(command: &CodingCommand, value: &Value) -> St
         CodingCommand::Review { id, candidate, .. }
         | CodingCommand::ReviewExisting { id, candidate, .. } => review(id, candidate, value),
         CodingCommand::Apply { candidate, .. } => apply(candidate, value),
+        CodingCommand::Setup { .. } => setup(value),
         _ => None,
     };
     shaped.unwrap_or_else(|| value.to_string())
@@ -116,4 +117,27 @@ fn text_of(value: &Value) -> String {
     value
         .as_str()
         .map_or_else(|| value.to_string(), str::to_owned)
+}
+
+fn setup(value: &Value) -> Option<String> {
+    let steps = value.get("steps")?.as_array()?;
+    let blocked = steps
+        .iter()
+        .filter(|step| step.get("status").and_then(Value::as_str) != Some("ok"))
+        .count();
+    let headline = match (value.get("ready")?.as_bool()?, blocked) {
+        (true, _) => "Coding setup: ready".to_owned(),
+        (false, 1) => "Coding setup: 1 step needs action".to_owned(),
+        (false, count) => format!("Coding setup: {count} steps need action"),
+    };
+    let mut lines = vec![headline];
+    for step in steps {
+        let check = step.get("check")?.as_str()?;
+        match step.get("action").and_then(Value::as_str) {
+            Some(action) => lines.push(format!("  [blocked]  {check}: {action}")),
+            None => lines.push(format!("  [ok]       {check}")),
+        }
+    }
+    lines.push("Nothing was installed, enabled or written.".into());
+    Some(lines.join("\n"))
 }

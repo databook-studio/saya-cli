@@ -113,3 +113,31 @@ fn an_unexpected_review_shape_falls_back_to_the_json() {
         value.to_string()
     );
 }
+
+#[test]
+fn setup_lists_every_step_and_the_action_for_each_blocked_one() {
+    let value = json!({
+        "ready": false,
+        "installs_nothing": true,
+        "steps": [
+            {"check":"coding_enabled","status":"ok","action":null},
+            {"check":"model_tool_loop","status":"blocked","action":"Run `coding setup --probe` to let saya make one bounded call"}
+        ],
+        "blocked": []
+    });
+    let text = render_coding_result(&CodingCommand::Setup { probe: false }, &value);
+    assert!(text.contains("Coding setup: 1 step needs action"), "{text}");
+    assert!(text.contains("[ok]       coding_enabled"), "{text}");
+    assert!(
+        text.contains("[blocked]  model_tool_loop: Run `coding setup --probe`"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Nothing was installed, enabled or written."),
+        "{text}"
+    );
+
+    let ready = json!({"ready":true,"installs_nothing":true,"steps":[{"check":"git","status":"ok","action":null}],"blocked":[]});
+    let text = render_coding_result(&CodingCommand::Setup { probe: true }, &ready);
+    assert!(text.contains("Coding setup: ready"), "{text}");
+}

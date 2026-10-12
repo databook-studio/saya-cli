@@ -19,6 +19,8 @@ mod review;
 #[path = "primary_coding/support.rs"]
 #[allow(dead_code)] // shared test harness: this file uses only part of it
 mod support;
+#[path = "primary_coding/u07.rs"]
+mod u07;
 #[cfg(unix)]
 #[path = "primary_coding/x02.rs"]
 mod x02;

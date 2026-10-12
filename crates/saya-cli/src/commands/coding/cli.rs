@@ -156,6 +156,7 @@ pub async fn dispatch(
             application.list(after.as_ref()).await
         }
         CodingCommand::Doctor { probe } => application.doctor(probe).await,
+        CodingCommand::Setup { probe } => application.setup(probe).await,
         CodingCommand::Worktrees { id } => {
             application
                 .worktrees(&JobId::parse(&id).map_err(CodingError::owner)?)
