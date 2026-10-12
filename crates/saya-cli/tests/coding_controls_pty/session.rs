@@ -1,14 +1,18 @@
-use super::{DEADLINE, Provider};
-use portable_pty::{Child, CommandBuilder, PtySize, native_pty_system};
+use super::DEADLINE;
+use portable_pty::Child;
 use std::{
     fs,
-    io::{Read, Write},
+    io::Write,
     path::PathBuf,
-    process::Command,
     sync::mpsc,
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+#[path = "session/drive.rs"]
+mod drive;
+#[path = "session/spawn.rs"]
+mod spawn;
 
 const OUTPUT_LIMIT: usize = 256 * 1024;
 const INPUT_LIMIT: usize = 32 * 1024;
@@ -33,183 +37,6 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn new(label: &str, config: &str, provider: &Provider) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "saya-coding-controls-pty-{label}-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("home/saya")).unwrap();
-        fs::create_dir_all(root.join("repo")).unwrap();
-        fs::write(root.join("home/saya/config.toml"), config).unwrap();
-        let git = Command::new("git")
-            .args(["init", "--quiet"])
-            .current_dir(root.join("repo"))
-            .status()
-            .expect("installed git initializes the private PTY repository");
-        assert!(
-            git.success(),
-            "private PTY repository initialization succeeds"
-        );
-        fs::write(root.join("repo/baseline.txt"), b"tracked baseline\n").unwrap();
-        for args in [
-            ["config", "user.name", "Saya PTY Fixture"].as_slice(),
-            ["config", "user.email", "pty@example.invalid"].as_slice(),
-            ["add", "baseline.txt"].as_slice(),
-            ["commit", "--quiet", "-m", "baseline"].as_slice(),
-        ] {
-            let status = Command::new("git")
-                .args(args)
-                .current_dir(root.join("repo"))
-                .status()
-                .expect("git baseline command starts");
-            assert!(status.success(), "git baseline command succeeds");
-        }
-
-        let pty = native_pty_system();
-        let pair = pty
-            .openpty(PtySize {
-                rows: 30,
-                cols: 120,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .unwrap();
-        let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_saya"));
-        command.args([
-            "--workspace",
-            root.join("repo").to_str().unwrap(),
-            "--approval-mode",
-            "bypass",
-            "--verbose",
-        ]);
-        command.cwd(root.join("repo"));
-        command.env("HOME", root.join("home"));
-        command.env("SAYA_CONFIG_HOME", root.join("home"));
-        command.env("SAYA_STATE_DB", root.join("home/state.sqlite3"));
-        command.env_remove("SAYA_API_KEY");
-        command.env_remove("SAYA_AI_API_KEY");
-        let child = pair.slave.spawn_command(command).unwrap();
-        drop(pair.slave);
-        let writer = pair.master.take_writer().unwrap();
-        let reader = pair.master.try_clone_reader().unwrap();
-        let (tx, output) = mpsc::channel();
-        let reader = thread::spawn(move || drain(reader, tx));
-        let _ = provider;
-        Self {
-            root: Root(root),
-            child: Some(child),
-            writer: Some(writer),
-            output,
-            reader: Some(reader),
-            raw: Vec::new(),
-            child_reaped: false,
-            reader_finished: false,
-        }
-    }
-
-    pub fn send(&mut self, bytes: &[u8]) {
-        assert!(bytes.len() <= INPUT_LIMIT, "one PTY input is bounded");
-        let writer = self.writer.as_mut().expect("PTY writer remains live");
-        writer.write_all(bytes).unwrap();
-        writer.flush().unwrap();
-    }
-
-    pub fn wait_for(&mut self, needle: &str, timeout: Duration) {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if String::from_utf8_lossy(&self.raw).contains(needle) {
-                return;
-            }
-            self.pump();
-        }
-        panic!("PTY did not show {needle:?}; tail:\n{}", self.tail());
-    }
-
-    pub fn checkpoint(&self) -> usize {
-        self.raw.len()
-    }
-
-    pub fn wait_for_after(&mut self, checkpoint: usize, needle: &str, timeout: Duration) {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if self
-                .raw
-                .get(checkpoint..)
-                .is_some_and(|bytes| String::from_utf8_lossy(bytes).contains(needle))
-            {
-                return;
-            }
-            self.pump();
-        }
-        panic!(
-            "PTY did not show {needle:?} after checkpoint; tail:\n{}",
-            self.tail()
-        );
-    }
-
-    pub fn pause_ticket_after(&mut self, checkpoint: usize, timeout: Duration) -> u64 {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let text = String::from_utf8_lossy(self.raw.get(checkpoint..).unwrap_or_default());
-            if let Some(start) = text.find("pause_requested\":") {
-                let digits = &text[start + "pause_requested\":".len()..];
-                let end = digits
-                    .find(|character: char| !character.is_ascii_digit())
-                    .unwrap_or(digits.len());
-                if end > 0 {
-                    return digits[..end].parse().expect("pause ticket is numeric");
-                }
-            }
-            self.pump();
-        }
-        panic!(
-            "pause ticket did not appear after checkpoint; tail:\n{}",
-            self.tail()
-        );
-    }
-
-    pub fn wait_for_pause_ack(
-        &mut self,
-        checkpoint: usize,
-        ticket: u64,
-        target: &str,
-        timeout: Duration,
-    ) {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let text = String::from_utf8_lossy(self.raw.get(checkpoint..).unwrap_or_default());
-            let mut cursor = 0;
-            while let Some(offset) = text[cursor..].find('{') {
-                let start = cursor + offset;
-                let Some(end) = text[start..].find('}') else {
-                    break;
-                };
-                let object = &text[start..=start + end];
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(object) {
-                    let matches = value
-                        .get("pause_requested")
-                        .and_then(|value| value.as_u64())
-                        == Some(ticket)
-                        && value
-                            .get("pause_acknowledged")
-                            .and_then(|value| value.as_bool())
-                            == Some(true)
-                        && value.get("target").and_then(|value| value.as_str()) == Some(target);
-                    if matches {
-                        return;
-                    }
-                }
-                cursor = start + 1;
-            }
-            self.pump();
-        }
-        panic!(
-            "matching pause acknowledgement did not appear; tail:\n{}",
-            self.tail()
-        );
-    }
-
     pub fn finish(&mut self) -> Vec<u8> {
         let deadline = Instant::now() + DEADLINE;
         while Instant::now() < deadline {
@@ -274,18 +101,6 @@ impl Session {
         self.reader_finished
     }
 
-    fn pump(&mut self) {
-        if let Ok(chunk) = self.output.recv_timeout(IO_WAIT) {
-            self.raw.extend_from_slice(&chunk);
-            assert!(self.raw.len() <= OUTPUT_LIMIT, "PTY transcript is bounded");
-        }
-    }
-
-    fn tail(&self) -> String {
-        let start = self.raw.len().saturating_sub(4096);
-        String::from_utf8_lossy(&self.raw[start..]).into_owned()
-    }
-
     fn cleanup(&mut self, drain_for: Duration) {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
@@ -341,27 +156,5 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.cleanup(Duration::from_millis(100));
-    }
-}
-
-fn drain(mut reader: Box<dyn Read + Send>, tx: mpsc::Sender<Vec<u8>>) {
-    let mut total = 0;
-    let mut buffer = [0_u8; 4096];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(count) => {
-                let remaining = OUTPUT_LIMIT.saturating_sub(total);
-                let end = count.min(remaining);
-                if end == 0 || tx.send(buffer[..end].to_vec()).is_err() {
-                    break;
-                }
-                total += end;
-                if total >= OUTPUT_LIMIT {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
     }
 }
