@@ -18,7 +18,7 @@ fn example_view() -> StatusView {
         model: "glm-5.2".into(),
         approval_mode: "ask".into(),
         agent_mode: "build".into(),
-        workspace_root: Some("/Users/subodhsharma/Projects/saya-cli".into()),
+        workspace_root: Some("/Users/alice/Projects/saya-cli".into()),
         sharing_on: true,
         host_composed: true,
         denied_programs: Vec::new(),
