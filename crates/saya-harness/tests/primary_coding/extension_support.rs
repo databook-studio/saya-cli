@@ -23,7 +23,15 @@ impl Fixture {
         }
     }
     pub fn config(&self, script: &str) -> ExtensionConfig {
-        let program = PathBuf::from("/bin/sh").canonicalize().unwrap();
+        // The framing scripts read a body with `read -r -n`, a bash builtin
+        // (macOS /bin/sh is bash 3.2; Debian's is dash, which rejects it), so
+        // bash is named explicitly wherever it exists.
+        let shell = if std::path::Path::new("/bin/bash").exists() {
+            "/bin/bash"
+        } else {
+            "/bin/sh"
+        };
+        let program = PathBuf::from(shell).canonicalize().unwrap();
         let sandbox = RunSandbox::new([self.root.clone()], []).unwrap();
         let provision = sandbox.prepare(program.parent().unwrap()).unwrap();
         let SandboxProvision::Proven { spawn, .. } = provision else {
