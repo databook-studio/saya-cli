@@ -92,14 +92,6 @@ struct WireReceipt {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct WireIncomplete {
-    kind: String,
-    reason: String,
-    version: u32,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct WireSession {
     kind: String,
     version: u32,
@@ -107,9 +99,17 @@ struct WireSession {
 }
 
 pub(in crate::coding::git) fn decode_line(line: &[u8]) -> Option<Result<JournalLine, ()>> {
-    if let Ok(marker) = serde_json::from_slice::<WireIncomplete>(line) {
-        let _valid =
-            marker.kind == "incomplete" && marker.reason == "bounded" && marker.version == VERSION;
+    // A line shaped like the bounded incomplete marker (exactly the keys
+    // kind, reason and version) makes the journal incomplete whatever its
+    // values: a well-formed marker and a corrupt one are both refused here,
+    // so the values are deliberately not interpreted.
+    if let Ok(marker) =
+        serde_json::from_slice::<std::collections::BTreeMap<String, serde_json::Value>>(line)
+        && marker
+            .keys()
+            .map(String::as_str)
+            .eq(["kind", "reason", "version"])
+    {
         return Some(Err(()));
     }
     if let Ok(session) = serde_json::from_slice::<WireSession>(line) {
