@@ -35,13 +35,22 @@ pub(super) fn canary_program_dir() -> PathBuf {
     PathBuf::from(CANARY_PROGRAM_DIR)
 }
 
+/// A process-unique suffix for every path the probe creates: concurrent
+/// probes in one process must never share a target, or one run's cleanup
+/// deletes another run's evidence.
+fn unique(tag: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{tag}-{}-{n}", std::process::id())
+}
+
 /// A temp directory for the canaries' outside-root targets; removed on drop.
 struct TempRoot(PathBuf);
 
 impl TempRoot {
     fn new(tag: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("saya-sbx-probe-{tag}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(unique(&format!("saya-sbx-probe-{tag}")));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("probe temp root must be creatable");
         Self(path)
@@ -166,7 +175,11 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
 
     let outside = TempRoot::new("outside");
     let outside_path = outside.canonical();
-    let inside = sb.fs_roots()[0].clone();
+    // Fresh, uniquely named targets: the canary creates `inside` (a directory
+    // under the root) and must fail to create `outside` (a file outside it);
+    // an existing path would answer EEXIST before the sandbox decided anything.
+    let inside = sb.fs_roots()[0].join(unique("canary-inside"));
+    let denied = outside_path.join(unique("canary-denied"));
 
     match Confinement::new(sb, &[canary_program_dir()]) {
         Err(e) => checks.push(Check::fail(
@@ -176,8 +189,8 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
         )),
         Ok(conf) => {
             let conf = std::sync::Arc::new(conf);
-            checks.push(landlock_enforcement_check(&conf, &inside, &outside_path));
-            checks.push(namespace_egress_check(&conf, &inside, &outside_path));
+            checks.push(landlock_enforcement_check(&conf, &inside, &denied));
+            checks.push(namespace_egress_check(&conf, &inside, &denied));
             checks.push(confinement_exec_allowed(&conf));
         }
     }

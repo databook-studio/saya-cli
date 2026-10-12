@@ -113,14 +113,19 @@ impl Confinement {
         }
         // handled = every fs right the ABI supports [UNVERIFIED ABI→rights
         // table; the enforcement canary proves whatever is claimed].
-        let handled_access_fs = ROOT_ALLOWED | sys::LANDLOCK_ACCESS_FS_REFER;
+        let handled_access_fs = ROOT_ALLOWED | EXEC_ALLOWED | sys::LANDLOCK_ACCESS_FS_REFER;
         let mut rules = Vec::new();
         for path in sb
             .fs_roots()
             .iter()
             .map(|p| p.as_path())
             .chain(program_dirs.iter().map(|p| p.as_path()))
-            .chain(LOADER_DIRS.iter().map(Path::new))
+            .chain(
+                LOADER_DIRS
+                    .iter()
+                    .map(Path::new)
+                    .filter(|path| path.exists()),
+            )
         {
             let allowed = if program_dirs.iter().any(|d| d.as_path() == path)
                 || LOADER_DIRS.iter().any(|d| Path::new(d) == path)
@@ -145,15 +150,19 @@ impl Confinement {
     }
 
     /// Applies the whole confinement to the calling (forked) child: no-new-
-    /// privs, the Landlock ruleset, then the user+network namespace per the
-    /// draft's order [UNVERIFIED — the probe measures each step's failure
-    /// surface; nothing falls back].
+    /// privs, the user+network namespace, then the Landlock ruleset.
+    /// Measured on a real kernel (Linux 7.1, Landlock ABI 9): Landlock must
+    /// come last because once it is enforced, opening /proc/self/uid_map for
+    /// write is denied; the handled rights must include EXECUTE because a
+    /// rule may only allow rights the ruleset handles (an unhandled EXECUTE
+    /// in a program-directory rule is EINVAL); and a loader directory the host
+    /// does not have (no /lib64 on aarch64 Debian) is skipped, not an error —
+    /// the exec canary still proves the loader is reachable. Nothing falls back.
     pub(super) fn apply(&self) -> io::Result<()> {
         sys::no_new_privs()?;
-        let ruleset_fd = sys::create_ruleset(self.handled_access_fs)?;
-        let restricted = self.restrict_under(ruleset_fd);
-        unsafe { libc::close(ruleset_fd) };
-        restricted?;
+        // The user and network namespaces come first: once Landlock is
+        // enforced, opening /proc/self/{setgroups,uid_map,gid_map} for write is
+        // itself denied, so the namespace setup cannot follow it.
         sys::unshare_user()?;
         sys::write_proc(&self.proc_setgroups, "deny")?;
         sys::write_proc(
@@ -165,7 +174,10 @@ impl Confinement {
             self.gid_map_content.to_str().unwrap_or_default(),
         )?;
         sys::unshare_net()?;
-        Ok(())
+        let ruleset_fd = sys::create_ruleset(self.handled_access_fs)?;
+        let restricted = self.restrict_under(ruleset_fd);
+        unsafe { libc::close(ruleset_fd) };
+        restricted
     }
 
     fn restrict_under(&self, ruleset_fd: libc::c_int) -> io::Result<()> {
