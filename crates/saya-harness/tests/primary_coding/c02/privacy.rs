@@ -5,8 +5,7 @@
 
 use std::{
     env, fs,
-    num::NonZeroU64,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::PermissionsExt,
     path::PathBuf,
     process::Command,
     sync::{
@@ -16,15 +15,19 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use saya_harness::coding::commands::{
-    CommandOutputCursor, CommandOutputError, CommandOutputStatus, CommandOwner, CommandSession,
-    MAX_OUTPUT_READ_BYTES, OutputStream,
-};
+use saya_harness::coding::commands::{CommandOutputStatus, CommandSession};
 use saya_harness::{
     runner::sandbox::{RunSandbox, RunnerSpawn, SandboxProvision},
     runner::{Credential, RunProgram, StaticCredentialSource},
 };
 use saya_types::{RunnerScope, SecretRef};
+
+#[path = "privacy/permissions.rs"]
+mod permissions;
+#[path = "privacy/refused_secret.rs"]
+mod refused_secret;
+#[path = "privacy/symlink_refusal.rs"]
+mod symlink_refusal;
 
 pub const PRIVACY_HELPER: &str = "saya-c02-privacy-helper";
 pub const CREDENTIAL_ENV: &str = "SAYA_C02_PRIVACY_TOKEN";
@@ -168,139 +171,4 @@ async fn join_exits_cleanly(session: CommandSession) {
         .expect("the run settles within 30 s")
         .unwrap();
     assert_eq!(outcome.exit_code, Some(0), "the helper exits cleanly");
-}
-
-/// (a) After a finished run with output, the store directory and both
-/// stream files carry private modes: the store dir is 0o700 and each
-/// stream file 0o600, read through symlink metadata.
-#[tokio::test]
-async fn store_files_are_private() {
-    let Some(fixture) = fixture() else { return };
-    let owner = CommandOwner::new(1).unwrap();
-    let session = owner
-        .start_with_output(
-            fixture.run_program(),
-            PRIVACY_HELPER.to_owned(),
-            Vec::new(),
-            NonZeroU64::new(20).unwrap(),
-            fixture.marker("privacy-perms"),
-        )
-        .unwrap();
-    wait_for_status(&session).await;
-    let store_dir = session
-        .output_dir()
-        .expect("session carries an output store");
-    let dir_mode = fs::symlink_metadata(&store_dir)
-        .expect("the store dir exists")
-        .permissions()
-        .mode();
-    assert_eq!(dir_mode & 0o777, 0o700, "the store dir is private");
-    let stdout = store_dir.join(OutputStream::Stdout.file_name());
-    let stdout_mode = fs::symlink_metadata(&stdout)
-        .expect("the stdout stream file exists after a run with output")
-        .permissions()
-        .mode();
-    assert_eq!(
-        stdout_mode & 0o777,
-        0o600,
-        "the stdout stream file is private"
-    );
-    let stderr = store_dir.join(OutputStream::Stderr.file_name());
-    let stderr_mode = fs::symlink_metadata(&stderr)
-        .expect("the stderr stream file exists after a run with output")
-        .permissions()
-        .mode();
-    assert_eq!(
-        stderr_mode & 0o777,
-        0o600,
-        "the stderr stream file is private"
-    );
-    join_exits_cleanly(session).await;
-}
-
-/// (b) A symlink pre-placed at the stdout stream path after a finished run
-/// is refused on read as a typed store error: the read never serves the
-/// link target's text.
-#[tokio::test]
-async fn pre_placed_symlink_at_stream_path_is_refused_on_read() {
-    let Some(fixture) = fixture() else { return };
-    let owner = CommandOwner::new(1).unwrap();
-    let session = owner
-        .start_with_output(
-            fixture.run_program(),
-            PRIVACY_HELPER.to_owned(),
-            Vec::new(),
-            NonZeroU64::new(20).unwrap(),
-            fixture.marker("privacy-symlink"),
-        )
-        .unwrap();
-    wait_for_status(&session).await;
-    let stdout = session
-        .output_dir()
-        .expect("session carries an output store")
-        .join(OutputStream::Stdout.file_name());
-    let decoy_dir = fixture.marker("privacy-decoy");
-    fs::create_dir_all(&decoy_dir).expect("the decoy dir is created");
-    let decoy = decoy_dir.join(OutputStream::Stdout.file_name());
-    fs::copy(&stdout, &decoy).expect("the stream copy is made");
-    let copied = fs::read_to_string(&decoy).expect("the decoy copy is readable");
-    assert!(
-        copied.contains("c02c1-privacy-line"),
-        "the decoy holds the stream's text: {copied:?}"
-    );
-    fs::remove_file(&stdout).expect("the stream file is removed");
-    symlink(&decoy, &stdout).expect("the symlink is placed");
-    let result = session.read_output(
-        CommandOutputCursor::start(OutputStream::Stdout),
-        MAX_OUTPUT_READ_BYTES,
-    );
-    assert!(
-        matches!(result, Err(CommandOutputError::Store { .. })),
-        "a symlink at the stream path is refused as a store error, never the target's text"
-    );
-    join_exits_cleanly(session).await;
-}
-
-/// (c) A credential value carrying the literal `[redacted]` marker makes
-/// the redactor refuse the secret set at construction: the stream seals
-/// with no stored bytes — the stdout file stays empty — and the start
-/// cursor reads empty at end-of-stream.
-#[tokio::test]
-async fn refused_secret_set_stores_nothing() {
-    let Some(fixture) = fixture() else { return };
-    let owner = CommandOwner::new(1).unwrap();
-    let session = owner
-        .start_with_output(
-            fixture.refused_program(),
-            PRIVACY_HELPER.to_owned(),
-            Vec::new(),
-            NonZeroU64::new(20).unwrap(),
-            fixture.marker("privacy-refused"),
-        )
-        .unwrap();
-    let status = wait_for_status(&session).await;
-    assert!(
-        status.capped && status.error.is_none(),
-        "a refused redactor seals its stream without a store error: {status:?}"
-    );
-    let stdout = session
-        .output_dir()
-        .expect("session carries an output store")
-        .join(OutputStream::Stdout.file_name());
-    let len = fs::symlink_metadata(&stdout)
-        .expect("the stdout stream file exists")
-        .len();
-    assert_eq!(len, 0, "the refused run stores no stdout bytes");
-    let read = session
-        .read_output(
-            CommandOutputCursor::start(OutputStream::Stdout),
-            MAX_OUTPUT_READ_BYTES,
-        )
-        .expect("reading a sealed stream at the start cursor succeeds");
-    assert!(
-        read.text().is_empty() && read.end_of_stream(),
-        "the sealed stream reads empty at end-of-stream: {:?}",
-        read.text()
-    );
-    join_exits_cleanly(session).await;
 }
