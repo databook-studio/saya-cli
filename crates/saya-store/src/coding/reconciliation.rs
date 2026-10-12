@@ -55,7 +55,7 @@ async fn reconcile_reservation(
     reconciled_by: NonZeroU64,
 ) -> Result<(), StoreError> {
     let row = sqlx::query(
-        "SELECT r.reconciled_by_sequence, COALESCE(json_extract(s.event_json,'$.event.settlement.effect_state'),'') AS effect_state \
+        "SELECT r.reconciled_by_sequence, r.settled_by_sequence, COALESCE(json_extract(s.event_json,'$.event.settlement.effect_state'),'') AS effect_state \
          FROM coding_budget_reservations r \
          LEFT JOIN coding_events s ON s.job_id=r.job_id AND s.sequence=r.settled_by_sequence \
          WHERE r.job_id=? AND r.reservation_sequence=?",
@@ -73,11 +73,17 @@ async fn reconcile_reservation(
     {
         return Err(StoreError::Conflict);
     }
-    if row
+    // Reconcilable: no settlement at all (open) or a settlement that says
+    // `uncertain`. A settled one has nothing to reconcile, and a settlement
+    // reference that does not resolve to a recognised state is corruption
+    // that reconciliation must not hide.
+    let settled_by = row
+        .try_get::<Option<i64>, _>("settled_by_sequence")
+        .map_err(|_| StoreError::Invalid)?;
+    let effect_state = row
         .try_get::<String, _>("effect_state")
-        .map_err(|_| StoreError::Invalid)?
-        == "settled"
-    {
+        .map_err(|_| StoreError::Invalid)?;
+    if settled_by.is_some() && effect_state != "uncertain" {
         return Err(StoreError::Conflict);
     }
     let changed = sqlx::query(
