@@ -1,6 +1,7 @@
 mod commands;
 mod commands_foreign;
 mod commands_session;
+mod reconcile;
 mod resume;
 mod resume_bound;
 mod resume_policy;

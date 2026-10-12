@@ -28,6 +28,11 @@ pub mod coordinator {
     mod resume;
     pub use recovery::inspect_recovery;
     pub use resume::{ResumeError, resume_job};
+    mod reconcile;
+    pub use reconcile::{
+        ReconcileError, ReconcileReport, ReconciliationPlan, UnresolvedEffect, plan_reconciliation,
+        reconcile_effects,
+    };
     mod notify;
     mod results;
     pub use cancel::CHILD_CANCEL_JOIN_GRACE;
