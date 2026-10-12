@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
@@ -15,6 +15,8 @@ pub struct Provider {
     pub calls: Arc<AtomicUsize>,
     pub overlap: Arc<AtomicBool>,
     pub saw_injection: Arc<AtomicBool>,
+    pub bodies: Arc<Mutex<Vec<String>>>,
+    status_gate: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -37,6 +39,17 @@ impl Provider {
     pub fn pair_conflicts() -> Self {
         Self::script(false, 5)
     }
+    // Mode 6, for the tool/command parity tests: the parent issues
+    // `cancel_child` and `message_child` for the unregistered agent `ghost`,
+    // then reads `coding_status`, then answers. The final answer is held
+    // until `release()`, so a test can read the owner's live job state while
+    // the run is parked; every request body is captured in `bodies`.
+    pub fn parity() -> Self {
+        Self::script(false, 6)
+    }
+    pub fn release(&self) {
+        self.status_gate.store(true, Ordering::Release);
+    }
     fn script(injection: bool, mode: u8) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -47,6 +60,10 @@ impl Provider {
         let overlapped = Arc::clone(&overlap);
         let saw_injection = Arc::new(AtomicBool::new(false));
         let injected = Arc::clone(&saw_injection);
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&bodies);
+        let status_gate = Arc::new(AtomicBool::new(false));
+        let held = Arc::clone(&status_gate);
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let worker = thread::spawn(move || {
@@ -82,6 +99,7 @@ impl Provider {
                     continue;
                 };
                 count.fetch_add(1, Ordering::AcqRel);
+                captured.lock().unwrap().push(body.clone());
                 if body.contains("INJECTED ROOT AUTHORITY") {
                     injected.store(true, Ordering::Release);
                 }
@@ -114,6 +132,13 @@ impl Provider {
                         }
                     }
                 } else {
+                    // The parity parent's final answer stays unsent until the
+                    // test opens the gate (or the bounded hold expires), so
+                    // the run cannot complete before the test has read the
+                    // captured coding_status result.
+                    if mode == 6 && actor == "parent" && current >= 3 {
+                        hold_for_status_read(&held);
+                    }
                     send(&mut stream, &response);
                 }
             }
@@ -123,6 +148,8 @@ impl Provider {
             calls,
             overlap,
             saw_injection,
+            bodies,
+            status_gate,
             stop,
             worker: Some(worker),
         }
@@ -176,6 +203,17 @@ fn read_request(stream: &mut TcpStream) -> Option<String> {
 }
 fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
     if actor == "parent" {
+        if mode == 6 {
+            return match stage {
+                0 => tool("cancel_child", json!({"agent_id":"ghost"})),
+                1 => tool(
+                    "message_child",
+                    json!({"agent_id":"ghost","message":"steer the ghost"}),
+                ),
+                2 => tool("coding_status", json!({})),
+                _ => answer("parity parent finished after the unregistered-child refusals"),
+            };
+        }
         return match stage {
             0 if mode == 3 || mode == 5 => {
                 let count = if mode == 3 { 24 } else { 2 };
@@ -270,4 +308,10 @@ fn answer(text: &str) -> String {
 fn send(stream: &mut TcpStream, body: &str) {
     write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
     stream.flush().unwrap();
+}
+fn hold_for_status_read(gate: &AtomicBool) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !gate.load(Ordering::Acquire) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(5));
+    }
 }

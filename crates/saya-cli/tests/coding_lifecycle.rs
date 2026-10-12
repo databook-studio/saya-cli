@@ -17,6 +17,8 @@ mod root_cancel;
 #[path = "primary_coding/support.rs"]
 #[allow(dead_code)] // shared test harness: this file uses only part of it
 mod support;
+#[path = "coding_lifecycle/tool_parity.rs"]
+mod tool_parity;
 
 #[path = "coding_lifecycle/budget_regressions.rs"]
 mod budget_regressions;
