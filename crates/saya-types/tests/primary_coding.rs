@@ -22,3 +22,5 @@ mod a06d_event_links;
 mod a06d_events;
 #[path = "primary_coding/a06d_limits.rs"]
 mod a06d_limits;
+#[path = "primary_coding/a06d_reconcile_links.rs"]
+mod a06d_reconcile_links;
