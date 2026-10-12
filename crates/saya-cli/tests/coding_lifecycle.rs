@@ -1,5 +1,7 @@
 //! Deterministic native entrypoint acceptance; no external agent executables.
 #![cfg(unix)]
+#[path = "coding_lifecycle/check_location.rs"]
+mod check_location;
 #[path = "coding_lifecycle/commands.rs"]
 mod commands;
 #[path = "coding_lifecycle/continuation.rs"]
