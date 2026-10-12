@@ -67,7 +67,12 @@ fn real_programs(directory: &Path, programs: &[&str]) -> PathBuf {
         // Copy beside the target and rename: concurrent test processes never
         // observe a partial executable, and a loser's rename just replaces
         // identical bytes.
-        let partial = staged.join(format!(".{program}.{}", std::process::id()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let partial = staged.join(format!(
+            ".{program}.{}.{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::copy(&source, &partial).expect("the program copies");
         exec_ready::wait_until_exec_ready(&partial);
         std::fs::rename(&partial, &target).expect("the program installs");
