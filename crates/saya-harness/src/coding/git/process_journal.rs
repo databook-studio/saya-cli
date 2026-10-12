@@ -1,17 +1,24 @@
 //! Private append-only persistence for bounded Git process receipts.
 use std::{
-    collections::HashSet,
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::Write,
     path::Path,
     sync::{Arc, Mutex},
 };
 
 use super::process_observer::GitProcessReceipt;
+use fs::{lock_file, read_records, unlock_file, validate_file};
+use session::{append_locked, close_locked};
 
+mod fs;
+mod session;
 #[path = "process_journal_wire.rs"]
 pub(super) mod wire;
-pub(super) use wire::{decode_line, encode_receipt};
+pub(super) use wire::encode_receipt;
+
+#[cfg(test)]
+#[path = "process_journal_tests.rs"]
+mod tests;
 
 const JOURNAL_NAME: &str = "git-processes.jsonl";
 const MAX_BYTES: usize = 16 * 1024;
@@ -148,77 +155,6 @@ impl GitProcessJournal {
     }
 }
 
-fn append_locked(
-    journal: &GitProcessJournal,
-    file: &mut File,
-    line: &[u8],
-    active_identity: Option<&str>,
-    appendable: &mut bool,
-) -> Result<(), JournalAppendError> {
-    validate_file(file).map_err(|_| JournalAppendError::Io)?;
-    let (persisted, incomplete, persisted_bytes, records, open_sessions) =
-        read_records(file).map_err(|_| JournalAppendError::Io)?;
-    if incomplete || active_identity.is_none_or(|identity| !open_sessions.contains(identity)) {
-        *appendable = false;
-        return Err(JournalAppendError::AlreadyIncomplete);
-    }
-    *journal.lock(&journal.retained_records) = records;
-    *journal.lock(&journal.retained_bytes) = persisted_bytes;
-    let length = file.metadata().map_err(|_| JournalAppendError::Io)?.len() as usize;
-    let count = persisted.len();
-    let retained = persisted_bytes;
-    if line.len() > wire::MAX_LINE
-        || count >= MAX_RECEIPTS
-        || records >= MAX_RECORDS
-        || retained.saturating_add(line.len()) > MAX_BYTES
-    {
-        write_incomplete_marker(file, length, appendable)?;
-        return Err(JournalAppendError::Bounded);
-    }
-    file.write_all(line)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| {
-            *appendable = false;
-            JournalAppendError::Io
-        })?;
-    *journal.lock(&journal.retained_records) = records + 1;
-    *journal.lock(&journal.retained_bytes) += line.len();
-    Ok(())
-}
-
-fn close_locked(
-    journal: &GitProcessJournal,
-    file: &mut File,
-    line: &[u8],
-    identity: &str,
-    appendable: &mut bool,
-) -> Result<(), JournalAppendError> {
-    validate_file(file).map_err(|_| JournalAppendError::Io)?;
-    let (_, incomplete, retained_bytes, records, open_sessions) =
-        read_records(file).map_err(|_| JournalAppendError::Io)?;
-    if incomplete || open_sessions.len() != 1 || !open_sessions.contains(identity) {
-        *appendable = false;
-        return Err(JournalAppendError::AlreadyIncomplete);
-    }
-    let length = file.metadata().map_err(|_| JournalAppendError::Io)?.len() as usize;
-    if line.len() > wire::MAX_LINE
-        || records >= MAX_RECORDS
-        || retained_bytes.saturating_add(line.len()) > MAX_BYTES
-    {
-        write_incomplete_marker(file, length, appendable)?;
-        return Err(JournalAppendError::Bounded);
-    }
-    file.write_all(line)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| {
-            *appendable = false;
-            JournalAppendError::Io
-        })?;
-    *journal.lock(&journal.retained_records) = records + 1;
-    *journal.lock(&journal.retained_bytes) = retained_bytes + line.len();
-    Ok(())
-}
-
 fn write_incomplete_marker(
     file: &mut File,
     length: usize,
@@ -232,123 +168,3 @@ fn write_incomplete_marker(
     }
     Ok(())
 }
-
-/// What one journal read settles: the receipts in order, whether the tail
-/// was truncated or corrupt, the valid-byte and record accounting, and the
-/// sessions still open.
-type JournalRead = (Vec<GitProcessReceipt>, bool, usize, usize, HashSet<String>);
-
-fn read_records(file: &File) -> std::io::Result<JournalRead> {
-    let mut reader = file.try_clone()?;
-    reader.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    reader
-        .take((MAX_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_BYTES {
-        return Ok((Vec::new(), true, MAX_BYTES, MAX_RECORDS, HashSet::new()));
-    }
-    let mut receipts = Vec::new();
-    let mut identities = HashSet::new();
-    let mut closed_sessions = HashSet::new();
-    let mut open_sessions = HashSet::new();
-    let mut records = 0;
-    let mut valid_bytes: usize = 0;
-    let mut incomplete = false;
-    for chunk in bytes.split_inclusive(|byte| *byte == b'\n') {
-        if records >= MAX_RECORDS {
-            incomplete = true;
-            break;
-        }
-        if !chunk.ends_with(b"\n") || chunk.len() > wire::MAX_LINE {
-            incomplete = true;
-            break;
-        }
-        let line = &chunk[..chunk.len() - 1];
-        match decode_line(line) {
-            Some(Err(())) => {
-                incomplete = true;
-                break;
-            }
-            Some(Ok(record)) => {
-                let valid = match record {
-                    wire::JournalLine::SessionStart(identity) => {
-                        !open_sessions.contains(&identity) && {
-                            closed_sessions.remove(&identity);
-                            open_sessions.insert(identity)
-                        }
-                    }
-                    wire::JournalLine::SessionClose(identity) => {
-                        open_sessions.remove(&identity) && closed_sessions.insert(identity)
-                    }
-                    wire::JournalLine::Receipt(receipt) => {
-                        receipts.len() < MAX_RECEIPTS
-                            && open_sessions.contains(&receipt.service_identity)
-                            && !closed_sessions.contains(&receipt.service_identity)
-                            && identities
-                                .insert((receipt.service_identity.clone(), receipt.sequence))
-                            && {
-                                receipts.push(receipt.into());
-                                true
-                            }
-                    }
-                };
-                if !valid {
-                    incomplete = true;
-                    break;
-                }
-                records += 1;
-                valid_bytes = valid_bytes.saturating_add(chunk.len());
-            }
-            None => {
-                incomplete = true;
-                break;
-            }
-        }
-    }
-    if !bytes.is_empty() && valid_bytes != bytes.len() && !incomplete {
-        incomplete = true;
-    }
-    Ok((receipts, incomplete, valid_bytes, records, open_sessions))
-}
-
-fn validate_file(file: &File) -> std::io::Result<()> {
-    let metadata = file.metadata()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if !metadata.is_file()
-            || metadata.mode() & 0o077 != 0
-            || metadata.uid() != unsafe { libc::geteuid() }
-        {
-            return Err(std::io::Error::other("unsafe journal"));
-        }
-    }
-    #[cfg(not(unix))]
-    if !metadata.is_file() {
-        return Err(std::io::Error::other("unsafe journal"));
-    }
-    Ok(())
-}
-
-fn lock_file(file: &File) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-fn unlock_file(file: &File) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::io::AsRawFd;
-        let _ = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
-    }
-}
-
-#[cfg(test)]
-#[path = "process_journal_tests.rs"]
-mod tests;
