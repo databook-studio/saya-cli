@@ -101,3 +101,43 @@ fn receipts_surface_even_when_the_activity_queue_is_deep() {
         "a receipt drains every tick regardless of the activity backlog: {texts:?}"
     );
 }
+
+mod safe_text_tests {
+    use super::super::safe_text;
+
+    #[test]
+    fn terminal_control_text_is_stripped_but_newlines_and_tabs_survive() {
+        let hostile = "ok\u{1b}[31mred\u{1b}[0m\u{7}bell\rreturn\u{8}back\nline\ttab";
+        let shown = safe_text(hostile);
+        assert!(
+            !shown
+                .chars()
+                .any(|c| c.is_control() && c != '\n' && c != '\t')
+        );
+        assert!(!shown.contains('\u{1b}') && !shown.contains('\u{7}') && !shown.contains('\r'));
+        assert!(
+            shown.contains("line\ttab") && shown.contains('\n'),
+            "{shown:?}"
+        );
+        assert!(shown.starts_with("ok"), "{shown:?}");
+    }
+
+    #[test]
+    fn secrets_are_redacted_before_display() {
+        let shown = safe_text("connecting with password=hunter2-sentinel done");
+        assert!(!shown.contains("hunter2-sentinel"), "{shown}");
+        assert!(shown.contains("connecting"), "{shown}");
+    }
+
+    #[test]
+    fn output_is_bounded_to_sixteen_kibibytes_of_characters() {
+        let long = "x".repeat(40 * 1024);
+        assert_eq!(safe_text(&long).chars().count(), 16 * 1024);
+        let exact = "y".repeat(16 * 1024);
+        assert_eq!(
+            safe_text(&exact),
+            exact,
+            "positive control: at the bound nothing is cut"
+        );
+    }
+}
