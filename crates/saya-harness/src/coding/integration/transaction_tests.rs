@@ -51,6 +51,24 @@ fn original_tree_lease_is_exclusive_and_released_on_drop() {
 }
 
 #[test]
+fn a_lease_released_just_after_the_attempt_started_is_still_acquired() {
+    // A child forked by another thread holds an inherited copy of the lease
+    // descriptor until it execs, so the kernel releases the lock a moment
+    // after the owner dropped it. The next acquire must ride that out.
+    let temp = Temp::new("apply-lease-handoff");
+    let original = temp.0.join("original");
+    fs::create_dir(&original).unwrap();
+    let workspace = Workspace::open(&original).unwrap();
+    let held = acquire(&temp.0, &workspace).unwrap();
+    let releaser = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        drop(held);
+    });
+    assert!(acquire(&temp.0, &workspace).is_ok());
+    releaser.join().unwrap();
+}
+
+#[test]
 fn over_budget_journal_append_leaves_the_existing_prefix_untouched() {
     let temp = Temp::new("apply-journal-cap");
     let mut journal = ApplyBackJournal::create(
