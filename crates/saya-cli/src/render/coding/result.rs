@@ -16,6 +16,7 @@ pub(crate) fn render_coding_result(command: &CodingCommand, value: &Value) -> St
         CodingCommand::Setup { .. } => setup(value),
         CodingCommand::Conflicts { id, candidate } => conflicts(id, candidate, value),
         CodingCommand::Worktrees { id } => worktrees(id, value),
+        CodingCommand::Show { .. } => show(value),
         _ => None,
     };
     shaped.unwrap_or_else(|| value.to_string())
@@ -193,6 +194,34 @@ fn worktrees(id: &str, value: &Value) -> Option<String> {
         .is_some_and(|cursor| !cursor.is_null())
     {
         lines.push("  … more checkouts exist; list again after the last id".into());
+    }
+    Some(lines.join("\n"))
+}
+
+fn show(value: &Value) -> Option<String> {
+    let job = value.get("job_id")?.as_str()?;
+    let children = value.get("children")?.as_array()?;
+    let count = match children.len() {
+        0 => "no child agents".to_owned(),
+        1 => "1 child agent".to_owned(),
+        many => format!("{many} child agents"),
+    };
+    let mut lines = vec![format!(
+        "Job {job}: {}, {count}",
+        text_of(value.get("state")?)
+    )];
+    for child in children {
+        lines.push(format!(
+            "  {}  {}",
+            child.get("agent_id")?.as_str()?,
+            text_of(child.get("state")?)
+        ));
+    }
+    if value
+        .get("next_cursor")
+        .is_some_and(|cursor| !cursor.is_null())
+    {
+        lines.push("  … more child agents exist".into());
     }
     Some(lines.join("\n"))
 }

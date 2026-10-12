@@ -202,3 +202,24 @@ fn worktrees_list_each_retained_checkout_with_its_lifecycle() {
     let text = render_coding_result(&CodingCommand::Worktrees { id: "job-1".into() }, &more);
     assert!(text.contains("more checkouts exist"), "{text}");
 }
+
+#[test]
+fn show_lists_the_job_state_and_each_child_agent() {
+    let value = json!({"job_id":"job-1","state":"running","children":[
+        {"agent_id":"child-a","state":"running","invocation_id":"inv-1"},
+        {"agent_id":"child-b","state":"queued","invocation_id":"inv-2"}
+    ],"next_cursor":null});
+    let text = render_coding_result(&CodingCommand::Show { id: "job-1".into() }, &value);
+    assert!(
+        text.contains("Job job-1: running, 2 child agents"),
+        "{text}"
+    );
+    assert!(text.contains("child-a  running"), "{text}");
+    assert!(text.contains("child-b  queued"), "{text}");
+    let empty = json!({"job_id":"job-1","state":"completed","children":[],"next_cursor":null});
+    let text = render_coding_result(&CodingCommand::Show { id: "job-1".into() }, &empty);
+    assert!(
+        text.contains("Job job-1: completed, no child agents"),
+        "{text}"
+    );
+}
