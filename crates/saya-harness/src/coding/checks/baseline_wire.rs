@@ -1,22 +1,25 @@
 //! Strict, bounded persistence for one receipt-bound diagnostic baseline.
-use saya_types::{
-    CheckDiagnosticFormat, CodingCheckOutcome, JobId, ManagedCheckoutId, Sha256Digest,
-};
-use serde::{Deserialize, Serialize};
+use saya_types::{CheckDiagnosticFormat, Sha256Digest};
 use sha2::{Digest, Sha256};
 
-use super::super::{CheckDiagnostics, CheckReceipt, DiagnosticBaseline, DiagnosticEvidenceError};
+use super::super::{DiagnosticBaseline, DiagnosticEvidenceError};
 use super::{Diagnostic, DiagnosticLocation, DiagnosticSet, DiagnosticSeverity};
+
+// This module is loaded through `#[path = "../baseline_wire.rs"]` from
+// `diagnostics/mod.rs`, so it does not own a subdirectory: the child module
+// files need explicit paths to live in `baseline_wire/`.
+#[path = "baseline_wire/identity.rs"]
+mod identity;
+
+#[path = "baseline_wire/wire.rs"]
+mod wire;
+
+pub(crate) use identity::{BaselineIdentity, receipt_matches};
+use wire::{RawEnvelope, WireDiagnostic, WireEnvelope, WirePayload};
 
 pub const DIAGNOSTIC_BASELINE_VERSION: u32 = 1;
 pub const MAX_DIAGNOSTIC_BASELINE_BYTES: usize = 64 * 1024;
 const MAX_DIAGNOSTICS: usize = 128;
-const MAX_MESSAGE_BYTES: usize = 4096;
-const MAX_CODE_BYTES: usize = 64;
-const MAX_PATH_BYTES: usize = 512;
-const MAX_LOCATIONS: usize = 8;
-const MAX_LINE: u32 = 10_000_000;
-const MAX_COLUMN: u32 = 1_000_000;
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -29,19 +32,6 @@ pub enum DiagnosticBaselineWireError {
     DigestMismatch,
     #[error("diagnostic baseline identity is invalid")]
     IdentityMismatch,
-}
-
-/// Immutable identity needed to compare a later receipt with the baseline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct BaselineIdentity {
-    pub(crate) job_id: JobId,
-    pub(crate) checkout_id: ManagedCheckoutId,
-    pub(crate) profile_id: String,
-    pub(crate) source_sha256: Sha256Digest,
-    pub(crate) comparison_sha256: Sha256Digest,
-    pub(crate) outcome: CodingCheckOutcome,
-    pub(crate) output_complete: bool,
 }
 
 /// A validated baseline that contains no authority and can only be used for
@@ -133,136 +123,6 @@ impl PersistedDiagnosticBaseline {
     }
 }
 
-impl BaselineIdentity {
-    fn from_receipt(evidence: &CheckDiagnostics) -> Self {
-        Self::from_parts(evidence.receipt())
-    }
-
-    pub(crate) fn from_parts(receipt: &CheckReceipt) -> Self {
-        let wire = receipt.wire_receipt();
-        Self {
-            job_id: wire.job_id().clone(),
-            checkout_id: receipt.checkout_id().clone(),
-            profile_id: receipt.profile_id().to_owned(),
-            source_sha256: wire.source_sha256().clone(),
-            comparison_sha256: receipt_identity_digest(receipt),
-            outcome: receipt.outcome(),
-            output_complete: receipt.output().complete(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-#[serde(deny_unknown_fields)]
-struct WireEnvelope {
-    version: u32,
-    payload: WirePayload,
-    payload_sha256: Sha256Digest,
-}
-
-/// Borrows the payload bytes exactly as transmitted so the digest covers the
-/// wire representation rather than a re-serialization of parsed content.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawEnvelope<'a> {
-    version: u32,
-    #[serde(borrow)]
-    payload: &'a serde_json::value::RawValue,
-    payload_sha256: Sha256Digest,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WirePayload {
-    identity: BaselineIdentity,
-    format: CheckDiagnosticFormat,
-    parser_revision: u32,
-    diagnostics: Vec<WireDiagnostic>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireDiagnostic {
-    severity: String,
-    code: Option<String>,
-    message: String,
-    locations: Vec<WireLocation>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireLocation {
-    path: String,
-    line_start: u32,
-    line_end: u32,
-    column_start: u32,
-    column_end: u32,
-}
-
-impl WirePayload {
-    fn from_record(record: &PersistedDiagnosticBaseline) -> Self {
-        Self {
-            identity: record.key.clone(),
-            format: record.format,
-            parser_revision: record.parser_revision,
-            diagnostics: record
-                .diagnostics
-                .entries()
-                .iter()
-                .map(WireDiagnostic::from_diagnostic)
-                .collect(),
-        }
-    }
-}
-
-impl BaselineIdentity {
-    fn validate(self) -> Result<Self, DiagnosticBaselineWireError> {
-        if !valid_reference(&self.profile_id)
-            || !self.output_complete
-            || !matches!(self.outcome, CodingCheckOutcome::KnownExit { .. })
-        {
-            return Err(DiagnosticBaselineWireError::IdentityMismatch);
-        }
-        Ok(self)
-    }
-}
-
-fn receipt_identity_digest(receipt: &CheckReceipt) -> Sha256Digest {
-    let bytes = serde_json::to_vec(&(
-        receipt.wire.job_id(),
-        receipt.checkout_id.as_str(),
-        receipt.profile_id.as_str(),
-        receipt.program.as_str(),
-        receipt.toolchain.as_deref(),
-        receipt.wire.command_id(),
-        receipt.wire.argv_sha256(),
-        receipt.wire.environment_profile(),
-        receipt.lineage.checkout.as_str(),
-        (
-            receipt.lineage.path.as_str(),
-            receipt.lineage.repository.as_str(),
-            receipt.lineage.snapshot.as_str(),
-            receipt.lineage.snapshot_sha256.as_str(),
-            receipt.lineage.plan_sha256.as_str(),
-            receipt.lineage.base.as_str(),
-            receipt.lineage.agent.as_ref().map(|agent| agent.as_str()),
-            receipt.lineage.policy.as_str(),
-            receipt.lineage.epoch,
-        ),
-    ))
-    .expect("receipt identity serializes");
-    let digest = Sha256::digest(bytes);
-    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
-    Sha256Digest::parse(&hex).expect("sha256 encoding is valid")
-}
-
-pub(crate) fn receipt_matches(receipt: &CheckReceipt, baseline: &BaselineIdentity) -> bool {
-    receipt.checkout_id == baseline.checkout_id
-        && receipt.profile_id == baseline.profile_id
-        && receipt.wire.job_id() == &baseline.job_id
-        && receipt_identity_digest(receipt) == baseline.comparison_sha256
-}
-
 pub(crate) fn redacted_diagnostics(diagnostics: &DiagnosticSet) -> DiagnosticSet {
     let mut entries = diagnostics
         .entries()
@@ -278,117 +138,6 @@ pub(crate) fn redacted_diagnostics(diagnostics: &DiagnosticSet) -> DiagnosticSet
         .collect::<Vec<_>>();
     entries.sort();
     DiagnosticSet::new(entries)
-}
-
-fn valid_reference(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-}
-
-impl WireDiagnostic {
-    fn from_diagnostic(diagnostic: &Diagnostic) -> Self {
-        Self {
-            severity: severity_name(diagnostic.severity()).to_owned(),
-            code: diagnostic.code().map(str::to_owned),
-            message: diagnostic.message().to_owned(),
-            locations: diagnostic
-                .locations()
-                .iter()
-                .map(|location| WireLocation {
-                    path: location.path().to_owned(),
-                    line_start: location.line_start(),
-                    line_end: location.line_end(),
-                    column_start: location.column_start(),
-                    column_end: location.column_end(),
-                })
-                .collect(),
-        }
-    }
-
-    fn into_diagnostic(self) -> Result<Diagnostic, DiagnosticBaselineWireError> {
-        let severity = parse_severity(&self.severity)?;
-        if self.message.is_empty()
-            || self.message.len() > MAX_MESSAGE_BYTES
-            || self
-                .message
-                .chars()
-                .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
-            || self.locations.len() > MAX_LOCATIONS
-        {
-            return Err(DiagnosticBaselineWireError::Malformed);
-        }
-        let had_code = self.code.is_some();
-        let code = self.code.filter(|code| {
-            !code.is_empty()
-                && code.len() <= MAX_CODE_BYTES
-                && code
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b':' | b'-'))
-        });
-        if had_code && code.is_none() {
-            return Err(DiagnosticBaselineWireError::Malformed);
-        }
-        let locations = self
-            .locations
-            .into_iter()
-            .map(WireLocation::into_location)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(Diagnostic::new(severity, code, self.message, locations))
-    }
-}
-
-impl WireLocation {
-    fn into_location(self) -> Result<DiagnosticLocation, DiagnosticBaselineWireError> {
-        if self.path.is_empty()
-            || self.path.len() > MAX_PATH_BYTES
-            || self.path.contains('\\')
-            || self.path.chars().any(char::is_control)
-            || self
-                .path
-                .split('/')
-                .any(|part| part.is_empty() || matches!(part, "." | ".."))
-            || !(1..=MAX_LINE).contains(&self.line_start)
-            || !(1..=MAX_LINE).contains(&self.line_end)
-            || !(1..=MAX_COLUMN).contains(&self.column_start)
-            || !(1..=MAX_COLUMN).contains(&self.column_end)
-            || (self.line_start, self.column_start) > (self.line_end, self.column_end)
-        {
-            return Err(DiagnosticBaselineWireError::Malformed);
-        }
-        Ok(DiagnosticLocation::new(
-            self.path,
-            self.line_start,
-            self.line_end,
-            self.column_start,
-            self.column_end,
-        ))
-    }
-}
-
-fn severity_name(severity: DiagnosticSeverity) -> &'static str {
-    match severity {
-        DiagnosticSeverity::Error => "error",
-        DiagnosticSeverity::Warning => "warning",
-        DiagnosticSeverity::Note => "note",
-        DiagnosticSeverity::Help => "help",
-        DiagnosticSeverity::FailureNote => "failure-note",
-        DiagnosticSeverity::InternalCompilerError => "error: internal compiler error",
-    }
-}
-
-fn parse_severity(value: &str) -> Result<DiagnosticSeverity, DiagnosticBaselineWireError> {
-    match value {
-        "error" => Ok(DiagnosticSeverity::Error),
-        "warning" => Ok(DiagnosticSeverity::Warning),
-        "note" => Ok(DiagnosticSeverity::Note),
-        "help" => Ok(DiagnosticSeverity::Help),
-        "failure-note" => Ok(DiagnosticSeverity::FailureNote),
-        "error: internal compiler error" => Ok(DiagnosticSeverity::InternalCompilerError),
-        _ => Err(DiagnosticBaselineWireError::Malformed),
-    }
 }
 
 fn digest(bytes: &[u8]) -> Sha256Digest {
