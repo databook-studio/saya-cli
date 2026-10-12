@@ -24,6 +24,8 @@ mod promotion;
 mod reads;
 #[path = "primary_coding/reconcile.rs"]
 mod reconcile;
+#[path = "primary_coding/reconcile_bounds.rs"]
+mod reconcile_bounds;
 #[cfg(unix)]
 #[path = "primary_coding/review.rs"]
 mod review;
