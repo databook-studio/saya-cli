@@ -350,6 +350,7 @@ fn budget_reconciled_is_a_job_event_and_refuses_an_agent() {
 fn approval_closure_has_only_frozen_audit_dispositions() {
     for (disposition, expected) in [
         (ApprovalDisposition::Denied, r#"{"disposition":"denied"}"#),
+        (ApprovalDisposition::Granted, r#"{"disposition":"granted"}"#),
         (ApprovalDisposition::Expired, r#"{"disposition":"expired"}"#),
         (ApprovalDisposition::Revoked, r#"{"disposition":"revoked"}"#),
         (
