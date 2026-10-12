@@ -57,7 +57,7 @@ pub(super) fn parse_lines(raw: &str) -> Result<Vec<JournalEvent>, StoreError> {
     let total = raw.lines().count();
     raw.lines()
         .enumerate()
-        .filter(|(index, line)| !line.is_empty() && !(torn_tail && index + 1 == total))
+        .filter(|(index, line)| !line.is_empty() && (!torn_tail || index + 1 != total))
         .map(|(_, line)| serde_json::from_str(line).map_err(|_| StoreError::Invalid))
         .collect()
 }
