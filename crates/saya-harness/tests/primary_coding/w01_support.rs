@@ -11,6 +11,9 @@ use std::{
 
 use saya_types::GitObjectId;
 
+#[path = "../support/exec_ready.rs"]
+mod exec_ready;
+
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 pub struct TempRoot(PathBuf);
@@ -159,46 +162,13 @@ pub fn git_command(git: &Path, home: &Path) -> Command {
     command
 }
 
-/// Writes an executable helper that is safe to exec immediately. A thread that
-/// forks while the file is open for writing leaves its child holding a write
-/// descriptor until that child execs, and exec of the file then fails with
-/// ETXTBSY; on Linux this waits until no process holds the file for writing.
+/// Writes an executable helper that is safe to exec immediately (see
+/// `exec_ready`).
 pub fn write_executable(path: &Path, body: &[u8]) {
     fs::write(path, body).expect("temporary helper writes");
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .expect("temporary helper is executable");
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while held_for_writing(path) && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(1));
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn held_for_writing(path: &Path) -> bool {
-    let Ok(processes) = fs::read_dir("/proc") else {
-        return false;
-    };
-    processes.flatten().any(|process| {
-        let fds = process.path().join("fd");
-        fs::read_dir(&fds).is_ok_and(|entries| {
-            entries.flatten().any(|fd| {
-                fs::read_link(fd.path()).is_ok_and(|target| target == path)
-                    && fs::read_to_string(process.path().join("fdinfo").join(fd.file_name()))
-                        .ok()
-                        .and_then(|info| {
-                            let flags =
-                                info.lines().find_map(|line| line.strip_prefix("flags:"))?;
-                            u32::from_str_radix(flags.trim(), 8).ok()
-                        })
-                        .is_some_and(|flags| flags & 0o3 != 0)
-            })
-        })
-    })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn held_for_writing(_path: &Path) -> bool {
-    false
+    exec_ready::wait_until_exec_ready(path);
 }
 
 pub fn trap_script(directory: &Path, name: &str) -> PathBuf {

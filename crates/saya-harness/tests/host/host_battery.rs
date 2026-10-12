@@ -16,6 +16,9 @@ mod path_resolution;
 #[path = "host_battery/timeout_group.rs"]
 mod timeout_group;
 
+#[path = "../support/exec_ready.rs"]
+mod exec_ready;
+
 use std::{fs, os::unix::fs::PermissionsExt as _, path::PathBuf, sync::OnceLock, time::Duration};
 
 use saya_harness::host::HostConfig;
@@ -114,6 +117,7 @@ fn stage(dir: &std::path::Path, name: &str) -> PathBuf {
     let mut perms = fs::metadata(&target).expect("staged").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&target, perms).expect("exec bit must set");
+    exec_ready::wait_until_exec_ready(&target);
     dir.to_path_buf()
 }
 

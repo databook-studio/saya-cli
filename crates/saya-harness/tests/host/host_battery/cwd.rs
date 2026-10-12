@@ -27,6 +27,7 @@ async fn the_child_runs_with_the_bound_root_as_its_cwd() {
     let mut perms = fs::metadata(&probe).expect("staged").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&probe, perms).expect("exec bit must set");
+    super::exec_ready::wait_until_exec_ready(&probe);
     let config = HostConfig::new(
         elsewhere.display().to_string(),
         root.clone(),
