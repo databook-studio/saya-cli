@@ -36,6 +36,10 @@ pub(super) fn validate_event(
                 && agent_id.is_none()
                 && invocation_id.is_none()
         }
+        CodingEventKind::BudgetReconciled {
+            reservation_sequence,
+            ..
+        } => *reservation_sequence < sequence && agent_id.is_none() && invocation_id.is_none(),
         CodingEventKind::ApprovalRequested { request } => {
             sequence == request.request_sequence()
                 && job_id == request.job_id()

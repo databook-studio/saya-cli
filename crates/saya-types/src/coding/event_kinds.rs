@@ -45,6 +45,10 @@ pub enum CodingEventKind {
     BudgetSettled {
         settlement: Box<BudgetSettlementV1>,
     },
+    BudgetReconciled {
+        reservation_sequence: NonZeroU64,
+        note_sha256: Sha256Digest,
+    },
     ApprovalRequested {
         request: Box<ApprovalRequestV1>,
     },
@@ -86,6 +90,10 @@ pub(super) enum WireCodingEventKind {
     },
     BudgetSettled {
         settlement: Box<BudgetSettlementV1>,
+    },
+    BudgetReconciled {
+        reservation_sequence: NonZeroU64,
+        note_sha256: String,
     },
     ApprovalRequested {
         request: Box<ApprovalRequestV1>,
@@ -129,6 +137,14 @@ impl WireCodingEventKind {
             },
             Self::BudgetReserved { reservation } => CodingEventKind::BudgetReserved { reservation },
             Self::BudgetSettled { settlement } => CodingEventKind::BudgetSettled { settlement },
+            Self::BudgetReconciled {
+                reservation_sequence,
+                note_sha256,
+            } => CodingEventKind::BudgetReconciled {
+                reservation_sequence,
+                note_sha256: Sha256Digest::parse(&note_sha256)
+                    .map_err(|_| CodingEventError::InvalidDigest)?,
+            },
             Self::ApprovalRequested { request } => CodingEventKind::ApprovalRequested { request },
             Self::ApprovalClosed {
                 request_sequence,

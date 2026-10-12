@@ -4,7 +4,7 @@ use saya_types::{
     AgentId, ApprovalDisposition, ApprovalRequestContext, ApprovalRequestV1, ApprovalScope,
     BudgetCharge, BudgetDimension, BudgetEffectState, BudgetObservation, BudgetObservationValue,
     BudgetReservationV1, BudgetSettlementV1, CheckoutOperationState, CheckoutOperationV1,
-    CodingEventKind, CodingEventV1, GitObjectId, JobId, ManagedCheckoutId,
+    CodingEventError, CodingEventKind, CodingEventV1, GitObjectId, JobId, ManagedCheckoutId,
     ManagedCheckoutLifecycle, ManagedCheckoutPath, ManagedCheckoutRecordData,
     ManagedCheckoutRecordV1, RepositoryId, RepositoryMutationAction, Sha256Digest, SnapshotId,
 };
@@ -12,6 +12,7 @@ use serde_json::Value;
 
 const SOURCE_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const COMMON_SHA: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const NOTE_SHA: &str = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const SNAPSHOT_SHA: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const BASE_COMMIT: &str = "1111111111111111111111111111111111111111";
 
@@ -35,6 +36,13 @@ pub(super) const BUDGET_SETTLED: &str = r#"{
         "price_metadata_sha256": null, "value": {"status": "unknown"}
       }]
     }
+  }
+}"#;
+
+pub(super) const BUDGET_RECONCILED: &str = r#"{
+  "version": 1, "sequence": 14, "job_id": "job-1", "event": {
+    "type": "budget_reconciled", "reservation_sequence": 5,
+    "note_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
   }
 }"#;
 
@@ -299,6 +307,42 @@ fn control_events_match_fixed_nested_wire_fixtures() {
             },
         ),
         CHECKOUT_OPERATION_OUTCOME,
+    );
+    assert_event_matches(
+        event(
+            14,
+            job("job-1"),
+            None,
+            None,
+            CodingEventKind::BudgetReconciled {
+                reservation_sequence: positive(5),
+                note_sha256: Sha256Digest::parse(NOTE_SHA).unwrap(),
+            },
+        ),
+        BUDGET_RECONCILED,
+    );
+}
+
+#[test]
+fn budget_reconciled_is_a_job_event_and_refuses_an_agent() {
+    let reconciled = CodingEventKind::BudgetReconciled {
+        reservation_sequence: positive(5),
+        note_sha256: Sha256Digest::parse(NOTE_SHA).unwrap(),
+    };
+    assert_event_matches(
+        event(14, job("job-1"), None, None, reconciled.clone()),
+        BUDGET_RECONCILED,
+    );
+    assert_eq!(
+        CodingEventV1::new(
+            positive(14),
+            job("job-1"),
+            Some(AgentId::parse("agent-1").unwrap()),
+            None,
+            reconciled,
+        )
+        .unwrap_err(),
+        CodingEventError::InvalidEventLink
     );
 }
 
