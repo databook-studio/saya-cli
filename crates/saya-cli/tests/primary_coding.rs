@@ -9,6 +9,8 @@ mod checkouts;
 #[cfg(unix)]
 #[path = "primary_coding/doctor.rs"]
 mod doctor;
+#[path = "primary_coding/fresh_home.rs"]
+mod fresh_home;
 #[cfg(unix)]
 #[path = "primary_coding/operations.rs"]
 mod operations;

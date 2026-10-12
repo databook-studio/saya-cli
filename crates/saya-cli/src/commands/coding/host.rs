@@ -104,8 +104,11 @@ pub(super) fn private_directory(path: &Path) -> Result<PathBuf, CodingError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+        // Missing ancestors are created too (private, like the leaf): on a
+        // fresh machine saya's own state directory does not exist yet. An
+        // existing directory is never altered; only the leaf is then checked.
         let mut builder = fs::DirBuilder::new();
-        builder.mode(0o700);
+        builder.recursive(true).mode(0o700);
         match builder.create(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
