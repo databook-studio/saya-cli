@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use saya_types::GitObjectId;
@@ -159,6 +159,48 @@ pub fn git_command(git: &Path, home: &Path) -> Command {
     command
 }
 
+/// Writes an executable helper that is safe to exec immediately. A thread that
+/// forks while the file is open for writing leaves its child holding a write
+/// descriptor until that child execs, and exec of the file then fails with
+/// ETXTBSY; on Linux this waits until no process holds the file for writing.
+pub fn write_executable(path: &Path, body: &[u8]) {
+    fs::write(path, body).expect("temporary helper writes");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("temporary helper is executable");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while held_for_writing(path) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn held_for_writing(path: &Path) -> bool {
+    let Ok(processes) = fs::read_dir("/proc") else {
+        return false;
+    };
+    processes.flatten().any(|process| {
+        let fds = process.path().join("fd");
+        fs::read_dir(&fds).is_ok_and(|entries| {
+            entries.flatten().any(|fd| {
+                fs::read_link(fd.path()).is_ok_and(|target| target == path)
+                    && fs::read_to_string(process.path().join("fdinfo").join(fd.file_name()))
+                        .ok()
+                        .and_then(|info| {
+                            let flags =
+                                info.lines().find_map(|line| line.strip_prefix("flags:"))?;
+                            u32::from_str_radix(flags.trim(), 8).ok()
+                        })
+                        .is_some_and(|flags| flags & 0o3 != 0)
+            })
+        })
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn held_for_writing(_path: &Path) -> bool {
+    false
+}
+
 pub fn trap_script(directory: &Path, name: &str) -> PathBuf {
     let script = directory.join(name);
     let marker = marker_for(&script);
@@ -166,13 +208,10 @@ pub fn trap_script(directory: &Path, name: &str) -> PathBuf {
         .to_str()
         .expect("temporary path is UTF-8")
         .replace('\'', "'\\''");
-    fs::write(
+    write_executable(
         &script,
         format!("#!/bin/sh\nprintf ran > '{marker}'\n").as_bytes(),
-    )
-    .expect("temporary helper script writes");
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o700))
-        .expect("temporary helper is executable");
+    );
     script
 }
 
@@ -184,9 +223,7 @@ pub fn marker_for(script: &Path) -> PathBuf {
 
 pub fn fake_git(directory: &Path, body: &str) -> (PathBuf, PathBuf) {
     let executable = directory.join("git-probe");
-    fs::write(&executable, body).expect("fake Git process writes");
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
-        .expect("fake Git process is executable");
+    write_executable(&executable, body.as_bytes());
     let mut marker = executable.as_os_str().to_owned();
     marker.push(".pids");
     (executable, PathBuf::from(marker))
@@ -208,7 +245,7 @@ pub fn wait_for_pids(marker: &Path) -> Vec<u32> {
                 return pids;
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(5));
     }
     panic!("test Git process did not record its process IDs");
 }
@@ -218,7 +255,7 @@ pub fn assert_processes_gone(pids: &[u32]) {
         if pids.iter().all(|pid| !process_is_alive(*pid)) {
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
         pids.iter().all(|pid| !process_is_alive(*pid)),
