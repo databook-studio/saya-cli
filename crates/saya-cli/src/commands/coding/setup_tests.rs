@@ -91,7 +91,13 @@ fn every_failed_fact_blocks_exactly_its_own_step() {
 fn a_git_that_failed_its_version_check_is_a_blocked_step() {
     let mut broken = report(true, json!(true));
     broken["git"] = json!(null);
-    let (status, action) = status_of(&checklist(&broken), "git");
+    let list = checklist(&broken);
+    let (status, action) = status_of(&list, "git");
     assert_eq!(status, "blocked");
     assert!(action.as_str().unwrap().contains("Install Git"));
+    for step in list["steps"].as_array().unwrap() {
+        if step["check"] != "git" {
+            assert_eq!(step["status"], "ok", "only git is blocked: {list}");
+        }
+    }
 }

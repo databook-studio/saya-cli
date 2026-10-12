@@ -37,8 +37,11 @@ impl CodingApplication {
             .iter()
             .map(|child| {
                 let task = tasks.as_ref().and_then(|tasks| tasks.get(&child.agent_id));
-                let blocked_by =
-                    task.map(|task| super::task_history::blocked_by(task, child.state, &states));
+                // With more than one page of children a dependency's record can
+                // sit on a page not read here: unknown, never a guessed wait.
+                let blocked_by = task
+                    .filter(|_| children.next_cursor.is_none())
+                    .map(|task| super::task_history::blocked_by(task, child.state, &states));
                 json!({"agent_id":child.agent_id,"state":child.state,"invocation_id":child.current_invocation_id,
                     "write_paths":task.map(|task| &task.write_paths),
                     "dependencies":task.map(|task| &task.dependencies),
