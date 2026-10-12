@@ -43,6 +43,9 @@ mod w12;
 #[path = "primary_coding/w13.rs"]
 mod w13;
 
+#[path = "primary_coding/w13_recovery.rs"]
+mod w13_recovery;
+
 #[path = "primary_coding/x01.rs"]
 mod x01;
 
