@@ -58,7 +58,9 @@ pub(super) async fn status_in_tx(
     let active_children = count(tx, job, "SELECT COUNT(*) FROM coding_children WHERE job_id=? AND state NOT IN ('queued','completed','failed','cancelled')").await?;
     // Missing or unrecognized settlement state is unresolved, including corrupt
     // references. Unknown observations cannot be treated as a measured refund.
-    let unresolved_reservations = count(tx, job, "SELECT COUNT(*) FROM coding_budget_reservations r LEFT JOIN coding_events e ON e.job_id=r.job_id AND e.sequence=r.settled_by_sequence WHERE r.job_id=? AND COALESCE(json_extract(e.event_json,'$.event.settlement.effect_state'),'') != 'settled'").await?;
+    // A reservation with a recorded reconciliation fact is resolved: the fact
+    // is durable and never refunds the reservation's charges.
+    let unresolved_reservations = count(tx, job, "SELECT COUNT(*) FROM coding_budget_reservations r LEFT JOIN coding_events e ON e.job_id=r.job_id AND e.sequence=r.settled_by_sequence WHERE r.job_id=? AND r.reconciled_by_sequence IS NULL AND COALESCE(json_extract(e.event_json,'$.event.settlement.effect_state'),'') != 'settled'").await?;
     let pending_approvals = count(tx, job, "SELECT COUNT(*) FROM coding_approval_requests WHERE job_id=? AND closed_by_sequence IS NULL").await?;
     let unresolved_checkouts = count(tx, job, "SELECT COUNT(*) FROM coding_checkout_operations o LEFT JOIN coding_events e ON e.job_id=o.job_id AND e.sequence=o.outcome_sequence WHERE o.job_id=? AND COALESCE(json_extract(e.event_json,'$.event.operation.state'),'') NOT IN ('completed','failed')").await?;
     Ok(CodingRecoveryStatus {
