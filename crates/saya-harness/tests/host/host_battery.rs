@@ -77,9 +77,8 @@ extern "C" {
 fn helper() -> &'static PathBuf {
     static HELPER: OnceLock<PathBuf> = OnceLock::new();
     HELPER.get_or_init(|| {
-        let base = std::env::var("CARGO_TARGET_TMPDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| std::env::temp_dir());
+        // Beside the per-test directories, so staging can hard-link it.
+        let base = std::env::temp_dir();
         let dir = base.join(format!("saya-host-helper-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("helper directory must be creatable");
@@ -113,7 +112,13 @@ fn leak(tag: &str) -> PathBuf {
 /// the dir for PATH construction.
 fn stage(dir: &std::path::Path, name: &str) -> PathBuf {
     let target = dir.join(name);
-    fs::copy(helper(), &target).expect("the helper must stage");
+    // A hard link to the finished helper never opens a file for writing, so
+    // exec cannot hit ETXTBSY through a descriptor another thread's fork
+    // inherited; across filesystems a copy plus a readiness wait does the job.
+    let _ = fs::remove_file(&target);
+    if fs::hard_link(helper(), &target).is_err() {
+        fs::copy(helper(), &target).expect("the helper must stage");
+    }
     let mut perms = fs::metadata(&target).expect("staged").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&target, perms).expect("exec bit must set");

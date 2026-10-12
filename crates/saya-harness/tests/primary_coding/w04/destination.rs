@@ -193,7 +193,18 @@ fn sweep_keeps_live_and_locked_stages_and_removes_only_stale_unlocked() {
     // Releasing the stranded lock makes it sweepable; the live stage never
     // does (its own drop removes its staging).
     drop(held_fd);
-    assert_eq!(artifacts.sweep_stale_staging(Duration::ZERO).unwrap(), 1);
+    // A child forked by another test thread can keep an inherited copy of the
+    // dropped lock descriptor until it execs, so the release may land a
+    // moment late: poll briefly for the sweep that finds it free.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let swept = loop {
+        let swept = artifacts.sweep_stale_staging(Duration::ZERO).unwrap();
+        if swept != 0 || std::time::Instant::now() >= deadline {
+            break swept;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    assert_eq!(swept, 1);
     assert!(!held.exists());
     drop(live_stage);
     assert!(staging_entries(&root).is_empty());
