@@ -14,10 +14,15 @@ use super::{
 #[non_exhaustive]
 pub enum ApprovalDisposition {
     Denied,
+    /// A human granted this exact request; it is an audit fact, never a
+    /// reusable grant.
+    Granted,
     Expired,
     Revoked,
     Cancelled,
-    Consumed { reservation_sequence: NonZeroU64 },
+    Consumed {
+        reservation_sequence: NonZeroU64,
+    },
 }
 
 /// Typed coding events. Storage owns global ordering and durable transitions.

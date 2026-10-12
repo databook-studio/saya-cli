@@ -1,5 +1,6 @@
 //! Shared identity and lifecycle contracts for native coding jobs.
 
+mod approval_job_scope;
 mod approval_scope;
 mod approvals;
 mod budget;
@@ -22,7 +23,7 @@ mod receipts;
 
 pub use approval_scope::{
     ApprovalNetworkDestination, ApprovalNetworkScheme, ApprovalScope, ApprovalScopeError,
-    RepositoryMutationAction, WorkspacePath,
+    JobApprovalAction, RepositoryMutationAction, WorkspacePath,
 };
 pub use approvals::{
     APPROVAL_REQUEST_VERSION, ApprovalRequestContext, ApprovalRequestError, ApprovalRequestV1,

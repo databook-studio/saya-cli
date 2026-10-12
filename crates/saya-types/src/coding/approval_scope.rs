@@ -3,6 +3,7 @@ use std::{net::IpAddr, str::FromStr};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use super::approval_job_scope::JobApprovalAction;
 use super::{ManagedCheckoutId, RepositoryId, Sha256Digest};
 use crate::ProfileIdentity;
 
@@ -107,6 +108,11 @@ pub enum ApprovalScope {
         managed_checkout_id: ManagedCheckoutId,
         action: RepositoryMutationAction,
     },
+    /// A job-level operation approved against one exact proposal digest.
+    JobOperation {
+        action: JobApprovalAction,
+        proposal_sha256: Sha256Digest,
+    },
 }
 
 impl ApprovalScope {
@@ -165,6 +171,13 @@ impl ApprovalScope {
         Self::RepositoryMutation {
             managed_checkout_id,
             action,
+        }
+    }
+
+    pub fn job_operation(action: JobApprovalAction, proposal_sha256: Sha256Digest) -> Self {
+        Self::JobOperation {
+            action,
+            proposal_sha256,
         }
     }
 }
