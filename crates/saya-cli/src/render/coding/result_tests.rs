@@ -223,3 +223,20 @@ fn show_lists_the_job_state_and_each_child_agent() {
         "{text}"
     );
 }
+
+#[test]
+fn show_names_owned_paths_and_what_a_child_is_waiting_on() {
+    let value = json!({"job_id":"job-1","state":"running","children":[
+        {"agent_id":"child-a","state":"running","write_paths":["a.txt","docs"],"blocked_by":[]},
+        {"agent_id":"child-b","state":"queued","write_paths":["b.txt"],"blocked_by":["child-a"]}
+    ],"next_cursor":null});
+    let text = render_coding_result(&CodingCommand::Show { id: "job-1".into() }, &value);
+    assert!(
+        text.contains("child-a  running  owns a.txt, docs"),
+        "{text}"
+    );
+    assert!(
+        text.contains("child-b  queued  owns b.txt  waiting on child-a"),
+        "{text}"
+    );
+}

@@ -211,11 +211,27 @@ fn show(value: &Value) -> Option<String> {
         text_of(value.get("state")?)
     )];
     for child in children {
-        lines.push(format!(
+        let mut line = format!(
             "  {}  {}",
             child.get("agent_id")?.as_str()?,
             text_of(child.get("state")?)
-        ));
+        );
+        let names = |key: &str| -> Vec<&str> {
+            child
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default()
+        };
+        let paths = names("write_paths");
+        if !paths.is_empty() {
+            line.push_str(&format!("  owns {}", paths.join(", ")));
+        }
+        let waiting = names("blocked_by");
+        if !waiting.is_empty() {
+            line.push_str(&format!("  waiting on {}", waiting.join(", ")));
+        }
+        lines.push(line);
     }
     if value
         .get("next_cursor")

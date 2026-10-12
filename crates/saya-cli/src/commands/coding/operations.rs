@@ -22,8 +22,31 @@ impl CodingApplication {
             .list_coding_children(job, None, 100)
             .await
             .map_err(CodingError::owner)?;
+        // The tasks are read for context only: unreadable history leaves the
+        // task fields null instead of hiding the job's state.
+        let tasks = super::task_history::read_tasks(&self.state_root.join(job.as_str()))
+            .map(|(tasks, _)| tasks)
+            .ok();
+        let states: std::collections::BTreeMap<_, _> = children
+            .items
+            .iter()
+            .map(|child| (child.agent_id.clone(), child.state))
+            .collect();
+        let child_views = children
+            .items
+            .iter()
+            .map(|child| {
+                let task = tasks.as_ref().and_then(|tasks| tasks.get(&child.agent_id));
+                let blocked_by =
+                    task.map(|task| super::task_history::blocked_by(task, child.state, &states));
+                json!({"agent_id":child.agent_id,"state":child.state,"invocation_id":child.current_invocation_id,
+                    "write_paths":task.map(|task| &task.write_paths),
+                    "dependencies":task.map(|task| &task.dependencies),
+                    "blocked_by":blocked_by})
+            })
+            .collect::<Vec<_>>();
         Ok(
-            json!({"job_id":record.job_id,"state":record.state,"children":children.items.iter().map(|child|json!({"agent_id":child.agent_id,"state":child.state,"invocation_id":child.current_invocation_id})).collect::<Vec<_>>(),"next_cursor":children.next_cursor}),
+            json!({"job_id":record.job_id,"state":record.state,"children":child_views,"next_cursor":children.next_cursor}),
         )
     }
     pub async fn cancel(&self, job: &JobId) -> Result<Value, CodingError> {

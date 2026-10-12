@@ -1,6 +1,6 @@
 use super::{
-    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, CodingTask,
-    NativeCodingJob, context,
+    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, NativeCodingJob,
+    context,
     create::{count_limits, digest},
 };
 use saya_agent::{ApprovalDecider, CancellationToken};
@@ -22,8 +22,7 @@ use std::{
 };
 
 const MAX_CONTINUATION_BYTES: usize = 48 * 1024;
-const MAX_TASK_HISTORY_BYTES: usize = 1024 * 1024;
-const MAX_TASKS: usize = 256;
+use super::task_history::MAX_TASKS;
 const DECISION_CONTENT_BYTES: usize = 256;
 impl CodingApplication {
     pub fn continuation_request(&self, job: &JobId) -> Result<CodingJobRequest, CodingError> {
@@ -172,29 +171,7 @@ impl NativeCodingJob {
     }
 
     async fn pending_tasks(&self) -> Result<(Vec<Value>, usize, usize), CodingError> {
-        let path = self.records.join("tasks.jsonl");
-        let bytes = if path.exists() {
-            context::read(&path, MAX_TASK_HISTORY_BYTES)?
-        } else {
-            Vec::new()
-        };
-        let mut tasks = BTreeMap::new();
-        for line in bytes
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-        {
-            let batch: Vec<CodingTask> =
-                serde_json::from_slice(line).map_err(CodingError::owner)?;
-            for task in batch {
-                if task.task.len() > 16 * 1024
-                    || task.dependencies.len() > 8
-                    || tasks.insert(task.agent_id.clone(), task).is_some()
-                    || tasks.len() > MAX_TASKS
-                {
-                    return Err(CodingError::InvalidRequest);
-                }
-            }
-        }
+        let (tasks, history_bytes) = super::task_history::read_tasks(&self.records)?;
         let mut cursor = None;
         let mut states = BTreeMap::new();
         loop {
@@ -231,7 +208,7 @@ impl NativeCodingJob {
                 }))
             })
             .collect();
-        Ok((pending, bytes.len(), completed))
+        Ok((pending, history_bytes, completed))
     }
 
     async fn accepted_decisions(&self) -> Result<(Vec<Value>, usize), CodingError> {
@@ -296,7 +273,7 @@ impl NativeCodingJob {
     }
 }
 
-fn is_terminal(state: JobState) -> bool {
+pub(super) fn is_terminal(state: JobState) -> bool {
     matches!(
         state,
         JobState::Completed | JobState::Failed | JobState::Cancelled

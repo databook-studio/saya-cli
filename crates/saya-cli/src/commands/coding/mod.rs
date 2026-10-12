@@ -32,6 +32,7 @@ mod proposal;
 mod provider_binding;
 mod request;
 mod setup;
+mod task_history;
 pub use proposal::CodingApprovalRequest;
 mod review;
 mod review_checks;

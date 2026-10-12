@@ -40,6 +40,18 @@ async fn live_controls_acknowledge_only_at_the_safe_boundary() {
         .unwrap();
     provider.wait_for_calls(2).await;
 
+    // The status names each child's owned paths; a child with no unfinished
+    // dependency is not blocked.
+    let status = job.status().await.unwrap();
+    let child_a = status["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|child| child["agent_id"] == "child-a")
+        .unwrap();
+    assert_eq!(child_a["write_paths"], serde_json::json!(["a.txt"]));
+    assert_eq!(child_a["blocked_by"], serde_json::json!([]));
+
     assert_eq!(
         job.control_command(CodingCommand::Message {
             id: "live-controls".into(),
