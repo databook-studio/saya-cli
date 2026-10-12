@@ -56,7 +56,7 @@ fn review(id: &str, candidate: &str, value: &Value) -> Option<String> {
     if let Some(delta) = value.get("diagnostic_delta") {
         lines.push(delta_line(delta));
     }
-    if value.get("checks_configured")?.as_bool() != Some(true) {
+    if checks.is_empty() || value.get("checks_configured")?.as_bool() != Some(true) {
         lines.push("Apply is refused until successful configured checks exist.".into());
     } else if !failing.is_empty() {
         lines.push(format!(

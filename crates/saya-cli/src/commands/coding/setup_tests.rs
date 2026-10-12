@@ -64,3 +64,34 @@ fn a_probed_model_that_failed_asks_for_a_tool_capable_model() {
     assert!(action.as_str().unwrap().contains("supports tool calls"));
     assert_eq!(list["ready"], false);
 }
+
+#[test]
+fn every_failed_fact_blocks_exactly_its_own_step() {
+    // (report key, step name): flipping one fact must block that step only.
+    for (key, check) in [
+        ("private_state_writable", "private_state"),
+        ("confinement_proven", "command_confinement"),
+        ("check_programs_installed", "check_programs"),
+    ] {
+        let mut broken = report(true, json!(true));
+        broken[key] = json!(false);
+        let list = checklist(&broken);
+        for step in list["steps"].as_array().unwrap() {
+            let expected = if step["check"] == check {
+                "blocked"
+            } else {
+                "ok"
+            };
+            assert_eq!(step["status"], expected, "{key} -> {check}: {list}");
+        }
+    }
+}
+
+#[test]
+fn a_git_that_failed_its_version_check_is_a_blocked_step() {
+    let mut broken = report(true, json!(true));
+    broken["git"] = json!(null);
+    let (status, action) = status_of(&checklist(&broken), "git");
+    assert_eq!(status, "blocked");
+    assert!(action.as_str().unwrap().contains("Install Git"));
+}

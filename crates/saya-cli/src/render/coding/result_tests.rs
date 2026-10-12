@@ -240,3 +240,16 @@ fn show_names_owned_paths_and_what_a_child_is_waiting_on() {
         "{text}"
     );
 }
+
+#[test]
+fn an_empty_check_list_never_prints_the_apply_command() {
+    let mut value = preview();
+    value["checks"] = json!([]);
+    value["checks_configured"] = json!(true);
+    let text = render_coding_result(&review_command(), &value);
+    assert!(!text.contains("/coding apply"), "{text}");
+    assert!(
+        text.contains("Apply is refused until successful configured checks exist"),
+        "{text}"
+    );
+}

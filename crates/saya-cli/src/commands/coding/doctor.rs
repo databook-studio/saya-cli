@@ -4,11 +4,13 @@ use saya_harness::runner::sandbox::{RunSandbox, SandboxProvision};
 use serde_json::{Value, json};
 impl CodingApplication {
     pub async fn doctor(&self, probe_provider: bool) -> Result<Value, CodingError> {
+        // A Git that fails its version check is a blocked readiness step, not
+        // an error: `coding setup` must still be able to say what to fix.
         let git = self
             .service
             .git_version(&CancellationToken::new())
             .await
-            .map_err(CodingError::owner)?;
+            .ok();
         let coding = &self.runtime.resolved.coding;
         let configured_programs = coding
             .check_profiles
@@ -51,6 +53,7 @@ impl CodingApplication {
             None
         };
         let ready = coding.enabled
+            && git.is_some()
             && confined
             && writable
             && configured_programs
@@ -59,6 +62,9 @@ impl CodingApplication {
             && extensions_proven
             && model_loop == Some(true);
         let mut blocked = Vec::new();
+        if git.is_none() {
+            blocked.push("Install a supported Git: the Git version check failed");
+        }
         if !coding.enabled {
             blocked.push("Enable coding.enabled in trusted user configuration");
         }
