@@ -10,19 +10,22 @@ use super::create_preflight::check_checkout_identity;
 use crate::coding::budget::JobEventSequencer;
 use crate::coding::git::{GitRepository, GitService};
 use crate::coding::snapshot::{
-    MaterializedSnapshot, SnapshotArtifacts, SnapshotManifest, materialize_snapshot,
-    privatize_materialization_target, reset_materialization_target,
+    SnapshotArtifacts, SnapshotManifest, materialize_snapshot, privatize_materialization_target,
+    reset_materialization_target,
 };
 use saya_agent::CancellationToken;
 use saya_store::{CheckoutPlanAppend, SqliteStateStore, StoreError};
 use saya_types::{
     AgentId, CheckoutOperationState, GitObjectId, JobId, ManagedCheckoutId,
-    ManagedCheckoutLifecycle, ManagedCheckoutPath,
+    ManagedCheckoutLifecycle,
 };
-use std::collections::HashMap;
-use std::fmt;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+
+mod locks;
+mod result;
+
+use locks::create_lock;
+pub use result::CreatedCheckout;
 
 /// Borrowed handles for one [`create_managed_checkout`] run.
 pub struct CreateCheckoutInput<'a> {
@@ -43,69 +46,6 @@ pub struct CreateCheckoutInput<'a> {
     pub base_commit: &'a GitObjectId,
 }
 
-/// The result of one create run. A `receipt` of `None` means the checkout
-/// was already `Active` (idempotent replay) and nothing was re-created.
-pub struct CreatedCheckout {
-    checkout_id: ManagedCheckoutId,
-    path: ManagedCheckoutPath,
-    receipt: Option<MaterializedSnapshot>,
-}
-
-impl CreatedCheckout {
-    fn completed(
-        checkout_id: ManagedCheckoutId,
-        path: ManagedCheckoutPath,
-        receipt: MaterializedSnapshot,
-    ) -> Self {
-        Self {
-            checkout_id,
-            path,
-            receipt: Some(receipt),
-        }
-    }
-
-    fn replayed(checkout_id: ManagedCheckoutId, path: ManagedCheckoutPath) -> Self {
-        Self {
-            checkout_id,
-            path,
-            receipt: None,
-        }
-    }
-
-    pub fn checkout_id(&self) -> &ManagedCheckoutId {
-        &self.checkout_id
-    }
-
-    pub fn path(&self) -> &ManagedCheckoutPath {
-        &self.path
-    }
-
-    pub fn receipt(&self) -> Option<&MaterializedSnapshot> {
-        self.receipt.as_ref()
-    }
-}
-
-/// Redacted `Debug`: the checkout id and whether a receipt was produced —
-/// never the managed path.
-impl fmt::Debug for CreatedCheckout {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CreatedCheckout")
-            .field("checkout_id", &self.checkout_id)
-            .field("has_receipt", &self.receipt.is_some())
-            .finish_non_exhaustive()
-    }
-}
-
-/// Per-(job, checkout) create serialization: the whole
-/// read–effect–outcome run for one id holds its lock, so a concurrent
-/// same-id call observes the settled record instead of racing the intent
-/// append. Cross-process serialization is not provided; the store itself
-/// still enforces one durable outcome. Entries are weak and pruned on
-/// every insert, so the map's bound is the number of in-flight keys.
-type CreateLockMap = HashMap<(String, String), Weak<tokio::sync::Mutex<()>>>;
-
-static CREATE_LOCKS: LazyLock<Mutex<CreateLockMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
 /// Creates (or idempotently replays) one managed checkout.
 ///
 /// Create calls for the same (job, checkout) id are serialized in-process
@@ -119,23 +59,7 @@ pub async fn create_managed_checkout(
     // is read or written and held to the end of the function. The caller
     // keeps the strong Arc while it holds/awaits the lock, so concurrent
     // same-id callers share one mutex.
-    let create_lock = {
-        let key = (
-            input.job_id.as_str().to_owned(),
-            input.checkout_id.as_str().to_owned(),
-        );
-        let mut locks = CREATE_LOCKS
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        locks.retain(|_, lock| lock.upgrade().is_some());
-        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
-            lock
-        } else {
-            let lock = Arc::new(tokio::sync::Mutex::new(()));
-            locks.insert(key, Arc::downgrade(&lock));
-            lock
-        }
-    };
+    let create_lock = create_lock(input.job_id.as_str(), input.checkout_id.as_str());
     let _create_guard = create_lock.lock().await;
 
     // One job owns a checkout id for ever: refuse a cross-job create before any read.
