@@ -99,3 +99,52 @@ fn coding_setup_on_a_fresh_machine_prints_the_checklist_not_a_generic_error() {
     }
     let _ = std::fs::remove_dir_all(&fresh.root);
 }
+
+#[test]
+fn a_started_job_whose_model_is_unreachable_fails_with_an_actionable_message() {
+    let fresh = fresh("dead-model");
+    std::fs::create_dir_all(fresh.root.join("config/saya")).unwrap();
+    std::fs::write(
+        fresh.root.join("config/saya/config.toml"),
+        "[coding]\nenabled = true\n",
+    )
+    .unwrap();
+    let output = saya(&fresh)
+        .args([
+            "--format",
+            "json",
+            "coding",
+            "start",
+            "job-dead-model",
+            "inspect",
+            "--approve",
+        ])
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("coding setup --probe") && text.contains("coding events"),
+        "the failure names what to read and what to check: {text}"
+    );
+    assert!(!text.contains("native coding operation failed"), "{text}");
+    assert!(
+        !text.contains("127.0.0.1:9"),
+        "no provider detail leaks: {text}"
+    );
+    // The job really is recorded as failed.
+    let listed = saya(&fresh)
+        .args(["--format", "json", "coding", "list"])
+        .output()
+        .unwrap();
+    let listed = String::from_utf8_lossy(&listed.stdout);
+    assert!(
+        listed.contains("job-dead-model") && listed.contains("failed"),
+        "{listed}"
+    );
+    let _ = std::fs::remove_dir_all(&fresh.root);
+}

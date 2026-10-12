@@ -82,6 +82,10 @@ pub enum CodingError {
     ReconciliationStale,
     #[error("effects cannot be reconciled: {0}")]
     ReconciliationRefused(String),
+    #[error(
+        "the job's model run failed and the job is recorded as failed: read its durable record with `coding events <job>`, and check the configured model with `coding setup --probe`"
+    )]
+    RunFailed,
     #[error("native coding operation failed")]
     Owner(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

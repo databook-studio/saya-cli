@@ -59,7 +59,9 @@ impl NativeCodingJob {
             let result =
                 run_agent_with_control(provider.as_ref(), &tools, request, definitions(), control)
                     .await
-                    .map_err(CodingError::owner);
+                    // The agent error can carry provider detail; the operator
+                    // gets a fixed, actionable message and the durable record.
+                    .map_err(|_| CodingError::RunFailed);
             if result.is_err() && self.cancellation.reason().is_none() {
                 self.cancellation.cancel_with_reason(
                     self.ledger
