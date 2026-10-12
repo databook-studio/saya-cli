@@ -1,6 +1,7 @@
 mod commands;
 mod commands_foreign;
 mod commands_session;
+mod commands_session_drop;
 mod reconcile;
 mod reconcile_uncertain;
 mod resume;

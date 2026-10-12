@@ -1,6 +1,6 @@
 //! Budgeted command sessions: real-spawn start under charge, denial before
-//! any spawn, owner-refusal release, runner-error unknown retention, and
-//! drop-without-join retention.
+//! any spawn, owner-refusal release, and runner-error unknown retention.
+//! Drop-without-join retention lives in `commands_session_drop.rs`.
 
 use std::{num::NonZeroU64, path::Path, time::Duration};
 
@@ -17,15 +17,15 @@ use super::support::{Fixture, limits};
 
 #[allow(dead_code)] // shared test harness: this file uses only part of it
 #[path = "../c01a/support.rs"]
-mod c01a_support;
+pub(super) mod c01a_support;
 
 use c01a_support::HELPER;
 
-fn owner() -> CommandOwner {
+pub(super) fn owner() -> CommandOwner {
     CommandOwner::new(2).unwrap()
 }
 
-fn command_timeout() -> NonZeroU64 {
+pub(super) fn command_timeout() -> NonZeroU64 {
     NonZeroU64::new(30).unwrap()
 }
 
@@ -39,7 +39,7 @@ fn command_charge() -> BudgetCharge {
     .unwrap()
 }
 
-fn hold_args(marker: &Path) -> Vec<String> {
+pub(super) fn hold_args(marker: &Path) -> Vec<String> {
     vec![
         "hold".to_owned(),
         marker.to_string_lossy().into_owned(),
@@ -347,55 +347,5 @@ async fn budgeted_owner_stop_settles_known_for_unspawned_and_running_commands() 
         c01a_support::wait_group_gone(pid).await,
         "the stopped command's process group is reaped"
     );
-    fixture.close().await;
-}
-
-#[tokio::test]
-async fn budgeted_dropped_session_stays_charged() {
-    let Some(live) = c01a_support::fixture() else {
-        return;
-    };
-    let fixture = Fixture::new("budgeted-drop-held").await;
-    let ledger = fixture
-        .ledger(limits(8, 8, 8, 4, 4, Duration::from_secs(30)))
-        .await
-        .unwrap();
-    let owner = owner();
-    let marker = live.marker("budgeted-drop-held");
-    let session = start_budgeted(
-        &ledger,
-        &owner,
-        live.run_program(),
-        HELPER.to_owned(),
-        hold_args(&marker),
-        command_timeout(),
-    )
-    .await
-    .unwrap();
-    let helper_pid = c01a_support::wait_for_file(&marker).await;
-    session.session().stop();
-    drop(session);
-    assert!(
-        c01a_support::wait_group_gone(helper_pid).await,
-        "the supervision task must kill and reap the dropped session's process group"
-    );
-    assert_eq!(ledger.snapshot().await.command_slots_active, 1);
-    let page = fixture
-        .store
-        .list_coding_events(&fixture.job, None, 100)
-        .await
-        .unwrap();
-    let reserved = page
-        .events
-        .iter()
-        .filter(|event| matches!(event.event(), CodingEventKind::BudgetReserved { .. }))
-        .count();
-    assert_eq!(reserved, 1);
-    let settled = page
-        .events
-        .iter()
-        .filter(|event| matches!(event.event(), CodingEventKind::BudgetSettled { .. }))
-        .count();
-    assert_eq!(settled, 0);
     fixture.close().await;
 }
