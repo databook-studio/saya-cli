@@ -6,6 +6,9 @@ async fn save_slash_and_clap_agree_on_the_command_and_the_bytes() {
 
     let (_clap, slash_code, slash_out, slash_err) = save_document(&runtime, &store).await;
     assert_eq!(slash_code, 0, "save stderr: {slash_err}");
+    // The investigation id hashes the document and a millisecond timestamp, so
+    // a second identical save inside the same millisecond is a duplicate.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     let clap_saved = run_headless(_clap.clone(), &runtime, &store).await;
     assert_eq!(clap_saved.0, 0, "clap save stderr: {}", clap_saved.2);
 

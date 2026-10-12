@@ -7,6 +7,9 @@
 //! differ, so instead of hard-coding one layout the fixture asks which
 //! candidate directory holds all of the programs it needs.
 
+#[path = "../../../saya-harness/tests/support/exec_ready.rs"]
+mod exec_ready;
+
 use std::path::{Path, PathBuf};
 
 /// Return the first candidate directory — `/bin`, then `/usr/bin` — that
@@ -21,11 +24,53 @@ pub(super) fn program_dir_for(programs: &[&str]) -> PathBuf {
             .iter()
             .all(|program| Path::new(directory).join(program).is_file())
         {
-            return PathBuf::from(directory);
+            return real_programs(Path::new(directory), programs);
         }
     }
     panic!(
         "no candidate program directory provides all of {:?}; checked /bin and /usr/bin",
         programs
     );
+}
+
+/// The sandbox accepts a trusted program only when its path is its own
+/// canonical path. Debian's merged-usr layout makes `/bin` a symlink and
+/// `/bin/sh` a link to `dash`, so there the directory is replaced by one
+/// holding real copies of exactly the requested programs; on macOS the
+/// directory is returned unchanged.
+fn real_programs(directory: &Path, programs: &[&str]) -> PathBuf {
+    let canonical = |path: &Path| path.canonicalize().is_ok_and(|real| real == path);
+    if programs
+        .iter()
+        .all(|program| canonical(&directory.join(program)))
+    {
+        return directory.to_path_buf();
+    }
+    let mut key = programs.to_vec();
+    key.sort_unstable();
+    let staged = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("saya-fixture-programs")
+        .join(key.join("+"));
+    std::fs::create_dir_all(&staged).expect("the fixture program directory is creatable");
+    let staged = staged
+        .canonicalize()
+        .expect("the staged directory resolves");
+    for program in programs {
+        let target = staged.join(program);
+        if target.is_file() {
+            continue;
+        }
+        let source = directory
+            .join(program)
+            .canonicalize()
+            .expect("the requested program resolves");
+        // Copy beside the target and rename: concurrent test processes never
+        // observe a partial executable, and a loser's rename just replaces
+        // identical bytes.
+        let partial = staged.join(format!(".{program}.{}", std::process::id()));
+        std::fs::copy(&source, &partial).expect("the program copies");
+        exec_ready::wait_until_exec_ready(&partial);
+        std::fs::rename(&partial, &target).expect("the program installs");
+    }
+    staged
 }
