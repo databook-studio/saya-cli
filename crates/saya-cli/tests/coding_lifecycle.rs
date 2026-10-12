@@ -12,6 +12,8 @@ mod git_process_export;
 mod native;
 #[path = "coding_lifecycle/provider.rs"]
 mod provider;
+#[path = "coding_lifecycle/root_cancel.rs"]
+mod root_cancel;
 #[path = "primary_coding/support.rs"]
 #[allow(dead_code)] // shared test harness: this file uses only part of it
 mod support;
