@@ -57,3 +57,12 @@ async fn child_issuance_approval_refuses_another_jobs_request() {
             .is_ok()
     );
 }
+
+#[test]
+fn a_missing_approval_names_the_action_that_supplies_it() {
+    let text = CodingError::ApprovalRequired.to_string();
+    assert!(
+        text.contains("--approve") && text.contains("/coding approve"),
+        "scripts and interactive sessions each get their own action: {text}"
+    );
+}

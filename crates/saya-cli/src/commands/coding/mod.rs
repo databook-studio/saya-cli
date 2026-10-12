@@ -59,7 +59,9 @@ pub enum CodingError {
     Disabled,
     #[error("coding request is invalid or exceeds its bound")]
     InvalidRequest,
-    #[error("fresh approval for this exact coding job and scope is required")]
+    #[error(
+        "fresh approval for this exact coding job and scope is required: scripts pass --approve for exactly that scope; interactive sessions answer with /coding approve <job>"
+    )]
     ApprovalRequired,
     #[error("coding state must be private, canonical, and outside the repository")]
     StateDirectory,
