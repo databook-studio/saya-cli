@@ -42,6 +42,7 @@ pub struct ResolvedDiagnostics {
     pub coding_max_physical_transport_attempts: usize,
     pub coding_max_tool_calls: usize,
     pub coding_max_known_tokens: u64,
+    pub coding_max_job_tokens: Option<u64>,
     pub coding_max_elapsed_seconds: u64,
     /// Safe effective profile summaries; argv bodies are never included.
     pub coding_extensions: BTreeMap<String, serde_json::Value>,
@@ -101,6 +102,7 @@ impl ResolvedConfig {
             coding_max_physical_transport_attempts: self.coding.max_physical_transport_attempts,
             coding_max_tool_calls: self.coding.max_tool_calls,
             coding_max_known_tokens: self.coding.max_known_tokens,
+            coding_max_job_tokens: self.coding.max_job_tokens,
             coding_max_elapsed_seconds: self.coding.max_elapsed_seconds,
             coding_extensions: self
                 .coding

@@ -1,5 +1,6 @@
 use super::{CodingApplication, CodingError, doctor_probe::ProbeOutcome, host::private_directory};
 use saya_agent::CancellationToken;
+use saya_config::ResolvedCoding;
 use saya_harness::runner::sandbox::{RunSandbox, SandboxProvision};
 use serde_json::{Value, json};
 
@@ -107,12 +108,96 @@ impl CodingApplication {
         if let Some(entry) = tool_loop_blocked(model_loop, configured_max_output_tokens) {
             blocked.push(entry);
         }
-        let report = json!({"provider_bindings":self.provider_bindings()?,"ready":ready,"enabled":coding.enabled,"limits":{"max_children":coding.max_children,"max_concurrent_model_requests":coding.max_concurrent_model_requests,"max_concurrent_commands":coding.max_concurrent_commands,"max_logical_model_requests":coding.max_logical_model_requests,"max_physical_transport_attempts":coding.max_physical_transport_attempts,"max_tool_calls":coding.max_tool_calls,"max_known_tokens":coding.max_known_tokens,"max_elapsed_seconds":coding.max_elapsed_seconds},"token_admission":{"configured":false,"mode":"independent_reported_thresholds_pending_shared_owner"},"git":git,"private_state_writable":writable,"confinement_proven":confined,"native_provider_tool_loop":native_tool_loop,"check_programs_installed":configured_programs,"extensions":extensions,"extension_protocol_runtime_health":extension_health,"database_required":false,"blocked":blocked});
+        let facts = DoctorFacts {
+            provider_bindings: self.provider_bindings()?,
+            coding: coding.clone(),
+            ready,
+            git,
+            private_state_writable: writable,
+            confinement_proven: confined,
+            native_provider_tool_loop: native_tool_loop,
+            check_programs_installed: configured_programs,
+            extensions,
+            extension_protocol_runtime_health: extension_health,
+            blocked,
+        };
         Ok(add_tool_loop_failure(
-            report,
+            report(facts),
             tool_loop_failure_field(model_loop, configured_max_output_tokens),
         ))
     }
+}
+
+/// The facts `doctor` has already gathered. The report shape itself is a pure
+/// function of them, so the published JSON contract is provable without a
+/// provider, sandbox, or Git probe.
+pub(super) struct DoctorFacts {
+    pub(super) provider_bindings: Value,
+    pub(super) coding: ResolvedCoding,
+    pub(super) ready: bool,
+    pub(super) git: Option<String>,
+    pub(super) private_state_writable: bool,
+    pub(super) confinement_proven: bool,
+    pub(super) native_provider_tool_loop: Option<bool>,
+    pub(super) check_programs_installed: bool,
+    pub(super) extensions: Vec<Value>,
+    pub(super) extension_protocol_runtime_health: Vec<Value>,
+    pub(super) blocked: Vec<String>,
+}
+
+/// Assembles the display-safe report. `token_admission` keeps its published
+/// object; `token_ceilings` is additive.
+pub(super) fn report(facts: DoctorFacts) -> Value {
+    let coding = &facts.coding;
+    json!({
+        "provider_bindings": facts.provider_bindings,
+        "ready": facts.ready,
+        "enabled": coding.enabled,
+        "limits": {
+            "max_children": coding.max_children,
+            "max_concurrent_model_requests": coding.max_concurrent_model_requests,
+            "max_concurrent_commands": coding.max_concurrent_commands,
+            "max_logical_model_requests": coding.max_logical_model_requests,
+            "max_physical_transport_attempts": coding.max_physical_transport_attempts,
+            "max_tool_calls": coding.max_tool_calls,
+            "max_known_tokens": coding.max_known_tokens,
+            "max_elapsed_seconds": coding.max_elapsed_seconds,
+        },
+        "token_admission": {
+            "configured": false,
+            "mode": "independent_reported_thresholds_pending_shared_owner",
+        },
+        "token_ceilings": token_ceiling_facts(coding.max_known_tokens, coding.max_job_tokens),
+        "git": facts.git,
+        "private_state_writable": facts.private_state_writable,
+        "confinement_proven": facts.confinement_proven,
+        "native_provider_tool_loop": facts.native_provider_tool_loop,
+        "check_programs_installed": facts.check_programs_installed,
+        "extensions": facts.extensions,
+        "extension_protocol_runtime_health": facts.extension_protocol_runtime_health,
+        "database_required": false,
+        "blocked": facts.blocked,
+    })
+}
+
+/// The token-ceiling disclosure. The per-loop limit is enforced by every
+/// model loop against provider-reported usage; the job-wide total is
+/// disclosed as not enforced until the enforcement packet.
+pub(super) fn token_ceiling_facts(max_known_tokens: u64, max_job_tokens: Option<u64>) -> Value {
+    json!({
+        "per_loop_reported_tokens": {
+            "limit": max_known_tokens,
+            "enforced": true,
+            "basis": "provider_reported_usage",
+            "note": "each model loop stops once its own reported tokens reach the limit; one in-flight request can overshoot",
+        },
+        "job_total": {
+            "limit": max_job_tokens,
+            "enforced": false, // until the enforcement packet
+            "default": "not enforced",
+            "note": "not enforced unless coding.max_job_tokens is set",
+        },
+    })
 }
 
 /// Additive doctor facts for the tool-loop probe. The boolean

@@ -56,6 +56,7 @@ pub struct RedactedDiagnostics {
     pub coding_max_physical_transport_attempts: Option<usize>,
     pub coding_max_tool_calls: Option<usize>,
     pub coding_max_known_tokens: Option<u64>,
+    pub coding_max_job_tokens: Option<u64>,
     pub coding_max_elapsed_seconds: Option<u64>,
     /// Safe profile summaries; argv bodies are never included.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,6 +105,7 @@ impl RedactedDiagnostics {
             coding_max_physical_transport_attempts: file.coding.max_physical_transport_attempts,
             coding_max_tool_calls: file.coding.max_tool_calls,
             coding_max_known_tokens: file.coding.max_known_tokens,
+            coding_max_job_tokens: file.coding.max_job_tokens,
             coding_max_elapsed_seconds: file.coding.max_elapsed_seconds,
             coding_extensions: file.coding.extensions.as_ref().map(|profiles| {
                 profiles

@@ -19,6 +19,9 @@ pub struct CodingFile {
     pub max_physical_transport_attempts: Option<usize>,
     pub max_tool_calls: Option<usize>,
     pub max_known_tokens: Option<u64>,
+    /// Optional job-wide ceiling across every model loop; absent (the
+    /// default) means no job-wide limit.
+    pub max_job_tokens: Option<u64>,
     pub max_elapsed_seconds: Option<u64>,
     #[serde(default)]
     pub check_profiles: Option<BTreeMap<String, CheckProfileFile>>,

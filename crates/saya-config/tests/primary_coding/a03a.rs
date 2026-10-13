@@ -2,6 +2,7 @@ use saya_config::{
     CliOverrides, CodingFile, ConfigError, ConfigFile, ConnectionsFile, ResolutionInput,
     SettingSource, resolve,
 };
+use serde_json::json;
 
 fn empty() -> ResolutionInput {
     ResolutionInput::new(ConnectionsFile::default())
@@ -35,6 +36,50 @@ fn core_defaults_are_opt_in_and_bounded() {
 }
 
 #[test]
+fn max_job_tokens_defaults_to_no_job_wide_ceiling() {
+    let resolved = resolve(empty()).expect("empty config resolves");
+    assert_eq!(
+        resolved.coding.max_job_tokens, None,
+        "no job-wide ceiling unless configured"
+    );
+    assert_eq!(
+        resolved
+            .provenance
+            .get("coding.max_job_tokens")
+            .unwrap()
+            .source,
+        SettingSource::Default
+    );
+}
+
+#[test]
+fn max_job_tokens_round_trips_through_merge_and_resolve() {
+    let user = ConfigFile::from_toml("[coding]\nmax_job_tokens = 500_000\n").unwrap();
+    let project = ConfigFile::from_toml("[coding]\nmax_job_tokens = 600_000\n").unwrap();
+    let resolved = resolve(
+        empty()
+            .with_user(user)
+            .with_project(project)
+            .with_cli(CliOverrides {
+                trust_project_config: true,
+                ..Default::default()
+            }),
+    )
+    .unwrap();
+    assert_eq!(resolved.coding.max_job_tokens, Some(600_000));
+    assert_eq!(
+        resolved
+            .provenance
+            .get("coding.max_job_tokens")
+            .unwrap()
+            .source,
+        SettingSource::ProjectFile
+    );
+    let diagnostics = serde_json::to_value(resolved.redacted_diagnostics()).unwrap();
+    assert_eq!(diagnostics["coding_max_job_tokens"], json!(600_000));
+}
+
+#[test]
 fn coding_config_precedence_and_invalid_bounds() {
     let user = ConfigFile::from_toml("[coding]\nmax_children = 1\n").unwrap();
     let project = ConfigFile::from_toml("[coding]\nmax_children = 2\n").unwrap();
@@ -49,6 +94,7 @@ fn coding_config_precedence_and_invalid_bounds() {
             max_physical_transport_attempts: Some(240),
             max_tool_calls: Some(300),
             max_known_tokens: Some(400_000),
+            max_job_tokens: Some(50_000),
             max_elapsed_seconds: Some(1_200),
             check_profiles: None,
         },
@@ -57,6 +103,7 @@ fn coding_config_precedence_and_invalid_bounds() {
     };
     let resolved = resolve(empty().with_user(user).with_project(project).with_cli(cli)).unwrap();
     assert_eq!(resolved.coding.max_children, 3);
+    assert_eq!(resolved.coding.max_job_tokens, Some(50_000));
     for (key, flag) in [
         ("coding.enabled", "--coding"),
         ("coding.max_children", "--coding-max-children"),
@@ -78,6 +125,7 @@ fn coding_config_precedence_and_invalid_bounds() {
         ),
         ("coding.max_tool_calls", "--coding-max-tool-calls"),
         ("coding.max_known_tokens", "--coding-max-known-tokens"),
+        ("coding.max_job_tokens", "--coding-max-job-tokens"),
         ("coding.max_elapsed_seconds", "--coding-max-elapsed-seconds"),
     ] {
         assert_eq!(
@@ -102,6 +150,8 @@ fn coding_config_precedence_and_invalid_bounds() {
         ("max_tool_calls", 301, 1, 300),
         ("max_known_tokens", 0, 1, 400_000),
         ("max_known_tokens", 400_001, 1, 400_000),
+        ("max_job_tokens", 0, 1, 100_000_000),
+        ("max_job_tokens", 100_000_001, 1, 100_000_000),
         ("max_elapsed_seconds", 0, 1, 1_200),
         ("max_elapsed_seconds", 1_201, 1, 1_200),
     ] {

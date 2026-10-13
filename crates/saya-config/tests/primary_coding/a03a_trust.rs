@@ -13,7 +13,7 @@ fn untrusted_project_coding_table_is_restored_with_all_provenance() {
     )
     .unwrap();
     let project = ConfigFile::from_toml(
-        "[coding]\nenabled = false\nmax_children = 3\nmax_concurrent_commands = 2\nmax_tool_calls = 299\n",
+        "[coding]\nenabled = false\nmax_children = 3\nmax_concurrent_commands = 2\nmax_tool_calls = 299\nmax_job_tokens = 7\n",
     )
     .unwrap();
     let resolved = resolve(
@@ -26,6 +26,10 @@ fn untrusted_project_coding_table_is_restored_with_all_provenance() {
     assert_eq!(resolved.coding.max_children, 1);
     assert_eq!(resolved.coding.max_concurrent_commands, 1);
     assert_eq!(resolved.coding.max_tool_calls, 300);
+    assert_eq!(
+        resolved.coding.max_job_tokens, None,
+        "the untrusted project ceiling is reverted to the unset default"
+    );
     assert_eq!(resolved.ignored_project_overrides, ["coding"]);
     for key in [
         "coding.enabled",
@@ -36,6 +40,7 @@ fn untrusted_project_coding_table_is_restored_with_all_provenance() {
         "coding.max_physical_transport_attempts",
         "coding.max_tool_calls",
         "coding.max_known_tokens",
+        "coding.max_job_tokens",
         "coding.max_elapsed_seconds",
     ] {
         assert_ne!(

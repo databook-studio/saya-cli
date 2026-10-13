@@ -7,6 +7,8 @@ pub(super) const MAX_LOGICAL_MODEL_REQUESTS: usize = 80;
 pub(super) const MAX_PHYSICAL_TRANSPORT_ATTEMPTS: usize = 240;
 pub(super) const MAX_TOOL_CALLS: usize = 300;
 pub(super) const MAX_KNOWN_TOKENS: u64 = 400_000;
+/// The sane ceiling for the optional job-wide total; the default is unset.
+pub(super) const MAX_JOB_TOKENS: u64 = 100_000_000;
 pub(super) const MAX_ELAPSED_SECONDS: u64 = 1_200;
 
 pub(super) fn require(value: usize, field: &'static str, max: usize) -> Result<(), ConfigError> {

@@ -25,6 +25,7 @@ pub(crate) fn merge(
     apply!(max_physical_transport_attempts);
     apply!(max_tool_calls);
     apply!(max_known_tokens);
+    apply!(max_job_tokens);
     apply!(max_elapsed_seconds);
     if let Some(profiles) = layer.extensions.as_ref() {
         base.extensions = Some(profiles.clone());
