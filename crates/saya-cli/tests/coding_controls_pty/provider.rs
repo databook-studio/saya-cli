@@ -16,14 +16,14 @@ pub struct Provider {
     endpoint: String,
     child_actors: Arc<Mutex<BTreeSet<String>>>,
     finished_actors: Arc<Mutex<BTreeSet<String>>>,
+    child_a_answer_released: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 
-/// The read-loop turn pace: slow enough that the job's bounded logical
-/// request budget outlives the operator's control sequence, fast enough that
-/// child-b is demonstrably still running when cancel-child lands.
-const READ_LOOP_PACE: Duration = Duration::from_millis(60);
+/// The read-loop pace keeps the provider's 80-request bound from expiring
+/// during the PTY's 15-second control window; final answers are not paced.
+const READ_LOOP_PACE: Duration = Duration::from_millis(300);
 
 pub fn config(provider: &Provider) -> String {
     format!(
@@ -40,14 +40,18 @@ impl Provider {
         let stop = Arc::new(AtomicBool::new(false));
         let child_actors = Arc::new(Mutex::new(BTreeSet::new()));
         let finished_actors = Arc::new(Mutex::new(BTreeSet::new()));
+        let child_a_answer_released = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let actors = Arc::clone(&child_actors);
         let finished = Arc::clone(&finished_actors);
-        let worker = thread::spawn(move || serve(listener, stopped, actors, finished));
+        let answer_released = Arc::clone(&child_a_answer_released);
+        let worker =
+            thread::spawn(move || serve(listener, stopped, actors, finished, answer_released));
         Self {
             endpoint,
             child_actors,
             finished_actors,
+            child_a_answer_released,
             stop,
             worker: Some(worker),
         }
@@ -79,6 +83,10 @@ impl Provider {
         panic!("provider did not receive a finishing turn for {actor}");
     }
 
+    pub fn release_child_a_answer(&self) {
+        self.child_a_answer_released.store(true, Ordering::Release);
+    }
+
     pub fn shutdown(&mut self) {
         self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() {
@@ -107,6 +115,7 @@ fn serve(
     stop: Arc<AtomicBool>,
     child_actors: Arc<Mutex<BTreeSet<String>>>,
     finished_actors: Arc<Mutex<BTreeSet<String>>>,
+    child_a_answer_released: Arc<AtomicBool>,
 ) {
     let deadline = Instant::now() + DEADLINE;
     let mut parent_turn = 0;
@@ -124,20 +133,22 @@ fn serve(
         // request read below must block instead of racing the writer.
         stream.set_nonblocking(false).unwrap();
         let request = read_request(&mut stream);
+        let mut finished_actor = None;
         let body = if request.contains("UNTRUSTED CHILD TASK") {
             let actor = actor(&request);
             child_actors.lock().unwrap().insert(actor.clone());
             let turn = child_turns.entry(actor.clone()).or_default();
-            let paced = *turn >= 2 && actor != "child-a";
-            let body = child_response(&actor, *turn);
+            let allow_answer = child_a_answer_released.load(Ordering::Acquire);
+            let finishing = actor == "child-a" && *turn >= 2 && allow_answer;
+            let paced = *turn >= 2 && !finishing;
+            let body = child_response(&actor, *turn, allow_answer);
             *turn += 1;
-            if *turn >= 3 {
-                finished_actors.lock().unwrap().insert(actor.clone());
+            if finishing {
+                finished_actor = Some(actor);
             }
             if paced {
-                // The read loop only keeps child-b alive for the operator's
-                // controls; pacing it leaves the job's bounded request budget
-                // to the real controls instead of a hot spin.
+                // Leave request budget for the operator's real controls; the
+                // listener never waits for the controller to release answers.
                 thread::sleep(READ_LOOP_PACE);
             }
             body
@@ -147,6 +158,9 @@ fn serve(
             response
         };
         send(&mut stream, &body);
+        if let Some(actor) = finished_actor {
+            finished_actors.lock().unwrap().insert(actor);
+        }
     }
 }
 
@@ -181,20 +195,17 @@ fn actor(request: &str) -> String {
         .unwrap_or_else(|| "child".to_owned())
 }
 
-/// Turn 0 starts one supervised `sleep` (child-a's finishes in 2s, child-b's
-/// holds 20s so it outlives the operator's controls). From turn 1 the child
-/// reads its OWN command id — child-b keeps reading forever so it is still
-/// running when the test cancels it, while child-a answers from turn 2:
-/// its turn-1 read happens after the pause settled its command, so it
-/// exercises the refusal-as-data path on the way to its answer.
-fn child_response(actor: &str, turn: usize) -> String {
+/// Turn 0 starts a supervised command. Later turns read that actor's command;
+/// child-a answers only after the test releases it following the real control
+/// receipts, while child-b stays live until the test cancels it.
+fn child_response(actor: &str, turn: usize, allow_child_a_answer: bool) -> String {
     let command_id = if actor == "child-a" { 1 } else { 2 };
     if turn == 0 {
         tool(
             "coding_command_start",
             json!({"program":"sleep","argv":[if actor == "child-a" { "2" } else { "20" }],"timeout_seconds":30}),
         )
-    } else if actor == "child-a" && turn >= 2 {
+    } else if actor == "child-a" && turn >= 2 && allow_child_a_answer {
         answer(&format!("{actor} child work complete"))
     } else {
         tool(

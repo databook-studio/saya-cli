@@ -27,6 +27,7 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     session.wait_for("cancel_requested", INTERACTIVE);
     session.send(b"/coding pause pty-job missing-child\r");
     session.wait_for("not owned", INTERACTIVE);
+    provider.release_child_a_answer();
     provider.wait_for_child_finished("child-a", INTERACTIVE);
     let raw = session.finish();
     let records = session.records("pty-job");
