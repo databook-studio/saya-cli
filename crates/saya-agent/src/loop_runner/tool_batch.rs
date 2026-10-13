@@ -14,6 +14,9 @@ pub(super) struct CompletedTool {
     pub(super) summary: String,
     pub(super) succeeded: bool,
     pub(super) executed: bool,
+    /// The executor proved this failed call changed nothing; only a
+    /// settlement mapping may treat it as a known outcome.
+    pub(super) effect_free: bool,
     pub(super) truncated: bool,
     pub(super) result_shape: Option<crate::ToolResultShape>,
     pub(super) failure_reason: Option<String>,
@@ -45,25 +48,35 @@ pub(super) async fn execute_batch(
                 cancellation: cancellation.clone(),
             };
             async move {
-                let (result, summary, succeeded, executed) = if cancellation.is_cancelled() {
-                    (
-                        serde_json::json!({"error":"tool was not executed after cancellation"}),
-                        "tool not executed after cancellation".to_owned(),
-                        false,
-                        false,
-                    )
-                } else {
-                    let result = tools::execute_with_outcome(
-                        executor, &name, arguments, definition, context,
-                    )
-                    .await;
-                    if result.2 {
-                        sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
-                            .await;
-                    }
-                    (result.0, result.1, result.2, true)
-                };
-                complete_tool(call.id.clone(), result, summary, succeeded, executed, cap)
+                let (result, summary, succeeded, executed, effect_free) =
+                    if cancellation.is_cancelled() {
+                        (
+                            serde_json::json!({"error":"tool was not executed after cancellation"}),
+                            "tool not executed after cancellation".to_owned(),
+                            false,
+                            false,
+                            false,
+                        )
+                    } else {
+                        let outcome = tools::execute_with_outcome(
+                            executor, &name, arguments, definition, context,
+                        )
+                        .await;
+                        if outcome.2 {
+                            sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
+                                .await;
+                        }
+                        (outcome.0, outcome.1, outcome.2, true, outcome.3)
+                    };
+                complete_tool(
+                    call.id.clone(),
+                    result,
+                    summary,
+                    succeeded,
+                    executed,
+                    effect_free,
+                    cap,
+                )
             }
         })
         .collect::<Vec<_>>();
@@ -79,6 +92,7 @@ pub(super) fn complete_tool(
     summary: String,
     succeeded: bool,
     executed: bool,
+    effect_free: bool,
     cap: usize,
 ) -> CompletedTool {
     let result_shape = tool_record::result_shape_of(&result);
@@ -101,6 +115,7 @@ pub(super) fn complete_tool(
         summary: bound_summary(&summary),
         succeeded,
         executed,
+        effect_free,
         truncated: shaped.truncated,
         result_shape,
         failure_reason,

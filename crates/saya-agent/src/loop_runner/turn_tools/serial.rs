@@ -71,6 +71,7 @@ pub(super) async fn run_serial_call(
             "tool call failed validation".into(),
             false,
             false,
+            false,
             cap,
         );
         messages.push(completed.message);
@@ -104,7 +105,8 @@ pub(super) async fn run_serial_call(
             arguments: serde_json::to_string(&call.arguments).unwrap_or_default(),
             result_shape: None,
         });
-        let completed = tools::complete_tool(call.id, result, summary.into(), false, false, cap);
+        let completed =
+            tools::complete_tool(call.id, result, summary.into(), false, false, false, cap);
         messages.push(completed.message);
         emit(
             events,
@@ -149,7 +151,7 @@ pub(super) async fn run_serial_call(
     // read from `result` after the call resolves. Cell values never reach
     // either; `result_shape_of` reads only `row_count` and `columns`.
     let arguments_json = serde_json::to_string(&call.arguments).unwrap_or_default();
-    let (result, summary, succeeded) = if executed {
+    let (result, summary, succeeded, effect_free) = if executed {
         coding::check_tool_dispatch(effect_admission, permit, cancellation).await?;
         // Indicates a database-row-producing query tool ran.
         if definition.effect.database_data {
@@ -191,6 +193,7 @@ pub(super) async fn run_serial_call(
             },
             "read-only database tool denied".to_owned(),
             false,
+            false,
         )
     };
     if executed {
@@ -210,7 +213,15 @@ pub(super) async fn run_serial_call(
             .then(|| result.get("error").and_then(serde_json::Value::as_str))
             .flatten(),
     );
-    let completed = tools::complete_tool(call.id, result, summary, succeeded, executed, cap);
+    let completed = tools::complete_tool(
+        call.id,
+        result,
+        summary,
+        succeeded,
+        executed,
+        effect_free,
+        cap,
+    );
     tool_metadata.push(crate::ToolMetadata {
         name: call.name.clone(),
         status: if executed {

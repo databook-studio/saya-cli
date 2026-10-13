@@ -89,6 +89,7 @@ pub(super) async fn run_batch(
                 if !completed.executed {
                     EffectOutcome::NotStarted
                 } else if completed.succeeded
+                    || completed.effect_free
                     || definitions
                         .iter()
                         .find(|definition| definition.name == call.name)

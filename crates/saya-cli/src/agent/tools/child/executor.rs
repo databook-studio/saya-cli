@@ -149,21 +149,23 @@ impl ToolExecutor for ChildTools {
         match name {
             "workspace_write" | "workspace_edit" => {
                 if !self.permit_writes {
-                    return Err(ToolError::UnsupportedTool);
+                    return Err(ToolError::NoEffect(Box::new(ToolError::UnsupportedTool)));
                 }
                 let path = arguments
                     .get("path")
                     .and_then(serde_json::Value::as_str)
                     .ok_or(ToolError::PathNotString)?;
                 let workspace_path = WorkspacePath::try_from(path.to_owned()).map_err(|_| {
-                    ToolError::WorkspaceWrite("the path is not an admissible workspace path".into())
+                    ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
+                        "the path is not an admissible workspace path".into(),
+                    )))
                 })?;
                 self.view
                     .admit_workspace_write(&self.checkout_id, &workspace_path)
                     .map_err(|_| {
-                        ToolError::WorkspaceWrite(
+                        ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
                             "the child authority does not admit this write".into(),
-                        )
+                        )))
                     })?;
             }
             "workspace_read" | "workspace_list" | "glob" | "grep" => {}
@@ -187,6 +189,17 @@ impl ToolExecutor for ChildTools {
             }
             _ => return Err(ToolError::UnsupportedTool),
         }
-        workspace::execute_tool(&self.tools, name, &arguments).await
+        // An executor-level refusal above was raised before any effect; here
+        // the write/edit itself ran, so only the typed pre-write refusals
+        // from the workspace layer prove the call changed nothing.
+        match workspace::execute_tool(&self.tools, name, &arguments).await {
+            Err(error)
+                if matches!(name, "workspace_write" | "workspace_edit")
+                    && super::no_effect::proves_no_effect(&error) =>
+            {
+                Err(ToolError::NoEffect(Box::new(error)))
+            }
+            outcome => outcome,
+        }
     }
 }

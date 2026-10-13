@@ -7,6 +7,7 @@ mod compose;
 mod decider;
 mod executor;
 mod factory;
+mod no_effect;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -15,6 +16,8 @@ mod tests_edit;
 mod tests_factory;
 #[cfg(test)]
 mod tests_loop;
+#[cfg(test)]
+mod tests_no_effect;
 #[cfg(test)]
 mod tests_runner;
 

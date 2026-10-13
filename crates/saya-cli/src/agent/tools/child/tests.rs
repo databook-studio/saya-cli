@@ -152,7 +152,11 @@ async fn definitions_and_executor_agree() {
     let outcome = read_only_tools
         .execute("workspace_write", write_call("a/ok.txt", "x"))
         .await;
-    assert!(matches!(outcome, Err(ToolError::UnsupportedTool)));
+    assert!(matches!(
+        outcome,
+        Err(ToolError::NoEffect(inner))
+            if matches!(inner.as_ref(), ToolError::UnsupportedTool)
+    ));
 }
 
 // authored, not executed
@@ -175,12 +179,20 @@ async fn allowed_exact_path_writes_child_workspace_only() {
         let outcome = tools
             .execute("workspace_write", write_call(refused, "x"))
             .await;
-        assert!(matches!(outcome, Err(ToolError::WorkspaceWrite(_))));
+        assert!(matches!(
+            outcome,
+            Err(ToolError::NoEffect(inner))
+                if matches!(inner.as_ref(), ToolError::WorkspaceWrite(_))
+        ));
     }
     let outcome = tools
         .execute("workspace_write", write_call("a/ok.txt/../other.txt", "x"))
         .await;
-    assert!(matches!(outcome, Err(ToolError::WorkspaceWrite(_))));
+    assert!(matches!(
+        outcome,
+        Err(ToolError::NoEffect(inner))
+            if matches!(inner.as_ref(), ToolError::WorkspaceWrite(_))
+    ));
 
     assert!(!sandbox.ws_root().join("a/other.txt").exists());
     assert!(!sandbox.outer.join("escape.txt").exists());

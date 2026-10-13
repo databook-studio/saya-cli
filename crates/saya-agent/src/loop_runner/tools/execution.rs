@@ -45,7 +45,7 @@ pub(in crate::loop_runner) async fn execute_with_context(
     definition: Option<&ToolDefinition>,
     context: ToolExecutionContext,
 ) -> (Value, String) {
-    let (result, summary, _) =
+    let (result, summary, _, _) =
         execute_with_outcome(tools, name, arguments, definition, context).await;
     (result, summary)
 }
@@ -56,19 +56,21 @@ pub(in crate::loop_runner) async fn execute_with_outcome(
     arguments: Value,
     definition: Option<&ToolDefinition>,
     context: ToolExecutionContext,
-) -> (Value, String, bool) {
+) -> (Value, String, bool, bool) {
     match tools
         .execute_with_context(name, arguments.clone(), context)
         .await
     {
         Ok(value) => {
             let (completed, _) = completion_summaries(definition, name, &arguments, Some(&value));
-            (value, completed, true)
+            (value, completed, true, false)
         }
         // The reason reaches the model so it can adjust (e.g. a
         // safety-layer rejection naming what is not allowed); the bounded,
         // redacted form reaches the human summary so a refusal reads
-        // differently from a runtime failure.
+        // differently from a runtime failure. The fourth value records
+        // whether the executor proved the failure changed nothing: the
+        // result JSON stays the plain error text either way.
         Err(error) => {
             let (_, failed) = completion_summaries(definition, name, &arguments, None);
             let summary = failure_summary_with_reason(&failed, &error.to_string());
@@ -76,6 +78,7 @@ pub(in crate::loop_runner) async fn execute_with_outcome(
                 serde_json::json!({"error": error.to_string()}),
                 summary,
                 false,
+                error.proves_no_effect(),
             )
         }
     }
