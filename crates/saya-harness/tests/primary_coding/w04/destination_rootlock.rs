@@ -22,11 +22,15 @@ fn root_lock_serializes_begin_and_sweep() {
     let temp = TempRoot::new("w04-dest-rootlock");
     let root = artifacts_root(&temp);
     let artifacts = SnapshotArtifacts::open(&root).unwrap();
+    let mut live = Vec::new();
 
     thread::scope(|scope| {
         // A concurrent sweeper: under the root lock every pass must leave
         // every live stage exactly as it found it, so zero removals is the
-        // only possible result across the whole run.
+        // only possible result across the whole run. No stage is dropped
+        // while it runs: a stage being dropped has already unlinked its own
+        // lock file, so a sweep that arrives mid-drop may legitimately
+        // finish removing it, and that is not a live stage.
         scope.spawn(|| {
             for _ in 0..SWEEPS {
                 assert_eq!(artifacts.sweep_stale_staging(Duration::ZERO).unwrap(), 0);
@@ -40,15 +44,18 @@ fn root_lock_serializes_begin_and_sweep() {
             // was ever able to see it between creation and lock
             // acquisition.
             assert_eq!(artifacts.sweep_stale_staging(Duration::ZERO).unwrap(), 0);
-            // Each earlier stage was dropped before this one began, so
-            // exactly one live stage exists here, and the zero-age sweep
-            // and `begin` both leave it in place.
-            assert_eq!(staging_entries(&root).len(), 1);
-            drop(staged);
-            // Dropping the stage removes it; the root keeps only the
-            // persistent `.lock` entry `open` leaves behind.
-            assert_eq!(non_lock_entries(&root), 0);
+            live.push(staged);
+            // Every stage begun so far is still in place.
+            assert_eq!(staging_entries(&root).len(), live.len());
         }
     });
-    assert_eq!(staging_entries(&root).len(), 0);
+    // The sweeper has joined, so each drop is now sequential: it removes
+    // exactly its own stage, and the root keeps only the persistent `.lock`
+    // entry `open` leaves behind.
+    while let Some(staged) = live.pop() {
+        let before = staging_entries(&root).len();
+        drop(staged);
+        assert_eq!(staging_entries(&root).len(), before - 1);
+    }
+    assert_eq!(non_lock_entries(&root), 0);
 }

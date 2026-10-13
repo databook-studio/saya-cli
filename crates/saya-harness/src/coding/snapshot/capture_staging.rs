@@ -261,8 +261,10 @@ impl Drop for StagedSnapshot {
         if !self.committed {
             // Best-effort, bounded, never link-following: a failure leaves
             // inert `.staging-*` garbage for `sweep_stale_staging`. The
-            // stage's own flock is still held while this runs, so a sweep
-            // racing the drop skips this stage entirely. The name-based
+            // stage's own flock is still held while this runs, but the tree
+            // removal unlinks the lock file first, so a sweep arriving
+            // mid-drop can see no lock and finish removing the stage by
+            // age; that is harmless, the stage was being removed. The name-based
             // removal first re-establishes that the staging name still
             // holds the directory this stage's descriptor was opened on; a
             // mismatch leaves the stranger's entry alone as sweepable
