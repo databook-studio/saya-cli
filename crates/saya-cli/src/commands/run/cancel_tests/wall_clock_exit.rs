@@ -70,20 +70,33 @@ async fn panel_start_maps_settled_wall_clock_stop_to_exit_six() {
         result = &mut active => panic!("panel start ended before the episode source began: {result:?}"),
         started = episode_rx => started.unwrap(),
     }
+    let mut settled_during_stop = None;
     tokio::time::timeout(Duration::from_secs(3), async {
         tokio::select! {
             biased;
-            result = &mut active => panic!("panel start ended before its stop token: {result:?}"),
+            result = &mut active => {
+                assert_eq!(
+                    cancellation.reason(),
+                    Some(saya_agent::CancellationReason::Budget(
+                        saya_agent::BudgetDimension::ElapsedTime
+                    )),
+                    "panel start ended before its wall-clock stop token: {result:?}"
+                );
+                settled_during_stop = Some(result);
+            },
             _ = cancellation.cancelled() => {},
         }
     })
     .await
     .expect("independent run deadline signals the panel's shared token");
 
-    let code = tokio::time::timeout(Duration::from_secs(2), &mut active)
-        .await
-        .expect("the local provider attempt settles")
-        .unwrap();
+    let code = match settled_during_stop {
+        Some(result) => result.unwrap(),
+        None => tokio::time::timeout(Duration::from_secs(2), &mut active)
+            .await
+            .expect("the local provider attempt settles")
+            .unwrap(),
+    };
     assert_eq!(code, 6);
     let events = Journal::open(root.join("runs").join(run_id.as_str()))
         .read()
