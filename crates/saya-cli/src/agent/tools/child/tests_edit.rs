@@ -30,7 +30,11 @@ async fn edit_append_creates_only_at_an_admitted_path() {
     let refused = tools
         .execute("workspace_edit", edit_call("a/other.txt"))
         .await;
-    assert!(matches!(refused, Err(ToolError::WorkspaceWrite(_))));
+    assert!(matches!(
+        refused,
+        Err(ToolError::NoEffect(inner))
+            if matches!(inner.as_ref(), ToolError::WorkspaceWrite(_))
+    ));
     assert!(!sandbox.ws_root().join("a/other.txt").exists());
 }
 
@@ -44,7 +48,11 @@ async fn edit_without_write_paths_is_unsupported() {
     let (_, tools) = child_toolset(&view, &pair).unwrap();
 
     let outcome = tools.execute("workspace_edit", edit_call("a/ok.txt")).await;
-    assert!(matches!(outcome, Err(ToolError::UnsupportedTool)));
+    assert!(matches!(
+        outcome,
+        Err(ToolError::NoEffect(inner))
+            if matches!(inner.as_ref(), ToolError::UnsupportedTool)
+    ));
 }
 
 // authored, not executed

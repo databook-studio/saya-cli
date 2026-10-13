@@ -246,4 +246,19 @@ pub enum ToolError {
     /// A `tasks_set` task whose note carries control characters.
     #[error("task list refused: task note contains control characters")]
     TaskNoteControl,
+    /// The executor that raised this error proved the tool changed nothing:
+    /// the refusal was raised before any write or other effect. Only an
+    /// executor that knows its tool may wrap; the wrapper forwards the inner
+    /// error's text and source so the model reads the exact same message.
+    #[error(transparent)]
+    NoEffect(Box<ToolError>),
+}
+
+impl ToolError {
+    /// Whether the executor that raised this error proved the tool changed
+    /// nothing. Only [`ToolError::NoEffect`] carries that proof: an inner
+    /// error on its own never does, so the settlement stays conservative.
+    pub fn proves_no_effect(&self) -> bool {
+        matches!(self, ToolError::NoEffect(_))
+    }
 }

@@ -22,6 +22,7 @@ pub struct RecordingExecutor {
     pub log: Arc<ExecutorLog>,
     pub trace: Trace,
     pub fail_name: Option<String>,
+    pub fail_no_effect: Option<String>,
     pub delay_slow: bool,
 }
 
@@ -33,6 +34,7 @@ impl RecordingExecutor {
                 log: Arc::clone(&log),
                 trace,
                 fail_name: None,
+                fail_no_effect: None,
                 delay_slow: false,
             },
             log,
@@ -54,6 +56,11 @@ impl ToolExecutor for RecordingExecutor {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         self.log.finished.lock().unwrap().push(name.to_owned());
+        if self.fail_no_effect.as_deref() == Some(name) {
+            return Err(ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
+                "refused".into(),
+            ))));
+        }
         if self.fail_name.as_deref() == Some(name) {
             Err(ToolError::UnsupportedTool)
         } else {
