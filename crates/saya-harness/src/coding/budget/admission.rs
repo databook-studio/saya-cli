@@ -95,6 +95,19 @@ pub(super) async fn admit_model(
 ) -> Result<EffectPermit, EffectAdmissionError> {
     check_base(state, 1)?;
     check_id_capacity(state, 1)?;
+    // One function serves root and child admission, so the job-wide
+    // reported-usage ceiling fences both. Only provider-reported totals
+    // count, and one request in flight can overshoot.
+    if let Some(ceiling) = state.reported_token_ceiling {
+        let reported_total = state
+            .snapshot
+            .reported_input_tokens
+            .unwrap_or(0)
+            .saturating_add(state.snapshot.reported_output_tokens.unwrap_or(0));
+        if reported_total >= ceiling {
+            return Err(EffectAdmissionError::Denied);
+        }
+    }
     check_limit(state, BudgetDimension::LogicalRequests, 1)?;
     check_limit(state, BudgetDimension::ModelRequestSlots, 1)?;
     if let Some(limit) = local_limit

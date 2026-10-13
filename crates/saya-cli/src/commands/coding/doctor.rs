@@ -180,9 +180,8 @@ pub(super) fn report(facts: DoctorFacts) -> Value {
     })
 }
 
-/// The token-ceiling disclosure. The per-loop limit is enforced by every
-/// model loop against provider-reported usage; the job-wide total is
-/// disclosed as not enforced until the enforcement packet.
+/// Token ceilings count provider-reported usage; one in-flight request can overshoot.
+/// The job-wide limit is enforced only when configured.
 pub(super) fn token_ceiling_facts(max_known_tokens: u64, max_job_tokens: Option<u64>) -> Value {
     json!({
         "per_loop_reported_tokens": {
@@ -193,9 +192,12 @@ pub(super) fn token_ceiling_facts(max_known_tokens: u64, max_job_tokens: Option<
         },
         "job_total": {
             "limit": max_job_tokens,
-            "enforced": false, // until the enforcement packet
+            "enforced": max_job_tokens.is_some(),
             "default": "not enforced",
-            "note": "not enforced unless coding.max_job_tokens is set",
+            "note": match max_job_tokens {
+                Some(_) => "only provider-reported usage counts; one in-flight request can overshoot",
+                None => "not enforced unless coding.max_job_tokens is set",
+            },
         },
     })
 }

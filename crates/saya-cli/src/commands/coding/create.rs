@@ -86,6 +86,9 @@ impl CodingApplication {
         .await
         .map_err(CodingError::owner)?;
         ledger
+            .set_reported_token_ceiling(self.runtime.resolved.coding.max_job_tokens)
+            .await;
+        ledger
             .bind_runtime(1, &policy_digest)
             .await
             .map_err(CodingError::owner)?;

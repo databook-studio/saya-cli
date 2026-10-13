@@ -1,6 +1,6 @@
 //! Bounded classification of a failed child's cause for the joined result.
 use super::{api::ChildRunError, schedule_types::ScheduleChildError};
-use saya_agent::{AgentError, AgentOutput, ProviderError};
+use saya_agent::{AgentError, AgentOutput, CancellationReason, ProviderError};
 use saya_types::{CodingFailureClass, CodingResultOutcome};
 
 /// The class of a child error; every error maps to one closed class, never to its text.
@@ -13,6 +13,11 @@ pub(super) fn classify(error: &ScheduleChildError) -> Option<CodingFailureClass>
             ChildRunError::Factory(_) | ChildRunError::ChannelIdentityMismatch => {
                 Class::SetupFailed
             }
+            // A budget-driven cancellation is a limit stop, not a plain
+            // cancellation; every other cancellation keeps Cancelled.
+            ChildRunError::Cancelled {
+                reason: CancellationReason::Budget(_),
+            } => Class::LimitReached,
             ChildRunError::Cancelled { .. } => Class::Cancelled,
             _ => Class::Internal,
         },

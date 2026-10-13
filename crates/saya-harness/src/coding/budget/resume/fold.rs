@@ -154,9 +154,9 @@ fn fold_record(
             }
             _ => {}
         }
-        // Reported usage totals are not durable: a transport observation
-        // proves only that the attempt settled, never that its reported
-        // usage was complete, so coverage never reads Complete again.
+        // A transport settlement alone does not prove token usage complete.
+        // The validated span fold restores known totals separately while
+        // coverage remains conservative after resume.
         if dimension == BudgetDimension::TransportAttempts {
             folded.usage_ever_incomplete = true;
         }

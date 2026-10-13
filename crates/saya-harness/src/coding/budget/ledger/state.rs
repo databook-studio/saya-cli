@@ -35,6 +35,10 @@ pub(in crate::coding::budget) struct State {
     /// usage coverage may never read Complete again.
     pub(in crate::coding::budget) usage_ever_unknown: bool,
     pub(in crate::coding::budget) usage_ever_incomplete: bool,
+    /// Optional job-wide ceiling on provider-reported usage, registered at
+    /// runtime and never part of the durable budget policy; checked before
+    /// each new model request.
+    pub(in crate::coding::budget) reported_token_ceiling: Option<u64>,
 }
 
 #[derive(Default)]

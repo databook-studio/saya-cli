@@ -88,14 +88,26 @@ fn token_ceilings_disclose_the_per_loop_limit_and_the_default_off_job_total() {
 }
 
 #[test]
-fn a_configured_job_total_is_disclosed_with_its_number_but_still_not_enforced() {
+fn a_configured_job_total_is_disclosed_with_its_number_and_enforced() {
     let coding = ResolvedCoding {
         max_job_tokens: Some(50_000),
         ..Default::default()
     };
     let job_total = report(facts(coding))["token_ceilings"]["job_total"].clone();
     assert_eq!(job_total["limit"], json!(50_000));
-    assert_eq!(job_total["enforced"], json!(false));
+    assert_eq!(job_total["enforced"], json!(true));
+    let note = job_total["note"]
+        .as_str()
+        .expect("the configured job ceiling must explain its enforcement basis")
+        .to_ascii_lowercase();
+    assert!(
+        note.contains("only") && note.contains("provider-reported usage"),
+        "the configured ceiling must disclose that only provider-reported usage counts: {note}"
+    );
+    assert!(
+        note.contains("one in-flight request") && note.contains("overshoot"),
+        "the configured ceiling must disclose possible in-flight overshoot: {note}"
+    );
 }
 
 #[test]
