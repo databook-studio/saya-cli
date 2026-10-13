@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from inspect_crate_packages_test_fixture import isolated_inspector_workspace
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "inspect-crate-packages.sh"
@@ -110,7 +111,11 @@ def metadata_json(names: list[str], version: str = VERSION) -> dict:
 
 class InspectPackagesTests(unittest.TestCase):
     def run_inspect(
-        self, tmp: Path, names: list[str], env_extra: dict[str, str] | None = None
+        self,
+        tmp: Path,
+        names: list[str],
+        env_extra: dict[str, str] | None = None,
+        script: Path = SCRIPT,
     ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
@@ -136,9 +141,23 @@ class InspectPackagesTests(unittest.TestCase):
             **(env_extra or {}),
         }
         result = subprocess.run(
-            ["bash", str(SCRIPT)], env=env, text=True, capture_output=True, check=False
+            ["bash", str(script)], env=env, text=True, capture_output=True, check=False
         )
         return result, log, receipt
+
+    def test_drifted_root_example_fails_before_packaging(self) -> None:
+        for name in ("connections.toml", "connections.docker.toml"):
+            with self.subTest(name=name):
+                with isolated_inspector_workspace(SCRIPT) as (root, script):
+                    (root / "examples" / name).write_text("drifted copy\n")
+                    result, log, receipt_path = self.run_inspect(root, CRATES, script=script)
+                    self.assertNotEqual(result.returncode, 0)
+                    receipt = json.loads(receipt_path.read_text())
+                    self.assertFalse(receipt["all_pass"])
+                    self.assertEqual(receipt["failure"]["crate"], "saya-config")
+                    self.assertIn(f"examples/{name}", receipt["failure"]["reason"])
+                    self.assertNotIn("cargo metadata", log.read_text())
+                    self.assertNotIn("cargo package", log.read_text())
 
     def receipt_from_stdout(self, result: subprocess.CompletedProcess[str]) -> dict:
         last = result.stdout.strip().splitlines()[-1]

@@ -12,26 +12,13 @@
 //! was deleted with it once its only in-repo row (`definitions.rs`) was
 //! re-checked by hand and found to admit — not reject — the edit tool.
 
-use std::path::PathBuf;
-
-fn repo_root() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .parent()
-        .and_then(|parent| parent.parent())
-        .expect("saya-cli lives two levels below the repo root")
-        .to_path_buf()
-}
-
-fn read_repo(relative: &str) -> String {
-    let path = repo_root().join(relative);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("must read {relative}: {error}"))
-}
-
 /// The `workspace_edit` module doc comment, read as source text: the
 /// failure contract's home, pinned row by row.
 fn workspace_edit_module_source() -> String {
-    read_repo("crates/saya-cli/src/agent/tools/workspace/edit.rs")
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/agent/tools/workspace/edit.rs");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("must read {}: {error}", path.display()))
 }
 
 /// Every row of the DESIGN §4 failure contract must appear in the tool's

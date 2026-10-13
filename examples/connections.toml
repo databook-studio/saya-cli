@@ -50,4 +50,3 @@ auth_type = "externalbrowser"
 type = "sqlite"
 path = "./data/warehouse.sqlite3"
 read_only = true
-

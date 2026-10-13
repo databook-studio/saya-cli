@@ -73,6 +73,30 @@ fail_crate() { # $1 = crate name ("" for a pre-flight failure), $2 = reason
   exit 1
 }
 
+# The crate-owned examples are canonical for package tests; keep the
+# workspace-root copies used by docs and users byte-identical before shipping.
+validate_distributed_config_examples() {
+  local name canonical distributed
+  while IFS=$'\t' read -r name canonical_name; do
+    canonical="crates/saya-config/examples/$canonical_name"
+    distributed="examples/$name"
+    if [[ ! -f "$canonical" || -L "$canonical" ]]; then
+      fail_crate "saya-config" "canonical example must be a regular file: $canonical"
+    fi
+    if [[ ! -f "$distributed" || -L "$distributed" ]]; then
+      fail_crate "saya-config" "distributed example must be a regular file: $distributed"
+    fi
+    if ! cmp -s "$canonical" "$distributed"; then
+      fail_crate "saya-config" "distributed example differs from canonical copy: $distributed"
+    fi
+  done <<'EOF'
+connections.toml	connections.example.toml
+connections.docker.toml	connections.docker.example.toml
+EOF
+}
+
+validate_distributed_config_examples
+
 # Same checks as publish-crates.sh: the crate list must equal the workspace
 # members exactly, versions must agree, and the list must respect the
 # workspace dependency order.

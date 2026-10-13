@@ -109,14 +109,11 @@ fn parse_errors_are_typed_as_config_parse_failures() {
     assert!(matches!(error, ConfigError::Parse(_)));
 }
 
-// The two shipped example connection files are real inputs — they must
-// parse end to end so a typo or a stale key list never ships a config the
-// binary itself would reject. `examples/` lives at the workspace root, two
-// levels above this crate's manifest.
+// The package-owned copies are the canonical inputs for these tests. The
+// workspace-root distribution copies are checked for byte equality by the
+// crate package inspector.
 fn example(name: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
         .join("examples")
         .join(name);
     std::fs::read_to_string(&path)
@@ -125,14 +122,14 @@ fn example(name: &str) -> String {
 
 #[test]
 fn shipped_connections_example_parses_end_to_end() {
-    let file = ConnectionsFile::from_toml(&example("connections.toml"))
+    let file = ConnectionsFile::from_toml(&example("connections.example.toml"))
         .expect("examples/connections.toml must parse");
     assert_eq!(file.profiles.len(), 7);
 }
 
 #[test]
 fn shipped_connections_docker_example_parses_end_to_end() {
-    let file = ConnectionsFile::from_toml(&example("connections.docker.toml"))
+    let file = ConnectionsFile::from_toml(&example("connections.docker.example.toml"))
         .expect("examples/connections.docker.toml must parse");
     assert_eq!(file.profiles.len(), 2);
 }
