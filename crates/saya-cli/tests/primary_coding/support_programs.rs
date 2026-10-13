@@ -7,7 +7,7 @@
 //! differ, so instead of hard-coding one layout the fixture asks which
 //! candidate directory holds all of the programs it needs.
 
-#[path = "../../../saya-harness/tests/support/exec_ready.rs"]
+#[path = "../support/exec_ready.rs"]
 mod exec_ready;
 
 use std::path::{Path, PathBuf};

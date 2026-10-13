@@ -32,6 +32,19 @@ def isolated_inspector_workspace(inspector: Path):
             ):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, destination)
+        helper_destinations = (
+            (
+                root / "crates" / "saya-harness" / "tests" / "support" / "exec_ready.rs",
+                REPOSITORY / "crates" / "saya-harness" / "tests" / "support" / "exec_ready.rs",
+            ),
+            (
+                root / "crates" / "saya-cli" / "tests" / "support" / "exec_ready.rs",
+                REPOSITORY / "crates" / "saya-cli" / "tests" / "support" / "exec_ready.rs",
+            ),
+        )
+        for destination, source in helper_destinations:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
         global_config = root / "isolated.gitconfig"
         global_config.write_text("")
         git_env = {
@@ -55,6 +68,8 @@ def isolated_inspector_workspace(inspector: Path):
                 "examples/connections.docker.toml",
                 "crates/saya-config/examples/connections.example.toml",
                 "crates/saya-config/examples/connections.docker.example.toml",
+                "crates/saya-harness/tests/support/exec_ready.rs",
+                "crates/saya-cli/tests/support/exec_ready.rs",
             ],
             cwd=root,
             env=git_env,

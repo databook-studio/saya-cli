@@ -97,6 +97,23 @@ EOF
 
 validate_distributed_config_examples
 
+# The CLI test helper is a package-local copy of the harness test helper.
+validate_cli_exec_helper() {
+  local canonical="crates/saya-harness/tests/support/exec_ready.rs"
+  local distributed="crates/saya-cli/tests/support/exec_ready.rs"
+  if [[ ! -f "$canonical" || -L "$canonical" ]]; then
+    fail_crate "saya-cli" "canonical test helper must be a regular file: $canonical"
+  fi
+  if [[ ! -f "$distributed" || -L "$distributed" ]]; then
+    fail_crate "saya-cli" "packaged test helper must be a regular file: $distributed"
+  fi
+  if ! cmp -s "$canonical" "$distributed"; then
+    fail_crate "saya-cli" "packaged test helper differs from canonical copy: $distributed"
+  fi
+}
+
+validate_cli_exec_helper
+
 # Same checks as publish-crates.sh: the crate list must equal the workspace
 # members exactly, versions must agree, and the list must respect the
 # workspace dependency order.

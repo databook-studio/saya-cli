@@ -159,6 +159,19 @@ class InspectPackagesTests(unittest.TestCase):
                     self.assertNotIn("cargo metadata", log.read_text())
                     self.assertNotIn("cargo package", log.read_text())
 
+    def test_drifted_cli_exec_helper_fails_before_packaging(self) -> None:
+        with isolated_inspector_workspace(SCRIPT) as (root, script):
+            copied_helper = root / "crates/saya-cli/tests/support/exec_ready.rs"
+            copied_helper.write_text("fn drifted_helper() {}\n")
+            result, log, receipt_path = self.run_inspect(root, CRATES, script=script)
+            self.assertNotEqual(result.returncode, 0)
+            receipt = json.loads(receipt_path.read_text())
+            self.assertFalse(receipt["all_pass"])
+            self.assertEqual(receipt["failure"]["crate"], "saya-cli")
+            self.assertIn("crates/saya-cli/tests/support/exec_ready.rs", receipt["failure"]["reason"])
+            self.assertNotIn("cargo metadata", log.read_text())
+            self.assertNotIn("cargo package", log.read_text())
+
     def receipt_from_stdout(self, result: subprocess.CompletedProcess[str]) -> dict:
         last = result.stdout.strip().splitlines()[-1]
         return json.loads(last)
