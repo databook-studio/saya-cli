@@ -166,3 +166,34 @@ async fn a_truncation_without_usage_never_reports_measured_zero_tokens() {
         "the missing usage keeps token coverage incomplete"
     );
 }
+
+#[tokio::test]
+async fn a_cut_stream_and_an_idle_stall_stay_unknown() {
+    // No terminal signal at all (the stream just ends) and a stall error are not
+    // known outcomes: the client cannot tell what the provider did.
+    for broken in [
+        vec![Ok(ProviderEvent::TextDelta("partial".into()))],
+        vec![
+            Ok(ProviderEvent::TextDelta("partial".into())),
+            Err(ProviderError::Request("provider stream stalled".into())),
+        ],
+    ] {
+        let provider = ControlledScriptProvider::new(vec![broken, successful_script()]);
+        let records = Records::default();
+        let approval = AllowReadOnlyApproval;
+        run_agent_with_control(
+            &provider,
+            &NoTools,
+            Records::request(),
+            Vec::new(),
+            records.strict_control(&approval, CancellationToken::new()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            attempt_outcomes(&records)[0],
+            EffectOutcome::Unknown,
+            "a broken stream is never settled as known"
+        );
+    }
+}
