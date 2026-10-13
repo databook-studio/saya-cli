@@ -10,5 +10,7 @@ mod owner;
 mod provider;
 #[path = "n01/requests.rs"]
 mod requests;
+#[path = "n01/tool_failures.rs"]
+mod tool_failures;
 #[path = "n01/tools.rs"]
 mod tools;

@@ -2,7 +2,7 @@ use super::super::{
     admission::coding, check_cancelled, emit, failed_statements, failure_key, output, tools,
 };
 use super::state::{TurnOutputs, TurnState};
-use crate::{AgentError, AgentEvent, ChatMessage, EffectOutcome};
+use crate::{AgentError, AgentEvent, ChatMessage, EffectOutcome, LocalStateEffect, ToolDefinition};
 
 pub(super) async fn run_batch(
     state: &TurnState<'_>,
@@ -84,10 +84,16 @@ pub(super) async fn run_batch(
     if effect_admission.is_some() {
         let outcomes = results
             .iter()
-            .map(|completed| {
+            .zip(assistant.tool_calls.iter())
+            .map(|(completed, call)| {
                 if !completed.executed {
                     EffectOutcome::NotStarted
-                } else if completed.succeeded {
+                } else if completed.succeeded
+                    || definitions
+                        .iter()
+                        .find(|definition| definition.name == call.name)
+                        .is_some_and(effect_free)
+                {
                     EffectOutcome::Succeeded
                 } else {
                     EffectOutcome::Unknown
@@ -136,4 +142,15 @@ pub(super) async fn run_batch(
         }
     }
     Ok(())
+}
+
+/// A failed effect-free call could not have changed anything, so the error the
+/// model received is the whole outcome — the settlement stays known, not uncertain.
+fn effect_free(definition: &ToolDefinition) -> bool {
+    definition.read_only
+        && !definition.effect.external_side_effect
+        && matches!(
+            definition.effect.local_state,
+            LocalStateEffect::None | LocalStateEffect::Read
+        )
 }
