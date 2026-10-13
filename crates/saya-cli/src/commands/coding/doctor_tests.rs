@@ -96,6 +96,18 @@ fn a_configured_job_total_is_disclosed_with_its_number_and_enforced() {
     let job_total = report(facts(coding))["token_ceilings"]["job_total"].clone();
     assert_eq!(job_total["limit"], json!(50_000));
     assert_eq!(job_total["enforced"], json!(true));
+    let note = job_total["note"]
+        .as_str()
+        .expect("the configured job ceiling must explain its enforcement basis")
+        .to_ascii_lowercase();
+    assert!(
+        note.contains("only") && note.contains("provider-reported usage"),
+        "the configured ceiling must disclose that only provider-reported usage counts: {note}"
+    );
+    assert!(
+        note.contains("one in-flight request") && note.contains("overshoot"),
+        "the configured ceiling must disclose possible in-flight overshoot: {note}"
+    );
 }
 
 #[test]
