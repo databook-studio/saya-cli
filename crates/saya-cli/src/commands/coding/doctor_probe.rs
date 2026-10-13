@@ -1,11 +1,22 @@
 use super::{CodingApplication, CodingError};
 use async_trait::async_trait;
 use saya_agent::{
-    AgentLimits, AgentRequest, AgentRunControl, AllowReadOnlyApproval, AnsweringLimits,
-    CancellationToken, NoopEventSink, ToolError, ToolExecutor, run_agent_with_control,
+    AgentError, AgentLimits, AgentRequest, AgentRunControl, AllowReadOnlyApproval, AnsweringLimits,
+    CancellationToken, NoopEventSink, ProviderError, ToolError, ToolExecutor,
+    run_agent_with_control,
 };
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The bounded probe's outcome. `completed` keeps the boolean the doctor has
+/// always reported; `truncated_by_output_limit` records that the run was cut
+/// off by the provider's output-token limit, so the doctor can say so without
+/// changing any durable format.
+#[derive(Clone, Copy)]
+pub(super) struct ProbeOutcome {
+    pub(super) completed: bool,
+    pub(super) truncated_by_output_limit: bool,
+}
 struct Probe {
     called: AtomicBool,
 }
@@ -22,7 +33,7 @@ impl ToolExecutor for Probe {
 impl CodingApplication {
     /// Explicit opt-in bounded provider call. The probe owns no database,
     /// workspace or process tool, and receives no repository content.
-    pub(super) async fn probe_provider(&self) -> Result<bool, CodingError> {
+    pub(super) async fn probe_provider(&self) -> Result<ProbeOutcome, CodingError> {
         let mut ai = self.runtime.resolved.ai.clone();
         ai.timeout_seconds = 10;
         ai.idle_timeout_seconds = 10;
@@ -74,6 +85,14 @@ impl CodingApplication {
             ),
         )
         .await;
-        Ok(result.is_ok() && probe.called.load(Ordering::Acquire))
+        let completed = result.is_ok() && probe.called.load(Ordering::Acquire);
+        let truncated_by_output_limit = matches!(
+            result,
+            Err(AgentError::Provider(ProviderError::OutputTruncated { .. }))
+        );
+        Ok(ProbeOutcome {
+            completed,
+            truncated_by_output_limit,
+        })
     }
 }
