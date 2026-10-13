@@ -1,5 +1,5 @@
 //! Joined output is an untrusted report, never a source receipt or an authority grant.
-use super::{AgentId, CodingResultOutcome, InvocationId, JobId, JobState};
+use super::{AgentId, CodingFailureClass, CodingResultOutcome, InvocationId, JobId, JobState};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_JOINED_ANSWER_BYTES: usize = 16 * 1024;
@@ -14,6 +14,8 @@ pub struct JoinedResultV1 {
     outcome: CodingResultOutcome,
     answer: String,
     answer_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_class: Option<CodingFailureClass>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum JoinedResultError {
@@ -42,6 +44,7 @@ impl JoinedResultV1 {
             outcome,
             answer,
             answer_truncated,
+            failure_class: None,
         };
         result.to_json_bytes()?;
         Ok(result)
@@ -63,6 +66,14 @@ impl JoinedResultV1 {
     }
     pub fn answer_truncated(&self) -> bool {
         self.answer_truncated
+    }
+    /// Why a failed child stopped; absent for any other outcome and for results stored before it existed.
+    pub fn failure_class(&self) -> Option<CodingFailureClass> {
+        self.failure_class
+    }
+    pub fn with_failure_class(mut self, class: CodingFailureClass) -> Self {
+        self.failure_class = Some(class);
+        self
     }
     pub fn terminal_state(&self) -> JobState {
         match self.outcome {
@@ -87,14 +98,19 @@ impl JoinedResultV1 {
         if wire.version != 1 {
             return Err(JoinedResultError::Invalid);
         }
-        Self::new(
+        let class = wire.failure_class;
+        let result = Self::new(
             wire.job_id,
             wire.agent_id,
             wire.invocation_id,
             wire.outcome,
             wire.answer,
             wire.answer_truncated,
-        )
+        )?;
+        Ok(match class {
+            Some(class) => result.with_failure_class(class),
+            None => result,
+        })
     }
 }
 #[derive(Deserialize)]
@@ -107,4 +123,10 @@ struct Wire {
     outcome: CodingResultOutcome,
     answer: String,
     answer_truncated: bool,
+    #[serde(default)]
+    failure_class: Option<CodingFailureClass>,
 }
+
+#[cfg(test)]
+#[path = "joined_result_tests.rs"]
+mod tests;

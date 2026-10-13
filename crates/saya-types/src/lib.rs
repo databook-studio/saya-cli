@@ -108,7 +108,8 @@ pub use session_tasks::{
 };
 
 pub use coding::{
-    JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
+    CodingFailureClass, JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES,
+    MAX_JOINED_RESULT_BYTES,
 };
 
 pub use coding::{

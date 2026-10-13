@@ -1,7 +1,10 @@
 use super::{admit::NodePlan, api::ChildRunError, schedule_types::ScheduleChildError};
 use crate::coding::budget::{JobBudgetLedger, SequencerError};
 use saya_agent::{AgentOutput, CancellationReason};
-use saya_types::{CodingResultOutcome, JoinedResultV1, MAX_JOINED_ANSWER_BYTES};
+use saya_types::{
+    AgentId, CodingFailureClass, CodingResultOutcome, InvocationId, JobId, JoinedResultV1,
+    MAX_JOINED_ANSWER_BYTES,
+};
 use std::num::NonZeroU64;
 
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +20,27 @@ pub(super) async fn persist(
     plan: &NodePlan,
     result: &Result<AgentOutput, ScheduleChildError>,
 ) -> Result<NonZeroU64, CompletionError> {
+    let envelope = envelope(
+        ledger.job_id().await,
+        plan.agent.clone(),
+        plan.invocation.clone(),
+        result,
+    )?;
+    Ok(ledger
+        .sequencer()
+        .append_completion(&envelope)
+        .await?
+        .sequence)
+}
+
+/// The bounded joined result for one finished child: its outcome, a redacted answer, and, for a
+/// failed child, the closed failure class. Pure so the mapping is testable without a store.
+pub(super) fn envelope(
+    job: JobId,
+    agent: AgentId,
+    invocation: InvocationId,
+    result: &Result<AgentOutput, ScheduleChildError>,
+) -> Result<JoinedResultV1, saya_types::JoinedResultError> {
     let outcome = match result {
         Ok(output) if output.truncated => CodingResultOutcome::Failed,
         Ok(_) => CodingResultOutcome::Completed,
@@ -48,17 +72,15 @@ pub(super) async fn persist(
         Ok(_) => (String::new(), true),
         Err(_) => (String::new(), false),
     };
-    let envelope = JoinedResultV1::new(
-        ledger.job_id().await,
-        plan.agent.clone(),
-        plan.invocation.clone(),
-        outcome,
-        answer,
-        truncated,
-    )?;
-    Ok(ledger
-        .sequencer()
-        .append_completion(&envelope)
-        .await?
-        .sequence)
+    let envelope = JoinedResultV1::new(job, agent, invocation, outcome, answer, truncated)?;
+    Ok(
+        match super::failure_class::classify_result(result, outcome) {
+            Some(class) => envelope.with_failure_class(class),
+            None => envelope,
+        },
+    )
 }
+
+#[cfg(test)]
+#[path = "results_tests.rs"]
+mod tests;
