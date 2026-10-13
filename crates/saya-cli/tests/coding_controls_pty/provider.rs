@@ -98,7 +98,9 @@ impl Provider {
                 self.worker = Some(worker);
                 panic!("provider worker did not finish within its read deadline");
             }
-            let _ = worker.join();
+            worker
+                .join()
+                .expect("provider worker exits without panicking");
         }
     }
 }
