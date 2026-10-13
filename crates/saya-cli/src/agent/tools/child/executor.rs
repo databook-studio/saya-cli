@@ -154,7 +154,7 @@ impl ToolExecutor for ChildTools {
                 let path = arguments
                     .get("path")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or(ToolError::PathNotString)?;
+                    .ok_or_else(|| ToolError::NoEffect(Box::new(ToolError::PathNotString)))?;
                 let workspace_path = WorkspacePath::try_from(path.to_owned()).map_err(|_| {
                     ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
                         "the path is not an admissible workspace path".into(),

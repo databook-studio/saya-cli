@@ -4,8 +4,9 @@
 //! executor wraps exactly these and nothing else.
 
 use saya_agent::ToolError;
+use saya_types::CheckpointRefusal;
 
-use super::super::workspace::checkpoint::{RefusalClass, classify_write};
+use super::super::workspace::checkpoint::{RefusalClass, classify_write, quota_refusal_text};
 
 /// Whether a failed child write or edit provably changed nothing. The typed
 /// refusals here are all raised before any write lands; the write tool's
@@ -30,7 +31,24 @@ pub(super) fn proves_no_effect(error: &ToolError) -> bool {
         | ToolError::ExpectedDigestNotString
         | ToolError::UnsupportedTool
         | ToolError::WorkspaceUnavailable => true,
-        ToolError::WorkspaceWrite(_) => classify_write(error) == RefusalClass::Clean,
+        ToolError::WorkspaceWrite(_) => {
+            classify_write(error) == RefusalClass::Clean || is_checkpoint_quota_refusal(error)
+        }
+        ToolError::WorkspaceEdit(_) => is_checkpoint_quota_refusal(error),
         _ => false,
     }
+}
+
+fn is_checkpoint_quota_refusal(error: &ToolError) -> bool {
+    let text = match error {
+        ToolError::WorkspaceWrite(text) | ToolError::WorkspaceEdit(text) => text,
+        _ => return false,
+    };
+    [
+        CheckpointRefusal::FileTooLarge,
+        CheckpointRefusal::TooManyCheckpoints,
+        CheckpointRefusal::SessionBytesExceeded,
+    ]
+    .into_iter()
+    .any(|quota| quota_refusal_text(quota) == *text)
 }

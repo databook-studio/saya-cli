@@ -81,6 +81,12 @@ fn refusals_that_may_have_landed_do_not_prove_no_effect() {
         ToolError::Workspace("x".into()),
         ToolError::WorkspaceWrite("x".into()),
         ToolError::WorkspaceEdit("x".into()),
+        ToolError::WorkspaceWrite(
+            "recovery is enabled but this edit cannot be checkpointed (file too large); the file was not changed by someone else".into(),
+        ),
+        ToolError::WorkspaceWrite("credential path".into()),
+        ToolError::WorkspaceWrite("secret-shaped content".into()),
+        ToolError::WorkspaceWrite("database export".into()),
         ToolError::Runner("x".into()),
         ToolError::Fetch("x".into()),
     ] {
@@ -88,6 +94,26 @@ fn refusals_that_may_have_landed_do_not_prove_no_effect() {
             !proves_no_effect(&error),
             "the effect may have landed and must stay uncertain: {error}"
         );
+    }
+}
+
+#[test]
+fn exact_checkpoint_quota_refusals_prove_no_effect() {
+    let refusals = [
+        "recovery is enabled but this edit cannot be checkpointed (file too large); the file was not changed",
+        "recovery is enabled but this edit cannot be checkpointed (too many checkpoints); the file was not changed",
+        "recovery is enabled but this edit cannot be checkpointed (session recovery storage is full); the file was not changed",
+    ];
+    for text in refusals {
+        for error in [
+            ToolError::WorkspaceWrite(text.into()),
+            ToolError::WorkspaceEdit(text.into()),
+        ] {
+            assert!(
+                proves_no_effect(&error),
+                "expected exact pre-write checkpoint refusal to prove no effect: {error}"
+            );
+        }
     }
 }
 
@@ -111,4 +137,30 @@ async fn a_write_refused_at_an_unadmitted_path_proves_no_effect() {
             .contains("the child authority does not admit this write"),
         "the model still reads the original refusal text: {refused}"
     );
+}
+
+#[tokio::test]
+async fn non_string_write_and_edit_paths_prove_no_effect() {
+    let checkout = checkout("checkout");
+    let view = implementer_view(&checkout, &["a/ok.txt"]);
+    let sandbox = Sandbox::new("no-effect-non-string-path");
+    let pair = sandbox.pair(&checkout);
+    let (_, tools) = child_toolset(&view, &pair).unwrap();
+
+    for (name, arguments) in [
+        (
+            "workspace_write",
+            serde_json::json!({"path": 3, "content": "x"}),
+        ),
+        (
+            "workspace_edit",
+            serde_json::json!({"path": 3, "offset": 0, "chunk": "x"}),
+        ),
+    ] {
+        let refused = tools.execute(name, arguments).await.unwrap_err();
+        assert!(
+            refused.proves_no_effect(),
+            "a malformed path is rejected before mutation: {refused}"
+        );
+    }
 }
