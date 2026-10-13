@@ -1,6 +1,6 @@
 //! Spawn and teardown plumbing for the private PTY session fixture.
 
-use super::{OUTPUT_LIMIT, Root, Session};
+use super::{OUTPUT_LIMIT, PTY_COLS, PTY_ROWS, Root, Session};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::{fs, io::Read, process::Command, sync::mpsc, thread};
 
@@ -41,8 +41,8 @@ impl Session {
         let pty = native_pty_system();
         let pair = pty
             .openpty(PtySize {
-                rows: 30,
-                cols: 120,
+                rows: PTY_ROWS,
+                cols: PTY_COLS,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -74,6 +74,7 @@ impl Session {
             writer: Some(writer),
             output,
             reader: Some(reader),
+            parser: vt100::Parser::new(PTY_ROWS, PTY_COLS, 0),
             raw: Vec::new(),
             child_reaped: false,
             reader_finished: false,
