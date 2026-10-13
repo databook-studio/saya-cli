@@ -12,5 +12,7 @@ mod provider;
 mod requests;
 #[path = "n01/tool_failures.rs"]
 mod tool_failures;
+#[path = "n01/tool_failures_serial.rs"]
+mod tool_failures_serial;
 #[path = "n01/tools.rs"]
 mod tools;

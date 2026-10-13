@@ -147,7 +147,7 @@ pub(super) async fn run_batch(
 
 /// A failed effect-free call could not have changed anything, so the error the
 /// model received is the whole outcome — the settlement stays known, not uncertain.
-fn effect_free(definition: &ToolDefinition) -> bool {
+pub(super) fn effect_free(definition: &ToolDefinition) -> bool {
     definition.read_only
         && !definition.effect.external_side_effect
         && matches!(

@@ -197,7 +197,10 @@ pub(super) async fn run_serial_call(
         )
     };
     if executed {
-        coding::settle_tool_result(effect_admission, permit, succeeded, cancellation).await?;
+        // Same rule as the concurrent batch: a failed call is a known one when the executor
+        // proved it changed nothing or the tool is effect-free.
+        let known = succeeded || effect_free || super::batch::effect_free(definition);
+        coding::settle_tool_result(effect_admission, permit, known, cancellation).await?;
     }
     if executed && succeeded {
         sink.metric(AgentMetric::Useful(AgentMetricUseful::SuccessfulTool))
