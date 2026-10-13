@@ -86,12 +86,14 @@ pub(super) async fn run_batch(
             .iter()
             .zip(assistant.tool_calls.iter())
             .map(|(completed, call)| {
-                let Some(definition) = definitions.iter().find(|d| d.name == call.name) else {
-                    return EffectOutcome::Unknown;
-                };
                 if !completed.executed {
                     EffectOutcome::NotStarted
-                } else if completed.succeeded || effect_free(definition) {
+                } else if completed.succeeded
+                    || definitions
+                        .iter()
+                        .find(|definition| definition.name == call.name)
+                        .is_some_and(effect_free)
+                {
                     EffectOutcome::Succeeded
                 } else {
                     EffectOutcome::Unknown
