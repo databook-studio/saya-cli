@@ -132,7 +132,12 @@ fn serve(
         // macOS hands out sockets that inherit the listener's O_NONBLOCK; the
         // request read below must block instead of racing the writer.
         stream.set_nonblocking(false).unwrap();
-        let request = read_request(&mut stream);
+        let request = match read_request(&mut stream) {
+            Ok(Some(request)) => request,
+            Ok(None) => continue,
+            Err(error) if peer_disconnected(&error) => continue,
+            Err(error) => panic!("provider request read failed: {error}"),
+        };
         let mut finished_actor = None;
         let body = if request.contains("UNTRUSTED CHILD TASK") {
             let actor = actor(&request);
@@ -157,7 +162,12 @@ fn serve(
             parent_turn += 1;
             response
         };
-        send(&mut stream, &body);
+        if let Err(error) = send(&mut stream, &body) {
+            if peer_disconnected(&error) {
+                continue;
+            }
+            panic!("provider response write failed: {error}");
+        }
         if let Some(actor) = finished_actor {
             finished_actors.lock().unwrap().insert(actor);
         }
@@ -215,18 +225,15 @@ fn child_response(actor: &str, turn: usize, allow_child_a_answer: bool) -> Strin
     }
 }
 
-fn read_request(stream: &mut TcpStream) -> String {
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<String>> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 4096];
-    stream
-        .set_read_timeout(Some(Duration::from_secs(3)))
-        .unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     loop {
-        let count = match stream.read(&mut buffer) {
-            Ok(0) => return String::new(),
-            Ok(count) => count,
-            Err(_) => return String::new(),
-        };
+        let count = stream.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(None);
+        }
         bytes.extend_from_slice(&buffer[..count]);
         assert!(bytes.len() <= 1024 * 1024, "provider request is bounded");
         if let Some(head) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
@@ -240,20 +247,30 @@ fn read_request(stream: &mut TcpStream) -> String {
                 })
                 .unwrap_or(0);
             if length <= 128 * 1024 && bytes.len() >= head + 4 + length {
-                return String::from_utf8_lossy(&bytes[head + 4..head + 4 + length]).into_owned();
+                return Ok(Some(
+                    String::from_utf8_lossy(&bytes[head + 4..head + 4 + length]).into_owned(),
+                ));
             }
         }
     }
 }
 
-fn send(stream: &mut TcpStream, body: &str) {
+fn send(stream: &mut TcpStream, body: &str) -> std::io::Result<()> {
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
+    )?;
+    stream.flush()
+}
+
+fn peer_disconnected(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
     )
-    .unwrap();
-    stream.flush().unwrap();
 }
 
 fn tool(name: &str, arguments: Value) -> String {
