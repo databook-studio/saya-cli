@@ -170,7 +170,7 @@ async fn tool_settlements_follow_input_permits_after_out_of_order_completion() {
     let definitions = vec![
         tool(
             "slow",
-            effect(true, false, false),
+            effect(false, true, false),
             ToolConcurrency::Concurrent,
         ),
         tool(
