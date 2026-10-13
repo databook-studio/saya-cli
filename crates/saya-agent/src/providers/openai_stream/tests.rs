@@ -1,4 +1,5 @@
-use super::{TokenUsage, apply_usage};
+use super::{State, TokenUsage, apply_usage};
+use crate::ProviderEvent;
 use serde_json::json;
 
 /// Deliverable 4 (OpenAI mapping, with): a usage chunk with detail objects
@@ -51,4 +52,69 @@ fn apply_usage_reports_zero_cache_as_some_zero() {
     .expect("parses");
     apply_usage(&mut accumulated, &usage);
     assert_eq!(accumulated.cached_input_tokens, Some(0));
+}
+
+/// Pushes one usage-only SSE frame (empty `choices`) carrying the given usage.
+fn push_usage_chunk(state: &mut State, usage: serde_json::Value) {
+    let frame = format!("data: {}\n\n", json!({"choices": [], "usage": usage}));
+    state.push(frame.as_bytes()).expect("chunk parses");
+}
+
+fn events(state: &mut State) -> Vec<ProviderEvent> {
+    state.pending.drain(..).collect()
+}
+
+/// A final chunk with only `completion_tokens` emits no `Usage`: an unreported
+/// prompt side is unknown, never a measured zero.
+#[test]
+fn usage_chunk_with_only_completion_stays_unreported() {
+    let mut state = State::default();
+    push_usage_chunk(&mut state, json!({"completion_tokens": 7}));
+    assert!(state.pending.is_empty(), "no Usage without prompt side");
+    assert!(!state.usage_reported);
+}
+
+/// A final chunk with both totals emits exactly one `Usage` carrying both.
+#[test]
+fn usage_chunk_with_both_totals_emits_one_usage() {
+    let mut state = State::default();
+    push_usage_chunk(
+        &mut state,
+        json!({"prompt_tokens": 5, "completion_tokens": 7}),
+    );
+    assert_eq!(
+        events(&mut state),
+        vec![ProviderEvent::Usage(TokenUsage::new(5, 7))]
+    );
+    assert!(state.usage_reported);
+}
+
+/// Totals split across chunks emit `Usage` once, after both sides are seen.
+#[test]
+fn usage_split_across_chunks_emits_once_both_seen() {
+    let mut state = State::default();
+    push_usage_chunk(&mut state, json!({"prompt_tokens": 5}));
+    assert!(state.pending.is_empty(), "input alone stays unreported");
+    push_usage_chunk(&mut state, json!({"completion_tokens": 7}));
+    assert_eq!(
+        events(&mut state),
+        vec![ProviderEvent::Usage(TokenUsage::new(5, 7))]
+    );
+    assert!(state.usage_reported);
+}
+
+/// A chunk reporting `0` on both totals emits `Usage` with zeros: a reported
+/// zero is measured.
+#[test]
+fn usage_chunk_with_reported_zeros_emits_usage() {
+    let mut state = State::default();
+    push_usage_chunk(
+        &mut state,
+        json!({"prompt_tokens": 0, "completion_tokens": 0}),
+    );
+    assert_eq!(
+        events(&mut state),
+        vec![ProviderEvent::Usage(TokenUsage::new(0, 0))]
+    );
+    assert!(state.usage_reported);
 }
