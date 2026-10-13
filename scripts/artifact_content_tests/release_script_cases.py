@@ -1,3 +1,5 @@
+import json
+
 from .test_support import *
 
 class ReleaseScriptCases:
@@ -168,15 +170,19 @@ class ReleaseScriptCases:
                 cwd=ROOT, text=True, capture_output=True, check=True,
             ).stdout
             packages = ["saya-types", "saya-config", "saya-store", "saya-agent", "saya-connectors", "saya-harness", "saya-cli"]
+            package_versions = {
+                package["name"]: package["version"]
+                for package in json.loads(metadata)["packages"]
+            }
             for crate in packages:
-                fixture = fixtures / f"{crate}-0.4.2.crate"
+                fixture = fixtures / f"{crate}-{package_versions[crate]}.crate"
                 valid_crate(fixture, {"src/lib.rs": b"pub fn packaged() {}"})
             self.executable(
                 bin_dir / "cargo",
                 "#!/bin/sh\nset -eu\n"
                 'case "$1" in\n'
                 'metadata) cat "$SAYA_METADATA_FIXTURE" ;;\n'
-                'package) shift; crate=""; while [ "$#" -gt 0 ]; do if [ "$1" = -p ]; then crate="$2"; shift 2; else shift; fi; done; mkdir -p "$CARGO_TARGET_DIR/package"; cp "$SAYA_CRATE_FIXTURES/$crate-0.4.2.crate" "$CARGO_TARGET_DIR/package/$crate-0.4.2.crate" ;;\n'
+                'package) shift; crate=""; while [ "$#" -gt 0 ]; do if [ "$1" = -p ]; then crate="$2"; shift 2; else shift; fi; done; version="$(jq -er --arg n "$crate" \'[.packages[] | select(.name == $n) | .version] | if length == 1 then .[0] else error("crate missing or duplicated: \\($n)") end\' "$SAYA_METADATA_FIXTURE")"; mkdir -p "$CARGO_TARGET_DIR/package"; cp "$SAYA_CRATE_FIXTURES/$crate-$version.crate" "$CARGO_TARGET_DIR/package/$crate-$version.crate" ;;\n'
                 'publish) exit 0 ;;\n'
                 '*) exit 2 ;;\n'
                 'esac\n',
