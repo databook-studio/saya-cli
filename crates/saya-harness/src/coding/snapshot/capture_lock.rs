@@ -3,8 +3,10 @@
 //! exclusive `flock` on it for the stage's whole life; the stale-staging
 //! sweep removes a candidate only when it can acquire that lock without
 //! blocking, so a live capture is never swept. A killed capture's lock is
-//! released by the kernel at process death, and a stage that died before
-//! creating its lock has none — for those, age alone decides.
+//! released by the kernel at process death, and a staging directory without
+//! a lock file is either a crashed leftover or a stage mid-removal, after
+//! its drop unlinked the lock before the staging directory itself is
+//! removed — for either, age alone decides.
 //!
 //! On top of the per-stage lock, stage creation and sweeping are
 //! serialized through the root-level `.lock` file: `begin` holds an
@@ -14,7 +16,8 @@
 //! description, so the exclusion works across threads and processes; a
 //! sweep can therefore never observe a staging directory that is between
 //! `mkdirat` and its stage lock acquisition. A staging directory without a
-//! lock file is then only a crashed leftover, removable by age.
+//! lock file is then either a crashed leftover or a stage mid-removal,
+//! removable by age in either case.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use std::{ffi::OsStr, fs, io, os::fd::AsRawFd};
@@ -111,8 +114,8 @@ pub(super) fn acquire_stage_lock(stage_dir: &fs::File) -> Result<fs::File, Snaps
 /// be kept alive until the candidate is removed; `Held` means a live
 /// capture holds the lock, or the lock cannot be verified at all (a link,
 /// an unreadable file) — either way the stage is kept, never removed;
-/// `Absent` means the capture died before creating its lock and only the
-/// age decides.
+/// `Absent` means the capture died before creating its lock or the stage is
+/// mid-removal after its lock was unlinked, and only the age decides.
 pub(super) enum StageLock {
     Free(fs::File),
     Held,

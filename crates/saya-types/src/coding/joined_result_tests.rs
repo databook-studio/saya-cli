@@ -92,6 +92,27 @@ fn unknown_failure_class_value_is_rejected() {
 }
 
 #[test]
+fn nonfailed_result_with_a_failure_class_is_rejected() {
+    let cases = ["completed", "cancelled", "uncertain"];
+    let jsons = cases.map(|outcome| {
+        let json = GOLDEN_WITH_CLASS.replace(
+            r#""outcome":"failed""#,
+            &format!(r#""outcome":"{outcome}""#),
+        );
+        assert!(json.contains(&format!(r#""outcome":"{outcome}""#)));
+        assert!(json.contains(r#""failure_class":"provider_error""#));
+        json
+    });
+    for (outcome, json) in cases.into_iter().zip(jsons) {
+        assert_eq!(
+            JoinedResultV1::from_json_bytes(json.as_bytes()),
+            Err(JoinedResultError::Invalid),
+            "{outcome} results cannot carry a failure class"
+        );
+    }
+}
+
+#[test]
 fn completed_result_never_carries_a_class() {
     let envelope = JoinedResultV1::new(
         JobId::parse("job-1").unwrap(),
