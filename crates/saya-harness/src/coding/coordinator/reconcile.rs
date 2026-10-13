@@ -149,8 +149,9 @@ pub async fn reconcile_effects(
         match store.reconcile_coding_budget(event).await? {
             CodingEventAppend::Appended(_) => {}
             CodingEventAppend::AlreadyPresent(_) => {
-                return Err(ReconcileError::Store(StoreError::Conflict));
+                return Err(ReconcileError::StalePlan);
             }
+            _ => return Err(ReconcileError::Store(StoreError::Conflict)),
         }
         reconciled.push(effect.reservation_sequence);
     }
