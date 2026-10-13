@@ -34,6 +34,9 @@ struct State {
     tools: ToolAssembly,
     usage: TokenUsage,
     usage_reported: bool,
+    /// `prompt_tokens` and `completion_tokens` have each been seen on some chunk of this response.
+    input_seen: bool,
+    output_seen: bool,
     content: bool,
     done: bool,
     /// Truncation error held back until the driver has drained `pending`.
@@ -95,9 +98,14 @@ impl State {
             if let Some(usage) = chunk.usage
                 && current_usage_reported
             {
-                self.usage_reported = true;
+                self.input_seen |= usage.prompt_tokens.is_some();
+                self.output_seen |= usage.completion_tokens.is_some();
                 apply_usage(&mut self.usage, &usage);
-                self.pending.push_back(ProviderEvent::Usage(self.usage));
+                // Usage is reported only when both totals were seen: a missing side is unknown, not zero.
+                if self.input_seen && self.output_seen {
+                    self.usage_reported = true;
+                    self.pending.push_back(ProviderEvent::Usage(self.usage));
+                }
             }
             if self.draining {
                 // After a truncation only usage matters: the content, the
