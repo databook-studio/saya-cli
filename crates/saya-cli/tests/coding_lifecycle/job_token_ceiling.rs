@@ -53,8 +53,7 @@ async fn requests_seen(label: &str, ceiling: Option<u64>) -> usize {
     let _ = tokio::time::timeout(Duration::from_secs(30), job.run(&NoopEventSink))
         .await
         .expect("the job ends instead of hanging");
-    let seen = provider.bodies.lock().unwrap().len();
-    seen
+    provider.bodies.lock().unwrap().len()
 }
 
 #[tokio::test]
