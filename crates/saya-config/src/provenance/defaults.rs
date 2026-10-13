@@ -65,6 +65,7 @@ const CODING: &[&str] = &[
     "coding.max_physical_transport_attempts",
     "coding.max_tool_calls",
     "coding.max_known_tokens",
+    "coding.max_job_tokens",
     "coding.max_elapsed_seconds",
     "coding.extensions",
     "coding.check_profiles",

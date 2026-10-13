@@ -46,6 +46,7 @@ pub(crate) const CLASS_TABLE: &[(&str, Class)] = &[
     ("coding_max_concurrent_commands", Class::Live),
     ("coding_max_concurrent_model_requests", Class::Live),
     ("coding_max_elapsed_seconds", Class::Live),
+    ("coding_max_job_tokens", Class::Live),
     ("coding_max_known_tokens", Class::Live),
     ("coding_max_logical_model_requests", Class::Live),
     ("coding_max_physical_transport_attempts", Class::Live),

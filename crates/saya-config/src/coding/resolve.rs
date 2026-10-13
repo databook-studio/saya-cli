@@ -5,8 +5,8 @@ use crate::{CodingFile, ConfigError};
 use super::check_profiles::{ResolvedCheckProfile, resolve_check_profiles};
 use super::limits::{
     MAX_CHILDREN, MAX_CONCURRENT_COMMANDS, MAX_CONCURRENT_MODEL_REQUESTS, MAX_ELAPSED_SECONDS,
-    MAX_KNOWN_TOKENS, MAX_LOGICAL_MODEL_REQUESTS, MAX_PHYSICAL_TRANSPORT_ATTEMPTS, MAX_TOOL_CALLS,
-    require, require_u64,
+    MAX_JOB_TOKENS, MAX_KNOWN_TOKENS, MAX_LOGICAL_MODEL_REQUESTS, MAX_PHYSICAL_TRANSPORT_ATTEMPTS,
+    MAX_TOOL_CALLS, require, require_u64,
 };
 
 /// Effective trusted coding limits. These settings shape admission only; they
@@ -22,6 +22,9 @@ pub struct ResolvedCoding {
     pub max_physical_transport_attempts: usize,
     pub max_tool_calls: usize,
     pub max_known_tokens: u64,
+    /// The optional job-wide token ceiling across every model loop; `None`
+    /// (the default) means no job-wide limit.
+    pub max_job_tokens: Option<u64>,
     pub max_elapsed_seconds: u64,
     /// Validated fixed check data; it does not grant process or path authority.
     pub check_profiles: BTreeMap<String, ResolvedCheckProfile>,
@@ -39,6 +42,7 @@ impl Default for ResolvedCoding {
             max_physical_transport_attempts: MAX_PHYSICAL_TRANSPORT_ATTEMPTS,
             max_tool_calls: MAX_TOOL_CALLS,
             max_known_tokens: MAX_KNOWN_TOKENS,
+            max_job_tokens: None,
             max_elapsed_seconds: MAX_ELAPSED_SECONDS,
             check_profiles: BTreeMap::new(),
         }
@@ -76,6 +80,7 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
         .unwrap_or(defaults.max_physical_transport_attempts);
     let max_tool_calls = file.max_tool_calls.unwrap_or(defaults.max_tool_calls);
     let max_known_tokens = file.max_known_tokens.unwrap_or(defaults.max_known_tokens);
+    let max_job_tokens = file.max_job_tokens.or(defaults.max_job_tokens);
     let max_elapsed_seconds = file
         .max_elapsed_seconds
         .unwrap_or(defaults.max_elapsed_seconds);
@@ -115,6 +120,9 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
         "coding.max_known_tokens",
         MAX_KNOWN_TOKENS,
     )?;
+    if let Some(max_job_tokens) = max_job_tokens {
+        require_u64(max_job_tokens, "coding.max_job_tokens", MAX_JOB_TOKENS)?;
+    }
     require_u64(
         max_elapsed_seconds,
         "coding.max_elapsed_seconds",
@@ -132,6 +140,7 @@ pub(crate) fn resolve(file: &CodingFile) -> Result<ResolvedCoding, ConfigError> 
         max_physical_transport_attempts,
         max_tool_calls,
         max_known_tokens,
+        max_job_tokens,
         max_elapsed_seconds,
         check_profiles,
     })

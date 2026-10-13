@@ -367,6 +367,26 @@ warning and `config doctor` lists which settings were ignored. An endpoint's
 `provider` and `model` are ordinary settings, like `[ai] model`: they name
 which model answers, not where the request goes.
 
+## Coding job token limits
+
+`coding.max_known_tokens` is a per-loop limit on provider-reported tokens: each
+model loop stops once its own reported tokens reach the limit, so one
+in-flight request can overshoot it.
+
+The job-wide total is not limited by default. `coding.max_job_tokens` is the
+optional job-wide limit across every model loop of a coding job, parent and
+children included; leaving it unset means no job-wide ceiling. When set, it is
+checked before each new model request from provider-reported usage, so one
+in-flight request can pass it. Usage the provider does not report is not
+counted. A value of `0` is refused as a typo, and values above
+`100_000_000` are refused as out of range.
+
+```toml
+[coding]
+max_known_tokens = 400_000   # per-loop ceiling on provider-reported tokens
+max_job_tokens = 5_000_000   # optional job-wide ceiling; unset means no limit
+```
+
 `config doctor` reports paths and selection. `config show` emits the resolved
 configuration as display-safe references and settings only. It never resolves
 or prints secret values — that is not optional and there is no flag to change

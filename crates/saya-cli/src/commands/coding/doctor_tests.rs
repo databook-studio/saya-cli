@@ -1,11 +1,101 @@
-use super::{ProbeOutcome, add_tool_loop_failure, tool_loop_blocked, tool_loop_failure_field};
-use serde_json::json;
+use super::{
+    DoctorFacts, ProbeOutcome, add_tool_loop_failure, report, tool_loop_blocked,
+    tool_loop_failure_field,
+};
+use saya_config::ResolvedCoding;
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 fn probe(completed: bool, truncated: bool) -> Option<ProbeOutcome> {
     Some(ProbeOutcome {
         completed,
         truncated_by_output_limit: truncated,
     })
+}
+
+fn facts(coding: ResolvedCoding) -> DoctorFacts {
+    DoctorFacts {
+        provider_bindings: json!({}),
+        coding,
+        ready: false,
+        git: None,
+        private_state_writable: true,
+        confinement_proven: true,
+        native_provider_tool_loop: None,
+        check_programs_installed: true,
+        extensions: Vec::new(),
+        extension_protocol_runtime_health: Vec::new(),
+        blocked: Vec::new(),
+    }
+}
+
+#[test]
+fn the_report_keeps_its_published_key_set_and_token_admission_object() {
+    let value = report(facts(ResolvedCoding::default()));
+    let keys: BTreeSet<&str> = value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let expected: &[&str] = &[
+        "blocked",
+        "check_programs_installed",
+        "confinement_proven",
+        "database_required",
+        "enabled",
+        "extension_protocol_runtime_health",
+        "extensions",
+        "git",
+        "limits",
+        "native_provider_tool_loop",
+        "private_state_writable",
+        "provider_bindings",
+        "ready",
+        "token_admission",
+        "token_ceilings",
+    ];
+    assert_eq!(keys, expected.iter().copied().collect());
+    let admission = value["token_admission"].clone();
+    assert_eq!(
+        admission,
+        json!({"configured":false,"mode":"independent_reported_thresholds_pending_shared_owner"}),
+        "token_admission keeps its published shape"
+    );
+    assert_eq!(admission.as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn token_ceilings_disclose_the_per_loop_limit_and_the_default_off_job_total() {
+    let ceilings = report(facts(ResolvedCoding::default()))["token_ceilings"].clone();
+    assert_eq!(ceilings.as_object().unwrap().len(), 2);
+    let per_loop = ceilings["per_loop_reported_tokens"].clone();
+    assert_eq!(per_loop["limit"], json!(400_000));
+    assert_eq!(per_loop["enforced"], json!(true));
+    assert_eq!(per_loop["basis"], "provider_reported_usage");
+    assert_eq!(
+        per_loop["note"],
+        "each model loop stops once its own reported tokens reach the limit; one in-flight request can overshoot"
+    );
+    let job_total = ceilings["job_total"].clone();
+    assert_eq!(job_total["limit"], Value::Null);
+    assert_eq!(job_total["enforced"], json!(false));
+    assert_eq!(job_total["default"], "not enforced");
+    assert_eq!(
+        job_total["note"],
+        "not enforced unless coding.max_job_tokens is set"
+    );
+}
+
+#[test]
+fn a_configured_job_total_is_disclosed_with_its_number_but_still_not_enforced() {
+    let coding = ResolvedCoding {
+        max_job_tokens: Some(50_000),
+        ..Default::default()
+    };
+    let job_total = report(facts(coding))["token_ceilings"]["job_total"].clone();
+    assert_eq!(job_total["limit"], json!(50_000));
+    assert_eq!(job_total["enforced"], json!(false));
 }
 
 #[test]
