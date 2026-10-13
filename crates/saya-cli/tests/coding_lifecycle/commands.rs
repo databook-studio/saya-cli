@@ -61,7 +61,10 @@ async fn native_async_commands_settle_before_durable_child_completion() {
         .create(request, &approval, CancellationToken::new())
         .await
         .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(10), job.run(&NoopEventSink))
+    // Cancelling the two children walks the harness's join grace, so an idle run takes
+    // 8 to 10 seconds. The bound only guards a hang and stays under the 30 second process
+    // timeout the assertions below rule out.
+    tokio::time::timeout(std::time::Duration::from_secs(25), job.run(&NoopEventSink))
         .await
         .unwrap()
         .unwrap();
