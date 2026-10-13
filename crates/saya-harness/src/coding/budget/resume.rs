@@ -1,7 +1,7 @@
-//! Conservative durable fold for a resumed budget owner: rebuild the
-//! in-memory owner's admitted counts, unknown counters, retained slot
-//! charges, and next event sequence from durable records. Count-only:
-//! charged units are never refunded and unreleased slots stay consumed.
+//! Conservative durable fold for a resumed budget owner: rebuild admitted
+//! counts, complete reported token totals, unknown counters, retained slot
+//! charges, and next event sequence from durable records. Charged units are
+//! never refunded and unreleased slots stay consumed.
 
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
@@ -15,8 +15,10 @@ use super::ledger::{
 };
 
 mod fold;
+mod reported_usage;
 
 use fold::fold;
+use reported_usage::fold_reported_usage;
 
 /// The fold's durable output: exactly the parts of [`State`] that are
 /// rebuilt from history, never from the new process's configuration.
@@ -32,6 +34,8 @@ pub(super) struct Folded {
     /// Reservation records folded with no settlement: interrupted
     /// effects whose usage is unknown.
     pub(super) unsettled: u64,
+    pub(super) reported_input_tokens: Option<u64>,
+    pub(super) reported_output_tokens: Option<u64>,
     pub(super) usage_ever_unknown: bool,
     pub(super) usage_ever_incomplete: bool,
 }
@@ -74,7 +78,8 @@ pub(super) async fn resume_ledger(
         child_slots: policy.child_slots(),
         deadline: policy.deadline(),
     };
-    let folded = fold(&store, &job).await?;
+    let mut folded = fold(&store, &job).await?;
+    fold_reported_usage(&store, &job, &mut folded).await?;
     if token_policy
         .as_ref()
         .is_some_and(|policy| folded.counts.tokens > policy.data().total_tokens)
@@ -141,6 +146,8 @@ fn resumed_snapshot(folded: &Folded) -> BudgetSnapshot {
         unknown_tool_calls: folded.unknown_tool_calls,
         measured_tool_calls: folded.measured_tool_calls,
         unsettled_reservations: folded.unsettled,
+        reported_input_tokens: folded.reported_input_tokens,
+        reported_output_tokens: folded.reported_output_tokens,
         usage_coverage: coverage,
         ..BudgetSnapshot::default()
     }

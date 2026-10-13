@@ -18,6 +18,7 @@ mod r11;
 mod r11_effects;
 mod r11_retained;
 mod r12;
+mod resume_ceiling;
 mod root_runtime;
 mod scheduler;
 mod scheduler_events;
