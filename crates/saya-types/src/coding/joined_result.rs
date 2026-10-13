@@ -98,6 +98,9 @@ impl JoinedResultV1 {
         if wire.version != 1 {
             return Err(JoinedResultError::Invalid);
         }
+        if wire.failure_class.is_some() && wire.outcome != CodingResultOutcome::Failed {
+            return Err(JoinedResultError::Invalid);
+        }
         let class = wire.failure_class;
         let result = Self::new(
             wire.job_id,
