@@ -17,6 +17,8 @@ mod spawn;
 const OUTPUT_LIMIT: usize = 256 * 1024;
 const INPUT_LIMIT: usize = 32 * 1024;
 const IO_WAIT: Duration = Duration::from_millis(100);
+pub(super) const PTY_ROWS: u16 = 30;
+pub(super) const PTY_COLS: u16 = 120;
 
 struct Root(PathBuf);
 impl Drop for Root {
@@ -31,6 +33,7 @@ pub struct Session {
     writer: Option<Box<dyn Write + Send>>,
     output: mpsc::Receiver<Vec<u8>>,
     reader: Option<JoinHandle<()>>,
+    parser: vt100::Parser,
     raw: Vec<u8>,
     child_reaped: bool,
     reader_finished: bool,
@@ -93,6 +96,15 @@ impl Session {
         self.root.0.join("home/state.sqlite3")
     }
 
+    pub fn screen_text(&self) -> String {
+        let mut text = String::new();
+        for row in self.parser.screen().rows(0, PTY_COLS) {
+            text.push_str(row.trim_end());
+            text.push('\n');
+        }
+        text
+    }
+
     pub fn child_reaped(&self) -> bool {
         self.child_reaped
     }
@@ -124,6 +136,7 @@ impl Session {
             match self.output.recv_timeout(IO_WAIT) {
                 Ok(chunk) => {
                     self.raw.extend_from_slice(&chunk);
+                    self.parser.process(&chunk);
                     if self.raw.len() >= OUTPUT_LIMIT {
                         break;
                     }

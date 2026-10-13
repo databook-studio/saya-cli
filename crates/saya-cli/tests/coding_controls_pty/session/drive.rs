@@ -15,12 +15,16 @@ impl Session {
     pub fn wait_for(&mut self, needle: &str, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if String::from_utf8_lossy(&self.raw).contains(needle) {
+            if self.screen_text().contains(needle) {
                 return;
             }
             self.pump();
         }
-        panic!("PTY did not show {needle:?}; tail:\n{}", self.tail());
+        panic!(
+            "PTY screen did not show {needle:?}; screen:\n{}\nraw tail:\n{}",
+            self.screen_text(),
+            self.tail()
+        );
     }
 
     pub fn checkpoint(&self) -> usize {
@@ -40,7 +44,8 @@ impl Session {
             self.pump();
         }
         panic!(
-            "PTY did not show {needle:?} after checkpoint; tail:\n{}",
+            "PTY screen did not show {needle:?} after checkpoint; screen:\n{}\nraw tail:\n{}",
+            self.screen_text(),
             self.tail()
         );
     }
@@ -61,7 +66,8 @@ impl Session {
             self.pump();
         }
         panic!(
-            "pause ticket did not appear after checkpoint; tail:\n{}",
+            "pause ticket did not appear after checkpoint; screen:\n{}\nraw tail:\n{}",
+            self.screen_text(),
             self.tail()
         );
     }
@@ -102,7 +108,8 @@ impl Session {
             self.pump();
         }
         panic!(
-            "matching pause acknowledgement did not appear; tail:\n{}",
+            "matching pause acknowledgement did not appear on PTY screen:\n{}\nraw tail:\n{}",
+            self.screen_text(),
             self.tail()
         );
     }
@@ -110,6 +117,7 @@ impl Session {
     pub(super) fn pump(&mut self) {
         if let Ok(chunk) = self.output.recv_timeout(IO_WAIT) {
             self.raw.extend_from_slice(&chunk);
+            self.parser.process(&chunk);
             assert!(self.raw.len() <= OUTPUT_LIMIT, "PTY transcript is bounded");
         }
     }
