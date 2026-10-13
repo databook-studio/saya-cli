@@ -2,8 +2,7 @@ use super::{admit::NodePlan, api::ChildRunError, schedule_types::ScheduleChildEr
 use crate::coding::budget::{JobBudgetLedger, SequencerError};
 use saya_agent::{AgentOutput, CancellationReason};
 use saya_types::{
-    AgentId, CodingFailureClass, CodingResultOutcome, InvocationId, JobId, JoinedResultV1,
-    MAX_JOINED_ANSWER_BYTES,
+    AgentId, CodingResultOutcome, InvocationId, JobId, JoinedResultV1, MAX_JOINED_ANSWER_BYTES,
 };
 use std::num::NonZeroU64;
 

@@ -2,6 +2,7 @@
 
 use super::*;
 use saya_agent::{AgentError, ProviderError, TokenUsage};
+use saya_types::CodingFailureClass;
 
 fn envelope_of(result: Result<AgentOutput, ScheduleChildError>) -> JoinedResultV1 {
     envelope(

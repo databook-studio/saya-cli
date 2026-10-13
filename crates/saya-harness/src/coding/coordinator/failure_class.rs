@@ -1,6 +1,5 @@
 //! Bounded classification of a failed child's cause for the joined result.
 use super::{api::ChildRunError, schedule_types::ScheduleChildError};
-use crate::coding::child::ChildFactoryError;
 use saya_agent::{AgentError, AgentOutput, ProviderError};
 use saya_types::{CodingFailureClass, CodingResultOutcome};
 

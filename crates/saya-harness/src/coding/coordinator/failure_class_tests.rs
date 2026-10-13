@@ -1,6 +1,7 @@
 //! Tests for the bounded failure-class mapping (`saya-harness::coding::coordinator::failure_class`).
 
 use super::*;
+use crate::coding::child::ChildFactoryError;
 use saya_agent::{
     BudgetDimension, CancellationReason, EffectOwnerFailure, ProviderError, TokenUsage,
 };
