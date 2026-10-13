@@ -8,3 +8,5 @@ mod lifecycle;
 mod loops;
 #[path = "n02/support.rs"]
 mod support;
+#[path = "n02/truncation.rs"]
+mod truncation;

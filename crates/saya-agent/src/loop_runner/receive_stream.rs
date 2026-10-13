@@ -110,15 +110,34 @@ async fn stream_attempt_inner(
             attempt::AttemptOutcome::Success { usage, .. } => {
                 (crate::EffectOutcome::Succeeded, *usage)
             }
-            attempt::AttemptOutcome::Failed { usage, .. } => {
-                (crate::EffectOutcome::Unknown, *usage)
-            }
+            // A complete output-limit truncation is a known provider answer
+            // (the stream ended with its terminal truncation signal). Every
+            // other failure, a transport error, an idle cut or a malformed
+            // stream, leaves the client unable to know the outcome.
+            attempt::AttemptOutcome::Failed { error, usage } => (
+                if is_known_truncation(error) {
+                    crate::EffectOutcome::Succeeded
+                } else {
+                    crate::EffectOutcome::Unknown
+                },
+                *usage,
+            ),
         };
         if let Err(error) = control.settle_pending_response(outcome, usage).await {
             return failed(controlled_failure(error), usage);
         }
     }
     outcome
+}
+
+pub(super) fn is_known_truncation(error: &attempt::AttemptError) -> bool {
+    matches!(
+        error,
+        attempt::AttemptError::Terminal {
+            error: ProviderError::OutputTruncated { .. },
+            ..
+        }
+    )
 }
 
 fn controlled_failure(error: ControlledProviderError) -> attempt::AttemptError {

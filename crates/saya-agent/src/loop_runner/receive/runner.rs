@@ -191,6 +191,11 @@ pub(in crate::loop_runner) async fn receive(
                             });
                         }
                     };
+                    // The provider answered (with a truncated result): the
+                    // logical request is a received response, not an unknown.
+                    if super::super::receive_stream::is_known_truncation(&error) {
+                        response_received = true;
+                    }
                     if let Some(usage) = usage
                         && let Some(reported_usage) = reported_usage.as_mut()
                     {
