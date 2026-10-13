@@ -105,8 +105,10 @@ fn a_configured_job_total_is_disclosed_with_its_number_and_enforced() {
         "the configured ceiling must disclose that only provider-reported usage counts: {note}"
     );
     assert!(
-        note.contains("one in-flight request") && note.contains("overshoot"),
-        "the configured ceiling must disclose possible in-flight overshoot: {note}"
+        note.contains("concurrent requests")
+            && note.contains("already admitted")
+            && note.contains("overshoot"),
+        "the configured ceiling must disclose already-admitted concurrent requests may overshoot: {note}"
     );
 }
 

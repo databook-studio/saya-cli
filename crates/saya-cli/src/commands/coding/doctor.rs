@@ -180,8 +180,8 @@ pub(super) fn report(facts: DoctorFacts) -> Value {
     })
 }
 
-/// Token ceilings count provider-reported usage; one in-flight request can overshoot.
-/// The job-wide limit is enforced only when configured.
+/// A per-loop limit can be overshot by one in-flight request. Job-wide
+/// enforcement is configured separately and may overshoot as requests settle.
 pub(super) fn token_ceiling_facts(max_known_tokens: u64, max_job_tokens: Option<u64>) -> Value {
     json!({
         "per_loop_reported_tokens": {
@@ -195,7 +195,7 @@ pub(super) fn token_ceiling_facts(max_known_tokens: u64, max_job_tokens: Option<
             "enforced": max_job_tokens.is_some(),
             "default": "not enforced",
             "note": match max_job_tokens {
-                Some(_) => "only provider-reported usage counts; one in-flight request can overshoot",
+                Some(_) => "only provider-reported usage counts; concurrent requests already admitted may settle after the ceiling is reached and overshoot it",
                 None => "not enforced unless coding.max_job_tokens is set",
             },
         },

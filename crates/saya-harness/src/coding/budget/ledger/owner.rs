@@ -103,8 +103,9 @@ impl JobBudgetLedger {
     /// Registers the optional job-wide ceiling on provider-reported usage
     /// as runtime configuration. It is checked before each new model
     /// request, it is not part of the durable budget policy, and a rebuilt
-    /// owner does not carry it. One request already in flight can overshoot
-    /// the ceiling, and usage the provider did not report is not counted.
+    /// owner does not carry it. Concurrent requests already admitted may
+    /// settle after the ceiling is reached and increase usage further; usage
+    /// the provider did not report is not counted.
     pub async fn set_reported_token_ceiling(&self, ceiling: Option<u64>) {
         self.inner.lock().await.reported_token_ceiling = ceiling;
     }

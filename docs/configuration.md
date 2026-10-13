@@ -376,9 +376,10 @@ in-flight request can overshoot it.
 The job-wide total is not limited by default. `coding.max_job_tokens` is the
 optional job-wide limit across every model loop of a coding job, parent and
 children included; leaving it unset means no job-wide ceiling. When set, it is
-checked before each new model request from provider-reported usage, so one
-in-flight request can pass it. Usage the provider does not report is not
-counted. A value of `0` is refused as a typo, and values above
+checked before each new model request from provider-reported usage. Concurrent
+requests already admitted may settle after the reported total reaches the
+ceiling and push it further above the limit. Usage the provider does not report
+is not counted. A value of `0` is refused as a typo, and values above
 `100_000_000` are refused as out of range.
 
 ```toml

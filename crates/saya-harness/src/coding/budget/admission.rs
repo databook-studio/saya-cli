@@ -97,7 +97,8 @@ pub(super) async fn admit_model(
     check_id_capacity(state, 1)?;
     // One function serves root and child admission, so the job-wide
     // reported-usage ceiling fences both. Only provider-reported totals
-    // count, and one request in flight can overshoot.
+    // count. Concurrent requests already admitted may settle after the
+    // ceiling is reached and increase the reported total further.
     if let Some(ceiling) = state.reported_token_ceiling {
         let reported_total = state
             .snapshot
