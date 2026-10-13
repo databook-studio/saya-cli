@@ -88,14 +88,14 @@ fn token_ceilings_disclose_the_per_loop_limit_and_the_default_off_job_total() {
 }
 
 #[test]
-fn a_configured_job_total_is_disclosed_with_its_number_but_still_not_enforced() {
+fn a_configured_job_total_is_disclosed_with_its_number_and_enforced() {
     let coding = ResolvedCoding {
         max_job_tokens: Some(50_000),
         ..Default::default()
     };
     let job_total = report(facts(coding))["token_ceilings"]["job_total"].clone();
     assert_eq!(job_total["limit"], json!(50_000));
-    assert_eq!(job_total["enforced"], json!(false));
+    assert_eq!(job_total["enforced"], json!(true));
 }
 
 #[test]

@@ -79,6 +79,12 @@ fn classifies_each_child_failure_into_its_closed_class() {
             ScheduleChildError::Run(ChildRunError::Cancelled {
                 reason: CancellationReason::Budget(BudgetDimension::ElapsedTime),
             }),
+            CodingFailureClass::LimitReached,
+        ),
+        (
+            ScheduleChildError::Run(ChildRunError::Cancelled {
+                reason: CancellationReason::OwnerFailure,
+            }),
             CodingFailureClass::Cancelled,
         ),
         (

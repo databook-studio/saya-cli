@@ -5,6 +5,7 @@ mod coverage;
 mod fixture;
 mod foreign;
 mod gate;
+mod job_token_ceiling;
 mod lifecycle;
 mod lifecycle_support;
 mod openai_server;

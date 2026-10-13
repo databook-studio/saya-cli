@@ -107,6 +107,7 @@ pub(super) async fn resume_ledger(
             snapshot,
             usage_ever_unknown: folded.usage_ever_unknown,
             usage_ever_incomplete: folded.usage_ever_incomplete,
+            reported_token_ceiling: None,
         })),
         cancellation,
     })

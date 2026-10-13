@@ -193,7 +193,7 @@ pub(super) fn token_ceiling_facts(max_known_tokens: u64, max_job_tokens: Option<
         },
         "job_total": {
             "limit": max_job_tokens,
-            "enforced": false, // until the enforcement packet
+            "enforced": max_job_tokens.is_some(),
             "default": "not enforced",
             "note": "not enforced unless coding.max_job_tokens is set",
         },

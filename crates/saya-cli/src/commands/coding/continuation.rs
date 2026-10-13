@@ -129,6 +129,9 @@ impl CodingApplication {
         )
         .await
         .map_err(CodingError::owner)?;
+        ledger
+            .set_reported_token_ceiling(self.runtime.resolved.coding.max_job_tokens)
+            .await;
         let (root_steering, root_mailbox) = saya_agent::agent_mailbox();
         Ok(Arc::new(NativeCodingJob {
             observation_sequence: std::sync::atomic::AtomicU64::new(1),

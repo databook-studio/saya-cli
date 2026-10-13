@@ -10,6 +10,8 @@ mod continuation;
 mod controls;
 #[path = "coding_lifecycle/git_process_export.rs"]
 mod git_process_export;
+#[path = "coding_lifecycle/job_token_ceiling.rs"]
+mod job_token_ceiling;
 #[path = "coding_lifecycle/native.rs"]
 mod native;
 #[path = "coding_lifecycle/one_child.rs"]
