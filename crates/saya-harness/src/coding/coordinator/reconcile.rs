@@ -5,7 +5,7 @@
 
 use std::num::NonZeroU64;
 
-use saya_store::{SqliteStateStore, StoreError};
+use saya_store::{CodingEventAppend, SqliteStateStore, StoreError};
 use saya_types::{BudgetCharge, CodingEventKind, CodingEventV1, JobId, JobState, Sha256Digest};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -146,7 +146,12 @@ pub async fn reconcile_effects(
             },
         )
         .map_err(|_| ReconcileError::Store(StoreError::Invalid))?;
-        store.reconcile_coding_budget(event).await?;
+        match store.reconcile_coding_budget(event).await? {
+            CodingEventAppend::Appended(_) => {}
+            CodingEventAppend::AlreadyPresent(_) => {
+                return Err(ReconcileError::Store(StoreError::Conflict));
+            }
+        }
         reconciled.push(effect.reservation_sequence);
     }
     Ok(ReconcileReport { reconciled })
