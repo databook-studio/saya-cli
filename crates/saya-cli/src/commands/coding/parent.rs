@@ -4,8 +4,8 @@ use crate::agent::{
     tools::coding::{CodingTools, definitions},
 };
 use saya_agent::{
-    AgentEventSink, AgentLimits, AgentOutput, AgentRequest, AgentRunControl, AnsweringLimits,
-    run_agent_with_control,
+    AgentError, AgentEventSink, AgentLimits, AgentOutput, AgentRequest, AgentRunControl,
+    AnsweringLimits, ProviderError, run_agent_with_control,
 };
 use saya_types::{CodingEventKind, CodingEventV1, JobState};
 use std::sync::Arc;
@@ -55,13 +55,14 @@ impl NativeCodingJob {
         };
         // Both futures are owned in this scope. No monitor task can detach on
         // an error return or when the caller drops this invocation.
+        let max_output_tokens = config.ai.max_output_tokens;
         let work = async {
             let result =
                 run_agent_with_control(provider.as_ref(), &tools, request, definitions(), control)
                     .await
                     // The agent error can carry provider detail; the operator
                     // gets a fixed, actionable message and the durable record.
-                    .map_err(|_| CodingError::RunFailed);
+                    .map_err(|error| map_root_error(error, max_output_tokens));
             if result.is_err() && self.cancellation.reason().is_none() {
                 self.cancellation.cancel_with_reason(
                     self.ledger
@@ -169,6 +170,22 @@ pub(super) fn answering_limits(config: &saya_config::ResolvedCoding) -> Answerin
         max_reported_tokens: Some(config.max_known_tokens),
     }
 }
+
+/// Maps the root agent error for the operator. Only the output-token
+/// truncation is named, and only by its configured limit number; every other
+/// error keeps the generic run-failure message with no provider detail.
+fn map_root_error(error: AgentError, configured_max_output_tokens: u32) -> CodingError {
+    match error {
+        AgentError::Provider(ProviderError::OutputTruncated { .. }) => CodingError::OutputLimit {
+            configured: configured_max_output_tokens,
+        },
+        _ => CodingError::RunFailed,
+    }
+}
+
+#[cfg(test)]
+#[path = "parent_tests.rs"]
+mod parent_tests;
 
 struct RunGuard {
     root: saya_agent::CancellationToken,

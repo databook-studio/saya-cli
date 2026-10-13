@@ -87,6 +87,10 @@ pub enum CodingError {
     )]
     RunFailed,
     #[error(
+        "the model hit its output-token limit (ai.max_output_tokens = {configured}) before answering; a reasoning model can spend the whole limit on reasoning: raise ai.max_output_tokens in trusted configuration, then resume or restart the job"
+    )]
+    OutputLimit { configured: u32 },
+    #[error(
         "the configured extension program is not usable: it must be a real executable, not a symlink, directly inside the trusted program directory; point the profile at the real file"
     )]
     ExtensionProgramRefused,
