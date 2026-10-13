@@ -88,7 +88,13 @@ impl Provider {
                     pending.push((stream, response));
                     continue;
                 }
-                if actor != "parent" && current == 0 && mode != 3 && mode != 5 {
+                if actor != "parent"
+                    && current == 0
+                    && mode != 3
+                    && mode != 5
+                    && mode != 7
+                    && mode != 8
+                {
                     pending.push((stream, response));
                     if pending.len() == 2 {
                         overlapped.store(true, Ordering::Release);

@@ -146,6 +146,7 @@ impl CodingApplication {
             records,
             cancellation: token,
             child_failed: AtomicBool::new(false),
+            delegated_children: std::sync::atomic::AtomicUsize::new(0),
             command_owner: Arc::new(
                 CommandOwner::new(self.runtime.resolved.coding.max_concurrent_commands)
                     .map_err(CodingError::owner)?,

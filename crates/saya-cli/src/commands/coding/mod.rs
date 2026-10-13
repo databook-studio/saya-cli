@@ -94,6 +94,10 @@ pub enum CodingError {
         "the configured extension program is not usable: it must be a real executable, not a symlink, directly inside the trusted program directory; point the profile at the real file"
     )]
     ExtensionProgramRefused,
+    #[error(
+        "this job has one allowed write path: delegate exactly one child, once, then await it and finish"
+    )]
+    SingleChildJob,
     #[error("native coding operation failed")]
     Owner(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

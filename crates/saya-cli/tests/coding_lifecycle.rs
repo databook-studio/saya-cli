@@ -12,6 +12,8 @@ mod controls;
 mod git_process_export;
 #[path = "coding_lifecycle/native.rs"]
 mod native;
+#[path = "coding_lifecycle/one_child.rs"]
+mod one_child;
 #[path = "coding_lifecycle/provider.rs"]
 mod provider;
 #[path = "coding_lifecycle/root_cancel.rs"]

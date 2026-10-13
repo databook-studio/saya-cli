@@ -48,6 +48,15 @@ impl Provider {
     pub fn parity() -> Self {
         Self::script(false, 6)
     }
+    // Mode 7, for the one-path job guard: the parent first tries two tasks in one
+    // delegate call, then delegates one child, awaits it, and tries again.
+    pub fn one_path() -> Self {
+        Self::script(false, 7)
+    }
+    // Mode 8: one child, await it, then delegate again after the join.
+    pub fn one_path_again() -> Self {
+        Self::script(false, 8)
+    }
     pub fn release(&self) {
         self.status_gate.store(true, Ordering::Release);
     }

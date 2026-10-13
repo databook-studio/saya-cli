@@ -107,6 +107,7 @@ impl CodingApplication {
             root_steering,
             root_mailbox: tokio::sync::Mutex::new(Some(root_mailbox)),
             child_failed: std::sync::atomic::AtomicBool::new(false),
+            delegated_children: std::sync::atomic::AtomicUsize::new(0),
             command_owner: Arc::new(
                 saya_harness::coding::commands::CommandOwner::new(
                     self.runtime.resolved.coding.max_concurrent_commands,

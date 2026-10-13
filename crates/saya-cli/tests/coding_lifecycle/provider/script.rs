@@ -5,6 +5,34 @@ use serde_json::{Value, json};
 
 pub(super) fn response(actor: &str, stage: usize, injection: bool, mode: u8) -> String {
     if actor == "parent" {
+        if mode == 7 {
+            return match stage {
+                0 => tool(
+                    "delegate",
+                    json!({"tasks":[{"agent_id":"child-c1","task":"write for child-c1","write_paths":["only.txt"]},{"agent_id":"child-c2","task":"write for child-c2","write_paths":["only.txt"]}]}),
+                ),
+                1 => tool(
+                    "delegate",
+                    json!({"tasks":[{"agent_id":"child-one","task":"write for child-one","write_paths":["only.txt"]}]}),
+                ),
+                2 => tool("await_children", json!({})),
+                _ => answer("one-path parent finished"),
+            };
+        }
+        if mode == 8 {
+            return match stage {
+                0 => tool(
+                    "delegate",
+                    json!({"tasks":[{"agent_id":"child-one","task":"write for child-one","write_paths":["only.txt"]}]}),
+                ),
+                1 => tool("await_children", json!({})),
+                2 => tool(
+                    "delegate",
+                    json!({"tasks":[{"agent_id":"child-second","task":"write for child-second","write_paths":["only.txt"]}]}),
+                ),
+                _ => answer("one-path parent finished"),
+            };
+        }
         if mode == 6 {
             return match stage {
                 0 => tool("cancel_child", json!({"agent_id":"ghost"})),

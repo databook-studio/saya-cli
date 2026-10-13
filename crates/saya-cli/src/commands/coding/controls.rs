@@ -27,6 +27,17 @@ impl NativeCodingJob {
         if active.is_some() {
             return Err(CodingError::Busy);
         }
+        // `coding.max_children` bounds SIMULTANEOUS children only; a one-path job
+        // gets exactly one child per run, however often the model calls delegate.
+        if self.request.write_paths.len() == 1
+            && (tasks.len() != 1
+                || self
+                    .delegated_children
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    > 0)
+        {
+            return Err(CodingError::SingleChildJob);
+        }
         super::context::append_line(
             &self.records.join("tasks.jsonl"),
             &serde_json::to_vec(&tasks).map_err(CodingError::owner)?,
@@ -43,7 +54,7 @@ impl NativeCodingJob {
             controls.insert(agent, node.control());
             nodes.push(node);
         }
-        let agents = controls.keys().cloned().collect();
+        let agents: Vec<AgentId> = controls.keys().cloned().collect();
         let owner = Arc::clone(self);
         let handle = tokio::spawn(async move {
             let config = &owner.application.runtime.resolved.coding;
@@ -72,6 +83,8 @@ impl NativeCodingJob {
                 }
             }
         });
+        self.delegated_children
+            .fetch_add(agents.len(), std::sync::atomic::Ordering::Release);
         *active = Some(LiveSchedule {
             controls,
             handle: Arc::new(tokio::sync::Mutex::new(Some(handle))),

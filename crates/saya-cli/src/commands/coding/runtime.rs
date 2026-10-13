@@ -22,6 +22,8 @@ pub struct NativeCodingJob {
     pub(super) observation_sequence: std::sync::atomic::AtomicU64,
     pub(super) observation_failed: std::sync::atomic::AtomicBool,
     pub(super) child_failed: std::sync::atomic::AtomicBool,
+    /// Children started by `delegate` in this run (a one-path job allows one).
+    pub(super) delegated_children: std::sync::atomic::AtomicUsize,
     pub(super) command_owner: Arc<saya_harness::coding::commands::CommandOwner>,
     pub(super) active: tokio::sync::Mutex<Option<super::controls::LiveSchedule>>,
     pub(super) progress:

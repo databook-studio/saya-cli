@@ -24,7 +24,7 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
         ),
         super::definition(
             "delegate",
-            "Start a bounded DAG of native coding children in isolated owned checkouts",
+            "Start native coding children in isolated owned checkouts: one child for a one-path job, several only for disjoint write ownership",
             json!({"type":"object","properties":{"tasks":{"type":"array","maxItems":32,"items":{"type":"object","properties":{"agent_id":{"type":"string"},"task":{"type":"string","maxLength":16384},"write_paths":{"type":"array","items":{"type":"string"}},"dependencies":{"type":"array","items":{"type":"string"}}},"required":["agent_id","task"],"additionalProperties":false}}},"required":["tasks"],"additionalProperties":false}),
             true,
         ),
@@ -75,6 +75,12 @@ impl ToolExecutor for CodingTools {
             },
             _=>return Err(ToolError::UnsupportedTool),
         };
+        // Refused before any child, checkout or budget exists: the refusal is the
+        // tool's whole result (data the model can correct), never an error that
+        // would leave the call's effect uncertain and fail the job.
+        if let Err(refusal @ crate::commands::coding::CodingError::SingleChildJob) = &result {
+            return Ok(json!({"outcome":"refused","reason":refusal.to_string()}));
+        }
         result.map_err(|error| ToolError::Runner(error.to_string()))
     }
 }
