@@ -74,7 +74,9 @@ pub enum CodingIdError {
     InvalidId(&'static str),
 }
 
+mod failure_class;
 mod joined_result;
+pub use failure_class::CodingFailureClass;
 pub use joined_result::{
     JoinedResultError, JoinedResultV1, MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
 };

@@ -33,6 +33,7 @@ pub mod coordinator {
         ReconcileError, ReconcileReport, ReconciliationPlan, UnresolvedEffect, plan_reconciliation,
         reconcile_effects,
     };
+    mod failure_class;
     mod notify;
     mod results;
     pub use cancel::CHILD_CANCEL_JOIN_GRACE;
