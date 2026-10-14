@@ -1,6 +1,6 @@
 use super::support::Fixture;
-#[path = "x02_support.rs"]
-mod x02_support;
+#[path = "mcp_extension_fixture.rs"]
+mod mcp_extension_fixture;
 use saya_agent::{CancellationToken, NoopEventSink};
 use saya_cli::{CodingAuthorization, CodingJobRequest};
 use saya_types::JobId;
@@ -8,8 +8,11 @@ use std::path::PathBuf;
 
 #[tokio::test]
 async fn coding_mcp_dispatches_only_an_explicit_read_only_profile() {
-    let run = invoke(&x02_support::profile(
-        &x02_support::server(x02_support::listed("inspect"), x02_support::result()),
+    let run = invoke(&mcp_extension_fixture::profile(
+        &mcp_extension_fixture::server(
+            mcp_extension_fixture::listed("inspect"),
+            mcp_extension_fixture::result(),
+        ),
         Some("read_only"),
     ))
     .await;
@@ -25,10 +28,13 @@ async fn coding_mcp_dispatches_only_an_explicit_read_only_profile() {
 #[tokio::test]
 async fn coding_mcp_refuses_untrusted_effects_before_server_side_effects() {
     for effect in [None, Some("unknown"), Some("mutating")] {
-        let script = x02_support::server(x02_support::listed("inspect"), x02_support::result());
+        let script = mcp_extension_fixture::server(
+            mcp_extension_fixture::listed("inspect"),
+            mcp_extension_fixture::result(),
+        );
         // Every iteration configures the server profile; `None` declares no
         // trusted tool policy at all, so any tool call must be refused.
-        let profile = x02_support::profile(&script, effect);
+        let profile = mcp_extension_fixture::profile(&script, effect);
         let run = invoke(&profile).await;
 
         assert!(!run.checkout.join("mcp-called").exists(), "{effect:?}");
@@ -39,15 +45,15 @@ async fn coding_mcp_refuses_untrusted_effects_before_server_side_effects() {
 #[tokio::test]
 async fn coding_mcp_rejects_untrusted_listings_and_wrong_responses_before_calling() {
     for listing in [
-        x02_support::listed("other"),
-        x02_support::invalid_schema(),
-        x02_support::too_many_tools(),
-        x02_support::paged(),
-        x02_support::wrong_id(),
-        x02_support::malformed(),
+        mcp_extension_fixture::listed("other"),
+        mcp_extension_fixture::invalid_schema(),
+        mcp_extension_fixture::too_many_tools(),
+        mcp_extension_fixture::paged(),
+        mcp_extension_fixture::wrong_id(),
+        mcp_extension_fixture::malformed(),
     ] {
-        let run = invoke(&x02_support::profile(
-            &x02_support::server(listing, x02_support::result()),
+        let run = invoke(&mcp_extension_fixture::profile(
+            &mcp_extension_fixture::server(listing, mcp_extension_fixture::result()),
             Some("read_only"),
         ))
         .await;
@@ -59,8 +65,10 @@ async fn coding_mcp_rejects_untrusted_listings_and_wrong_responses_before_callin
 
 #[tokio::test]
 async fn coding_mcp_drops_an_oversized_server_result_after_the_authorized_call() {
-    let run = invoke(&x02_support::profile(
-        &x02_support::server_with_oversized_result(x02_support::listed("inspect")),
+    let run = invoke(&mcp_extension_fixture::profile(
+        &mcp_extension_fixture::server_with_oversized_result(mcp_extension_fixture::listed(
+            "inspect",
+        )),
         Some("read_only"),
     ))
     .await;
@@ -72,8 +80,8 @@ async fn coding_mcp_drops_an_oversized_server_result_after_the_authorized_call()
 
 #[tokio::test]
 async fn coding_mcp_rejects_an_oversized_schema_before_calling_the_tool() {
-    let run = invoke(&x02_support::profile(
-        &x02_support::server_with_oversized_schema(),
+    let run = invoke(&mcp_extension_fixture::profile(
+        &mcp_extension_fixture::server_with_oversized_schema(),
         Some("read_only"),
     ))
     .await;
@@ -83,13 +91,13 @@ async fn coding_mcp_rejects_an_oversized_schema_before_calling_the_tool() {
 }
 
 async fn invoke(profile: &str) -> Invocation {
-    let provider = x02_support::Provider::new();
+    let provider = mcp_extension_fixture::Provider::new();
     let fixture = Fixture::with_extensions("x02-mcp", &provider.endpoint, profile).await;
     let request = CodingJobRequest::new(
         JobId::parse("x02-mcp").unwrap(),
         "Call the configured MCP inspection tool".into(),
         vec![],
-        vec![x02_support::PROGRAM.into()],
+        vec![mcp_extension_fixture::PROGRAM.into()],
     )
     .unwrap();
     let approval =
@@ -132,7 +140,7 @@ async fn invoke(profile: &str) -> Invocation {
 
 struct Invocation {
     _fixture: Fixture,
-    provider: x02_support::Provider,
+    provider: mcp_extension_fixture::Provider,
     checkout: PathBuf,
     records: String,
 }
