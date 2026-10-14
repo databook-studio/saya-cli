@@ -29,6 +29,25 @@ async fn root_cancel_stops_every_child_and_is_separate_from_selecting_one() {
         .unwrap();
     provider.wait_for_calls(2).await;
     assert!(!job.cancellation().is_cancelled());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+
+    for agent in ["child-a", "child-b"] {
+        let pause = job
+            .control_command(CodingCommand::Pause {
+                id: "root-cancel".into(),
+                agent: agent.into(),
+            })
+            .await
+            .unwrap();
+        let ticket = pause["pause_requested"].as_u64().unwrap();
+        assert!(
+            tokio::time::timeout_at(deadline, job.wait_pause("root-cancel", agent, ticket))
+                .await
+                .unwrap()
+                .unwrap(),
+            "{agent} must acknowledge its matching pause at a safe boundary"
+        );
+    }
 
     assert_eq!(
         job.control_command(CodingCommand::CancelChild {
@@ -43,14 +62,13 @@ async fn root_cancel_stops_every_child_and_is_separate_from_selecting_one() {
         !job.cancellation().is_cancelled(),
         "selecting one child must not cancel the job root"
     );
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     loop {
         let status = job.status().await.unwrap();
         if child_state(&status, "child-a") == "cancelled" {
             assert_eq!(
                 child_state(&status, "child-b"),
-                "running",
-                "the untouched child must still be live after one child was selected"
+                "paused",
+                "the other child must remain paused and live after one child was selected"
             );
             break;
         }
