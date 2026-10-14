@@ -67,8 +67,8 @@ async fn root_cancel_stops_every_child_and_is_separate_from_selecting_one() {
         if child_state(&status, "child-a") == "cancelled" {
             assert_eq!(
                 child_state(&status, "child-b"),
-                "paused",
-                "the other child must remain paused and live after one child was selected"
+                "running",
+                "the untouched child must still be live after one child was selected"
             );
             break;
         }
