@@ -12,8 +12,9 @@ pub struct Fixture {
 }
 impl Fixture {
     pub fn new() -> Self {
+        let module = module_path!().replace("::", "-");
         let root = std::env::temp_dir().join(format!(
-            "saya-extension-{}-{}",
+            "saya-extension-{module}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
