@@ -3,7 +3,7 @@ use std::{fs, time::Duration};
 use saya_harness::coding::integration::{DEFAULT_DELTA_DEADLINE, DeltaError, compute_delta};
 use saya_harness::coding::snapshot::MAX_SNAPSHOT_FILE_BYTES;
 
-use super::delta::active;
+use super::worktree_delta::active;
 
 #[cfg(unix)]
 #[tokio::test]

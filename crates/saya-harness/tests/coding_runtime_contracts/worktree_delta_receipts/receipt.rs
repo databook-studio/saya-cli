@@ -1,6 +1,6 @@
 use std::fs;
 
-use super::delta::{Active, active};
+use super::worktree_delta::{Active, active};
 use saya_harness::coding::integration::{
     AssignedPaths, ChangeScope, DEFAULT_DELTA_DEADLINE, DeltaKind, ReceiptOutcome, RejectionReason,
     compute_delta, evaluate_receipt,

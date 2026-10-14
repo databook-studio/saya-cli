@@ -4,7 +4,7 @@ use saya_harness::coding::integration::{
     DEFAULT_DELTA_DEADLINE, DeltaError, DeltaKind, candidate_source_digest, compute_delta,
 };
 
-use super::delta::active;
+use super::worktree_delta::active;
 
 #[tokio::test]
 async fn output_root_contents_are_not_a_change() {

@@ -1,7 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
 #[path = "process_confinement/confinement.rs"]
-mod confinement;
+mod checkout_confinement;
 
 #[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]

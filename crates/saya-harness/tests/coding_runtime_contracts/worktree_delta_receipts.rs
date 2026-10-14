@@ -1,7 +1,5 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
-#[path = "worktree_delta_receipts/delta.rs"]
-mod delta;
 #[path = "worktree_delta_receipts/delta_edges.rs"]
 mod delta_edges;
 #[path = "worktree_delta_receipts/delta_output.rs"]
@@ -10,6 +8,8 @@ mod delta_output;
 mod paths;
 #[path = "worktree_delta_receipts/receipt.rs"]
 mod receipt;
+#[path = "worktree_delta_receipts/delta.rs"]
+mod worktree_delta;
 
 #[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
 #[allow(dead_code)]
