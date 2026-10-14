@@ -1,9 +1,9 @@
 //! Actual parent loop delegates three concurrent native children under one ledger.
 use super::{
+    child_scheduler::{caps, node},
     child_support::tool_definition,
     fixture::{Fixture, limits},
     openai_server::{ANSWER_RESPONSE, LocalOpenAi, TOOL_RESPONSE},
-    scheduler::{caps, node},
 };
 use async_trait::async_trait;
 use saya_agent::{

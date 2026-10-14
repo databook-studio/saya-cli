@@ -1,10 +1,10 @@
 #[cfg(unix)]
 use super::openai_server::TOOL_RESPONSE;
 use super::{
+    child_scheduler::{caps, finish, ledger, start},
     fixture::Fixture,
     lifecycle_support::{self, Behavior},
     openai_server::{ANSWER_RESPONSE, LocalOpenAi},
-    scheduler::{caps, finish, ledger, start},
 };
 use saya_harness::coding::coordinator::{ChildRunError, ScheduleChildError, ScheduleStop};
 use saya_types::CodingResultOutcome;

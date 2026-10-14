@@ -1,7 +1,7 @@
 use super::{
+    child_scheduler::{caps, finish, ledger, node, start},
     fixture::Fixture,
     openai_server::{ANSWER_RESPONSE, LocalOpenAi},
-    scheduler::{caps, finish, ledger, node, start},
 };
 use saya_harness::coding::coordinator::{acknowledge_completion, replay_completions};
 use saya_types::CodingResultOutcome;

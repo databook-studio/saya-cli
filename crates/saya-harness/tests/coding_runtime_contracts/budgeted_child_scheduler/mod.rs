@@ -1,5 +1,7 @@
 mod child_concurrency;
 mod child_result_durability;
+#[path = "scheduler.rs"]
+mod child_scheduler;
 mod child_slot_cancellation;
 mod child_support;
 mod consumer;
@@ -19,7 +21,6 @@ mod root_cancellation_effects;
 mod root_cancellation_retention;
 mod root_child_cancellation;
 mod root_runtime;
-mod scheduler;
 mod scheduler_events;
 mod scheduler_lifecycle;
 mod scheduler_limits;

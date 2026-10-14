@@ -1,10 +1,10 @@
 //! R08: whole-schedule ownership and ordinary no-start refusal.
 
 use super::{
+    child_scheduler::{caps, finish, ledger, node, start},
     child_support::FactoryStats,
     fixture::Fixture,
     openai_server::{ANSWER_RESPONSE, LocalOpenAi},
-    scheduler::{caps, finish, ledger, node, start},
 };
 use saya_agent::{CancellationReason, CancellationToken};
 use saya_harness::coding::coordinator::{ScheduleError, ScheduleLimits, run_schedule};

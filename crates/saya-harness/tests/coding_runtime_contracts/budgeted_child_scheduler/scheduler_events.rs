@@ -1,8 +1,8 @@
 //! R08: unavailable root progress must fail closed and still join child work.
 use super::{
+    child_scheduler::{caps, ledger, node},
     fixture::Fixture,
     openai_server::{LocalOpenAi, TOOL_RESPONSE},
-    scheduler::{caps, ledger, node},
 };
 use saya_agent::CancellationToken;
 use saya_harness::coding::coordinator::{
