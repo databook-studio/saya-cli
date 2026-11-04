@@ -50,7 +50,7 @@ terminal-colorsaurus.workspace = true
 # Both are already in Cargo.lock (transitive via ratatui); these pins add no
 # new supply chain.
 unicode-segmentation = "=1.13.3"
-unicode-width = "=0.2.2"
+unicode-width = "=0.2.3"
 
 [dev-dependencies]
 duckdb.workspace = true
