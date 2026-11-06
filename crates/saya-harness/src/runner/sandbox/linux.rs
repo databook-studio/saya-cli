@@ -74,6 +74,22 @@ const EXEC_ALLOWED: u64 = sys::LANDLOCK_ACCESS_FS_EXECUTE
 /// leaving the child unable to start with the cause hidden].
 const LOADER_DIRS: &[&str] = &["/lib", "/lib64", "/usr/lib"];
 
+/// The one device the confinement grants: `/dev/null`.
+///
+/// POSIX gives an asynchronous list (`cmd &`) its standard input from
+/// `/dev/null`, so without this rule every sandboxed background command dies
+/// with `cannot open /dev/null: Permission denied`. Redirections (`>/dev/null`)
+/// open it with `O_TRUNC`, hence TRUNCATE alongside read and write. This is a
+/// rule on the file, never on `/dev`: the device carries no data and no other
+/// device may become reachable through a directory grant.
+const DEV_NULL: &str = "/dev/null";
+
+/// The rights the [`DEV_NULL`] rule grants, masked to the handled set when
+/// the rule is built (a rule may only allow rights the ruleset handles).
+const DEV_NULL_ALLOWED: u64 = sys::LANDLOCK_ACCESS_FS_READ_FILE
+    | sys::LANDLOCK_ACCESS_FS_WRITE_FILE
+    | sys::LANDLOCK_ACCESS_FS_TRUNCATE;
+
 /// Everything the pre-exec confinement applies: the Landlock ruleset (every
 /// fs right the measured ABI supports, one PATH_BENEATH rule per root and
 /// program directory), then the user+network namespace. Constructed once,
@@ -123,25 +139,7 @@ impl Confinement {
         // handled = every fs right the ABI supports [UNVERIFIED ABI→rights
         // table; the enforcement canary proves whatever is claimed].
         let handled_access_fs = ROOT_ALLOWED | EXEC_ALLOWED | sys::LANDLOCK_ACCESS_FS_REFER;
-        let mut rules = Vec::new();
-        // The workspace roots are read+write; program directories, loader
-        // directories, and the host's toolchain roots are read+execute only.
-        for root in sb.fs_roots() {
-            rules.push((marshal(root)?, ROOT_ALLOWED));
-        }
-        for path in program_dirs
-            .iter()
-            .map(|p| p.as_path())
-            .chain(sb.read_only_roots().iter().map(|p| p.as_path()))
-            .chain(
-                LOADER_DIRS
-                    .iter()
-                    .map(Path::new)
-                    .filter(|path| path.exists()),
-            )
-        {
-            rules.push((marshal(path)?, EXEC_ALLOWED));
-        }
+        let rules = build_rules(sb, program_dirs, handled_access_fs)?;
         Ok(Self {
             handled_access_fs,
             rules,
@@ -197,6 +195,42 @@ impl Confinement {
     }
 }
 
+/// One PATH_BENEATH rule per filesystem root, program directory, read-only
+/// root, present loader directory, and the `/dev/null` file. Pure of syscalls
+/// so the rule set can be asserted without a Landlock-capable kernel.
+fn build_rules(
+    sb: &RunSandbox,
+    program_dirs: &[PathBuf],
+    handled_access_fs: u64,
+) -> Result<Vec<(std::ffi::CString, u64)>, SandboxError> {
+    let mut rules = Vec::new();
+    // The workspace roots are read+write; program directories, loader
+    // directories, and the host's toolchain roots are read+execute only.
+    for root in sb.fs_roots() {
+        rules.push((marshal(root)?, ROOT_ALLOWED));
+    }
+    for path in program_dirs
+        .iter()
+        .map(|p| p.as_path())
+        .chain(sb.read_only_roots().iter().map(|p| p.as_path()))
+        .chain(
+            LOADER_DIRS
+                .iter()
+                .map(Path::new)
+                .filter(|path| path.exists()),
+        )
+    {
+        rules.push((marshal(path)?, EXEC_ALLOWED));
+    }
+    // The background-stdin and redirection device; a file rule, and only the
+    // rights the ruleset handles (an unhandled right is EINVAL).
+    rules.push((
+        marshal(Path::new(DEV_NULL))?,
+        DEV_NULL_ALLOWED & handled_access_fs,
+    ));
+    Ok(rules)
+}
+
 /// The forked-child confinement entry [`RunnerSpawn`](super::RunnerSpawn)
 /// installs via `CommandExt::pre_exec`. The closure performs no allocation:
 /// every path is pre-marshalled into the [`Confinement`].
@@ -221,3 +255,6 @@ fn marshal_error(what: &str) -> SandboxError {
         reason: "content contains NUL".to_owned(),
     }
 }
+
+#[cfg(test)]
+mod linux_rules_tests;

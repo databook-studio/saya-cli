@@ -3,6 +3,14 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Fixed
+
+- The Linux runner sandbox allows `/dev/null`, so background shell commands
+  (`cmd &`) and `>/dev/null` redirections no longer fail with a permission
+  error.
+
 ## 0.5.0 — 2026-11-13
 
 ### Highlights
