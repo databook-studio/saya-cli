@@ -46,7 +46,7 @@ pub(in crate::interactive::tui) fn draw_input(frame: &mut Frame<'_>, app: &App, 
     // Empty input: show a dim placeholder and park the cursor at the start.
     if app.input.is_empty() {
         let hint = Paragraph::new(Line::from(Span::styled(
-            "Ask about your data, or type / for commands",
+            "Ask about data or describe work; /start runs a long or background job",
             Style::default().fg(secondary()),
         )))
         .block(block);

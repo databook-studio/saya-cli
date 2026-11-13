@@ -13,7 +13,10 @@
 /// surface contains it verbatim. Kept beside the command it documents.
 pub(crate) const PLAN_BYPASS_SENTENCE: &str = "Plan still denies writes under `bypass`";
 pub(crate) const COMMAND_DESCRIPTIONS: &[(&str, &str)] = &[
-    ("start", "Start a bounded job in this session"),
+    (
+        "start",
+        "Start a job for long or background work; ordinary work is just a message",
+    ),
     (
         "follow-up",
         "Run a bounded new invocation of a completed child in its checkout",

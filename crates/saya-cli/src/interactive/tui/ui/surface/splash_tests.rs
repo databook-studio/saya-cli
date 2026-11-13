@@ -84,6 +84,21 @@ fn status_line_names_model_provider_and_mode() {
     assert_eq!(status_text("   ", "ollama", "ask"), AI_NOT_CONFIGURED);
 }
 
+/// The welcome says plainly that a message is how ordinary work gets done
+/// and that `/start` is the opt-in for long or background work.
+#[test]
+fn the_welcome_states_the_plain_default_and_the_job_opt_in() {
+    let all = [WELCOME, WELCOME_ASK, WELCOME_START].join(" ");
+    assert!(
+        all.contains("describe work"),
+        "a message describes work: {all}"
+    );
+    assert!(
+        all.contains("/start") && all.contains("long or background job"),
+        "the welcome names the job opt-in: {all}"
+    );
+}
+
 /// The state and hint copy names no config path. Init's default moved from
 /// the project layer to the user one and old guidance kept naming `.saya/`,
 /// which nothing asserted — so it stayed wrong through a release.
@@ -183,6 +198,8 @@ fn unbound_workspace_line_names_the_fact_and_the_remedy() {
 #[test]
 fn first_run_guidance_fits_its_columns() {
     for line in [
+        WELCOME_ASK,
+        WELCOME_START,
         START_SETUP,
         START_AI,
         START_DATABASE,

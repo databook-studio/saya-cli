@@ -86,10 +86,13 @@ creates a managed checkout instead. `saya start <id> <task>` starts a job,
 runs the durable lifecycle (`list`, `show`, `events`, `resume`, `review`,
 `apply`, `rewind`, and the rest).
 Review and apply are explicit operator steps: a candidate applies only while
-its digest and the original tree are unchanged. Inside the interactive session
-the same grammar is `/start`, `/follow-up`, and `/job <verb>`, with `/approve`,
-`/deny`, `/message`, `/pause`, `/continue`, and `/cancel-child` for the
-session-only controls. `saya coding` and `/coding` are retired and answer with
+its digest and the original tree are unchanged. Inside the interactive
+session, ordinary work is just a message. `/start [--id <id>] <task>` is the
+opt-in for long or background work: the id is generated unless `--id` states
+one, and with no `--write` the job may edit the whole workspace. `/follow-up`
+and `/job <verb>` keep the shell grammar, with `/approve`, `/deny`,
+`/message`, `/pause`, `/continue`, and `/cancel-child` for the session-only
+controls. `saya coding` and `/coding` are retired and answer with
 the replacement. For explicit database selection, plan-first starts, and
 operator review and apply, see
 [job capabilities](docs/coding-capabilities.md).
@@ -240,8 +243,10 @@ saya job apply my-job <candidate> --source-sha256 <sha> --approve
 
 `review` prints the candidate id and source digest, and `apply` refuses unless
 both still match. `saya job rewind my-job` lists the job's checkpoints, and
-`saya job rewind my-job --to <turn>` restores one. Inside the TUI the same
-grammar is `/start`, `/follow-up`, and `/job <verb>`.
+`saya job rewind my-job --to <turn>` restores one. Inside the TUI, a message is
+how ordinary work gets done; `/start <task>` starts a job for long or
+background work (the id is generated), and `/follow-up` and `/job <verb>` keep
+the shell grammar.
 
 One-shot SQL, no agent:
 

@@ -45,7 +45,7 @@ fn tui_investigation_run_mixed_param_tokens_survive_and_leak_nothing() {
     // Wait for the steady state (the draft cleared — the placeholder paints
     // exactly when the box is empty) before reading the screen, so the
     // typing-time echo of the draft never pollutes the assertion.
-    tui.wait_for("Ask about your data", INTERACTIVE)
+    tui.wait_for("Ask about data or describe work", INTERACTIVE)
         .expect("the input draft cleared after the submit");
 
     let screen = tui.screen();

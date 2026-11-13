@@ -21,8 +21,9 @@ impl App {
         let mut transcript = Transcript::new();
         transcript.push(
             BlockKind::System,
-            "Welcome to saya. Type a message and press Enter. Type / for commands, \
-             Tab to accept a suggestion, ↑/↓ for history, Alt+Enter for a newline, Ctrl+C to quit.",
+            "Welcome to saya. Ask about your data or describe work to do and press Enter; \
+             `/start` runs a long or background job. Type / for commands, Tab to accept a \
+             suggestion, ↑/↓ for history, Alt+Enter for a newline, Ctrl+C to quit.",
         );
         Self {
             input: InputBuffer::new(),

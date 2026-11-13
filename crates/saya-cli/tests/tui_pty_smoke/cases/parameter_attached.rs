@@ -31,7 +31,7 @@ fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
     // exactly when the box is empty) before reading the screen: the
     // typing-time echo of the draft is the user's own keystrokes, not a
     // persisted or displayed copy of the submitted line.
-    tui.wait_for("Ask about your data", INTERACTIVE)
+    tui.wait_for("Ask about data or describe work", INTERACTIVE)
         .expect("the input draft cleared after the submit");
 
     let screen = tui.screen();

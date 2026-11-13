@@ -34,8 +34,12 @@ pub(in crate::interactive::tui) const DATABASE_NONE: &str =
     "none yet — optional; /connect or `saya demo`";
 
 /// The home screen's left-column introduction and the right column's two
-/// section headings.
+/// section headings. The two welcome hints say the plain-message default and
+/// the one opt-in for long or background work, so the first screen states
+/// both without a footer.
 pub(in crate::interactive::tui) const WELCOME: &str = "Welcome to saya";
+pub(in crate::interactive::tui) const WELCOME_ASK: &str = "Ask about data or describe work to do";
+pub(in crate::interactive::tui) const WELCOME_START: &str = "/start runs a long or background job";
 pub(in crate::interactive::tui) const GETTING_STARTED: &str = "Getting started";
 pub(in crate::interactive::tui) const STATUS: &str = "Status";
 

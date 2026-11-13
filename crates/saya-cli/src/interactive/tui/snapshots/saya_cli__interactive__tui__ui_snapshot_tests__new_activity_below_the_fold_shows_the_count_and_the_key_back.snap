@@ -24,5 +24,5 @@ expression: buffer
 "SAYA                                                                           ║"
 "2 new lines below · Shift+End to catch up analytics · qwen            ? for help"
 "╭ saya ────────────────────────────────────────────────────────────────────────╮"
-"│Ask about your data, or type / for commands                                   │"
+"│Ask about data or describe work; /start runs a long or background job         │"
 "╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

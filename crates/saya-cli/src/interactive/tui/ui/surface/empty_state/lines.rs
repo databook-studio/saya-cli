@@ -5,7 +5,8 @@
 use super::super::super::theme::{accent, foreground, secondary, warning};
 use super::super::splash::{
     GETTING_STARTED, NO_WORKSPACE_LINES, START_AI, START_CODE_BOUND, START_CODE_UNBOUND,
-    START_DATABASE, START_SETUP, START_SQL, STATUS, WELCOME, mascot_lines, status_text,
+    START_DATABASE, START_SETUP, START_SQL, STATUS, WELCOME, WELCOME_ASK, WELCOME_START,
+    mascot_lines, status_text,
 };
 use super::state;
 use crate::interactive::session_prompt::StatusView;
@@ -46,6 +47,11 @@ fn welcome() -> Line<'static> {
     ))
 }
 
+/// The two welcome hints: the plain-message default and the job opt-in.
+fn welcome_hints() -> Vec<Line<'static>> {
+    [WELCOME_ASK, WELCOME_START].into_iter().map(hint).collect()
+}
+
 /// The left column's dim status line: model, provider, permission mode.
 fn status_line(status: &StatusView, provider: &str, mode: &str) -> Line<'static> {
     Line::from(Span::styled(
@@ -67,7 +73,9 @@ pub(super) fn mode_text(status: &StatusView) -> &str {
 
 /// The full left column: welcome, mascot, status line.
 pub(super) fn left_lines(status: &StatusView, provider: &str, mode: &str) -> Vec<Line<'static>> {
-    let mut lines = vec![welcome(), Line::from("")];
+    let mut lines = vec![welcome()];
+    lines.extend(welcome_hints());
+    lines.push(Line::from(""));
     lines.extend(mascot_lines());
     lines.push(Line::from(""));
     lines.push(status_line(status, provider, mode));
@@ -81,11 +89,11 @@ pub(super) fn left_lines_without_mascot(
     provider: &str,
     mode: &str,
 ) -> Vec<Line<'static>> {
-    vec![
-        welcome(),
-        Line::from(""),
-        status_line(status, provider, mode),
-    ]
+    let mut lines = vec![welcome()];
+    lines.extend(welcome_hints());
+    lines.push(Line::from(""));
+    lines.push(status_line(status, provider, mode));
+    lines
 }
 
 /// A horizontal rule spanning the column, drawn between the two right-hand
