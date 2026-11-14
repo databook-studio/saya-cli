@@ -1,6 +1,6 @@
 use super::super::transcript::BlockKind;
 /// Composed-screen behaviour snapshots (the no-colour gate and the action line).
-/// Moved byte-identical from the hub; plain assertions only.
+/// Plain assertions only; no `insta` snapshots involved.
 use super::support::{busy_stream, empty_app, fixed_status, render_buffer};
 
 /// The phase gate: nothing essential relies on hue alone.
@@ -49,10 +49,10 @@ fn every_block_kind_is_distinguishable_without_colour() {
     }
 }
 
-// --- Fieldnotes phase 4: the action line names its target; drafts are marked.
+// --- The action line names its target; drafts are marked. -------------------
 
 /// Objective A: the busy line names the tool and its target — the path for
-/// `workspace_write`, the SQL for a query — via the shared `tool_call_detail`
+/// `write`, the SQL for a query — via the shared `tool_call_detail`
 /// seam. Name the action and its target, never a motive ("to …" is forbidden).
 #[test]
 fn the_action_line_names_the_tool_and_its_target() {
@@ -125,13 +125,11 @@ fn a_long_detail_never_pushes_the_cancel_hint_off_the_bar() {
         None,
     );
     let buffer = render_buffer(&app, &fixed_status(), 100, 10);
-    // Assert the painted frame, not the budget the renderer worked from.
-    // This test previously computed a row width through a test-only seam,
-    // discarded it, and checked only that *something* was truncated — so it
-    // passed against a bar with no cancel hint on it at all, which is the
-    // bar that shipped (audit F06). The hint is now reserved before the
-    // elastic spans are sized, so it is in the buffer and can be asserted
-    // there.
+    // Assert the painted frame, not the budget the renderer worked from: a
+    // row width computed through a test-only seam and then discarded only
+    // proves that *something* was truncated, and passes against a bar with no
+    // cancel hint on it at all. The hint is reserved before the elastic spans
+    // are sized, so it is in the buffer and can be asserted there.
     assert!(
         buffer.contains("Esc to cancel"),
         "a long detail must not push the cancel affordance off the bar:\n{buffer}"

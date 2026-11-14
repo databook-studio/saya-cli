@@ -1,0 +1,146 @@
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use saya_agent::{AgentMode, ApprovalPolicy};
+
+use crate::interactive::session::universe::SessionUniverse;
+
+// ---------------------------------------------------------------------------
+// harness
+// ---------------------------------------------------------------------------
+
+pub(super) fn temp_dir(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "saya-approval-surface-{label}-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+/// A worktree-shaped project: `.git` present, so the walk binds its top.
+pub(super) fn worktree(label: &str) -> PathBuf {
+    let project = temp_dir(label);
+    fs::create_dir_all(project.join(".git")).unwrap();
+    project
+}
+
+fn session_runtime() -> crate::config::runtime::RuntimeConfig {
+    crate::config::runtime::RuntimeConfig {
+        resolved: saya_config::ResolvedConfig {
+            hooks: Default::default(),
+            web_search: Default::default(),
+            mcp_servers: Default::default(),
+            permissions: Default::default(),
+            tools: Default::default(),
+            coding: Default::default(),
+            agents: Default::default(),
+            instructions: Default::default(),
+            profile_name: None,
+            profile: None,
+            limits: Default::default(),
+            ai: saya_config::ResolvedAi {
+                app_attribution: true,
+                provider: saya_config::AiProvider::Ollama,
+                model: "test-model".into(),
+                base_url: None,
+                api_key: None,
+                allow_data_sharing: true,
+                temperature: 0.0,
+                timeout_seconds: 60,
+                idle_timeout_seconds: 90,
+                request_timeout_seconds: 180,
+                max_output_tokens: None,
+                reasoning_effort: None,
+                context_byte_budget: 256 * 1024,
+                context_window_tokens: None,
+                show_thinking: false,
+                compaction: saya_config::CompactionMode::Auto,
+                compaction_trigger_percent: 50,
+                retry_delays_ms: vec![250, 500, 1000],
+            },
+            max_rows: 100,
+            read_only: true,
+            candidates: 1,
+            jobs: saya_config::ResolvedJobs::default(),
+            query_timeout_seconds: 5,
+            output_format: saya_config::OutputFormat::Text,
+            output_color: saya_config::ColorChoice::Auto,
+            ui_theme: saya_config::ThemeChoice::Auto,
+            memory: saya_config::ResolvedMemory {
+                mode: saya_config::MemoryMode::Off,
+                max_contracts: 5,
+                max_claims_per_contract: 12,
+                max_context_bytes: 16384,
+            },
+            host_commands: saya_config::ResolvedHostCommands::default(),
+            session_deny: Default::default(),
+            ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
+            endpoints: Default::default(),
+        },
+        connections: Default::default(),
+        config_path: None,
+        connections_path: None,
+        cache_scope: PathBuf::from("/tmp/saya-approval-surface"),
+        investigations_root: crate::config::runtime::temp_investigations_root(),
+        secret_values: Default::default(),
+    }
+}
+
+pub(super) fn compose(project: &Path, _state_dir: &Path) -> SessionUniverse {
+    SessionUniverse::compose(&session_runtime(), None, None, true, project)
+        .expect("composition succeeds on a plain worktree")
+}
+
+/// The write-shaped members the plain worktree composition carries: no
+/// no runner and no program-naming door beyond `run_command` —
+/// the honest shape, not a hidden capability. The unstated host lane does
+/// compose over a bound root, so `run_command` rides.
+pub(super) const WRITE_SHAPED: [&str; 5] = [
+    "write",
+    "edit",
+    "http_fetch",
+    "http_download",
+    "run_command",
+];
+
+pub(super) fn assert_host_tool_for_platform(names: &BTreeSet<String>) {
+    if cfg!(windows) {
+        assert!(
+            !names.contains("run_command"),
+            "Windows keeps the unavailable host lane out of the surface: {names:?}"
+        );
+    } else {
+        assert!(
+            names.contains("run_command"),
+            "a composed Unix host lane advertises run_command: {names:?}"
+        );
+    }
+}
+
+pub(super) fn advertised_set(
+    universe: &SessionUniverse,
+    agent_mode: AgentMode,
+    mode: ApprovalPolicy,
+    can_obtain_approval: bool,
+) -> BTreeSet<String> {
+    universe
+        .definitions(
+            agent_mode,
+            false,
+            mode,
+            can_obtain_approval,
+            true,
+            false,
+            false,
+            &Default::default(),
+        )
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect()
+}

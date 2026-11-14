@@ -4,8 +4,9 @@ use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::history::History;
 use crate::interactive::tui::input::InputBuffer;
 use crate::interactive::tui::sql_task::{Followup, SqlTask};
+use crate::interactive::tui::startup_readiness::{ReadinessLine, StartupReadiness};
 use crate::interactive::tui::transcript::Transcript;
-use crate::interactive::tui::types::{App, OverlayState, RequestState};
+use crate::interactive::tui::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::render::TerminalEvent;
 use saya_store::SqliteStateStore;
 use std::collections::BTreeMap;
@@ -19,9 +20,17 @@ pub(crate) fn idle_app() -> App {
     App {
         sql_task: None,
         compact_task: None,
+        session_metrics: None,
+        replay_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: Vec::new(),
+        startup: StartupReadiness {
+            ai: ReadinessLine {
+                ready: true,
+                detail: "ollama, model test-model".into(),
+            },
+        },
         pending: None,
         request: RequestState::default(),
         overlays: OverlayState::default(),
@@ -30,17 +39,24 @@ pub(crate) fn idle_app() -> App {
         viewport: std::cell::Cell::new((0, 0)),
         ctrl_c_armed: false,
         at_refs: Vec::new(),
+        starter_questions: Vec::new(),
         pending_clipboard: None,
+        pending_permission_cycle: false,
         clipboard_copy: None,
         session_save: None,
         pending_session_save: None,
         last_query: None,
+        captured: None,
+        pending_queries: std::collections::VecDeque::new(),
+        pending_queries_desync: false,
+        agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
+        coding_panel: None,
         run_panel: None,
         runtime: Arc::new(unused_runtime()),
         state_db: SqliteStateStore::new(PathBuf::new()),
         session: std::sync::Arc::new(
-            crate::interactive::session_universe::SessionUniverse::empty(),
+            crate::interactive::session::universe::SessionUniverse::empty(),
         ),
         should_quit: false,
         pending_trust_answer: None,
@@ -71,14 +87,23 @@ pub(crate) fn idle_app_with_sql_task() -> App {
 pub(crate) fn unused_runtime() -> RuntimeConfig {
     use saya_config::{
         AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-        ResolvedConfig, ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs,
-        ResolvedJobs, ResolvedMemory, ResolvedRunnerJobs, ThemeChoice,
+        ResolvedConfig, ResolvedHostCommands, ResolvedJobs, ResolvedMemory, ThemeChoice,
     };
     RuntimeConfig {
         resolved: ResolvedConfig {
+            hooks: Default::default(),
+            web_search: Default::default(),
+            mcp_servers: Default::default(),
+            permissions: Default::default(),
+            tools: Default::default(),
+            coding: Default::default(),
+            agents: Default::default(),
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
+            limits: Default::default(),
             ai: ResolvedAi {
+                app_attribution: true,
                 provider: AiProvider::Ollama,
                 model: "test-model".into(),
                 base_url: None,
@@ -87,27 +112,20 @@ pub(crate) fn unused_runtime() -> RuntimeConfig {
                 temperature: 0.0,
                 timeout_seconds: 60,
                 idle_timeout_seconds: 90,
-                max_output_tokens: 4096,
-                max_output_tokens_is_default: true,
+                request_timeout_seconds: 180,
+                max_output_tokens: None,
+                reasoning_effort: None,
                 context_byte_budget: 256 * 1024,
                 context_window_tokens: None,
                 show_thinking: false,
                 compaction: saya_config::CompactionMode::Auto,
+                compaction_trigger_percent: 50,
                 retry_delays_ms: vec![250, 500, 1000],
             },
             max_rows: 100,
             read_only: true,
-            max_iterations: 4,
             candidates: 1,
-            jobs: ResolvedJobs {
-                wall_clock_seconds: None,
-                tokens_per_endpoint: BTreeMap::new(),
-                turns: Some(4),
-                tool_calls: None,
-                fetch: ResolvedFetchJobs::default(),
-                interpreter: ResolvedInterpreterJobs::default(),
-                runner: ResolvedRunnerJobs::default(),
-            },
+            jobs: ResolvedJobs::default(),
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
@@ -121,12 +139,16 @@ pub(crate) fn unused_runtime() -> RuntimeConfig {
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: BTreeMap::new(),
         },
         connections: ConnectionsFile::default(),
         config_path: None,
         connections_path: None,
         cache_scope: PathBuf::new(),
+        // A temp-rooted investigations root: a hand-built test runtime must
+        // never resolve into the machine's real data directory.
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: BTreeMap::new(),
     }
 }
@@ -138,6 +160,7 @@ pub(crate) fn in_flight_task() -> (
     std::sync::mpsc::Receiver<TerminalEvent>,
     super::super::sql_task::SqlTask,
     std::time::Instant,
+    saya_agent::CancellationToken,
 ) {
     in_flight_task_at(std::time::Instant::now())
 }
@@ -150,14 +173,15 @@ pub(crate) fn in_flight_task_at(
     std::sync::mpsc::Receiver<TerminalEvent>,
     super::super::sql_task::SqlTask,
     std::time::Instant,
+    saya_agent::CancellationToken,
 ) {
     let (_tx, rx) = std::sync::mpsc::channel();
-    let task = SqlTask {
-        profile: Some("analytics".into()),
-        sql: "SELECT 1".into(),
-        followup: Followup::Sql {
+    let task = SqlTask::new(
+        Some("analytics".into()),
+        "SELECT 1".into(),
+        Followup::Sql {
             connection: Some("analytics".into()),
         },
-    };
-    (rx, task, started)
+    );
+    (rx, task, started, saya_agent::CancellationToken::new())
 }

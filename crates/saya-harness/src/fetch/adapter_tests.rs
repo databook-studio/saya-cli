@@ -1,18 +1,18 @@
-//! The fetch lane's bound and backstop, at the envelope level.
+//! The fetch tool's bound and backstop, at the envelope level.
 //!
 //! The sentinels are the scheme's fixed, public constants; the harness's
 //! tests hardcode the literals the way `fetch_tool.rs` does.
 
 use super::super::limits::ENVELOPE_SLACK;
 use super::*;
-use saya_agent::MAX_TOOL_MESSAGE_BYTES;
+use saya_agent::{ContextBlock, MAX_TOOL_MESSAGE_BYTES};
 
 const CONTEXT_CLOSE: &str = "<<<CONTEXT_BLOCK_END>>>";
 
-/// The drift pin, from the harness side: the lane's cap is exactly the
+/// The drift pin, from the harness side: the tool's cap is exactly the
 /// loop's exported tool-message cap — the same number the loop truncates
 /// at — and the wired body bound sits below it minus the envelope slack,
-/// so a fetch success at the bound always fits the lane.
+/// so a fetch success at the bound always fits.
 #[test]
 fn the_lane_bound_is_below_the_loop_s_tool_message_cap_by_construction() {
     let cap = FetchLimits::tool_lane_cap();

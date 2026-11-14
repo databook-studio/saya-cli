@@ -1,8 +1,10 @@
 use super::*;
+use crate::interactive::session::permissions::trust::trust_prompt;
 use crate::interactive::tui::history::History;
 use crate::interactive::tui::input::InputBuffer;
+use crate::interactive::tui::startup_readiness::{ReadinessLine, StartupReadiness};
 use crate::interactive::tui::transcript::Transcript;
-use crate::interactive::tui::types::{App, OverlayState, RequestState};
+use crate::interactive::tui::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::interactive::tui::ui_snapshot_tests::{empty_app, unused_runtime, unused_store};
 use crate::interactive::tui::ui_snapshot_tests::{fixed_status, render_buffer};
 use std::path::PathBuf;
@@ -15,9 +17,17 @@ fn trust_app() -> App {
     App {
         sql_task: None,
         compact_task: None,
+        session_metrics: None,
+        replay_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into()],
+        startup: StartupReadiness {
+            ai: ReadinessLine {
+                ready: true,
+                detail: "ollama, model test-model".into(),
+            },
+        },
         pending: None,
         request: RequestState::default(),
         overlays: OverlayState {
@@ -29,17 +39,24 @@ fn trust_app() -> App {
         viewport: std::cell::Cell::new((0, 0)),
         ctrl_c_armed: false,
         at_refs: Vec::new(),
+        starter_questions: Vec::new(),
         pending_clipboard: None,
+        pending_permission_cycle: false,
         clipboard_copy: None,
         session_save: None,
         pending_session_save: None,
         last_query: None,
+        captured: None,
+        pending_queries: std::collections::VecDeque::new(),
+        pending_queries_desync: false,
+        agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
+        coding_panel: None,
         runtime: unused_runtime(),
         state_db: unused_store(),
         session: std::sync::Arc::new(
-            crate::interactive::session_universe::SessionUniverse::empty(),
+            crate::interactive::session::universe::SessionUniverse::empty(),
         ),
         should_quit: false,
         pending_trust_answer: None,
@@ -48,10 +65,9 @@ fn trust_app() -> App {
 
 /// The modal renders the shared prompt body — the same words the plain
 /// REPL prints — so the two renderings cannot drift. The TUI wraps the
-/// body to the modal width and appends its own answers line on the
-/// same visual row, so the assertion cuts the modal's words at the
-/// body's own question mark: the words before it are the body's words
-/// in order, wrapping aside.
+/// body to the modal width and follows it with its own answers line, so
+/// the assertion cuts the modal's words at the body's own question mark:
+/// the words before it are the body's words in order, wrapping aside.
 #[test]
 fn the_trust_modal_renders_the_shared_prompt_body() {
     let app = trust_app();
@@ -71,7 +87,7 @@ fn the_trust_modal_renders_the_shared_prompt_body() {
         .split_whitespace()
         .map(|w| w.replace(',', ""))
         .collect();
-    let body: Vec<String> = TRUST_PROMPT
+    let body: Vec<String> = trust_prompt()
         .split_whitespace()
         .take_while(|w| !w.starts_with("[t]rust"))
         .map(|w| w.replace(',', ""))
@@ -87,8 +103,27 @@ fn the_trust_modal_renders_the_shared_prompt_body() {
     );
 }
 
+/// The modal renders the shared decision as its own TUI element, never as
+/// the line prompt's single reflowed line: the exact byte run the line
+/// prompt prints must not reappear on screen. The pty smoke test forbids
+/// that run — a raw stdin read in front of the alternate screen is the bug
+/// it hunts — and the modal must not collide with it by wrapping the line
+/// prompt's one line into one row. Rendered at the pty smoke test's own
+/// geometry (80×24), because the collision is a wrap fact.
+#[test]
+fn the_trust_modal_never_replays_the_raw_line_prompt_run() {
+    let app = trust_app();
+    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
+    assert!(
+        !buffer.contains("Trust this folder as the session workspace? [t]rust once"),
+        "the modal must not replay the line prompt's bytes:\n{buffer}"
+    );
+}
+
 /// The modal offers the same three exits the line prompt offers, and
-/// the splash marker still paints behind it.
+/// the splash's state section still paints behind it — the AI, project,
+/// and database readiness lines tier with the state, so they outlive the
+/// branding this pane size sheds.
 #[test]
 fn the_trust_modal_offers_all_three_exits_beside_the_splash() {
     let app = trust_app();
@@ -104,8 +139,8 @@ fn the_trust_modal_offers_all_three_exits_beside_the_splash() {
         );
     }
     assert!(
-        buffer.contains("◆ saya"),
-        "the splash paints behind the modal:\n{buffer}"
+        buffer.contains("Database  analytics"),
+        "the splash's state section paints behind the modal:\n{buffer}"
     );
 }
 
@@ -129,8 +164,8 @@ fn the_trust_modal_renders_the_draft_and_its_inline_refusal() {
     );
 }
 
-/// The modal's height accounts for the wrapped body plus the answers
-/// and draft rows, bounded so a narrow terminal wraps instead of
+/// The modal's height accounts for the wrapped body plus the answers,
+/// note, and draft rows, bounded so a narrow terminal wraps instead of
 /// pushing the input off screen.
 #[test]
 fn the_trust_modal_height_covers_body_answers_and_draft() {

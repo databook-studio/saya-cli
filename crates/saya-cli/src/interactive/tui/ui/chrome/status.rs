@@ -3,7 +3,7 @@
 use super::super::surface::SPINNER;
 use super::super::theme::{accent, on_accent, secondary};
 use super::action_line::{
-    CANCEL_HINT, SEPARATOR, action_text, bare_action_width, busy_row_plan, running_call,
+    SEPARATOR, action_text, bare_action_width, busy_hint, busy_row_plan, running_call,
 };
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::types::App;
@@ -20,16 +20,19 @@ use status_segments::{BarWords, bar_spans, bar_words, fit_bar, full_fit, segment
 #[path = "status_segments.rs"]
 mod status_segments;
 
-/// The approval mode's colour, one explicit arm per mode the grammar parses
-/// — read-only green, ask amber, never and bypass red. Painted on the top
-/// context line's `Approval:` segment (the bottom bar no longer names the
-/// mode). The catch-all is a named hole, not a licence: a mode added to
-/// `FromStr` but not here would render grey with nothing failing, which is
-/// exactly what the colour-map test pins.
+/// The approval mode's colour, one explicit arm per mode the session can
+/// hold — read-only green, ask and accept-edits amber, never and bypass red.
+/// Painted on the top context line's `Approval:` segment. The catch-all is a
+/// named hole, not a licence: a mode the session can hold but this map does
+/// not know would render grey with nothing failing, which is exactly what the
+/// colour-map test pins.
 pub(super) fn approval_colour(mode: &str) -> Color {
     match mode {
         "read-only" => super::super::theme::success(),
-        "ask" => super::super::theme::warning(),
+        // `accept-edits` is amber, not green: it widens the consent the way
+        // `ask` does not — the workspace file family runs unasked — and it is
+        // reached only from the session's own switch, never from a launch.
+        "ask" | "accept-edits" => super::super::theme::warning(),
         "never" => super::super::theme::danger(),
         "bypass" => super::super::theme::danger(),
         _ => secondary(),
@@ -37,7 +40,7 @@ pub(super) fn approval_colour(mode: &str) -> Color {
 }
 
 /// The status bar's plain-text words, in bar order — the seam the headless
-/// parity test reads. Reachable as
+/// comparison test reads. Reachable as
 /// `crate::interactive::tui::ui::chrome::status::status_words_for_test`.
 #[cfg(test)]
 pub(crate) fn status_words_for_test(view: &StatusView) -> String {
@@ -103,7 +106,8 @@ fn unseen_span(count: usize, bg: Color) -> Option<Span<'static>> {
 }
 
 /// Renders the status bar as a filled accent-tinted strip, with a spinner and
-/// hint while an agent request is streaming.
+/// hint while a request is in flight — the hint naming what Esc actually does
+/// (detach for an off-thread query, cancel for an agent stream).
 pub(in crate::interactive::tui) fn draw_status(
     frame: &mut Frame<'_>,
     app: &App,
@@ -123,13 +127,14 @@ pub(in crate::interactive::tui) fn draw_status(
             .started
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
-        // The stop affordance is reserved first: the cancel hint and the
-        // fixed chrome it rides with come off the frame width before
-        // anything elastic is sized, and what is left is spent down the
-        // shedding hierarchy — the routine status detail sheds, then the
-        // action detail truncates, and the notice yields last — so the hint
-        // is never what the row drops (audit F06: it painted last and paid
-        // for every other span's overflow).
+        // The stop affordance is reserved first: the busy hint and the fixed
+        // chrome it rides with come off the frame width before anything
+        // elastic is sized, and what is left is spent down the shedding
+        // hierarchy — the routine status detail sheds, then the action
+        // detail truncates, and the notice yields last — so the hint is
+        // never what the row drops — an affordance painted last pays for
+        // every other span's overflow.
+        let hint = busy_hint(app);
         let segments = bar_spans(&words, full_fit(&words), bg);
         let widths: Vec<usize> = segments.iter().map(|span| span.width()).collect();
         let unseen_width = unseen.as_ref().map(|span| span.width()).unwrap_or(0);
@@ -142,9 +147,12 @@ pub(in crate::interactive::tui) fn draw_status(
         );
         let plan = busy_row_plan(
             area.width as usize,
-            unseen_width,
-            frame_width,
-            elapsed_width,
+            super::action_line::BusyChrome {
+                lead: unseen_width,
+                spinner: frame_width,
+                elapsed: elapsed_width,
+                hint: cell_width(hint),
+            },
             &widths,
             cell_width(&full_action),
             bare_action_width(app.request.activity.as_deref()),
@@ -170,16 +178,16 @@ pub(in crate::interactive::tui) fn draw_status(
         ));
         spans.push(Span::styled(SEPARATOR, bar));
         spans.extend(segments.into_iter().take(plan.status_segments));
-        // The cancel hint rides at the row's end whatever room is left: when
+        // The stop hint rides at the row's end whatever room is left: when
         // there is spare width, a padding span pushes it to the last column;
         // when there is none, it paints immediately, exactly as before.
         let used = spans.iter().map(Span::width).sum::<usize>();
-        let hint_width = cell_width(CANCEL_HINT);
+        let hint_width = cell_width(hint);
         if used + hint_width < area.width as usize {
             let pad = area.width as usize - used - hint_width;
             spans.push(Span::styled(" ".repeat(pad), bar));
         }
-        spans.push(Span::styled(CANCEL_HINT, bar));
+        spans.push(Span::styled(hint, bar));
         Line::from(spans)
     } else if app.overlays.selection_mode {
         let mut spans = Vec::new();

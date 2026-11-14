@@ -1,0 +1,203 @@
+//! The headless `saya investigation` adapter: save, list, show,
+//! edit, delete, export, and import portable saved-investigation documents
+//! through `saya_store::investigations::InvestigationRepository`.
+//!
+//! One operation, multiple adapters: this is the single dispatcher the clap
+//! subcommand uses and the slash/TUI adapters reuse;
+//! behavior lives in the per-operation modules and the repository. Saving
+//! and importing validate and never execute — no AI provider is constructed
+//! anywhere in this module, and nothing here connects to a database.
+
+mod bindings;
+mod connection;
+mod delete;
+mod dispatch;
+mod edit;
+mod export;
+mod fingerprint;
+mod import;
+mod list;
+mod objects;
+mod params;
+mod run;
+mod run_binding;
+mod run_outcome;
+mod run_report;
+mod save;
+mod save_input;
+mod show;
+#[cfg(test)]
+mod tests;
+
+use crate::cli::InvestigationCommand;
+use crate::config::runtime::RuntimeConfig;
+use crate::render::RenderFormat;
+use dispatch::run_investigation_outcome_controlled_in;
+pub use run_outcome::{Replay, RunOutcome};
+use saya_agent::CancellationToken;
+use saya_store::{InvestigationRepository, SqliteStateStore, StoreError};
+use saya_types::investigation::InvestigationId;
+
+/// Exit code for typed investigation-command failures (usage and domain
+/// errors); ad-hoc per command like the rest of the crate, matching
+/// `contracts`.
+pub(super) const EXIT_INVESTIGATION_ERROR: i32 = 2;
+/// Exit code when the investigations store cannot be read or opened.
+pub(super) const EXIT_STORE_UNAVAILABLE: i32 = 3;
+/// Exit code when the safety layer refuses the SQL — the code `query` uses.
+pub(super) const EXIT_SAFETY: i32 = 4;
+
+/// How one controlled run is driven: the optional cancellation source the
+/// adapter holds, and whether the run is machine-driven: it can
+/// never write or complete review authority).
+struct RunControl<'a> {
+    cancellation: Option<&'a CancellationToken>,
+    machine_driven: bool,
+}
+
+/// Runs one investigation subcommand against the on-disk repository for this
+/// invocation: the composed runtime's `investigations_root` —
+/// resolved once at composition, never re-read from the environment here).
+pub async fn run_investigation(
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    run_investigation_in(
+        &InvestigationRepository::new(runtime.investigations_root.clone()),
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+    )
+    .await
+}
+
+/// The typed-outcome seam for the replay adapter: the same path as
+/// [`run_investigation`], returning the exit code plus the replay (result
+/// and evidence) after a successful execution, so a caller captures the run
+/// instead of re-parsing rendered output.
+pub async fn run_investigation_outcome(
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    run_investigation_outcome_cancellable(
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+        &CancellationToken::new(),
+    )
+    .await
+}
+
+/// The replay worker's cancellable seam: the same path as
+/// [`run_investigation_outcome`] — the composed roots, the captured `emit`
+/// output — with the adapter's cancellation token riding `RunControl`, so a
+/// detached replay's SQL cancels exactly like the direct-SQL path's does.
+pub(crate) async fn run_investigation_outcome_cancellable(
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+    cancellation: &CancellationToken,
+) -> Result<RunOutcome, Box<dyn std::error::Error>> {
+    run_investigation_outcome_controlled_in(
+        &InvestigationRepository::new(runtime.investigations_root.clone()),
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+        RunControl {
+            cancellation: Some(cancellation),
+            machine_driven: false,
+        },
+    )
+    .await
+}
+
+/// The repository-explicit seam: tests and later adapters pass the repository
+/// they own instead of relying on process env; the public entry is a
+/// one-liner over this.
+pub(crate) async fn run_investigation_in(
+    repo: &InvestigationRepository,
+    command: InvestigationCommand,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    can_prompt: bool,
+    state_db: &SqliteStateStore,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    run_investigation_outcome_controlled_in(
+        repo,
+        command,
+        runtime,
+        format,
+        can_prompt,
+        state_db,
+        RunControl {
+            cancellation: None,
+            machine_driven: false,
+        },
+    )
+    .await
+    .map(|outcome| outcome.code)
+}
+
+/// Parses a user-supplied id. A malformed id cannot exist on disk, so it maps
+/// to the same "no investigation <id>" refusal the store's `NotFound` gets.
+pub(super) fn parse_investigation_id(raw: &str) -> Result<InvestigationId, (i32, String)> {
+    InvestigationId::parse(raw)
+        .map_err(|_| (EXIT_INVESTIGATION_ERROR, format!("no investigation {raw}")))
+}
+
+/// Emits a payload-free store error mapped onto its exit code, naming `id`
+/// for the not-found case.
+pub(super) fn store_failure(
+    error: StoreError,
+    id: &str,
+    format: RenderFormat,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let (code, message) = store_error_parts(&error, id);
+    super::output::failure_message(code, message, format)
+}
+
+/// The (exit code, message) mapping for a store error. Store
+/// errors are payload-free, so these words are all a store refusal gets.
+pub(super) fn store_error_parts(error: &StoreError, id: &str) -> (i32, String) {
+    match error {
+        StoreError::NotFound => (EXIT_INVESTIGATION_ERROR, format!("no investigation {id}")),
+        StoreError::Conflict => (
+            EXIT_INVESTIGATION_ERROR,
+            "the saved investigation changed underneath this command; retry".to_string(),
+        ),
+        StoreError::LimitExceeded => (
+            EXIT_INVESTIGATION_ERROR,
+            "the investigations collection is full (500); delete or export some investigations"
+                .to_string(),
+        ),
+        StoreError::VersionUnsupported => (
+            EXIT_INVESTIGATION_ERROR,
+            "this investigation was made by a newer saya".to_string(),
+        ),
+        StoreError::Invalid => (
+            EXIT_INVESTIGATION_ERROR,
+            "the investigation document is corrupt or invalid".to_string(),
+        ),
+        StoreError::Unavailable | StoreError::OpenFailed => {
+            (EXIT_STORE_UNAVAILABLE, error.to_string())
+        }
+        // `StoreError` is `#[non_exhaustive]`: a variant added later is a
+        // store-level failure the caller cannot classify, so it surfaces with
+        // the unavailable exit code and the store's own words — never silently.
+        _ => (EXIT_STORE_UNAVAILABLE, error.to_string()),
+    }
+}

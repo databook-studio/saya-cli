@@ -1,15 +1,15 @@
 //! The rollback watermark for one provider attempt.
 //!
-//! `AgentEvent::TurnReset` means "discard what *this attempt* produced", and
-//! before slice O the TUI had no way to say where the attempt began. It used
-//! the request chapter instead, which spans the whole request, so a receive
-//! that died before emitting text erased an earlier step's delivered preamble
-//! and threw away completed tool results (re-audit R02). A chapter is a
+//! `AgentEvent::TurnReset` means "discard what *this attempt* produced", which
+//! needs a mark for where the attempt began. The request chapter cannot serve:
+//! it spans the whole request, so a receive that died before emitting text
+//! would erase an earlier step's delivered preamble and throw away completed
+//! tool results. A chapter is a
 //! presentation decision; an attempt is a lifecycle fact, and they are not
 //! the same boundary.
 //!
-//! `AgentEvent::TurnStarted` now arrives before every attempt, first and
-//! retried alike. The mark taken there is everything needed to undo exactly
+//! `AgentEvent::TurnStarted` arrives before every attempt, first and retried
+//! alike. The mark taken there is everything needed to undo exactly
 //! what follows it and nothing earlier.
 
 use super::super::{BlockKind, Transcript};
@@ -41,8 +41,8 @@ impl Transcript {
     /// marked. The resume path uses it to refuse an answer block that
     /// predates the attempt: after a rollback the tail is the retry notice,
     /// and the newest assistant block *in the chapter* is the earlier step's
-    /// preamble — appending the replacement to it is how R02's "reuse that
-    /// older answer position" happens.
+    /// preamble — appending the replacement to it is how that older answer
+    /// position gets reused.
     pub(crate) fn attempt_start(&self) -> Option<usize> {
         self.attempt.as_ref().map(|mark| mark.blocks)
     }
@@ -72,14 +72,14 @@ impl Transcript {
     /// clearing on a hunch is what destroyed evidence before.
     ///
     /// Routed through [`Transcript::mutate`] so the shrink keeps a scrolled
-    /// reader where they were (slice N).
+    /// reader where they were.
     pub(crate) fn rollback_attempt(&mut self) -> bool {
         let Some(mark) = self.attempt.clone() else {
             return false;
         };
         // Did this attempt stream any answer text? Only then is there a
-        // discarded attempt to announce — slice B's rule, kept: a reset with
-        // nothing streamed says nothing.
+        // discarded attempt to announce: a reset with nothing streamed says
+        // nothing.
         let discarded = self.blocks[mark.blocks.min(self.blocks.len())..]
             .iter()
             .any(|block| block.kind == BlockKind::Assistant && !block.text.is_empty())

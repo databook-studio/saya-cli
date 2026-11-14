@@ -64,8 +64,8 @@ pub(crate) fn flush_tool_buffer(transcript: &mut Transcript) {
     );
 }
 
-/// Today's verbatim request rendering, one block per line: the SQL block or
-/// the `→` line, exactly as the TUI rendered before this slice.
+/// The verbatim request rendering, one block per line: the SQL block or the
+/// `→` line.
 fn request_lines(name: &str, arguments: &serde_json::Value) -> Vec<String> {
     if let Some(call) = crate::agent::tools::sql_tool_call(name, arguments) {
         let header = match &call.target {
@@ -83,8 +83,7 @@ fn request_lines(name: &str, arguments: &serde_json::Value) -> Vec<String> {
     vec![request_line(name, arguments)]
 }
 
-/// Today's verbatim single request line: the SQL block or the `→` line,
-/// exactly as the TUI rendered before this slice.
+/// The verbatim single request line: the SQL block or the `→` line.
 pub(crate) fn request_line(name: &str, arguments: &serde_json::Value) -> String {
     if let Some(call) = crate::agent::tools::sql_tool_call(name, arguments) {
         let header = match &call.target {

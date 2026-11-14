@@ -58,7 +58,6 @@ fn is_rejection(error: &HarnessError) -> bool {
         HarnessError::PathOutsideRoot { .. }
             | HarnessError::InvalidPath { .. }
             | HarnessError::SymlinkRefused { .. }
-            | HarnessError::DeniedName { .. }
             | HarnessError::BoundsExceeded { .. }
             | HarnessError::IdentityChanged { .. }
             | HarnessError::NotRegularFile { .. }
@@ -165,8 +164,8 @@ fn intermediate_directory_swap_never_crosses_the_root() {
             Err(error) => assert!(is_rejection(&error), "read {round}: {error}"),
         }
         match sandbox.ws.list("sub", 100) {
-            Ok(entries) => {
-                for entry in &entries {
+            Ok(listed) => {
+                for entry in &listed.entries {
                     assert_ne!(entry.name, "bait-listed.txt", "outside listing leaked");
                 }
             }

@@ -15,7 +15,7 @@ use super::transcript::{BlockKind, Transcript};
 use crate::cli::RunCommand;
 use crate::commands::run_management;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_resume::block_on;
+use crate::interactive::session::lifecycle::resume::block_on;
 use crate::render::RenderFormat;
 
 /// Runs a run-management command through the shared dispatcher and pushes its

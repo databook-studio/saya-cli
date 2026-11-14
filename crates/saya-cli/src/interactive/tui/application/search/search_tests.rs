@@ -36,9 +36,8 @@ fn transcript_overlay_stays_open_after_enter() {
 
 #[test]
 fn repeated_enter_walks_to_distinct_matches() {
-    // Before the fix, commit_search took the overlay on every Enter, so
-    // there was no find-next — the user retyped the query for each match.
-    // Now the overlay stays open and Enter walks to the next match.
+    // commit_search leaves the overlay open and Enter walks to the next
+    // match, so the user never retypes the query for each match.
     let mut app = app_with_find("match");
 
     app.commit_search();

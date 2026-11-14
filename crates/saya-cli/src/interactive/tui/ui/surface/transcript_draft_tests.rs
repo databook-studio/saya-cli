@@ -1,9 +1,9 @@
-//! The draft label must survive an overflowing pane (audit finding F04):
-//! exactly the live answer is marked `SAYA (draft)` in conversations longer
-//! than the visible pane — and every older answer still reads as final. These
-//! render real frames through the composed `ui::draw` onto a ratatui test
-//! backend and assert on the painted buffer, because the defect only shows
-//! when the painted window's first row is not the transcript's first row.
+//! The draft label must survive an overflowing pane: exactly the live answer
+//! is marked `SAYA (draft)` in conversations longer than the visible pane —
+//! and every older answer still reads as final. These render real frames
+//! through the composed `ui::draw` onto a ratatui test backend and assert on
+//! the painted buffer, because a mix-up only shows when the painted window's
+//! first row is not the transcript's first row.
 
 use crate::interactive::tui::stream_events::apply_event;
 use crate::interactive::tui::transcript::BlockKind;
@@ -19,6 +19,7 @@ fn busy_stream() -> crate::interactive::tui::agent::Stream {
         rx,
         cancel: saya_agent::CancellationToken::new(),
         prompt: String::new(),
+        question_scope: None,
     }
 }
 
@@ -52,7 +53,7 @@ fn painted_lines(buffer: &str) -> Vec<&str> {
     buffer.lines().collect()
 }
 
-/// The packet's core test: a conversation comfortably longer than an 80×24
+/// The core case: a conversation comfortably longer than an 80×24
 /// pane, a stream in flight, the live answer visible at the bottom — its
 /// label must read `SAYA (draft)`, not a final-looking `SAYA`.
 #[test]
@@ -116,8 +117,7 @@ fn the_draft_marker_survives_scrolling() {
 }
 
 /// The control: a short conversation that fits its pane still marks its
-/// draft. This passes before and after the fix — it proves nothing on its
-/// own; it guards the no-regression flank of the change.
+/// draft. It proves nothing on its own; it guards the no-regression flank.
 #[test]
 fn a_short_conversation_still_marks_its_draft() {
     let mut app = empty_app();

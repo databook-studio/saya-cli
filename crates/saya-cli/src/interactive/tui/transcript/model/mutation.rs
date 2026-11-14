@@ -29,7 +29,7 @@ impl Transcript {
         // this boundary serves two different shrinks and they need opposite
         // handling. A tail shrink (a fold or discard below the reader) must
         // lower `scroll_up` by the delta, or `start` falls with `rem` and the
-        // window walks backwards through history (re-audit R03). Prefix
+        // window walks backwards through history. Prefix
         // eviction (bounds draining rows off the front) must not move
         // `scroll_up` at all: the whole array shifts down by the dropped
         // count, so `start` falling by that same count already lands on the
@@ -123,7 +123,7 @@ impl Transcript {
     /// the cache is then stale and the re-measure is a real re-wrap — the one
     /// extra pass a scrolled mutation pays while evicting (without eviction
     /// the post-bounds measure is a cache hit). No cache or index is added to
-    /// avoid it. A shrinking mutation is no longer a zero growth: pure-removal
+    /// avoid it. A shrinking mutation is not a zero growth: pure-removal
     /// paths fold and discard with the anchor lowered by the exact shrink, so
     /// the window stays on the rows the reader was reading.
     fn after_scrolled_mutation(&mut self, measured: Option<(usize, usize, usize)>, evicted: bool) {

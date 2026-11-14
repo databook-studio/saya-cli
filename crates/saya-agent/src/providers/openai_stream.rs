@@ -1,92 +1,63 @@
-use super::{framing::whitespace, openai_chunks::Chunk, tool_assembly::ToolAssembly};
+use super::{
+    framing::{boundary, whitespace},
+    openai_chunks::Chunk,
+    stall::ProgressClock,
+    tool_assembly::ToolAssembly,
+};
 use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
-use futures_util::{StreamExt, stream};
+use futures_util::stream;
 use reqwest::Response;
 use std::{collections::VecDeque, time::Duration};
+
+mod driver;
 
 pub(super) fn parse(
     response: Response,
     cancellation: CancellationToken,
     idle: Duration,
+    request_timeout: Duration,
+    stall: Duration,
 ) -> ProviderStream {
     Box::pin(stream::unfold(
         (
             response.bytes_stream(),
-            State::default(),
+            State {
+                progress: ProgressClock::new(stall),
+                ..State::default()
+            },
             cancellation,
             idle,
+            std::time::Instant::now(),
+            request_timeout,
         ),
-        next,
+        driver::next,
     ))
-}
-
-async fn next<S>(
-    mut value: (S, State, CancellationToken, Duration),
-) -> Option<(
-    Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken, Duration),
-)>
-where
-    S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
-{
-    loop {
-        if value.2.is_cancelled() {
-            value.1.done = true;
-            return Some((Err(ProviderError::Cancelled), value));
-        }
-        if let Some(event) = value.1.pending.pop_front() {
-            return Some((Ok(event), value));
-        }
-        if value.1.done {
-            return None;
-        }
-        // Per-chunk idle budget instead of a total cap (see anthropic_stream).
-        let item = tokio::select! {
-            _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
-            item = tokio::time::timeout(value.3, value.0.next()) => match item {
-                Ok(item) => item,
-                Err(_) => {
-                    value.1.done = true;
-                    return Some((
-                        Err(ProviderError::Request("provider stream stalled".into())),
-                        value,
-                    ));
-                }
-            }
-        };
-        let Some(chunk) = item else {
-            value.1.done = true;
-            return Some((Err(ProviderError::InvalidResponse), value));
-        };
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(_) => {
-                value.1.done = true;
-                return Some((
-                    Err(ProviderError::Request("network request failed".into())),
-                    value,
-                ));
-            }
-        };
-        if let Err(error) = value.1.push(&chunk) {
-            value.1.done = true;
-            return Some((Err(error), value));
-        }
-    }
 }
 
 #[derive(Default)]
 struct State {
     bytes: Vec<u8>,
+    frames: super::framing::FrameCount,
     pending: VecDeque<ProviderEvent>,
     tools: ToolAssembly,
     usage: TokenUsage,
+    usage_reported: bool,
+    /// `prompt_tokens` and `completion_tokens` have each been seen on some chunk of this response.
+    input_seen: bool,
+    output_seen: bool,
     content: bool,
     done: bool,
+    /// Truncation error held back until the driver has drained `pending`.
+    deferred: Option<ProviderError>,
+    /// A length truncation was seen: later frames are read for their usage only.
+    draining: bool,
     assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
     text: String,
+    /// Last content-bearing delta, so keep-alives cannot hold a silent stream
+    /// open.
+    progress: ProgressClock,
 }
 impl State {
     fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
@@ -108,16 +79,24 @@ impl State {
             ));
         }
         self.bytes.extend_from_slice(chunk);
-        while let Some((end, skip)) = boundary(&self.bytes) {
-            let frame = String::from_utf8(self.bytes[..end].to_vec())
+        let mut consumed = 0;
+        while let Some((end, skip)) = boundary(&self.bytes[consumed..]) {
+            let usage = self.usage_reported.then_some(self.usage);
+            self.frames.admit(usage)?;
+            let frame_end = consumed + end;
+            let frame = std::str::from_utf8(&self.bytes[consumed..frame_end])
                 .map_err(|_| ProviderError::InvalidResponse)?;
-            self.bytes.drain(..end + skip);
-            let data = frame
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if data.is_empty() {
+            consumed = frame_end + skip;
+            let mut data = String::new();
+            let mut has_data = false;
+            for value in frame.lines().filter_map(|line| line.strip_prefix("data:")) {
+                if has_data {
+                    data.push('\n');
+                }
+                data.push_str(value.trim_start());
+                has_data = true;
+            }
+            if !has_data || data.is_empty() {
                 continue;
             }
             if data == "[DONE]" {
@@ -126,13 +105,27 @@ impl State {
             }
             let chunk: Chunk =
                 serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
-            if let Some(usage) = chunk.usage {
+            let current_usage_reported = chunk.usage.as_ref().is_some_and(has_reported_usage);
+            if let Some(usage) = chunk.usage
+                && current_usage_reported
+            {
+                self.input_seen |= usage.prompt_tokens.is_some();
+                self.output_seen |= usage.completion_tokens.is_some();
                 apply_usage(&mut self.usage, &usage);
-                self.pending.push_back(ProviderEvent::Usage(self.usage));
+                // Usage is reported only when both totals were seen: a missing side is unknown, not zero.
+                if self.input_seen && self.output_seen {
+                    self.usage_reported = true;
+                    self.pending.push_back(ProviderEvent::Usage(self.usage));
+                }
+            }
+            if self.draining {
+                // After a truncation only usage matters: the content, the
+                // tool deltas and an empty `choices` list are all ignored.
+                continue;
             }
             let Some(choice) = chunk.choices.into_iter().next() else {
                 // The trailing usage-only chunk carries an empty choices list.
-                if self.usage == TokenUsage::default() {
+                if !current_usage_reported {
                     return Err(ProviderError::InvalidResponse);
                 }
                 continue;
@@ -144,10 +137,12 @@ impl State {
                 // else stays a generic protocol failure. Truncation is typed
                 // and carries the partial output, never retried upstream.
                 if reason == "length" {
-                    return Err(ProviderError::output_truncated(
+                    self.deferred = Some(ProviderError::output_truncated(
                         std::mem::take(&mut self.text),
                         self.tools.partial_json(),
                     ));
+                    self.draining = true;
+                    continue;
                 }
                 return Err(ProviderError::InvalidResponse);
             }
@@ -157,15 +152,18 @@ impl State {
                 self.reserve(text.len())?;
                 self.content = true;
                 self.text.push_str(&text);
+                self.progress.observe();
                 self.pending.push_back(ProviderEvent::TextDelta(text));
             }
             if let Some(reasoning) = choice.delta.reasoning_content
                 && !reasoning.is_empty()
             {
                 self.reserve(reasoning.len())?;
+                self.progress.observe();
                 self.pending
                     .push_back(ProviderEvent::ReasoningDelta(reasoning));
             }
+            let tool_delta = !choice.delta.tool_calls.is_empty();
             for call in choice.delta.tool_calls {
                 self.tools.push(
                     call.index,
@@ -178,8 +176,14 @@ impl State {
                     return Err(size_error());
                 }
             }
+            if tool_delta {
+                self.progress.observe();
+            }
         }
-        if self.done {
+        if consumed > 0 {
+            self.bytes.drain(..consumed);
+        }
+        if self.done && !self.draining {
             if !whitespace(&self.bytes) || (!self.content && self.tools.is_empty()) {
                 return Err(ProviderError::InvalidResponse);
             }
@@ -198,17 +202,17 @@ fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
 }
 
-fn boundary(value: &[u8]) -> Option<(usize, usize)> {
-    value
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .map(|i| (i, 4))
-        .or_else(|| {
-            value
-                .windows(2)
-                .position(|part| part == b"\n\n")
-                .map(|i| (i, 2))
+fn has_reported_usage(usage: &super::openai_chunks::Usage) -> bool {
+    usage.prompt_tokens.is_some()
+        || usage.completion_tokens.is_some()
+        || usage.prompt_tokens_details.as_ref().is_some_and(|details| {
+            details.cached_tokens.is_some() || details.cache_write_tokens.is_some()
         })
+        || usage
+            .completion_tokens_details
+            .as_ref()
+            .is_some_and(|details| details.reasoning_tokens.is_some())
+        || usage.cost.is_some()
 }
 
 /// Folds an OpenAI usage chunk into the running totals for one response. The
@@ -227,66 +231,22 @@ fn apply_usage(accumulated: &mut TokenUsage, usage: &super::openai_chunks::Usage
         .prompt_tokens_details
         .as_ref()
         .and_then(|details| details.cached_tokens);
+    accumulated.cache_creation_input_tokens = usage
+        .prompt_tokens_details
+        .as_ref()
+        .and_then(|details| details.cache_write_tokens);
     accumulated.reasoning_tokens = usage
         .completion_tokens_details
         .as_ref()
         .and_then(|details| details.reasoning_tokens);
+    // OpenRouter reports cost in US dollars; micro-USD keeps the guard in
+    // integers, and a negative or non-finite figure is not a report at all.
+    accumulated.cost_micros = usage.cost.and_then(|cost| {
+        cost.is_finite()
+            .then(|| (cost.max(0.0) * 1_000_000.0).round() as u64)
+    });
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{TokenUsage, apply_usage};
-    use serde_json::json;
-
-    /// Deliverable 4 (OpenAI mapping, with): a usage chunk with detail objects
-    /// populates `cached_input_tokens` and `reasoning_tokens` on the running
-    /// total.
-    #[test]
-    fn apply_usage_populates_cache_and_reasoning() {
-        let mut accumulated = TokenUsage::default();
-        let usage: super::super::openai_chunks::Usage = serde_json::from_value(json!({
-            "prompt_tokens": 100,
-            "completion_tokens": 200,
-            "prompt_tokens_details": {"cached_tokens": 90},
-            "completion_tokens_details": {"reasoning_tokens": 270}
-        }))
-        .expect("parses");
-        apply_usage(&mut accumulated, &usage);
-        assert_eq!(accumulated.input_tokens, 100);
-        assert_eq!(accumulated.output_tokens, 200);
-        assert_eq!(accumulated.cached_input_tokens, Some(90));
-        assert_eq!(accumulated.reasoning_tokens, Some(270));
-        assert_eq!(accumulated.cache_creation_input_tokens, None);
-    }
-
-    /// Deliverable 4 (OpenAI mapping, without): a usage chunk with no detail
-    /// objects leaves the new fields `None` and does not clobber a previously
-    /// reported cache hit — the trailing chunk for one response carries the
-    /// final numbers, but detail absence is an honest `None`, not a reset.
-    #[test]
-    fn apply_usage_without_details_leaves_new_fields_none() {
-        let mut accumulated = TokenUsage::default();
-        let usage: super::super::openai_chunks::Usage =
-            serde_json::from_value(json!({"prompt_tokens": 5, "completion_tokens": 6}))
-                .expect("parses");
-        apply_usage(&mut accumulated, &usage);
-        assert_eq!(accumulated.input_tokens, 5);
-        assert_eq!(accumulated.output_tokens, 6);
-        assert_eq!(accumulated.cached_input_tokens, None);
-        assert_eq!(accumulated.reasoning_tokens, None);
-    }
-
-    /// Deliverable 5 (OpenAI mapping): a reported `cached_tokens: 0` flows
-    /// through as `Some(0)`, never collapsed to `None`.
-    #[test]
-    fn apply_usage_reports_zero_cache_as_some_zero() {
-        let mut accumulated = TokenUsage::default();
-        let usage: super::super::openai_chunks::Usage = serde_json::from_value(json!({
-            "prompt_tokens": 10,
-            "prompt_tokens_details": {"cached_tokens": 0}
-        }))
-        .expect("parses");
-        apply_usage(&mut accumulated, &usage);
-        assert_eq!(accumulated.cached_input_tokens, Some(0));
-    }
-}
+#[path = "openai_stream/tests.rs"]
+mod tests;

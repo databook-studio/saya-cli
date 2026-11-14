@@ -4,8 +4,8 @@ pub(crate) mod action_line;
 mod context_line;
 pub(crate) mod status;
 
-// Test-only shim: `status_tests.rs` moves byte-identical with its
-// `use super::super::theme::…` path, which now resolves to this module.
+// Test-only shim: `status_tests.rs` uses `use super::super::theme::…`, which
+// resolves to this module.
 #[cfg(test)]
 pub(super) use super::theme;
 

@@ -1,10 +1,26 @@
-use crate::{CancellationToken, ProviderError};
+use crate::{
+    CancellationToken, ControlledProviderError, EffectOutcome, PhysicalAttemptControl,
+    ProviderError,
+};
 use futures_util::StreamExt;
 use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+
+/// What the transport needs to decide whether a rejected send is retryable:
+/// the configured backoff schedule.
+#[derive(Clone, Copy)]
+pub(super) struct RetryPolicy<'a> {
+    delays: &'a [Duration],
+}
+
+impl<'a> RetryPolicy<'a> {
+    pub(super) const fn new(delays: &'a [Duration]) -> Self {
+        Self { delays }
+    }
+}
 
 /// Decode one HTTP JSON body without allowing reqwest to buffer an
 /// unbounded response before the provider applies its stream budget.
@@ -27,57 +43,154 @@ pub(super) async fn read_json<T: DeserializeOwned>(
 }
 
 enum AttemptError {
-    Network,
+    /// The send failed below HTTP. Only a reset/aborted connection is worth
+    /// retrying: a refused or otherwise failed connection would fail the same
+    /// way again, and a timeout already spent its establishment budget.
+    Network {
+        connection_reset: bool,
+    },
     Timeout,
 }
 
 pub(super) async fn send_stream(
-    mut build: impl FnMut() -> RequestBuilder,
-    delays: &[Duration],
+    build: impl FnMut() -> RequestBuilder,
+    retry: RetryPolicy<'_>,
     cancellation: &CancellationToken,
     endpoint: &str,
     establishment_timeout: Duration,
 ) -> Result<Response, ProviderError> {
+    send_stream_inner(
+        build,
+        retry,
+        cancellation,
+        endpoint,
+        establishment_timeout,
+        None,
+    )
+    .await
+    .map_err(provider_error)
+}
+
+pub(super) async fn send_stream_controlled(
+    build: impl FnMut() -> RequestBuilder,
+    retry: RetryPolicy<'_>,
+    cancellation: &CancellationToken,
+    endpoint: &str,
+    establishment_timeout: Duration,
+    attempts: &mut PhysicalAttemptControl<'_>,
+) -> Result<Response, ControlledProviderError> {
+    send_stream_inner(
+        build,
+        retry,
+        cancellation,
+        endpoint,
+        establishment_timeout,
+        Some(attempts),
+    )
+    .await
+}
+
+async fn send_stream_inner(
+    mut build: impl FnMut() -> RequestBuilder,
+    retry: RetryPolicy<'_>,
+    cancellation: &CancellationToken,
+    endpoint: &str,
+    establishment_timeout: Duration,
+    mut attempts: Option<&mut PhysicalAttemptControl<'_>>,
+) -> Result<Response, ControlledProviderError> {
+    let delays = retry.delays;
     for attempt in 0..=delays.len() {
+        if let Some(control) = attempts.as_deref_mut() {
+            control.admit_before_send().await?;
+            if cancellation.is_cancelled() {
+                // The loop settles whatever this admission left live. Settling
+                // here would race the loop dropping this future on the same
+                // cancellation, orphaning the permit.
+                return Err(ProviderError::Cancelled.into());
+            }
+        }
         let response = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProviderError::Cancelled),
-            response = tokio::time::timeout(establishment_timeout, build().send()) => match response {
-                Ok(Ok(response)) => Ok(response),
-                Ok(Err(_)) => Err(AttemptError::Network),
+            biased;
+            _ = cancellation.cancelled() => {
+                return Err(ProviderError::Cancelled.into());
+            }
+            response = tokio::time::timeout(establishment_timeout, async {
+                if let Some(control) = attempts.as_deref_mut() { control.dispatch_started()?; }
+                Ok::<_, ControlledProviderError>(build().send().await)
+            }) => match response {
+                Ok(Ok(Ok(response))) => Ok(response),
+                Ok(Ok(Err(error))) => Err(AttemptError::Network {
+                    connection_reset: is_connection_reset(&error),
+                }),
+                Ok(Err(error)) => return Err(error),
                 Err(_) => Err(AttemptError::Timeout),
             },
         };
         match response {
-            Ok(response) if response.status().is_success() => return Ok(response),
+            Ok(response) if response.status().is_success() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control.hold_successful_response()?;
+                }
+                return Ok(response);
+            }
             Ok(response) if retryable(response.status()) && attempt < delays.len() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
                 let delay = parse_retry_after(response.headers())
                     .unwrap_or_else(|| jitter(delays[attempt]))
                     .min(MAX_BACKOFF);
                 wait(delay, cancellation).await?;
             }
             Ok(response) => {
-                return Err(ProviderError::Request(describe(response.status())));
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
+                return Err(ProviderError::Request(describe(response.status())).into());
             }
-            Err(error) if attempt < delays.len() => {
+            Err(AttemptError::Network {
+                connection_reset: true,
+            }) if attempt < delays.len() => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
                 let delay = jitter(delays[attempt]).min(MAX_BACKOFF);
                 wait(delay, cancellation).await?;
-                let _ = error;
             }
             Err(error) => {
+                if let Some(control) = attempts.as_deref_mut() {
+                    control
+                        .settle_active(EffectOutcome::Unknown, None, false)
+                        .await?;
+                }
                 if matches!(error, AttemptError::Timeout) {
                     return Err(ProviderError::Request(format!(
                         "provider request timed out while establishing a connection to {endpoint}"
-                    )));
+                    ))
+                    .into());
                 }
                 return Err(ProviderError::Request(format!(
                     "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
-                )));
+                )).into());
             }
         }
     }
     Err(ProviderError::Request(format!(
         "could not reach the provider at {endpoint} — check that it is running and the configured base_url is correct"
-    )))
+    )).into())
+}
+
+pub(super) fn provider_error(error: ControlledProviderError) -> ProviderError {
+    match error {
+        ControlledProviderError::Provider(error) => error,
+        _ => ProviderError::Request("controlled provider call failed".into()),
+    }
 }
 
 async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), ProviderError> {
@@ -87,8 +200,36 @@ async fn wait(delay: Duration, cancellation: &CancellationToken) -> Result<(), P
     }
 }
 
+/// Whether a rejected status is worth retrying: a rate limit (429) or a
+/// server-side failure (5xx, which includes Anthropic's 529 overloaded
+/// response). Every other 4xx is the request's own fault — a wrong model,
+/// key, or body — and re-sending it would fail identically.
 fn retryable(status: StatusCode) -> bool {
     status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Whether a transport failure is a connection reset/abort worth retrying.
+/// A refused connection, DNS failure, or timeout is not: the first two would
+/// fail the same way again, and a timeout already spent its establishment
+/// budget. The reset is looked for anywhere in the error's source chain
+/// because `reqwest` wraps the `std::io::Error` at different depths.
+fn is_connection_reset(error: &reqwest::Error) -> bool {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = source {
+        if let Some(io) = current.downcast_ref::<std::io::Error>()
+            && matches!(
+                io.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        {
+            return true;
+        }
+        source = current.source();
+    }
+    false
 }
 
 /// Turns a provider's status code into a redacted but *diagnosable* message:
@@ -130,191 +271,5 @@ fn jitter(base: Duration) -> Duration {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
-
-    #[test]
-    fn test_parse_retry_after_valid_seconds() {
-        let mut headers = HeaderMap::new();
-        headers.insert(RETRY_AFTER, HeaderValue::from_static("5"));
-        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(5)));
-
-        headers.insert(RETRY_AFTER, HeaderValue::from_static(" 120 "));
-        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(120)));
-    }
-
-    #[test]
-    fn test_parse_retry_after_invalid_or_missing() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(parse_retry_after(&headers), None);
-
-        headers.insert(RETRY_AFTER, HeaderValue::from_static(""));
-        assert_eq!(parse_retry_after(&headers), None);
-
-        headers.insert(
-            RETRY_AFTER,
-            HeaderValue::from_static("Mon, 01 Jan 2030 00:00:00 GMT"),
-        );
-        assert_eq!(parse_retry_after(&headers), None);
-
-        headers.insert(RETRY_AFTER, HeaderValue::from_static("invalid"));
-        assert_eq!(parse_retry_after(&headers), None);
-
-        headers.insert(RETRY_AFTER, HeaderValue::from_static("-5"));
-        assert_eq!(parse_retry_after(&headers), None);
-    }
-
-    #[test]
-    fn test_jitter_bounds() {
-        let bases = [
-            Duration::ZERO,
-            Duration::from_millis(1),
-            Duration::from_millis(100),
-            Duration::from_secs(1),
-            Duration::from_secs(10),
-            Duration::from_secs(120),
-        ];
-
-        for base in bases {
-            for _ in 0..50 {
-                let j = jitter(base);
-                assert!(
-                    j >= base / 2,
-                    "jitter({base:?}) = {j:?} should be >= base / 2 ({:?})",
-                    base / 2
-                );
-                assert!(
-                    j <= base,
-                    "jitter({base:?}) = {j:?} should be <= base ({base:?})"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_retry_after_and_backoff_capped_at_max() {
-        let mut headers = HeaderMap::new();
-        headers.insert(RETRY_AFTER, HeaderValue::from_static("120"));
-        let parsed = parse_retry_after(&headers).unwrap();
-        let delay = parsed.min(MAX_BACKOFF);
-        assert_eq!(delay, MAX_BACKOFF);
-
-        let large_base = Duration::from_secs(200);
-        let j = jitter(large_base).min(MAX_BACKOFF);
-        assert!(j <= MAX_BACKOFF);
-    }
-
-    #[test]
-    fn status_descriptions_name_the_fix_without_the_body() {
-        let text = describe(StatusCode::UNAUTHORIZED);
-        assert!(text.contains("401") && text.contains("API key"), "{text}");
-        let not_found = describe(StatusCode::NOT_FOUND);
-        assert!(
-            not_found.contains("404") && not_found.contains("model"),
-            "{not_found}"
-        );
-        let payload = describe(StatusCode::PAYLOAD_TOO_LARGE);
-        assert!(
-            payload.contains("413") && payload.contains("too large"),
-            "{payload}"
-        );
-        let other = describe(StatusCode::FAILED_DEPENDENCY);
-        assert!(text.len() > 10 && !other.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_send_stream_honors_retry_after() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server_task = tokio::spawn(async move {
-            if let Ok((socket, _)) = listener.accept().await {
-                let mut buf = [0_u8; 1024];
-                let _ = socket.readable().await;
-                let _ = socket.try_read(&mut buf);
-                let response = "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                let _ = socket.writable().await;
-                let _ = socket.try_write(response.as_bytes());
-            }
-            if let Ok((socket, _)) = listener.accept().await {
-                let mut buf = [0_u8; 1024];
-                let _ = socket.readable().await;
-                let _ = socket.try_read(&mut buf);
-                let response =
-                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
-                let _ = socket.writable().await;
-                let _ = socket.try_write(response.as_bytes());
-            }
-        });
-
-        let client = reqwest::Client::new();
-        let cancellation = CancellationToken::new();
-        let url = format!("http://{addr}");
-        let delays = vec![Duration::from_secs(10)];
-
-        let start = std::time::Instant::now();
-        let res = send_stream(
-            || client.get(&url),
-            &delays,
-            &cancellation,
-            &url,
-            Duration::from_secs(5),
-        )
-        .await;
-        let elapsed = start.elapsed();
-
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap().status(), reqwest::StatusCode::OK);
-        assert!(elapsed < Duration::from_secs(2));
-
-        server_task.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn send_stream_times_out_while_establishing() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server_task = tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            drop(socket);
-        });
-
-        let client = reqwest::Client::new();
-        let cancellation = CancellationToken::new();
-        let url = format!("http://{addr}");
-        let started = std::time::Instant::now();
-        let error = send_stream(
-            || client.get(&url),
-            &[],
-            &cancellation,
-            &url,
-            Duration::from_millis(20),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(error.to_string().contains("timed out"), "{error:?}");
-        assert!(started.elapsed() < Duration::from_millis(150));
-        server_task.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn send_stream_cancellation_wins_before_establishment() {
-        let client = reqwest::Client::new();
-        let cancellation = CancellationToken::new();
-        cancellation.cancel();
-        let error = send_stream(
-            || client.get("http://127.0.0.1:1"),
-            &[],
-            &cancellation,
-            "http://127.0.0.1:1",
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap_err();
-
-        assert_eq!(error, ProviderError::Cancelled);
-    }
-}
+#[path = "http/tests.rs"]
+mod tests;

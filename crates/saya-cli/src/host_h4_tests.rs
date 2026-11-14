@@ -1,8 +1,6 @@
-//! H4 — the prompt must not claim "no shell" when the program is a shell.
+//! The prompt must not claim "no shell" when the program is a shell.
 //!
-//! Each test below names the property the slice exists for, in the order the
-//! task lists them. Written before the fix; the failing output is pasted
-//! verbatim into `REPORT.md` before any green edit.
+//! Each test below names the property this module exists for.
 
 use crate::approval_facts::{ApprovalFacts, HostFacts};
 use serde_json::json;
@@ -73,8 +71,8 @@ fn the_shell_line_says_the_argument_is_interpreted() {
     );
 }
 
-/// Both lines present for a shell program: the new typed-argv line and the
-/// existing interpreter-approval line.
+/// Both lines present for a shell program: the typed-argv line and the
+/// interpreter-approval line.
 #[test]
 fn the_interpreter_warning_still_rides_alongside() {
     let body = body_for("bash", &["-c", "echo hi"]);

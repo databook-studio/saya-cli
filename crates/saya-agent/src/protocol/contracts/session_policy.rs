@@ -2,12 +2,37 @@
 //! consults, so the mode match and the session-grant state live in exactly
 //! one place. A frontend renders an [`ApprovalDecision::Ask`] and reports the
 //! user's [`ApprovalChoice`] back; it never implements policy itself.
+//!
+//! The engine holds two axes. The *consent posture* ([`ApprovalPolicy`]) is
+//! who answers — `ask` and `accept-edits` put calls to a frontend, `read-only`
+//! and `never` decide without one, `bypass` allows outright. The *task
+//! posture* ([`AgentMode`]) is what the task may touch: `plan` refuses
+//! write-shaped calls before the approval match runs. The task posture
+//! narrows, never widens, so `plan` denies writes under every policy including
+//! `bypass`, and a grant made in `build` is inert under `plan` and live again
+//! on return.
+//!
+//! Both axes are shared cells: a clone of the policy — every turn's decider —
+//! reads the mode a mid-session switch writes at its next `resolve`, and a
+//! `frozen` policy (the headless run's) refuses every switch, because its
+//! approval is stated before the run starts.
+//!
+//! The task posture narrows, with one door: a session that composes a plan
+//! gate ([`PlanGateCell`]) opens `plan`'s write surface by approving a
+//! submitted plan, and that one cell is what both this engine and the
+//! surface's advertisement read — so an advertised write is a write the
+//! engine admits, and a hidden one is refused. No gate is the closed shape.
+//!
+//! Every structural guard — the SQL safety layer, the sandbox, the allowlists
+//! — lives in the tools and the composition, untouched by any mode: a mode
+//! judges *what the task may touch* and *who answers*, never *what a tool is*.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use super::ToolEffect;
-use super::approval::{AgentMode, read_only_permits};
+use super::approval::{AgentMode, WORKSPACE_WRITE_TOKEN, read_only_permits};
+use super::session_grants::SessionGrants;
 use crate::protocol::approval::ApprovalPolicy;
 
 /// How the engine resolves one tool call.
@@ -20,9 +45,9 @@ pub enum ApprovalDecision {
     /// Refuse without asking. `reason` names why when the refusal carries
     /// information beyond the mode itself — a headless ask no reader can
     /// answer names the run's real approval. `None` is the mode's own
-    /// refusal, whose words the mode's documentation already states.
+    /// refusal, whose words the mode's documentation states.
     Deny {
-        /// Why the call was refused, when there is more to say than the mode.
+        /// Why the call was refused, when there is more to say.
         reason: Option<&'static str>,
     },
 }
@@ -51,114 +76,107 @@ pub enum ApprovalChoice {
     Deny,
 }
 
-/// The grammar tokens granted for this session: process lifetime, never
-/// persisted, and a resumed session starts empty. Additive only — nothing
-/// widens a grant except another explicit user choice.
+/// The plan posture's one cell: whether an operator has approved a submitted
+/// plan for this session.
+///
+/// Shared by construction — the surface that advertises the write family and
+/// the engine that admits the calls it lists hold the same cell — so the
+/// advertisement and the enforcement cannot drift into the
+/// advertised-but-refused shape. The gate opens once and is closed again when
+/// the session leaves `plan`; a policy composed with no cell is the closed
+/// shape.
 #[derive(Debug, Clone, Default)]
-pub struct SessionGrants {
-    tokens: Arc<Mutex<BTreeSet<String>>>,
-    /// The calls each token's grant has pre-answered — the count a prompt's
-    /// session-history line reads ("3 calls so far"). Incremented by
-    /// [`SessionPolicy::resolve`] every time a grant resolves a call to
-    /// `Allow`, so the number a prompt states is the store's own count, not
-    /// a frontend's tally. Allow-once and denies record nothing here.
-    calls: Arc<Mutex<BTreeMap<String, u64>>>,
-}
+pub struct PlanGateCell(Arc<AtomicBool>);
 
-impl SessionGrants {
-    /// Records a grant and reports whether it was new, so a first grant can
-    /// be journaled exactly once.
-    pub fn grant(&self, token: &str) -> bool {
-        self.locked().insert(token.to_owned())
+impl PlanGateCell {
+    /// Whether the operator has opened the plan posture's write surface.
+    pub fn is_open(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 
-    /// Whether this token is granted for the session.
-    pub fn is_granted(&self, token: &str) -> bool {
-        self.locked().contains(token)
+    /// Opens it: the operator approved a submitted plan.
+    pub fn open(&self) {
+        self.0.store(true, Ordering::Release);
     }
 
-    /// Whether nothing has been granted yet.
-    pub fn is_empty(&self) -> bool {
-        self.locked().is_empty()
-    }
-
-    /// The granted tokens in sorted order — a session listing's words.
-    pub fn tokens(&self) -> Vec<String> {
-        self.locked().iter().cloned().collect()
-    }
-
-    /// The calls [`SessionPolicy::resolve`] allowed under `token` — the
-    /// session-history figure a prompt's session line reads. Zero for a
-    /// token nothing has run under yet.
-    pub fn calls(&self, token: &str) -> u64 {
-        self.call_lock().get(token).copied().unwrap_or(0)
-    }
-
-    /// Counts one grant-answered call. Internal to the policy: only
-    /// `resolve` deciding `Allow` through a grant increments a token.
-    pub(crate) fn record_allowed_call(&self, token: &str) {
-        *self.call_lock().entry(token.to_owned()).or_insert(0) += 1;
-    }
-
-    /// The grant set is a plain set, so a panicked holder cannot have left it
-    /// in a state recovery must fear; taking the guard anyway keeps approving
-    /// (and prompting) rather than wedging the session on a poisoned lock.
-    fn locked(&self) -> MutexGuard<'_, BTreeSet<String>> {
-        self.tokens.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The call counts share the same posture: a poisoned lock keeps
-    /// prompting rather than wedging the session.
-    fn call_lock(&self) -> MutexGuard<'_, BTreeMap<String, u64>> {
-        self.calls.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Closes it again: the session left `plan`, so the approval that opened
+    /// it — which belonged to the plan the operator read — no longer stands.
+    pub fn close(&self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
 /// The approval engine. One instance per interactive session, shared by every
 /// turn's decider: the mode is the session's `--approval-mode`, the grants
 /// start empty and grow only through [`SessionPolicy::record`]. The frozen
-/// shape ([`SessionPolicy::frozen`]) is the headless run's: seeded from
-/// `--allow`, unable to ask, unable to accumulate.
+/// shape ([`SessionPolicy::frozen`]) is the headless run's.
 #[derive(Debug, Clone)]
 pub struct SessionPolicy {
-    mode: ApprovalPolicy,
-    agent_mode: AgentMode,
+    /// The consent posture, as a shared cell: a clone reads what a switch
+    /// writes. `Relaxed` is enough — the cell publishes nothing beside itself,
+    /// and a stale read only resolves one call as it did a moment earlier.
+    mode: Arc<AtomicU8>,
+    /// The task posture, a shared cell for the same reason.
+    agent_mode: Arc<AtomicU8>,
+    /// The plan posture's gate, when the composing surface has one. `None` —
+    /// the headless run's policy, and every policy composed without a gate —
+    /// leaves `plan` denying write-shaped calls exactly as it did before the
+    /// gate existed.
+    plan_gate: Option<PlanGateCell>,
     grants: SessionGrants,
     /// Whether the policy accepts answers. `false` — the interactive shape —
-    /// asks and records; `true` — the headless run's — resolves what its
-    /// seeds do not cover to a structured deny and refuses every grant.
+    /// asks and records; `true` — the headless run's — denies what its seeds
+    /// do not cover, and refuses every grant and every switch.
     frozen: bool,
 }
 
 impl SessionPolicy {
     pub fn new(mode: ApprovalPolicy) -> Self {
         Self {
-            mode,
-            agent_mode: AgentMode::Build,
+            mode: Arc::new(AtomicU8::new(mode.code())),
+            agent_mode: Arc::new(AtomicU8::new(AgentMode::Build.code())),
+            plan_gate: None,
             grants: SessionGrants::default(),
             frozen: false,
         }
     }
 
-    /// Sets the agent's task posture, leaving the approval policy and the
-    /// grants untouched — a grant made in `Build` rides along inert under
-    /// `Plan` and answers again on return.
-    pub fn with_agent_mode(mut self, agent_mode: AgentMode) -> Self {
-        self.agent_mode = agent_mode;
+    /// Binds the session's plan gate, at construction: the cell an approved
+    /// `submit_plan` opens. The composing surface holds the same cell for its
+    /// advertisement, so the two read one answer. Construction, not a switch —
+    /// a gate is composed once per session and survives every mode change.
+    pub fn with_plan_gate(self, gate: Option<PlanGateCell>) -> Self {
+        Self {
+            plan_gate: gate,
+            ..self
+        }
+    }
+
+    /// Whether the plan posture's write surface is open. No gate is the closed
+    /// shape: `plan` denies a write-shaped call exactly as it always did.
+    pub fn plan_gate_open(&self) -> bool {
+        self.plan_gate.as_ref().is_some_and(PlanGateCell::is_open)
+    }
+
+    /// Sets the agent's task posture at construction, leaving the approval
+    /// policy and the grants untouched — a grant made in `Build` rides along
+    /// inert under `Plan` and answers again on return. Construction, not a
+    /// switch: a frozen policy is composed with its posture this way (the
+    /// headless `plan` run), which is why it does not consult the freeze.
+    /// [`set_agent_mode`](Self::set_agent_mode) is the mid-session one.
+    pub fn with_agent_mode(self, agent_mode: AgentMode) -> Self {
+        self.agent_mode.store(agent_mode.code(), Ordering::Relaxed);
         self
     }
 
     /// The headless run's policy, frozen: seeded from the run's `--allow`
-    /// tokens — the stated scopes are the approval — and unable to ask or
-    /// accumulate. An `Ask` the seeds do not cover resolves to a structured
-    /// deny naming [`HEADLESS_ASK_REASON`]; `record` refuses, so a headless
-    /// session grant is impossible, not merely unused.
+    /// tokens — the stated scopes are the approval — and unable to ask,
+    /// accumulate, or switch. `record` refuses, so a headless session grant
+    /// is impossible, not merely unused.
     pub fn frozen(mode: ApprovalPolicy, seeds: &[String]) -> Self {
         let policy = Self {
-            mode,
-            agent_mode: AgentMode::Build,
-            grants: SessionGrants::default(),
             frozen: true,
+            ..Self::new(mode)
         };
         for token in seeds {
             policy.grants.grant(token);
@@ -166,16 +184,37 @@ impl SessionPolicy {
         policy
     }
 
-    /// The policy's mode — what a session listing reads to state the mode
-    /// the store sits under.
-    pub fn mode(&self) -> ApprovalPolicy {
-        self.mode
+    /// Swaps the consent posture mid-session — what `/mode` and the keyboard
+    /// cycle set. Refused on a frozen policy: a headless run's approval is
+    /// stated before it starts and nothing may move it. Reports whether the
+    /// mode was set, so a caller can say a refusal rather than assume it.
+    /// Every clone of this policy reads the new mode at its next `resolve`.
+    pub fn set_mode(&self, mode: ApprovalPolicy) -> bool {
+        if self.frozen {
+            return false;
+        }
+        self.mode.store(mode.code(), Ordering::Relaxed);
+        true
     }
 
-    /// The agent's task posture — what a session listing reads to state
-    /// whether this session builds or plans.
+    /// Swaps the task posture mid-session, under the same refusal as
+    /// [`set_mode`](Self::set_mode).
+    pub fn set_agent_mode(&self, agent_mode: AgentMode) -> bool {
+        if self.frozen {
+            return false;
+        }
+        self.agent_mode.store(agent_mode.code(), Ordering::Relaxed);
+        true
+    }
+
+    /// The consent posture — what a session listing reads to state the mode.
+    pub fn mode(&self) -> ApprovalPolicy {
+        ApprovalPolicy::from_code(self.mode.load(Ordering::Relaxed))
+    }
+
+    /// The task posture — what a session listing reads to state build or plan.
     pub fn agent_mode(&self) -> AgentMode {
-        self.agent_mode
+        AgentMode::from_code(self.agent_mode.load(Ordering::Relaxed))
     }
 
     /// The session's grant store — what a prompt's "already allowed" facts
@@ -189,43 +228,70 @@ impl SessionPolicy {
     /// one; callers that do not suggest tokens pass `None` and the decision
     /// falls to the mode alone. A grant pre-answers the call the mode would
     /// have asked about, so it allows under `ask` — and counts the call
-    /// under its token, the session-history figure a prompt reads. `read-only`
-    /// and `never` never ask, so grants cannot move them — read-only still
-    /// allows exactly the read-shaped tools (`read_only_permits`) and denies
-    /// the rest, and `never` denies everything. `bypass` allows every call:
-    /// it is the per-call consent given once, in the launch flag, so no grant
-    /// is consulted and none is recorded — no ask occurs under it. On a
-    /// frozen policy — the headless run's — an `Ask` the seeds do not cover
-    /// resolves to [`ApprovalDecision::Deny`] naming [`HEADLESS_ASK_REASON`],
-    /// never to an ask: a headless surface has no reader, and its approval is
-    /// its seeds. The agent mode narrows, never widens: under [`AgentMode::Plan`]
-    /// a call whose effect fails [`read_only_permits`] denies before the
-    /// approval match runs — under every policy including `bypass` — so it
-    /// consults no grant and records no call, and a grant made in `Build` is
-    /// inert under `Plan` and live again on return. `Plan` is a task posture
-    /// and `read-only` is a consent posture, and they compose: the mode judges
-    /// *what the task may touch*, the policy judges *who answers*, never
-    /// *what the tool is*: every structural guard lives in the tools and the
-    /// composition, untouched by any mode.
+    /// under its token, the session-history figure a prompt reads.
+    /// `read-only` and `never` never ask, so grants cannot move them —
+    /// read-only still allows exactly the read-shaped tools
+    /// (`read_only_permits`) and denies the rest, and `never` denies
+    /// everything. `bypass` allows every call: it is the per-call consent
+    /// given once, in the launch flag, so no grant is consulted and none is
+    /// recorded — no ask occurs under it. `accept-edits` is `ask` plus one
+    /// pre-answer of its own, the workspace file family's token
+    /// ([`WORKSPACE_WRITE_TOKEN`]), which the mode states rather than the
+    /// user; it records nothing, so the store holds only what the user gave.
+    ///
+    /// On a frozen policy — the headless run's — an `Ask` the seeds do not
+    /// cover resolves to [`ApprovalDecision::Deny`] naming
+    /// [`HEADLESS_ASK_REASON`], never to an ask: a headless surface has no
+    /// reader, and its approval is its seeds. The freeze also refuses the
+    /// `accept-edits` pre-answer, which is a reader's consent and so cannot
+    /// apply where there is no reader — a run spelling that posture falls
+    /// back to `ask` and denies what nothing seeded. The task posture
+    /// narrows here too: under [`AgentMode::Plan`] a call whose effect fails
+    /// [`read_only_permits`] denies before the approval match runs — under
+    /// every policy including `bypass` — so it consults no grant and records
+    /// no call. The one door is the plan gate: a session whose operator
+    /// approved a submitted plan ([`PlanGateCell::open`]) resolves those calls
+    /// as the consent posture alone would, which is exactly the surface the
+    /// advertisement then lists.
     pub fn resolve(&self, effect: &ToolEffect, grant_token: Option<&str>) -> ApprovalDecision {
-        if self.agent_mode == AgentMode::Plan && !read_only_permits(effect) {
+        if self.agent_mode() == AgentMode::Plan
+            && !read_only_permits(effect)
+            && !self.plan_gate_open()
+        {
             return ApprovalDecision::Deny { reason: None };
         }
-        match self.mode {
+        match self.mode() {
             ApprovalPolicy::Bypass => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly if read_only_permits(effect) => ApprovalDecision::Allow,
             ApprovalPolicy::ReadOnly => ApprovalDecision::Deny { reason: None },
             ApprovalPolicy::Never => ApprovalDecision::Deny { reason: None },
-            ApprovalPolicy::Ask => match grant_token {
-                Some(token) if self.grants.is_granted(token) => {
-                    self.grants.record_allowed_call(token);
-                    ApprovalDecision::Allow
-                }
-                _ if self.frozen => ApprovalDecision::Deny {
-                    reason: Some(HEADLESS_ASK_REASON),
-                },
-                _ => ApprovalDecision::Ask,
+            ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => self.asking_arm(grant_token),
+        }
+    }
+
+    /// The arm both asking postures share: a held grant pre-answers the call,
+    /// a frozen policy denies with the run's own wording, and everything else
+    /// reaches the frontend. `accept-edits` adds exactly one pre-answer of its
+    /// own — the workspace file token — and it is not a grant: the call is
+    /// neither recorded as granted nor counted. The pre-answer is refused
+    /// under the freeze, before it is consulted, because a mode's consent is
+    /// a reader's.
+    fn asking_arm(&self, grant_token: Option<&str>) -> ApprovalDecision {
+        let pre_answered = !self.frozen
+            && self.mode() == ApprovalPolicy::AcceptEdits
+            && grant_token == Some(WORKSPACE_WRITE_TOKEN);
+        if pre_answered {
+            return ApprovalDecision::Allow;
+        }
+        match grant_token {
+            Some(token) if self.grants.is_granted(token) => {
+                self.grants.record_allowed_call(token);
+                ApprovalDecision::Allow
+            }
+            _ if self.frozen => ApprovalDecision::Deny {
+                reason: Some(HEADLESS_ASK_REASON),
             },
+            _ => ApprovalDecision::Ask,
         }
     }
 

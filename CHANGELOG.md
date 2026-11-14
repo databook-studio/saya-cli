@@ -3,7 +3,386 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.5.0 — 2026-11-13
+
+### Highlights
+
+- **Jobs.** `saya start` runs a job in a folder or a managed checkout;
+  `saya follow-up` adds work; `saya job` lists, shows, reviews, applies,
+  resumes, rewinds, or reconciles it.
+- **One-shot mode.** `saya -p "<task>"` runs one headless job and exits with a
+  result code; `--format json` and `ndjson` make it scriptable.
+- **Edits land where you work.** A Git folder is edited in place by default,
+  with before-images, a baseline undo, and a changed-path report; `--managed`
+  asks for an isolated checkout.
+- **A shell for the agent.** The session, `saya run`, and jobs can run commands
+  on the host or in the sandbox, including long builds in the background.
+- **Control.** Four permission modes, `[permissions] allow`/`deny` command
+  rules, one `--tools` list, and plan-first jobs.
+- **Extensions.** MCP servers, hooks, web search and fetch, helper agents,
+  images, notebooks, and your own markdown slash commands.
+- **Saved work.** `saya demo`, guided `saya setup`, saved investigations with
+  typed parameters, `/report`, and portable contracts with dbt import.
+- **Continuity.** A versioned session continuation, `/notes`, `/rotate`,
+  `/sessions`, project preferences, and `/recovery`.
+
+### Known limitations
+
+- **Jobs are not supported on Windows yet.** The job commands refuse with a
+  typed error instead of running a half-ported write path. Database features,
+  the session, and everything else that worked on Windows in 0.4.1 keep
+  working.
+
+### Breaking changes
+
+- `[jobs] wall_clock_seconds`, `tokens_per_endpoint`, `turns`, and `tool_calls`
+  moved to `[limits.run]`; `[jobs.fetch]` stays. Rewrite the keys.
+- `[ai] investigation_max_logical_answering_requests`,
+  `investigation_max_requested_tool_calls`, `investigation_max_elapsed_seconds`,
+  and `investigation_max_known_reported_tokens` moved to `[limits.session]` as
+  `requests`, `tool_calls`, `elapsed_seconds`, and `known_tokens`. `[limits.ask]`
+  may state its own values. Rewrite the keys.
+- `[jobs.runner]` and `[jobs.interpreter]` are gone. Move `program_dir` to
+  `[job] program_dir` and use the `shell` tool for commands; `allow` and
+  `timeout_seconds` have no replacement.
+- `[run] max_iterations` is gone. Use `limits.run.turns`; `SAYA_MAX_ITERATIONS`
+  is no longer read.
+- `--allow runner:<program>`, `--allow interpreter:<program>`, and
+  `--allow scratch` are usage errors. Use `shell`; drop `scratch`.
+- Workspace tools are `read`, `list`, `glob`, `grep`, `write`, `edit`, and
+  `delete`; the old `workspace_*` names are unknown tools.
+- A Git repository is edited in place by default. Scripts that need an owned
+  checkout must pass `--managed` or set `[job] root_mode = "managed"`.
+- `ConfigError`, `AgentError`, `ToolError`, and `CancellationReason` are
+  `#[non_exhaustive]`: add a wildcard arm to matches in another crate.
+
+### Added
+
+- **Native jobs.** `saya start <id> <task>`, `saya follow-up <id> …`, and
+  `saya job <verb>` (`list`, `show`, `events`, `resume`, `review`, `apply`,
+  `rewind`, `worktrees`, `doctor`, `export`, `notes`, `reconcile`, and the
+  rest) run and manage durable jobs. The session has `/start`, `/follow-up`,
+  `/job`, `/approve`, `/deny`, `/message`, `/pause`, `/continue`, and
+  `/cancel-child`.
+- **The `-p/--print` one-shot.** `saya -p "<task>"` runs one headless job in
+  the current directory and exits 0 completed, 2 usage or consent refusal,
+  5 failed, 6 paused, or 130 cancelled. `-p -` reads the task from stdin
+  (16 KiB). `--write`, `--job-id`, `--max-turns`, and `--max-budget-usd` shape
+  the job; `--format json` prints one result object and `--format ndjson`
+  streams agent events. An edit-capable `-p` with no `--write` may edit the
+  whole workspace; an explicit `--write` narrows it.
+- **Shared one-shot consent.** Under `accept-edits` or `bypass`, `saya start`
+  and the TUI `/start` panel need no `--approve`, and an empty `--write` scope
+  means the current folder. `saya job resume` answers with the same result
+  object and exit code as `saya -p`.
+- **In-place jobs by default.** `saya start` edits a Git working tree in place
+  unless `--managed` or `[job] root_mode = "managed"` asks for a checkout.
+  `--in-place` forces the folder, and `follow-up` follows the job's record.
+  A managed start that cannot use a checkout falls back in place with a stated
+  reason in `managed_fallback`.
+- **In-place write scope and undo.** A write job records bounded before-images
+  (4,096 paths, 8 MiB per file, 512 MiB total); `saya job rewind <job> --baseline`
+  restores them and removes what the job created. A non-`-p` write
+  job with no stated scope is refused. `saya job review` reports tool changes
+  and `shell_changes` separately, and marks a change its journal does not
+  account for as `foreign_changes`; rewind leaves that path unless `--force`
+  is passed. `saya job apply` finalizes in place and refuses a folder changed
+  since review.
+- **Managed checkouts.** A job can still use an owned checkout with explicit
+  review and apply-back; `saya job worktrees` lists them, and review reports
+  ignored paths, nested repositories, and truncated change sets.
+- **Plan-first jobs.** `saya start --plan` and session `plan` mode advertise
+  read tools and `submit_plan` until you approve the plan; approval opens the
+  write tools.
+- **Checkpoints and rewind.** `saya job rewind <job>` lists checkpoints and
+  `--to <turn>` restores one; the model has a `rewind` tool over the same store.
+- **The `shell` tool.** The session, `saya run` steps, and jobs run commands on
+  the host under the approval rules or in the sandbox (`sandbox: true`), and
+  can start a background command and read or kill it. A foreground command
+  defaults to a 120 s timeout (up to 600 s) and moves to the background when it
+  expires. The fifth live background run is refused, naming `shell_kill`.
+- **Permission modes.** `ask`, `accept-edits`, `plan`, and `bypass`, switched by
+  `/mode`, Shift+Tab, or `--permission-mode`; `[permissions] allow_bypass` is
+  required for `bypass`.
+- **Command permission rules.** `[permissions] allow` and `deny` state command
+  prefixes, evaluated segment by segment for compound commands; a deny rule
+  refuses in every mode, including `bypass`. A command with a substitution,
+  heredoc, unbalanced quotes, redirection, background `&`, or leading
+  environment assignment is never auto-allowed. `--allow-command` and
+  `--deny-command` state the same rules at launch. The rules are trusted-layer
+  only.
+- **One tool allow list.** `--tools name,…` or `[tools] allow` narrows the
+  model tools on the session, `saya ask`, `saya run`, and jobs with helpers.
+  The list only removes tools.
+- **Helper agents.** `[agents.<name>]` declares a helper type with a role, write
+  access, and an optional model; `--agents-max-children` and
+  `--agents-max-concurrent-model-requests` set the two bounds.
+- **MCP.** `[mcp_servers.<name>]` starts a stdio server whose tools appear as
+  `mcp__<server>__<tool>`. `saya mcp serve` exposes `list_profiles`, `schema`,
+  and `contracts`, plus `query` and `investigation_run` only when data sharing
+  is allowed; its profile allowlist is fixed at startup.
+- **Hooks.** `[hooks]` runs commands before and after a tool call, at turn end,
+  and at `session_start`, `session_end`, and `permission_request`. A
+  `pre_tool_use` exit 2 blocks the call; a `permission_request` exit 2 denies
+  and exit 0 falls through to the normal prompt.
+- **Built-in `/commit` and `/pr`.** Both are ordinary command prompts; a user
+  or repository command with the same name replaces them, and `/help` states
+  the precedence.
+- **Web search and fetch.** `[web_search]` configures a search backend, and
+  jobs gain `web_search` and `web_fetch`.
+- **Richer file tools.** `read` numbers every line (up to 2,000), returns
+  images, and shows notebook cells; `notebook_edit` changes one cell. `grep`
+  gains output modes, context, language types, multiline matching, and a cap;
+  `edit` gains `replace_all`; `glob` sorts newest-first. A whole-file `write`
+  is capped at 1 MiB.
+- **Bigger bounded results.** A `shell` command may be 64 KiB (was 8 KiB), a
+  `read` retains 256 KiB (was 64 KiB), and shell output entering the model is
+  capped at 30,000 characters with both ends kept and the rest saved to a
+  private spool the job can read.
+- **Instructions and preferences.** `AGENTS.md` files from the workspace root
+  down to the working directory and a personal `instructions.md` ride each
+  request as labelled, untrusted guidance (32 KiB project, 16 KiB personal,
+  64 nested files, symlinks refused); `/context` shows what loaded.
+  `saya preferences add|list|edit|forget` stores confirmed per-worktree notes.
+- **Sessions.** A saved session carries an optional versioned continuation;
+  `/notes` sets your notes on the summary, `/rotate` continues in a smaller
+  successor, and `saya sessions list|delete` manages saved sessions.
+- **`/recovery`.** Opt-in per session, it records the previous bytes of file
+  edits and restores one only while the file is still that edit's result.
+- **`saya demo`.** Builds a deterministic synthetic SQLite database of
+  customers, orders, and contacts and opens it read-only; no provider is
+  needed. `--reset` rebuilds it, `SAYA_DEMO_DIR` moves it, and the first screen
+  offers it when no database is configured.
+- **`saya setup` and `/setup`.** A guided flow drafts a provider and a database
+  profile, shows the exact TOML, probes the database (and, with consent, the
+  provider), then writes on confirm. It covers SQLite, PostgreSQL, MySQL,
+  Snowflake, ClickHouse, and BigQuery; probes run one at a time (15 s each,
+  120 s for Snowflake browser SSO); secrets are requested as environment
+  variable names only. Writes are atomic, backups are private, and an
+  interrupted commit leaves a recovery marker.
+- **Saved investigations.** `saya investigation save|list|show|edit|run|export|import|delete`
+  stores one bounded read-only query per JSON document (500-document cap,
+  128 KiB import). Saving validates the SQL but never runs it. Replay needs no
+  provider, resolves only an explicit or stored binding, and refuses a stale
+  review until `--revalidate`. `/investigation` and the TUI picker use the same
+  operations; a TUI replay runs in the background and Esc detaches it.
+- **Typed parameters.** `--param-spec name:type[:required]` declares `:name`
+  placeholders and `--param name=value` binds them; values are never stored.
+  PostgreSQL, MySQL, SQLite, and BigQuery bind natively; Snowflake needs
+  keypair auth, and ClickHouse refuses parameterised SQL.
+- **Captured answers.** A successful result carries a provenance line and is
+  captured in memory for the session (up to 32 MiB). `/export --snapshot`
+  writes the captured result without querying; `/export --refresh` re-runs the
+  query; `/report` writes a neutralised Markdown report (at most 100 rows,
+  2 MiB). Agent captures are limited to the rows the model saw and are labelled.
+- **Portable context.** `saya contracts export|import` moves Active claims as a
+  `saya.context` document; import files them Pending for review.
+  `contracts import-dbt` reads a dbt manifest (schema v10–v12, 32 MiB, 5,000
+  nodes) and imports node and column descriptions plus `relationships` tests.
+- **Clarification.** The agent may ask one focused question instead of guessing;
+  `saya ask` exits 6 with a `clarification_needed` event.
+- **Config inspection.** `saya config doctor --task query|ai|coding` reports one
+  task's readiness, `config show --explain` names the layer that supplied each
+  setting, and `/reload` applies configuration changes between turns.
+- **Managed runtimes.** `saya runtime install-node`, `install-deps`, and
+  `check-node` install and use a pinned Node runtime; each needs `--yes`.
+- **Job reporting.** `saya job show`, `saya job export`, and the `saya start`
+  result report provider usage, the progress object, the outcome, changed
+  paths, and readiness.
+- **`--verbose` diagnostics.** A fixed `saya local metrics` section is printed
+  to stderr after a settled turn; stdout and the exit code never change.
+- **Sandbox toolchain.** A sandboxed command reaches the host's resolved
+  `cargo`, `rustc`, `rustup`, `node`, `npm`, `npx`, `python3`, `pip3`, `go`,
+  `uv`, and `make` (at most 16 directories), read-only and executable.
+- **Ordinary repositories snapshot.** A tracked credential-shaped path is
+  included with a `sensitive_tracked_included` warning instead of refusing the
+  job, and relative in-repository symlinks are snapshotted and carried through
+  apply-back. A Git job's proposal lists the untracked sensitive paths it omits
+  (`omitted_sensitive`, bounded to 64 paths) with the full count.
+- **Provider attribution.** Every request identifies Saya with a
+  `User-Agent`; the OpenRouter endpoint also receives app-attribution headers,
+  and `[ai] app_attribution = false` opts out. No other host receives them.
+- **Doctor and Git compatibility.** `saya job doctor` separates optional items
+  from blocked ones. Git 2.34 and newer is supported; older Git is refused with
+  the found and minimum versions.
+- **Background completions are announced.** An exit notice is appended to the
+  next request; a headless job waits for a live run instead of polling, and a
+  repeated silent read of one run waits 30 s, then 60 s, then 120 s.
+- **Tool digest trail.** When compaction evicts tool results, the digest records
+  paths and counts only — `read`, `wrote`, `edited`, `deleted` — never content.
+- **Budget flags and progress limits.** `--coding-max-*` flags set the job
+  ceilings; `[limits.job]` stops a job on lack of progress (`no_progress_turns`
+  default 8, `repeat_limit` default 3) and keeps runaway backstops (2,000
+  requests, 6,000 attempts, 10,000 tool calls, 7 days). `wall_clock_seconds`
+  is unset by default, and `budget_mode = "uncapped"` removes the backstops.
+
+### Changed
+
+- **Help and wording.** Every global flag's `--help` text is one line, with
+  detail in `docs/commands.md`. User- and model-facing text says "job" rather
+  than code-specific wording.
+- **Provider retries.** The default schedule is 500, 1000, 2000, 4000, 8000,
+  16000, 30000, 30000 ms, each jittered; `[ai] retry_delays_ms` overrides it.
+  A request is retried only on 429, 5xx, or a connection failure, never after
+  the stream delivered content. A stream with no text, reasoning, or tool-call
+  delta for 120 s is aborted and retried. Retries skip a 30 s reserve and are
+  clamped to the job's remaining wall clock.
+- **One request has a total deadline.** `[ai] request_timeout_seconds`
+  (default 600 s) bounds each request; on expiry the partial reply is kept.
+- **Context follows the window.** When `[ai] context_byte_budget` is unset and
+  the window is known, it is four bytes per token times 90%, clamped to
+  256 KiB–4 MiB. Compaction triggers at `compaction_trigger_percent` (default
+  50) of the window.
+- **Progress means material change.** A repeated inspection, a zero-match
+  search, and a command that wrote nothing and succeeded are idle. A ranged
+  read or a changed result is progress. Consecutive idle calls count against
+  `limits.job.no_progress_turns`.
+- **`shell_output` waits inside the call.** The first read of an id answers at
+  once; a repeated silent read waits 30 s, then 60 s, then 120 s, clamped to
+  the job's clock. `wait_ms` is gone.
+- **Reasoning.** With no `reasoning_effort`, Anthropic routine turns use
+  adaptive thinking with low effort; `high` is chosen only for the first
+  request and the first after a diagnostic failure, and a second consecutive
+  failure asks for `medium`. Signed thinking is replayed to the Anthropic
+  route.
+- **Edit and write results show the change.** An `edit` result carries the
+  changed lines with context (`changed_excerpt`); a `write` result carries a
+  numbered head. Read-only calls in one turn run concurrently (at most four).
+- **Start is faster.** The working tree is inventoried once, checkout
+  verification is reused, a headless start prepares no unused candidate, and
+  the sandbox probe no longer blocks the first model request.
+- **Long commands no longer stop a healthy job.** A background read that shows
+  new output or a status change counts as progress; a silent poll does not
+  advance the no-progress guard.
+- **A generic system prompt.** The fixed prefix now begins `You are an agent
+  working in this workspace.`
+- **Outcomes are explicit.** A run that ends with the model's final answer is
+  `completed`; a guard stop is `paused` and names its reason. A job no longer
+  stops at the retired 80-request, 300-tool-call, 1,200-second, or 400k-token
+  defaults.
+- **`saya run` uses `shell`.** Steps run commands with the `shell` tool; the
+  `runner:` and `interpreter:` scopes are gone.
+- **`/export` no longer overwrites silently.** An existing destination is
+  refused unless `--overwrite` is passed; writes are atomic.
+- **Leaner tool descriptions.** Job surfaces advertise leaner descriptions and
+  withhold tools until they are allowed or needed.
+- **File analysis routes through the shell.** When a workspace holds CSV, TSV,
+  Parquet, NDJSON, JSONL, or DuckDB files and the `duckdb` CLI is on `PATH`,
+  the prompt routes them through `duckdb -readonly -json -c "<SQL>"` with a
+  `LIMIT`.
+
+### Fixed
+
+- **In-place helpers.** A helper of an in-place job works in the same folder
+  under the root's lease, and its edits are covered by `show`, `review`, and
+  `rewind`.
+- **Managed review skips Git-ignored paths.** One bounded Git listing replaces
+  thousands of additions; nested repositories and special files are reported as
+  not included.
+- **A spent job clock reports a timeout, not a provider failure**, including
+  mid-stream.
+- **Stream cuts have their own consecutive bound** and no longer spend the
+  output-truncation allowance; a completed reply resets it.
+- **Reasoning effort reads exits correctly.** Exit 1 from `grep`, `rg`, `diff`,
+  `test`, or `[` is an ordinary "no"; a compile or collection failure is
+  diagnostic.
+- **The request prefix is append-only across turns.** Earlier reasoning and the
+  session task note are no longer cleared, so the provider's prompt cache keeps
+  hitting.
+- **A batched `edit` or `write` no longer refuses when the only change is this
+  run's own earlier edit**; a change by anyone else still refuses.
+- **A stale `expected_digest` still applies when the anchor resolves** exactly
+  once (or with `replace_all`) against the current content, with a note that
+  the file changed since it was read; zero or several matches still refuse.
+- **A write outside the job's scope names up to eight paths it may write** and
+  says the job can still finish inside them or report what it needs.
+- **A deferred or finished headless job says "changes are in the workspace; run
+  `saya job review <id>`"** instead of claiming the owner will prepare a
+  candidate.
+- **Workspace file tools accept absolute paths under the root**; a path outside
+  it is refused, naming the root.
+- **A literal `grep` with no matches says to pass `regex: true`** when the
+  pattern holds metacharacters; `glob` and `grep` advertise `type`, and `grep`
+  advertises `multiline` and `head_limit`.
+- **A zero-match `edit` names up to three nearby regions.**
+- **A successful shell view is a read witness** (`cat`, `head`, `tail`,
+  `sed -n`, `nl`), so a later `edit` without `expected_digest` is admitted.
+- **An in-place job removes its empty `.saya` scratch directory** at job end.
+- **A read-only job advertises `read`, `glob`, and `grep` over its folder.**
+- **A provider request with no tools omits the `tools` field.**
+- **A Git failure names its first stderr line**, redacted and bounded, with a
+  remedy.
+- **Git 2.34–2.44 works.** Saya probes Git once, uses `--no-lazy-fetch` on
+  2.45+, and falls back to newline-terminated `git worktree list --porcelain`
+  below 2.36.
+- **A headless `shell` call that cannot ask runs in the sandbox and says so**;
+  a refusal names `--approval-mode bypass` as the way to a host shell.
+- **A stream cut after content continues once** within a bounded allowance.
+- **`saya runtime check-node` accepts an ordinary Git root** and ignores its
+  root `.git` metadata.
+- **The tool journal records every call** — name, status, duration, bounded
+  arguments — even after the result-body budget is spent.
+- **A crash around a checkpoint no longer looks like a committed edit.**
+- **Instruction projection stays sound** when redaction grows a source past
+  its measured budget, and a missing instruction directory is treated as absent.
+- **`saya sessions delete` clears a tombstone-only leftover.**
+- **Headless launch grants make their tools usable**: `workspace-write`,
+  `fetch:<scheme>+<host>`, `command:<program>`, and `sql:<connection>` un-hide
+  the matching family under `--approval-mode ask` with no prompt surface, and
+  every call is still judged on its own arguments.
+- **`[ui] theme` is honoured**, and `--no-color` resolves through normal
+  configuration with its source attributed correctly.
+- **A download no longer overwrites an existing destination**; pass
+  `expected_digest` to replace it.
+- **A `Stop` hook runs when a helper finishes and when a `saya run` step's loop
+  ends.**
+
+### Removed
+
+- **The DuckDB connector and dialect.** A profile with `type = "duckdb"` fails
+  with a message naming the profile and pointing at the `duckdb` CLI or another
+  supported database.
+- **The `scratch` run scope**, `--allow scratch`, and `/allow scratch`; the
+  token is now an unknown scope.
+- **The `run_program` model tool**; `shell` replaces it.
+- **The `render_chart` model tool**; the `/chart` slash command replaces it.
+- **The `scratch_sql` and `scratch_import` tools** and the scratch database
+  behind them.
+
+### Security
+
+- **Host shells do not inherit Saya's secrets.** A command run outside the
+  sandbox has every configured provider and database secret name removed from
+  its environment, plus `SAYA_API_KEY` and every `SAYA_*` name; resolved secret
+  values are scrubbed from the captured output.
+- **The sandbox stays closed.** A sandboxed command gets read-only toolchain
+  directories but never `$HOME`, Saya's state root, `.ssh`, `.aws`, `.gnupg`,
+  `.config`, or `.docker`; network stays off and writes stay inside the
+  checkout.
+- **Sensitive-path matching follows real credential shapes.** The snapshot and
+  in-place predicates share one list: `.aws`, `.ssh`, `.azure`, `.gnupg`,
+  `.kube`, and `.saya` directories; `.env`, `.env.*`, `.netrc`, `.npmrc`,
+  `.pypirc`, `credentials.json`, `id_rsa`, `id_ed25519`, and the `.pem`,
+  `.key`, `.p12`, and `.pfx` extensions. Names that merely contain `secret` or
+  `credentials`, and files under a generic `.config` or `.docker` directory,
+  are ordinary content again.
+- **Symlinks are validated by case-folded, NFC-normalized path.** A chain that
+  reaches an escaping link through a case or Unicode variant is refused at
+  snapshot, materialization, delta, apply-back, and the in-place plan; a chain
+  is bounded at 40 hops, and a symlink added, retargeted, or deleted by a job
+  is refused in apply-back with the path named.
+- **Untracked secrets are omitted** from a snapshot; a tracked credential-shaped
+  path is included only with a visible warning.
+- **Saved SQL and context refuse credential-shaped content** rather than
+  redacting it, because they keep SQL semantics exactly. Investigation import
+  validates the whole document, and contract import files claims Pending — a
+  file's approval is never authority.
+- **Command rules are trusted-layer only.** A project's `.saya/config.toml`
+  cannot set `[permissions]`, and a deny rule refuses in every mode, including
+  `bypass`.
+- **The read-only SQL boundary is unchanged.** Every query — direct, agent,
+  investigation replay, MCP, or job — crosses the same safety gate and row,
+  byte, and time bounds.
 
 ## 0.4.1 — 2026-09-25
 
@@ -83,20 +462,13 @@ bypass` refuses at start — a run's approval is its `--allow` scopes).
   tools are usable, because the engine resolves `Allow`.
 - **The activation line.** At launch, at `/approvals bypass`, and again on a
   resume, the session prints the mode's own words: what bypass does, what
-  still applies, the staged interpreter facts (the run surface's interpreter
-  warning adapted to the session — including "no process-fork is granted:
-  children an interpreter spawns are refused by the sandbox"), or the
-  none-staged sentence, and — where the host did not prove — "run_program is
-  unavailable: the sandbox probe did not prove this host", said under every
-  mode on the startup notice.
-- **The interpreter door is real.** The session's executor now composes the
-  interpreter scope from the trusted config's staged `[jobs.interpreter]
-  allow`, mode-independently. Before this release the session's prompt
-  offered `[s] allow interpreter:python3 for this session`, recorded the
-  grant, and the granted call still refused with the family refusal — a
-  lying approval. The fix is capability in the composition, consent in the
-  approval engine: under `ask`, a granted `interpreter:<program>` token now
-  actually runs; unstaged names keep the byte-identical family refusal.
+  still applies, the none-staged sentence (nothing stages interpreters), and
+  — where the host did not prove — "run_program is unavailable: the sandbox
+  probe did not prove this host", said under every mode on the startup
+  notice.
+- **The interpreter door (retired in 0.5.0).** `[jobs.interpreter]` and the
+  `interpreter:` scope were removed with `run_program`; nothing stages an
+  interpreter, and interpreter calls keep the family refusal.
 - **The red indicator.** The status bar and the headless status line render
   `approval:bypass` in `danger()` red; the colour map carries an explicit
   bypass arm, and a parity test closes the catch-all hole that would have
@@ -163,9 +535,8 @@ block. Downloads are resumable by digest and bounded by a run budget.
 
 **Config.** `[[ai.endpoints]]` binds roles to named endpoints, with per-endpoint
 `base_url` and `api_key` on the trust boundary — a project-layer config cannot
-add an endpoint or retarget one without `--trust-project-config`. `[jobs]`
-declares default run budgets, and `[run] max_iterations` finally has a
-behavioural reader.
+add an endpoint or retarget one without `--trust-project-config`.
+`[limits.run]` declares default run budgets.
 
 ### Fixed
 
@@ -810,14 +1181,10 @@ longer trusted for security-critical settings.
 
 ### Repository note
 
-Two internal skill files — `.claude/skills/saya-run/SKILL.md` and
-`.claude/skills/saya-smoke/SKILL.md` — shipped in the `v0.1.0` initial public
-release and were removed in `0.3.0`. They are absent from every current tree,
-but a deleted file stays retrievable from git history, so they can still be
-read from a clone. Both describe how to launch the CLI and smoke-test the REPL
-locally; neither contains credentials or infrastructure detail. The exposure is
-recorded and accepted rather than repaired, since removing it would mean
-rewriting published release history. See
+Two internal operator guides for launching the CLI and smoke-testing the REPL
+shipped in the `v0.1.0` initial public release and were removed in `0.3.0`.
+Their historical contents remain available in git history. Neither contains
+credentials or infrastructure detail. See
 [RELEASING.md](RELEASING.md#internal-only-paths-must-not-reach-a-public-ref).
 
 ### Changed — read this before upgrading

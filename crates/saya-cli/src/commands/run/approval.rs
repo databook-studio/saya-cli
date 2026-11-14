@@ -1,4 +1,4 @@
-//! The plan-approval gate at `planned → approved` (DESIGN §5.2, §7): the
+//! The plan-approval gate at `planned → approved`: the
 //! user accepts the plan, its scopes, and the budgets once, before anything
 //! runs. Headless, the approval is the `RunSpec` pre-authorization — the
 //! engine has already refused any plan outside `--allow`, so the
@@ -32,7 +32,7 @@ pub(crate) struct PlanApprovalRequest {
 }
 
 /// Decides the plan approval once, at `planned → approved`. The surface
-/// outlives any single ask: a mid-run capability re-ask (DESIGN §5.3) rides
+/// outlives any single ask: a mid-run capability re-ask rides
 /// the same channel rather than inheriting an earlier approval.
 pub(super) async fn decide(surface: &PlanApproval, view: &PlanApprovalView) -> bool {
     match surface {

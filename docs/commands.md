@@ -1,15 +1,23 @@
 # Commands
 
 Running `saya` without a subcommand starts the scrollback-preserving terminal
-session. It accepts `/help`, `/connect`, `/connections`, `/include`,
-`/exclude`, `/provider`, `/model`, `/privacy`, `/approvals`, `/allow`,
-`/grants`, `/schema`,
-`/clear`, `/history`, and `/exit`.
+session. It accepts the slash commands `/help` lists — grouped under
+connections; provider, model and privacy; query and data; session; memory;
+and runs — from `/connect`, `/sql`, and `/export` through the session
+commands `/sessions`, `/preferences`, `/notes`, `/recovery`, `/rotate`,
+`/reload`, `/setup`, and `/context`, to `/exit`.
+
+`/context` shows which project and personal instruction files are loaded
+into requests: names, sizes, truncation and redaction counts, never their
+text, plus why any source was skipped (symlink, not a regular file, too
+large, not UTF-8, unreadable) or omitted for budget, and the effective
+settings. These files carry project guidance, never permissions. The [copy-ready instruction examples](../crates/saya-cli/tests/fixtures/instruction-examples/README.md) are verified against the binary.
 
 Examples:
 
 ```bash
 saya config init
+saya demo
 saya --profile analytics
 saya --profile prod --include-profile staging ask "compare row counts"
 saya --continue
@@ -28,6 +36,16 @@ text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 `--verbose`. `--workspace <dir>` (the interactive session only) binds the
 session's workspace root explicitly; without it the root is the git worktree
 top above the launch directory, and outside any worktree nothing binds.
+`--verbose` appends a fixed `saya local metrics` diagnostics section to
+stderr after the settled turn: 14 phase lines (provider establishment, read
+await, first event, local attempt, retry backoff, database connect, wait,
+and execute, schema discovery, approval wait, compaction, first paint,
+question first-useful, cancellation settlement), five counts, per-attempt
+coverage, and a first-useful stamp. Placement: after the answer for `ask`
+and scripted sessions; after the interactive loop ends, once the terminal is
+restored, for a TUI session. The section is fixed-vocabulary diagnostics
+only: stdout stays byte-identical, the exit code never changes, nothing is
+persisted, and no section prints without the flag.
 The host-command lane composes in the interactive session wherever a
 workspace root binds (`run_command` runs PATH-resolved programs
 unsandboxed — as your user, with your whole filesystem and network; no root,
@@ -36,16 +54,20 @@ of bare program names, evaluated before every grant, every approval prompt,
 and bypass. Under bypass, a hostile workspace file is effectively arbitrary
 code execution as the user.
 
-Automation never prompts. PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake `connection
+Automation never prompts. PostgreSQL, MySQL, SQLite, Snowflake,
+ClickHouse, and BigQuery `connection
 test`, `connection schema`, and `query` commands are live; Snowflake
 `externalbrowser` is rejected in automation because it requires an interactive
 TTY. Query execution allows one parsed read-only statement and
 returns code `4` for SQL safety/query failures. `ask` calls the configured chat
 provider (Ollama, OpenAI, an OpenAI-compatible endpoint, Anthropic, or Gemini),
-can inspect schema, and can run bounded SQL according to the approval policy. It
-can also render an interactive Chart.js file from a query via the `render_chart`
-tool; because that writes a file and opens a browser (`external_side_effect`), it
-always requires approval. When additional databases are connected via
+can inspect schema, and can run bounded SQL according to the approval policy.
+The `render_chart` model tool was retired on 2026-11-02: no surface advertises
+it, and a call naming it is refused as an unknown tool. Charts are rendered by
+the operator's `/chart` slash command instead (see
+[Charting a query](#charting-a-query-chart)).
+
+When additional databases are connected via
 `--include-profile` or interactive `/include`, the AI agent is informed of the name and SQL
 dialect of every connected database in its context and can navigate between them by passing an
 optional `connection` argument to its schema-inspection and query tools (with the primary database as default). If a secondary database fails to connect, it is skipped while the primary run continues. Connection and schema failures return code
@@ -58,7 +80,28 @@ collapses on the text surface into one summary line (`▸ N tool calls · ok —
 before), so piped-text consumers that grepped `Using tool:` one line per
 call must match the `▸` summary or switch to NDJSON, the supported machine
 surface — NDJSON is unchanged, one `tool_requested` / `tool_completed`
-envelope per call.
+envelope per call. When a provider caps a response mid-answer, the loop
+re-asks under an admitted continuation instead of settling: a
+`provider_continuation` event with phase `continuing` precedes each re-ask
+(one-based `index`, the run's `limit`), and phase `exhausted` is emitted
+once when the allowance ran out — the truncation error settles the run; the
+event is progress only. The allowance is 3 by default, tunable with
+`SAYA_AGENT_MAX_CONTINUATIONS`.
+When the question's material definition is ambiguous and the confirmed
+context does not resolve it, the agent may ask one focused question instead
+of assuming: the turn ends with a `clarification_needed` event (the TUI
+renders it as a Question block), and `saya ask` exits `6` — the paused
+class, "needs input", not an error — so a script can tell the two apart.
+A settled `ask` classifies on the question token's first stop reason: a user
+Ctrl-C exits `130`; a budget stop exits `6` with the
+truthful wording "the run stopped on its `<dimension>` budget; any answer it
+produced is partial or absent" (`logical-requests`, `requested-tool-calls`,
+`elapsed-time`, `reported-tokens`, `download-bytes`); an owner failure — the
+run's sink could not record answering observations — and a provider/agent
+error both exit `5`. A budget or owner-failure stop that latched first keeps
+its class and wording even through a later Ctrl-C. The plain REPL prints the
+same truthful wording as a terminal diagnostic for a settled budget stop,
+and nothing when no budget stop latched.
 Two live limits worth knowing: only the newest collapsed TUI group can be
 expanded (the transcript has no per-block cursor, so older groups cannot be
 reached), and groups are sparse in practice (assistant text between calls
@@ -81,22 +124,63 @@ workspace root, host lane, and privacy/cloud data-sharing state) followed by the
 with command history recall (Up/Down) and standard line editing. Piped input
 uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
 turns, and `--continue`/`--resume` reconstruct redacted history with saved
-provider settings. `/clear` removes the canonical turns as well as visible
-context. Tool arguments, responses, credentials, headers, and rows are never
-restored into provider history. The status header's `ws:` segment names the
+provider settings; a successful resume also retires the old session's SQL
+capture, last query, and agent-capture gap, so a re-run entry binds to the
+resumed session (refusals and failed loads change nothing).
+`/clear` removes the canonical turns as well as visible context, and re-arms
+the automatic-compaction trigger after a failure latch (a successful
+compaction re-arms it too). Tool arguments, responses, credentials, headers,
+and rows are never restored into provider history.
+
+In the full-screen TUI, `/setup` hands the terminal to the guided setup: the
+interface gives the terminal to the same wizard `saya setup` runs in the
+normal screen and takes it back when the wizard finishes, is cancelled
+(Ctrl-D), or fails — typed-ahead input is dropped and the transcript reports
+where control stands. It takes no argument, and only the full-screen TUI
+offers it: the piped REPL and `--turn-file` refuse with the pointer to run
+`saya setup` from your shell. The wizard writes your user configuration
+(`config.toml`/`connections.toml`), and the closed wizard's result is
+applied immediately: the TUI runs the same reload `/reload` runs and shows
+one block — `Guided setup closed.` plus the reload report. When the wizard
+was cancelled (or wrote nothing) the report reads `Configuration is
+unchanged.`; when it added a profile, the running session adopts it — the
+first screen's database line and `/connections` follow without a restart.
+A reload that fails (a file the wizard wrote does not load) says so and
+keeps the configuration the session already had; a wizard that exits
+non-zero or fails reports that and never reloads.
+
+When the compaction mode is `auto` — the default (`manual` compacts only on
+an explicit `/compact`, and `off` also silences the context-window warning) —
+a finished turn at or above 95% of a known context window, measured by the
+last answering call's reported input tokens, runs the same compaction
+`/compact` runs, one at a time (the trigger fires past 100% too). Absence is
+not zero: with no provider report or an unknown window there is no decision,
+never a trigger. A pending clarification is not authority for the trigger,
+and a cancelled, stopped, continued (an admitted provider continuation), or
+truncated (a budget salvage) turn never compacts. When an automatic
+compaction fails, its line says "It will not retry on its own; run /compact
+to try again", and the trigger stays silent until `/clear` or a successful
+compaction re-arms it.
+
+A saved session summary also carries your notes, the files and checks
+recorded earlier; each request shows them as untrusted context, with file
+status re-checked against disk (up to 16 files) and checks labelled
+historical.
+
+The status header's `ws:` segment names the
 session's bound workspace root — the git worktree top above the launch
 directory, or a `--workspace <dir>` statement, pinned into the session record
 and re-opened on a resume from anywhere — or `ws:unbound`, the outside-a-worktree
 shape where the write-shaped tools are absent and the workspace reads refuse.
-A session's workspace is what the file tools and `run_program` children are
-contained to; the session's scratch database and lock live outside it, at
+A session's workspace is what the file tools are contained to, and the root a
+sandboxed `shell` call is confined to; the session's lock lives outside it, at
 `~/.local/share/saya/sessions/<id>/`, where no file tool and no child can
-reach them. The status header's `host:` segment names the host-command lane:
+reach it. The status header's `host:` segment names the host-command lane:
 `host:unsandboxed` where the lane composed, `host:off` where it did not, plus
 `deny:<names>` where the session's deny list is non-empty. The host lane is
 the unsandboxed second lane: `run_command` runs PATH-resolved programs
 unsandboxed — as your user, with your whole filesystem and network. Its
-guarantees are not `run_program`'s: the contained lane's sandbox bounds do
+guarantees are not the sandbox's: the contained lane's sandbox bounds do
 not apply here. Under bypass, a hostile workspace file is effectively
 arbitrary code execution as the user. The deny list bounds the direct ask
 only — a denied `curl` does not stop an allowed `make` from invoking curl,
@@ -117,6 +201,1090 @@ instead. It is credential-free, refuses to overwrite either file,
 and makes a best-effort rollback after an ordinary creation error; it is not
 crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
 errors and diagnostics remain on stderr.
+
+## Global flags
+
+The flags below shape a launch. `--help` states each in one line; the details
+live here.
+
+- `--continue` continues the most recent session. It is not global: its only
+  consumer is the interactive session it sits beside, and a run is not a
+  session — `saya run --continue` is a usage error, never a silently ignored
+  intent. The pre-subcommand spelling (`saya --continue run`) is refused by
+  the dispatch guard.
+- `--resume <id>` resumes a saved session by id.
+- `--workspace <dir>` binds the session's workspace root explicitly,
+  canonicalised and pinned into the session. Without it the root is the git
+  worktree top above the launch directory, and outside any worktree nothing
+  binds: the write-shaped tools stay hidden and the workspace reads refuse.
+  Session only.
+- `--allow <scopes>` seeds session grants at launch in the `--allow` grammar.
+  Session-only: a subcommand is not a session — `saya ask` and `saya run`
+  refuse it rather than silently ignoring a stated intent.
+- `--deny <program>` (repeatable) states the session's deny list of bare
+  program names: a user-stated refusal evaluated before every grant, every
+  approval prompt, and bypass, at every session door that execs a program by
+  name — the `run_command` door. Refusal-only: it composes nothing. Session
+  only; `saya ask` and `saya run` refuse it.
+- `--allow-command <prefix>` (repeatable) allows a command prefix on the host
+  without asking: matched word by word, so `cargo test` covers
+  `cargo test -p x` and never `cargo testx`. Every segment of a compound
+  command must match, and a command containing a substitution or heredoc is
+  never allowed. Adds to `[permissions] allow`; it never widens `read-only`
+  or `never`.
+- `--deny-command <prefix>` (repeatable) refuses a command prefix in every
+  mode, `bypass` included, with the same word-by-word match as
+  `--allow-command`. Adds to `[permissions] deny`; a deny rule wins over any
+  allow rule.
+- `--turn-file <path>` reads one turn from the file instead of stdin, runs
+  exactly that turn, then exits. The bytes reach the turn unaltered — blank
+  lines, trailing whitespace, code fences — where piped stdin reads line by
+  line and folds layout. Session-surface only; `saya ask` and `saya run`
+  refuse it. See [Scripted turns](#scripted-turns---turn-file).
+- `--permission-mode <mode>` starts the session (or a `saya -p` one-shot) in
+  `ask`, `accept-edits`, `plan`, or `bypass` — the same four modes `/mode` and
+  Shift+Tab switch between — and overrides whatever the launch or a resumed
+  record carried. `bypass` is refused for a session unless
+  `[permissions] allow_bypass` is true in your user configuration; `saya -p`
+  accepts it ungated. Stating it with `--approval-mode` is refused: they are
+  two spellings of the same consent. `saya ask`, `saya run` and `saya job`
+  refuse it. See [Switching the session's permission
+  mode](#switching-the-sessions-permission-mode-mode-shifttab---permission-mode).
+- `--approval-mode <mode>` states when tool calls need approval: `ask`,
+  `read-only`, `never`, or `bypass`. Read-only auto-approves read-shaped
+  tools only; tools with external side effects are denied. `bypass` runs
+  every call without asking; every structural guard still applies. Headless
+  (`--non-interactive`, or no terminal) defaults to `never`, which advertises
+  no `shell`: `--approval-mode bypass` is how a headless job gets a host
+  shell. `saya -p` also reads it as the one-shot consent. See [The fourth
+  approval mode](#the-fourth-approval-mode-bypass).
+- `--tools <name,...>` narrows the model tools a surface advertises; see
+  [Choosing model tools](#choosing-model-tools---tools-and-tools-allow).
+- `--profile <name>`, `--model <name>`, and `--provider <name>` override the
+  configured connection profile, model, and provider for this invocation.
+- `--include-profile <name>` (repeatable) connects additional read-only
+  databases alongside the active profile.
+- `--agents-max-children <n>` and
+  `--agents-max-concurrent-model-requests <n>` bound a job's helper children
+  and its in-flight model requests.
+- `--coding-max-logical-model-requests <n>`,
+  `--coding-max-physical-transport-attempts <n>`,
+  `--coding-max-elapsed-seconds <n>`, and `--coding-max-job-tokens <n>` bound
+  a job's requests and wall clock. The token threshold counts
+  provider-reported usage only: missing usage is unknown, and
+  already-admitted concurrent requests may overshoot it.
+- `--max-rows <n>` overrides the configured row cap for query results.
+- `--candidates <n>` answers with the best of N independent attempts
+  (default 1). Each attempt is a full agent run, so N attempts cost roughly N
+  times as much.
+- `--format text|json|ndjson` sets the output format (default `text`).
+- `--non-interactive` runs without any terminal interaction (CI-safe;
+  approvals deny).
+- `--config <path>`, `--connections <path>`, and `--env-file <path>` name the
+  config, connections, and SAYA_* env files explicitly (never an implicit
+  `.env`).
+- `--allow-data-sharing` and `--no-data-sharing` force cloud data sharing on
+  or off for this invocation, overriding any config layer.
+- `--trust-project-config` accepts security-critical settings
+  (`ai.base_url`, `ai.api_key`, `ai.allow_data_sharing`, `run.read_only`)
+  from the project layer's `.saya/config.toml`. Off by default: a cloned
+  repository is untrusted.
+- `--no-color` disables coloured output.
+- `--theme <dark|light|auto>` sets the TUI palette. It defaults to the
+  `[ui] theme` config setting, then `auto` (honour `COLORFGBG`, falling back
+  to dark when the terminal reports nothing). Absence of the flag never
+  overrides config; an explicit `--theme auto` does.
+- `--show-thinking` shows the model's chain-of-thought in the transcript as
+  it streams. Off by default: thinking is verbose and restates database
+  contents in prose. Display only — reasoning is never persisted to a session
+  file.
+- `--verbose` prints extraction-trace diagnostics: why a learned fact was or
+  was not recorded after a turn (the "memory didn't record" gate), and local
+  phase timing diagnostics for agent turns.
+
+The `--plan` flag of `saya start` needs an interactive operator to answer and
+at least one `--write` path to open; its approval opens the write surface for
+the rest of the job. `--in-place` captures tool edits as before-images and
+creates no checkout. `saya job reconcile` lists or records what blocks an
+interrupted job from resuming; it never refunds a charge or re-runs anything,
+and it is only for a job that is not running anywhere — a live in-flight
+effect looks the same as a crashed one.
+
+## Try it: `saya demo`
+
+`saya demo` builds a deterministic synthetic SQLite database — 240
+customers, 560 orders, and 123 customer_contacts rows — and opens it
+read-only in an interactive session. No AI provider is needed for schema
+browsing and `/sql`; asking questions in plain language needs a configured
+provider.
+
+The fixture is designed to exercise tricky SQL: nulls in emails and amounts,
+a `customer_contacts` table that multiplies rows when joined, order dates
+straddling the year boundary (2025-12-31 against 2026-01-01), and statuses
+(`active`, `inactive`, `churned`) that disagree with recent-order activity
+for some customers — so "active customer" has two defensible meanings:
+`customers.status = 'active'`, or ordered in the last 90 days of the data.
+
+```bash
+saya demo            # build (or reuse) the fixture, then open the TUI
+saya demo --reset    # rebuild the fixture even when one exists on disk
+```
+
+The database lives under the platform data directory at `saya/demo/`
+(`demo.sqlite3` plus a generated `connections.toml` with a `demo` profile);
+set `SAYA_DEMO_DIR` to place it elsewhere. Without a terminal (or with
+`--non-interactive`) the command launches nothing: it prints the database
+and connections paths, the launch command (`saya --connections … --profile
+demo`), and example SQL to try.
+
+## Guided setup: `saya setup`
+
+`saya setup` is an interactive flow: choose an AI provider and a database
+profile, review the exact file changes, probe, then confirm. Nothing is
+written until you confirm, and no prompt ever asks for a secret value — the
+API key is requested only as an environment-variable **name**, and its
+presence (never its value) is reported.
+
+- **AI provider** — five choices: ollama (local, default base URL,
+  no key), openai, openai_compatible (asks for its base URL), anthropic, and
+  gemini; plus skip.
+- **Database** — all six engines: sqlite, postgresql, mysql,
+  snowflake, clickhouse, and bigquery; plus skip. Snowflake offers its three auth paths — keypair (a private
+  key file path plus an optional passphrase env name, recommended), browser
+  SSO (no secret), or a password taken only as an environment-variable name
+  — and the browser-SSO probe opens the browser **only after explicit
+  consent** ("This opens your browser to sign in to Snowflake. Continue?");
+  declining skips that probe entirely. Warehouse fields not needed by the
+  chosen auth (warehouse, database, schema, role) are asked with blank
+  skipping each.
+- **Review** — the exact TOML that will be written, before anything is
+  written. An existing `connections.toml` is appended to: the existing bytes
+  are kept as an exact prefix and a new profile block is added (a profile
+  name that already exists is refused). An existing `config.toml` is never
+  modified — setup prints the `[ai]` snippet for you to apply yourself.
+- **Probes** — one at a time, 15 seconds each. The database probe checks the
+  connection; the provider probe runs only with explicit consent, states
+  that a request will be sent, and sends only the word "ping" — no schema,
+  no rows. A failed probe does not block writing; it says so and leaves the
+  choice with you.
+- **Commit** — files are backed up privately (`.setup-backup/`) before
+  replacing, writes go through private temp files and atomic renames, and a
+  reload check verifies the result loads. A failed reload restores the
+  originals. An interruption mid-commit leaves a recovery marker that later
+  startups warn about (stderr); the next `saya setup` offers to restore or
+  finish the interrupted write. A restore step that fails says which file it
+  could not restore, keeps the recovery marker, and exits `2` — setup never
+  reports success it did not achieve.
+
+`saya setup` needs a terminal. With `--non-interactive` or no TTY it prompts
+for nothing, writes nothing, and exits `2` with guidance to
+`saya config init` (starter templates) or `saya demo` (sample database).
+A cancelled flow changes nothing and exits `0`.
+
+The first screen names the ways to start: coding in the project, guided
+setup of AI and a database through the in-session `/setup`, the sample
+database with `saya demo`, and `/provider`/`/model` for the AI commands;
+once a schema is cached, the empty state shows up to three starter questions
+derived from it.
+
+## Saved investigations: `saya investigation`
+
+A saved investigation is one portable JSON document: an exact, bounded,
+read-only SQL statement plus its name, description, dialect, connection
+alias, and referenced tables — no credentials, rows, results, prompts, or
+machine-specific identity. Saving validates the SQL
+with the same read-only gate execution uses but never executes it, never
+connects, and never involves an AI provider. **Literals are stored verbatim:
+review the SQL before sharing**, and the command says so where you save.
+
+Documents live at one file per id under the platform data directory
+`investigations/` (set `SAYA_INVESTIGATIONS_DIR` to place them elsewhere),
+mode `0600` in a `0700` directory, capped at 500 documents. Ids are derived
+from the name plus a hash suffix, so they are always safe filename stems —
+`investigation list` prints them. Per-machine state (the review binding) is
+kept separately under `investigations/local/<id>.json` and is never
+exported. Every write to the collection — save, import, delete, binding
+updates — is exclusive across processes: mutations run under a repository
+lock and a create never replaces an existing document, so a conflicting
+concurrent writer is refused (`the saved investigation changed underneath
+this command; retry`) instead of silently overwriting.
+
+Subcommands:
+
+- `saya investigation save --name <NAME> [--description <TEXT>] [--sql <SQL> | --file <PATH>] [--connection <PROFILE>] [--param-spec <SPEC>]…`
+  — store the exact SQL as a new document (revision 1); with neither `--sql`
+  nor `--file`, and stdin piped in, the statement is read from stdin. The
+  SQL is checked by the read-only safety gate for the target dialect;
+  multi-statement or write SQL is refused (exit `4`). Credential-shaped
+  content is refused (exit `2`), not redacted — the document keeps SQL
+  semantics exactly. The saving profile is recorded locally as the review
+  binding.
+- `saya investigation list [--limit <N>] [--offset <N>]`
+  — one line per saved investigation (id, revision, dialect, connection,
+  name), at most 50 per page; unreadable documents appear as warnings, not
+  failures.
+- `saya investigation show <ID>` — print the exact definition as JSON plus
+  this machine's local review binding (the opaque profile identity is never
+  printed).
+- `saya investigation edit <ID> [--name <TEXT>] [--description <TEXT>] [--sql <SQL> | --file <PATH>] [--param-spec <SPEC>]…`
+  — change the stored fields you pass (everything else is kept; the id,
+  dialect, and connection alias never change) and store the result as a
+  **new revision**. The replacement SQL crosses the same read-only gate and
+  credential-shape refusal, and the edit leaves the local review binding on
+  the old revision, so the next run needs `--revalidate` — exactly like any
+  other edit. At least one field is required.
+- `saya investigation delete <ID> [--revision <N>]` — delete the document
+  and its local binding; the current revision is checked first, so a
+  document changed underneath the command is refused rather than deleted
+  unseen.
+- `saya investigation export <ID> <PATH> [--overwrite]` — write the portable
+  definition to a file for sharing. Only the definition travels; the write
+  is atomic and an existing destination needs `--overwrite` (directories and
+  symlinks are refused).
+- `saya investigation import <PATH>` — read a definition file, validate the
+  whole document (including re-gating the SQL), print a preview (SQL,
+  dialect, connection requirement), and store it **without a binding**.
+  Nothing is executed and no connection is made. Identical id and content is
+  an idempotent no-op; the same id with different content is a conflict
+  (exit `2`). The first run afterwards needs `--connection`.
+- `saya investigation run <ID> [--connection <PROFILE>] [--revalidate] [--report <PATH> [--rows <N>] [--overwrite]] [--param <NAME=VALUE>]…`
+  — replay the saved SQL against an explicit local connection: the same
+  bounded, read-only query path as `saya query`, with no AI provider
+  involved. The target comes only from `--connection` or the stored local
+  binding — never the active or default profile. A dialect mismatch is
+  refused (exit `2`).
+
+### Parameters for saved investigations
+
+A saved investigation's SQL may bind values by name with `:name`
+placeholders — `WHERE region = :region`. Declare them at `save` with
+`--param-spec name:type[:required]` (repeatable), where type is `string`,
+`integer`, `boolean`, `decimal`, `date`, or `timestamp` and the third part
+marks the parameter required (the default is optional):
+
+```bash
+saya investigation save --name "orders since" \
+  --sql "SELECT count(*) FROM orders WHERE status = :status AND order_date >= :min_date" \
+  --param-spec status:string:required \
+  --param-spec min_date:date
+saya investigation run orders-since-3f9a1c2b \
+  --param status=active --param min_date=2026-01-01
+```
+
+Only the `:name` placeholder form is accepted (positional `$1`, `?`, and the
+rest are refused), and every declaration must appear in the SQL and every
+placeholder must be declared. Bind values with `run --param name=value`
+(repeatable); the literal `null` binds a typed null, and an omitted optional
+parameter binds a typed null too. Values are parsed strictly as their
+declared types and bound natively by the engine at execute time — never
+spliced into the SQL text — and are **never stored anywhere**: the evidence
+record carries the parameter names and a SHA-256 digest of the value set,
+never a value. Binding errors — an unknown name, a bad value, a missing
+required parameter (the error lists every required name with its type) —
+exit `2` before any profile or connection work: no connection is ever made
+with a bad binding. Engines that bind
+natively: PostgreSQL, MySQL, SQLite, and BigQuery; Snowflake with
+keypair auth only (other auth paths refuse parameterised SQL before any
+network activity); ClickHouse refuses parameterised SQL — fixed
+(parameter-free) SQL works unchanged. `investigation edit --param-spec`
+replaces the whole declaration list (a new revision, so the next run needs
+`--revalidate`), and `/investigation run <id> --param name=value` works in
+the TUI.
+
+The review is bound to the definition's revision, the target profile's
+identity, and the schema fingerprint of the referenced tables. When any of
+the three changes, the run is refused — `review is stale (…)` — until
+`--revalidate` is passed; a revalidated run rewrites the binding. This is
+deliberate friction: a saved query that silently runs against a changed
+table is worse than one that stops. The referenced tables are derived from
+the SQL itself at run time — the document's `objects` list is
+informational, and `investigation import` refuses a document whose
+`objects` do not match its SQL. A table that cannot be resolved against the
+live schema, an ambiguous name, or an incomplete dependency analysis makes
+the review **unverifiable**: the run is refused (`schema review
+unavailable: …`) unless `--revalidate` is passed, and such a run is never
+recorded as reviewed — a revalidated unverifiable run rewrites the binding
+without a schema fingerprint, and the next unverifiable run is refused the
+same way. Quoted names containing dots (`"orders.v1"`) are kept as one
+object, never re-split.
+
+`run` writes a Markdown report with `--report <PATH>`: the same report the
+TUI's `/report` writes — exact SQL and provenance by default, result rows
+only with `--rows <N>` (at most 100). The report is written only after a
+successful replay, and an existing destination needs `--overwrite`.
+
+Exit codes follow the global scheme: `0` ok; `2` usage and domain errors
+(unknown id, id conflict, stale review, credential-shaped SQL, an unusable
+document, a parameter binding error); `3` store unavailable or
+connection/config failure; `4` a safety/query refusal. Exit `5` (agent)
+never occurs here — replay builds no provider.
+
+## Session commands: `/investigation`, `/export`, `/report`
+
+`/investigation save|list|show|edit|delete|export|import|run` is the same
+operation module the `saya investigation` commands run, so the two surfaces
+cannot disagree. Bare `/investigations` opens the TUI's searchable picker;
+`/investigations --list` prints the text listing instead.
+Three TUI-only details:
+
+- `/investigation save <name>` takes the name **positionally** — unlike the
+  CLI, which spells it `--name <NAME>`. With neither `--sql` nor `--file` it
+  saves the
+  **latest successful, concrete query** — a `/sql` result or a direct agent
+  SQL query — on the connection that actually ran it. Failed or denied agent
+  queries never become selectable, and fan-out (`bounded_sql_query_all`)
+  never counts; pass `--sql <SQL>` (or `--file <PATH>`) to save different
+  SQL, `--param-spec <SPEC>` to declare parameters, and
+  `--connection <PROFILE>` to save against another profile.
+- `/investigation run <id>` runs in the background: the status bar shows a
+  spinner naming the investigation while the replay runs on a worker, and
+  the transcript stays usable. Esc or Ctrl+C detaches it — the late result
+  is discarded (it never replaces the capture, never writes a report) and
+  the query is **not cancelled: it may still be running on the server**.
+  Detaching changes only what the UI waits for; the replay's audit row and
+  review binding are written exactly as a foreground run's.
+- `/investigation run` takes no `--report` flags in the TUI — write reports
+  with `/report`.
+
+### The `/investigations` picker
+
+Bare `/investigations` opens a searchable picker over the saved
+investigations instead of printing the text listing (which
+`/investigations --list` keeps). The picker loads the collection (up to 500
+summaries, in list order, each labelled with its age, name, dialect, and
+connection) on a worker, filters as you type over id and display name, and
+captures navigation and filter typing until you choose: **Enter** shows the
+selected investigation through the same adapter `/investigation show <id>`
+uses, **`r`** starts the same background replay `/investigation run <id>`
+dispatches (the same worker-permit cap and busy refusal — a replay that
+still needs `--connection` fails in the worker with the command's refusal),
+and **Esc** closes. While the picker is open a bare `r` is the run key, not
+filter text — the trade every single-key action on this surface makes. The
+picker never writes to the store.
+
+`/investigation edit <id>` edits as a new revision, exactly like the CLI
+command: the fields you pass replace the stored ones and the next run needs
+`--revalidate`.
+
+### Scripted turns: `--turn-file`
+
+Every scripted (`--turn-file`) run ends with exactly one machine-readable
+result, the last stdout line under `--format json|ndjson`:
+
+```json
+{"event":"turn_result","status":"completed","exit_code":0,"tools_completed":2,"tools_unfinished":[]}
+```
+
+`status` is `completed`, `failed`, `cancelled`, or `budget_stopped`; the
+`exit_code` field equals the process exit code in every case: `0` only for a
+completed turn (an explicit `/exit` included), `5` otherwise. Unlike `saya
+ask`/`saya run`, a cancelled or budget-stopped turn-file run also exits `5`
+here, not `130`/`6`. A run that fails before or after its turn (an
+unreadable turn file, a store error) still ends with a `turn_result` with
+`status: failed` and `exit_code: 2` — the code the process itself exits
+with. A configuration that fails to load exits `2` before any turn starts and
+prints no result. Under json/ndjson the result goes to stdout; diagnostics and
+errors go to stderr. Under `--approval-mode ask`, a launch `--allow` token
+can make a tool family usable in a headless run like this one — see
+[Headless grants under ask](#headless-grants-under-ask).
+
+The result also carries an honest tool tally: `tools_completed` counts the
+tool calls that ran to completion, and `tools_unfinished` names (up to
+eight, each capped at 120 characters, overflow as `… and N more`) the calls
+the stream requested but never settled — when a run is cancelled, a
+cancelled `edit`/`write` may already have written the
+file (writes land atomically before cancellation is checked). In `--format
+text` mode nothing extra prints for the result itself, except one stderr
+line when calls are unfinished:
+
+```
+Unfinished tool calls (their effects are unknown — check these files): edit src/lib.rs
+```
+
+Send SIGINT (Ctrl-C) to cancel cleanly: the run stops, keeps any partial
+assistant text already streamed, starts no new tool call, and ends with the
+one `turn_result` (status `cancelled`). SIGTERM is unhandled: the process
+terminates immediately, without a result line.
+
+## Charting a query: `/chart`
+
+`/chart [type] [path]` re-runs the last query on the connection that ran it and
+renders the **fresh** result as a self-contained interactive HTML chart, then
+opens it in your browser. It charts the re-run, never the table already on
+screen. With no query yet it says `Nothing to chart yet — run a query first.`,
+and a stored query whose connection no longer resolves to the same source is
+refused before anything runs — the same guard `/export --refresh` and bare
+`/explain` use.
+
+`type` is `bar`, `line`, `area`, `pie`, `doughnut`, or `scatter`, matched
+case-insensitively; omit it and the columns choose — two numeric columns chart
+as a scatter, a categorical column against a numeric one as a bar. `path` is
+the file to write: a path you name is yours, and the session never deletes it.
+
+Without a path the chart goes to a fresh `saya-chart-<hex>.html` in your temp
+directory, created new (owner-only on Unix) and never over an existing file or
+symlink. Automatic files are removed when the session ends; a path you named
+is left alone.
+
+`/chart` runs in the interactive TUI. The headless surfaces (`saya ask`, the
+piped REPL, `--turn-file`) answer `chart is only available in the interactive
+TUI`.
+
+## Readiness: `saya config doctor`
+
+`saya config doctor` prints the flat diagnosis and exits 0 when a database
+profile is selected and its secrets resolve, else 3. Nothing changes without
+`--task`.
+
+With `--task <query|ai|coding>` it reports **one** task's readiness as
+structured checks, computed from the resolved configuration only — no network
+calls, no database connection, no provider call, and no secret value is ever
+printed. Exit 0 when the task is ready, 3 when it is not, so a script can
+tell:
+
+- `query` — can this config run a database query? Checks `profile` (a profile
+  is selected) and `secrets` (every secret reference of the selected profile
+  resolves). Ready iff both pass — the same decision the flagless doctor's
+  exit code makes.
+- `ai` — can this config answer? Checks `provider` (a provider and model are
+  configured), `credentials` (a cloud provider's `api_key` reference resolves;
+  local providers need none), and `endpoint` (the configured endpoint
+  `host:port`, a warning when none can be stated). Ready when no check fails.
+- `coding` — can this directory support jobs? The `ai` checks plus
+  `workspace` (the launch directory sits inside a git worktree). The database
+  is NOT consulted: a ready AI provider with zero profiles is job-ready.
+
+The check names are stable. Text output is one summary line per task plus one
+line per check (`✓` pass, `!` warning, `✗` failure); a failing or warning
+check that knows what to edit adds a `fix:` line naming the setting or file —
+never a secret value:
+
+```
+task ai: NOT ready
+✓ provider: openai, model gpt-4o
+✗ credentials: no api_key reference configured — requests to openai will be unauthenticated
+   fix: Set [ai] api_key = { env = "NAME" } in /home/me/.config/saya/config.toml (or export SAYA_AI_API_KEY).
+```
+
+With `--format json` or `--format ndjson` the readiness is one `doctor_task`
+event on stdout:
+
+```json
+{"event":"doctor_task","task":"coding","ready":true,"checks":[{"name":"workspace","status":"ok","detail":"/home/me/project"},{"name":"credentials","status":"ok","detail":"no credentials required for ollama"}]}
+```
+
+A check with an edit hint carries it as a string `hint` field; checks that
+pass carry no `hint` key at all.
+
+## Which layer supplied a setting: `saya config show --explain`
+
+`saya config show --explain` prints the same effective settings as
+`saya config show`, each annotated with the layer that supplied it. Values
+stay redacted exactly as without the flag — a secret is still its
+`env:NAME`-style reference label, and an environment-sourced setting names
+the variable, never the value:
+
+```
+ai.model                              gpt-4o  ← user config file (/home/me/.config/saya/config.toml)
+run.max_rows                          1000  ← built-in default
+ai.api_key                            env:SAYA_AI_API_KEY  ← environment (SAYA_AI_API_KEY)
+```
+
+The source vocabulary: `built-in default`, `user config file`,
+`project config file`, `env file (VAR)`, `environment (VAR)`, and
+`command line (--flag)`; the file layers also name the file path the layer
+was read from. Two shapes are worth knowing. `--no-color` resolves through
+the ordinary configuration: with the flag, the `output.color` row reads
+`output.color never ← command line (--no-color)`. And each `[job]`,
+`[limits.job]` and `[agents]` setting appears under its own dotted key —
+`job.program_dir`, `limits.job.logical_requests`, `agents.max_children` among
+them — annotated with the origin of the layer that supplied it. When the project layer tried to set security-critical
+settings, they are listed after a blank line with the reason each was
+ignored:
+
+```
+Ignored from the project file:
+  the project file cannot set ai.base_url: it is security-critical; set it in your user config file or pass --trust-project-config
+```
+
+With `--format json` or `--format ndjson` the explanation is one JSON object
+with `settings` and `ignored_project_overrides`. Without `--explain`,
+`config show` prints exactly what it always printed.
+
+## Saved sessions: `saya sessions`
+
+`saya sessions list` prints one line per stored session, newest first: the
+id, its size in KiB, a status (`ok`, or `near-limit` at the store's warning
+band), and its age. Sessions whose deletion is pending — a previous `delete`
+could not remove every path — are listed separately as
+`pending deletion: <id>` instead of reappearing as rows, and the last line
+names the storage root. A pending deletion shown by `saya sessions list`
+is finished by running `saya sessions delete <id>` again.
+
+`saya sessions delete <id>` deletes exactly one saved session — its record,
+its state directory (the recovery checkpoints included), and its staged
+temps and quarantined copies — through
+the same lifecycle owner the interactive session holds its lock with. It
+never prompts, so scripted runs behave identically. A session another
+process holds live is refused with the holder's pid and nothing is deleted;
+deleting the id of the session you are running is refused the same way.
+When some paths could not be removed, the command says so (`N paths could
+not be removed; run the same command again to retry`) and a repeat run
+converges. What the command deliberately does not delete: **"Project
+preferences and typed database knowledge are stored separately and were not
+deleted."** Deleting an id that has no saved session says so and creates
+nothing.
+
+Exit codes follow the global scheme: `0` on success; `2` for every refusal
+or failure — unknown or invalid id, live session, the current session, an
+incomplete cleanup, or a store error.
+
+In an interactive session the same operations are slash commands with the
+same behaviour: `/sessions list` prints the same listing (rows, pending
+deletions, storage root) and `/sessions delete <id>` performs the same
+delete — it never prompts, refuses the current session and any live session
+with the same words, and reports pending cleanup the same way. Bare
+`/sessions` keeps its per-surface meaning: the text history list in the
+headless REPL, and the session picker in the TUI.
+
+## Project preferences: `saya preferences`
+
+`saya preferences` manages explicit, per-worktree guidance you confirmed
+yourself: short text notes scoped to the current git worktree, stored in
+saya's state database separately from typed database knowledge
+(`saya contracts`) and from saved sessions. **"Project preferences are
+explicit guidance you confirmed for this worktree. They never grant
+permissions and are stored separately from database knowledge
+(`saya contracts`)."** Nothing is created automatically — never by the
+model — and a preference carries no execution authority.
+
+```bash
+saya preferences list                   # what this worktree holds
+saya preferences add "prefer tabs"      # confirm one preference
+saya preferences edit <id> "new text"   # replace one preference's text
+saya preferences forget <id>            # remove one
+saya preferences forget-all             # remove every preference in this worktree
+```
+
+Ids are `pp-…`, printed by `list`. The text must be 1–1024 bytes of plain
+text with no control characters, and secret-shaped text (keys, tokens,
+passwords, credentials in URLs) is refused, never stored. A worktree holds
+at most 64 preferences with a 16 KiB aggregate. The identity is the
+canonical worktree root, so a run from a subdirectory of the same worktree
+sees the same preferences, and a sibling worktree sees none of them.
+`forget` of an id this worktree does not hold is a refusal that changes
+nothing. The command never prompts and never reads stdin. Preferences are
+sent with each request in this worktree as untrusted guidance, up to 16 KiB;
+`/context` is unchanged.
+
+Exit codes follow the global scheme: `0` on success; `2` for every refusal
+— no project worktree, refused text, an unknown or malformed id, either
+bound, or a store error.
+
+In an interactive session the same operations are slash commands with the
+same behaviour and the same words: `/preferences` and `/preferences list`
+print the same listing, `/preferences add <text>` confirms one, `/preferences
+edit <id> <text>` replaces one, `/preferences forget <id>` removes one, and
+`/preferences forget-all` removes every preference in this worktree. The
+worktree is the session's bound workspace root — never the launch directory —
+and a session with no bound root refuses every form with the same worktree
+remedy. The preference text keeps its interior spacing exactly as typed. The
+forms never prompt and are never a model-callable tool; nothing here grants
+a permission.
+
+## Session notes: `/notes`
+
+`/notes` manages your own notes attached to **this session's** saved
+summary (its continuation record): short guidance you write yourself,
+kept apart from the generated summary and from everything the model
+produces. **"Session notes (yours; guidance only — they grant
+nothing)."** Nothing is created by the model, and a note never grants a
+permission, an approval, or a capability.
+
+- `/notes` — show the current notes, or say there are none.
+- `/notes set <text>` — store the notes; the text is kept verbatim
+  (outer ends trimmed, interior spacing kept).
+- `/notes clear` — remove the notes.
+
+Notes attach to the saved summary a compaction creates, so `set` and
+`clear` refuse until you run `/compact` (or auto-compaction has run):
+"Notes attach to the session's saved summary, which /compact creates;
+run /compact first." The text is at most 8192 bytes of plain text —
+newlines and tabs allowed, no other control characters — and
+secret-shaped text (keys, tokens, passwords) is refused, never stored.
+Notes ride later compactions of the same session unchanged and are
+saved with the session: they come back on `/resume <id>` and are carried by
+`/rotate`, and they disappear only through `/notes clear` or deleting the
+session (`/sessions delete <id>`). They are separate from project
+preferences (`/preferences`, per worktree) and from typed database knowledge
+(`/remember`), and are never a model-callable tool.
+
+## Your own slash commands: `commands/*.md`
+
+A markdown file in a `commands/` directory becomes a slash command. The file
+name is the command name — `review.md` is `/review` — and the file body is
+the prompt sent to the agent as your message. Two directories are read:
+
+- `<config home>/commands/` — yours (`$SAYA_CONFIG_HOME/saya`,
+  `$XDG_CONFIG_HOME/saya`, `$APPDATA/saya`, or `~/.config/saya`: the
+  [configuration](configuration.md) directory, plus `commands/`).
+- `<workspace root>/.saya/commands/` — the repository's, where a workspace
+  root binds.
+
+```markdown
+---
+description: Review a diff for real problems
+---
+Review $ARGUMENTS and report only real problems. Cite file and line.
+```
+
+`$ARGUMENTS` is replaced by whatever you type after the command: `/review
+src/lib.rs` sends `Review src/lib.rs and report only real problems. …`. A body
+with no `$ARGUMENTS` gets the typed text appended on a new line, so `/name
+foo` never silently drops `foo`. Front matter is optional and only
+`description` is read — `/help` lists the command with it, and `/help <name>`
+says whether it came from your directory or the project's. Any other key is
+ignored with a diagnostic at startup, never applied.
+
+**A project command is untrusted input.** It comes from the repository, so it
+can only ever expand to a user message: it cannot change configuration, the
+approval mode, the tool set, or a permission, and nothing in it is executed.
+A body that looks like a slash command (`/mode bypass`) is sent to the agent
+as text, never run. Precedence is yours, then the repository's, then the
+built-in: your command keeps its name if a project file tries to define the
+same one, and a project or user file that takes a built-in user command's name
+(`commit.md`, `pr.md`) replaces that built-in and says so. A file named after a
+slash command that is not a user command (`help.md`) is refused with a
+diagnostic naming the built-in.
+
+Bounds: at most 64 command files, 8 KiB per file, 32 KiB for the expanded
+prompt, and a name of lowercase letters, digits, and `-` up to 64 characters.
+A file over a bound is refused whole — never truncated — and typing its name
+says why. Nothing is created automatically, and a command carries no
+execution authority: it is a prompt you wrote, sent the same way as one you
+type.
+
+### Built-in commands: `/commit` and `/pr`
+
+Two commands ship with saya, in the same `commands/*.md` shape: `/commit` and
+`/pr`. They are ordinary commands in every other way — the same `$ARGUMENTS`
+expansion, the same route to the agent as a message, no new tool — so a file
+of yours or your repository's with the same name replaces one, and `/help`
+names the built-in and says that it was replaced.
+
+- **`/commit [message hint]`** — read `git status` and the staged and unstaged
+  diff, stage only the files the task changed, write a conventional-commit
+  message (using the hint when one is given), and commit. It never stages with
+  `git add -A` or `git add .`, never passes `--no-verify`, never amends a
+  pushed commit, never commits secrets or credential files, and adds no
+  co-author trailer.
+- **`/pr [title hint]`** — inspect the branch's status, log, and diff against
+  the default branch, then push the current branch only if the session's
+  permission mode approves that `shell` call. It never force-pushes and never
+  pushes to or targets the default branch. Where `gh` is installed it opens
+  the pull request with `gh pr create`; otherwise it prints the repository's
+  compare URL for the branch.
+
+The hint is the typed text after the command, substituted for `$ARGUMENTS`.
+Neither template grants anything: staging, committing, pushing, and opening a
+pull request each go through the same `shell` approval every other call does,
+and under a mode that refuses a call the command reports the refusal rather
+than working around it.
+
+## Rotating a long session: `/rotate`
+
+A session record is capped at **4 MiB**; the store warns at **3 MiB**.
+Compaction (`/compact`) keeps the model's working memory small, but the
+saved record still grows with the verbatim tail it keeps. When a session
+has grown large — a long conversation, many turns — `/rotate` continues
+your work in a **new, smaller session** instead of growing the old record
+further.
+
+- `/rotate` takes no argument. Run `/compact` first: a session with no
+  saved summary has nothing to carry over, and the command refuses with
+  that remedy.
+- What carries over: the saved summary (the compaction narrative), your
+  session notes (`/notes`), the file and check facts recorded with it,
+  and the not-yet-summarised tail of the conversation, verbatim.
+- What does **not**: grants (`/allow`), approvals, denials, and the
+  recovery setting. The successor starts empty on all of them — nothing
+  is inherited.
+- The old session stays on disk, complete and resumable any time with
+  `/resume <old id>`. Nothing is pruned or deleted.
+
+The rotation saves the current session, publishes the successor linked
+to it (the link is lineage only — it records where the session came from
+and grants nothing), and continues in the successor. If the successor
+would still exceed the 4 MiB cap, the rotation refuses and asks you to
+compact further. If the successor cannot be opened — for example its
+session lock is held by another process — the rotation stops with the
+successor saved and resumable and your current session untouched.
+
+### When the record nears the cap
+
+The session tells you before the cap: after a save whose stored record
+has reached **3 MiB** of the **4 MiB** limit, it says this once:
+
+> This session's saved record is 3.4 MiB of its 4 MiB limit. Run
+> /compact, then /rotate to continue in a smaller successor session.
+
+At the cap itself a save is refused — the latest turn is not saved, the
+last good record stays on disk untouched, and the session says:
+
+> This session's record has reached its 4 MiB limit, so the latest turn
+> could not be saved. Run /compact, then /rotate to continue in a smaller
+> successor session; /resume &lt;id&gt; restores the last saved state.
+
+Nothing is ever truncated or pruned to fit. Run `/compact`, then
+`/rotate`; `/resume <id>` re-opens the last saved state at any time.
+
+## Reloading configuration: `/reload`
+
+Settings that `saya` loads at launch normally stay fixed for the session.
+`/reload` re-reads the configuration **between turns** — with the same
+launch options, from the same files — applies what is safe to apply now,
+and says exactly what it did. It never prompts (pipe-safe), and an
+invalid configuration changes nothing: the report says the previous
+configuration is still in use, and the session keeps running on it.
+
+The report has three sections:
+
+- **Applied from the next turn** — settings the agent re-reads per turn:
+  row caps, timeouts, budgets, iteration limits, and the connection
+  profiles (new or removed profiles are picked up; the completion and
+  `@`-references follow).
+- **Updated for this session** — the session copies re-seeded now:
+  provider, model, default profile, and endpoint. If you overrode one of
+  these with `/provider`, `/model`, or `/connect`, your override stays
+  yours: the setting is named as *not applied* instead of being silently
+  replaced.
+- **Not applied in this session** — what a running session never
+  changes, with the reason. Data sharing (`/privacy` is the way to change
+  it in-session), host commands and session denies, theme and thinking
+  display, and the output colour all take effect in a new session. Coding
+  settings are read when a job is created or resumed, so `/reload`
+  applies them to the next job in this session.
+
+The reload is classified against your session: settings you overrode are
+never silently replaced, and authority-sensitive settings never move for
+a running session. Grants and the approval mode are untouched. To see
+which file supplied a value in the first place, run
+`saya config show --explain`.
+
+## Undoing agent file edits: `/recovery`
+
+`/recovery` covers the agent's **direct file edits** inside the bound
+workspace: it is **opt-in per session, off by default**, and the flag
+dies with the session (a resumed session starts off again). While it is
+on, `write` and `edit` keep the file's previous
+contents — the exact bytes — before each edit, so a later restore can put
+them back.
+
+- **What is stored and where.** Owner-only files under the saya sessions
+  directory, outside your project: each edit's before-image, its
+  post-edit digest and the path. Nothing else — never the conversation,
+  never database results. The recorded edits are deleted with the session:
+  `/sessions delete <id>` removes the session's directory, checkpoints
+  included, and they are gone when the session is gone.
+- **Limits.** At most 128 edits and 64 MiB per session, 8 MiB per file.
+  At the quota, an edit that would need recovery is refused before
+  anything is mutated; you can delete the recorded edits
+  (`/sessions delete`) or turn recovery off for later edits.
+- **What it does NOT cover.** Restoring never undoes commands, downloads, or database effects, and files that look like credentials
+  or secrets are edited without a copy.
+
+- `/recovery` — the flag, how many edits are recorded, and the quota use.
+- `/recovery on` — turn recording on (it explains the terms). Recording
+  starts with the NEXT file edit; edits made before were not recorded.
+- `/recovery off` — stop recording; what was recorded stays available.
+- `/recovery list` — the recorded edits, one line each, with their
+  `ck-…` ids and whether each is restorable now.
+- `/recovery diff <id>` — preview what restoring that edit would change.
+- `/recovery restore <id>` — undo that edit. `<id>` is the full `ck-…`
+  id from `/recovery list` or a unique prefix of at least 6 characters
+  after `ck-`.
+
+A restore runs only when the file **still is, digest for digest, the
+recorded edit's result** — a restore never overwrites newer work: restore
+the newer edits first, or edit the file yourself. After a successful
+restore the copy is consumed. The forms never prompt and are never a
+model-callable tool.
+
+```text
+saya> /recovery on
+Recovery is on. From the next file edit, write and edit
+keep the file's previous contents so you can undo an edit. ...
+saya> /recovery list
+Recorded edits this session (1 of 128 · 1 KiB of 64 MiB):
+ck-1a2b… notes.txt write committed absent -> 24 B (sha 9f2c…) ·
+just now · restorable now: the file still matches the recorded edit
+saya> /recovery restore ck-1a2b
+Restored notes.txt to its state before the edit (checkpoint ck-1a2b… removed).
+Restoring a file does not undo commands, downloads or database effects.
+```
+
+## MCP: `saya mcp serve`
+
+`saya mcp serve` exposes saya's read-only capabilities to MCP hosts over
+stdio: newline-delimited JSON-RPC on stdin/stdout (protocol frames only —
+diagnostics go to stderr), exit `0` on stdin EOF. The same read-only safety
+gate every other client crosses sits behind every tool, and the surface has
+no approval or grant machinery at all: a missing secret refuses, it never
+prompts, so MCP profiles need complete, resolvable credentials.
+
+```bash
+saya mcp serve --profile analytics --profile staging
+saya mcp serve --allow-data-sharing   # rows may leave the machine
+```
+
+- **Tools.** `list_profiles` (allowlist names + SQL dialects only), `schema`
+  (live discovery with the state-store cache fallback), and `contracts`
+  (Active claims only; a schema-stale contract is dropped and counted in
+  `excluded_by_schema`) are always available. `query` (one bounded read-only
+  statement → `columns`/`rows`/`truncated` plus evidence) and
+  `investigation_run` (replay a saved investigation → result, evidence,
+  connection; `params` binds its declared parameters as `{"name": "value"}`
+  strings) return rows, so they exist **only when data sharing is allowed** —
+  absent from `tools/list` entirely when it is off, and refused at dispatch
+  too. The data-sharing gate is the config's `[ai] allow_data_sharing`
+  folded with the global `--allow-data-sharing` / `--no-data-sharing` flags.
+- **The profile allowlist is decided at startup and never widened.** The
+  `serve` subcommand's `--profile` values (repeatable) fix it; with none
+  given, the configured default profile is it (and with none configured the
+  server starts empty). Every tool that takes a profile is held inside it:
+  `schema`, `query`, and `contracts` resolve their profile argument through
+  it — a client naming a configured-but-unlisted profile gets `profile not
+  available: …` — and `investigation_run` is checked too, before anything
+  runs: its effective target (the `profile` argument, else the saved
+  binding's profile) must be allowlisted, and a binding saved against an
+  unlisted profile refuses with a bare `profile not available`, never
+  naming the profile. `list_profiles` reports the allowlist, never a
+  configured-but-unlisted profile.
+- **Bounds.** Requests ≤ 1 MiB (an oversized line is answered with a
+  JSON-RPC error and discarded unread), ≤ 4 tool calls in flight (beyond it,
+  a tool-level `busy` error invites a retry), 30 s for other tool calls and a
+  30 s cancellation-request deadline for database `query` and `schema`, responses
+  ≤ 16 MiB (a `query` payload first narrows by halving rows, refusing only
+  when even the rowless payload exceeds the bound).
+- **Every failure is a sanitized `isError` result**: credential-shaped
+  content is redacted, control characters are stripped, and saya's own
+  errors carry no paths — a database engine's own error text may name the
+  database file it failed on (for example a missing SQLite file). Write
+  SQL (`DELETE`, `DROP`, …) is refused by the read-only gate,
+  and a stale review on `investigation_run` is an error naming
+  `--revalidate` — words the client reads, a flag it cannot pass; a replay
+  never revalidates from the wire.
+- **Database cancellation requests settlement.** A `notifications/cancelled`
+  requests cancellation of an active `query` or active SQL in a saved
+  `investigation_run` through its connector and keeps the server in-flight
+  slot until the typed operation settles; the cancelled request's reply is
+  suppressed by RMCP.
+  Replay also keeps its serialized capture slot until settlement and capture
+  cleanup. Cancellation outcomes are not proof that the database stopped.
+  Active `schema` discovery, including schema discovery during replay, cannot
+  be interrupted, so cancellation or the 30 s deadline keeps its slot while
+  discovery is awaited and its result discarded before a later query. Replay
+  waiting for its capture slot is cancellation-aware and does not cancel the
+  current holder. Connector setup and connect are also awaited if they outlast
+  the deadline. The deadline requests cancellation at 30 s; the database
+  response can therefore arrive later. Other tools keep their existing call
+  timeout behavior.
+- **Stdin EOF does not join pending handlers.** RMCP's current service
+  shutdown exits `0` when stdin closes without cancelling or joining requests
+  still in flight. A one-shot pipeline that writes its JSON-RPC frames and
+  then closes stdin — for example
+  `printf '%s\n' "$INIT" "$INITIALIZED" "$LIST" | saya mcp serve --profile
+  demo` (the `initialize`, `initialized`, and `tools/list` frames) — may exit
+  before replies to handlers still in flight. Holding stdin open keeps the
+  session active; EOF shutdown settlement remains a service lifecycle limit.
+
+### Connecting a client
+
+Add saya to the host's MCP configuration, with `--profile` values to fix the
+allowlist (and `--allow-data-sharing` only when rows may leave the machine):
+
+**Generic host setup** — add a local MCP server in your host’s configuration.
+Use the executable and arguments below, adapting their field names to the host:
+
+```text
+command: saya
+arguments: mcp serve --profile analytics
+transport: stdio
+```
+
+For host-specific setup, consult that host's MCP configuration reference.
+
+The `--profile` values fix the server’s startup allowlist. Add
+`--allow-data-sharing` only when row-returning tools are permitted.
+
+`/export [--snapshot|--refresh] [--overwrite] <path>` writes rows to a
+`.csv` or `.json` file (chosen by extension):
+
+- The default form — and `--refresh` — re-runs the last query on its
+  original connection and exports that **fresh read**; the file reflects the
+  fresh result, not the displayed table (column filters, scroll, and folds
+  do not apply). The legacy spelling stays a refresh and its success line
+  says so. A re-run first resolves the stored connection alias again: when
+  the alias now resolves to a different source than the one the last query
+  ran on, the re-run is refused before any task spawns (`/chart` and bare
+  `/explain` refuse the same way) — run `/sql` again to capture fresh from
+  the current source. `--snapshot` and reports read the capture only and
+  never consult this guard.
+- `--snapshot` writes the result you already inspected: the latest capture,
+  held for this session only, with **no query at all**. The success line
+  names the execution id and capture time (UTC) it came from. Captures
+  cover three paths: a direct `/sql` result (full, up to the row cap), an
+  agent `bounded_sql_query` result (model-limited: exactly the at most 50
+  rows the agent saw — the success line says `model-limited: the full
+  result may be larger — use --refresh for a full read`), and a saved
+  replay run in the TUI (full).
+- An existing destination needs `--overwrite`; a refused or failed export
+  leaves the destination unchanged. Writes are atomic (private temp +
+  rename), symlink and directory destinations are refused, and encoded
+  output is capped at 32 MiB.
+- A refused or absent capture never falls back to an older result: the
+  snapshot says the rows were not captured and offers `/export --refresh`.
+  Fan-out agent queries (`bounded_sql_query_all`) are never captured.
+
+`/report [--rows N] [--overwrite] <path>` writes a shareable Markdown report
+of the captured result — the latest capture, from a direct `/sql` query, an
+agent query, or a saved replay — never querying a database and never opening
+a browser or uploading anything. By default it carries the exact SQL and
+provenance only (connection label, submitted-SQL hash, execution id, times
+in UTC, row counts, truncation, scope) with the rows section labelled as
+omitted; `--rows N` (at most 100) adds a table of the first N captured
+rows, and a model-limited capture says so in the provenance (the agent saw
+only the first N rows). Cell values are neutralised — links, images, HTML,
+table-breaking characters, and control characters cannot be carried into
+the file — and a bare `https://…`
+text value may still be auto-linked by a Markdown renderer, so review the
+report before sharing. The report is capped at 2 MiB, written atomically,
+and an existing destination needs `--overwrite`. Use `/export` for data
+files (`.csv`/`.json`).
+
+## One-shot headless: `saya -p`
+
+`saya -p "<task>"` runs one job headless in the current directory and
+exits. It is the same job `saya start` runs — one durable id, one event
+journal, the same `outcome` block and usage — with no session and no
+follow-up.
+
+Flags:
+
+- `-p, --print <TASK>` — the task. `-p -` reads it from stdin, bounded to
+  16 KiB.
+- `--job-id <ID>` — a stated durable id; otherwise `p<unix-millis>-<pid>`.
+- `--write <PATH>` — the write scope (repeatable); needs an edit-capable
+  consent. With none stated, the job may edit the whole workspace (`.`).
+- `--max-turns <N>` — a backstop on logical model requests. Reaching it ends
+  the job `failed` with subtype `error_max_turns` and exit `5`; it is not a
+  pause.
+- `--max-budget-usd <USD>` — the job's cost ceiling; reaching it ends
+  `error_max_budget_usd`.
+- `--format text|json|ndjson` — text prints the answer and puts `job <id>` and
+  any failure on stderr; json prints the one result object; ndjson streams
+  progress and ends with that object. `--output-format` is an alias, and
+  `--format stream-json` is ndjson.
+
+Consent comes from `--permission-mode` or `--approval-mode`, not both. On
+`-p`, `bypass` is ungated.
+
+| Stated | Approval policy | Write scope | Shell with no operator |
+| --- | --- | --- | --- |
+| nothing, `ask`, `default`, `read-only` | read-only | none | sandbox, root write-denied |
+| `never` | never | none | no shell |
+| `accept-edits` / `acceptEdits` | accept-edits | `.` unless `--write` | sandbox with a notice |
+| `bypass` / `bypassPermissions` | bypass | `.` unless `--write` | host |
+| `plan` | refused, exit 2 | — | — |
+
+`--write` under a non-edit consent is refused with exit 2.
+
+The result object is the last ndjson line and the only stdout under `json`:
+
+```json
+{"event":"job_result","type":"result","subtype":"success","is_error":false,
+ "session_id":"p1794353611759-12359","job_id":"p1794353611759-12359",
+ "result":"<final answer>","num_turns":12,"duration_ms":81234,
+ "duration_api_ms":60211,"total_cost_usd":0.0123,"usage":{},
+ "outcome":{},"failure":null,"failure_class":null,"exit_code":0}
+```
+
+`subtype` is `success`, `error_max_turns`, `error_max_budget_usd`, or
+`error_during_execution`. `total_cost_usd` is `null` when the provider
+reported no cost. The first ndjson line is `job_started` with the id, the
+working directory, the consent and the write scope.
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | completed |
+| 2 | usage or consent refusal; nothing started |
+| 5 | failed |
+| 6 | paused (guard stop; resumable) |
+| 130 | cancelled |
+
+```bash
+saya -p "fix the failing test"
+saya --format json --permission-mode accept-edits -p "create hello.txt"
+```
+
+`saya start` and the TUI `/start` panel share this rule: under `accept-edits`
+or `bypass`, an empty `--write` scope means `.` and the approve question is
+answered by the stated mode. Under `ask` they still ask. `saya job resume`
+returns the same result object and exit code.
+
+## Jobs: `saya start`, `saya follow-up`, `saya job`
+
+The retired `saya coding` spelling was replaced by three commands. On-disk job
+state, ids, and paths are unchanged, so a job started by an earlier binary
+still lists, resumes, reviews, and applies.
+
+- `saya start <id> <task> [--write <path>]... [--database-profile <name>]...
+  [--plan] [--in-place | --managed] [--approve] [--repository <path>]
+  [--program-dir <path>]` starts a job. `--write` is repeatable and states the
+  repository-relative paths the job may edit (pass `.` to cover the whole
+  repository); `--database-profile` selects existing bounded, non-whitespace
+  profile names for read-only queries; `--plan` starts plan-first, needs an
+  interactive operator to answer, and needs at least one `--write` path to
+  open. By default a Git repository is edited
+  **in place**: tool edits land in the working tree and are captured as
+  before-images, and no managed checkout is created. `--managed` creates the
+  managed checkout instead, and `--in-place` forces the folder even when
+  `[job] root_mode = "managed"`. `--approve` preauthorizes the exact task and
+  stated scope.
+- `saya follow-up <id> <agent> --expected-completion-sequence <n> <instruction>
+  [--in-place | --managed] [--approve]` runs a bounded new invocation of a
+  completed child in the job's own root. The instruction is at most 4096 bytes
+  and grants nothing; the job's record decides whether that root is in place or
+  a managed checkout, so the two mode flags parse for compatibility but are
+  ignored; `--approve` renews the job's exact current scope.
+- `saya job <verb>` runs the durable-job lifecycle: `export`, `events`,
+  `review`, `review-existing`, `apply`, `remove-checkout`,
+  `reconcile-checkout`, `retain-checkout`, `resume`, `notes`, `accept`,
+  `promote`, `list`, `show`, `cancel`, `doctor`, `setup`, `reconcile`,
+  `worktrees`, and `rewind`. An agent-shaped verb is refused by name: those
+  controls have their own spellings below. `saya job rewind <id> [--to <turn>]
+  [--baseline] [--force]` lists checkpoints when no turn is named; `--force`
+  lets a rewind touch a path the job's journal does not account for, which is
+  otherwise reported and left as it stands.
+
+`saya start` and `saya resume` end with an `outcome` block — final state, the
+model's bounded and redacted final answer, the commits made in the working
+checkout since its base, the changed paths, the checkout path, and readiness as
+one field. `saya job show` reports the same block. A run that ends with the
+model's final answer is `completed` even when it changed nothing; a guard stop
+is `paused` and names its reason. Model text is marked untrusted.
+
+Inside a session the same grammar is spelled `/start`, `/follow-up`, and
+`/job <verb>`. The session-only controls have one bare spelling each:
+`/approve <id>`, `/deny <id>`, `/message <id> <agent> <text>`,
+`/pause <id> <agent>`, `/continue <id> <agent>`, and
+`/cancel-child <id> <agent>`. A top-level `saya coding …` still parses, but
+every path exits `2` with the spelling that works; `/coding` is refused the
+same way. `saya job doctor --probe` is the job-side readiness probe.
+`saya job setup` checks readiness step by step and prints the one action that
+clears each blocked step; it installs and enables nothing.
 
 ## Runs: `saya run`
 
@@ -147,10 +1315,10 @@ granted, each step with the scopes it asks for, the declared budgets, and the
 workspace artifacts' digests as they stand. Only an explicit `y`/`yes`
 approves; a refusal exits `2`, and that run is not resumable — nothing was
 approved, so start a new run. Approve, and the episodes run without further
-prompts: the wall clock arms only at approval, read-shaped tools run, the
+prompts: the wall clock arms only at approval, read-shaped tools run, every
+step carries the `shell` tool, the
 approved scopes' own plan-gated tools run in the steps that asked for them
-(scratch's `scratch_sql`, fetch's `http_fetch` and `http_download`, the
-runner's `run_program`), and
+(fetch's `http_fetch` and `http_download`), and
 anything needing an interactive decision or an
 external side effect is denied rather than asked about. One approval instead of one per tool call is what
 makes a long run usable and also what makes the approval matter, so the
@@ -160,50 +1328,47 @@ Headless — piped input, CI, or `--non-interactive` — there is no ask at all:
 the `--allow` declaration is the approval, and a plan asking for scopes
 outside it is refused with exit `2`, naming the missing scopes.
 
-**Today four scopes bind: `workspace-write`, `scratch`, `fetch` and
-`runner`.**
-`scratch` gives the run one DuckDB file of its own, at
-`runs/<id>/scratch.duckdb`, reachable only through the `scratch_sql` tool, and
-only in the steps whose plan asked for scratch: DDL, DML and joins over the
-run's staged intermediate results, one statement per call, results capped at
-50 rows. It holds nothing else: external access is off and locked at open,
-every file reader is refused, and it is not a connection to any registered
-database — the run's only writable SQL, and it dies with the run directory.
-Stage corpus data through the workspace tools first. `fetch:<scheme>+<host>`
+**Today two scopes bind: `workspace-write` and `fetch`.**
+`fetch:<scheme>+<host>`
 gives the steps that asked for it two tools, gated by that scope's declared
 destinations and HTTPS-only, loopback/private/refused — `http_fetch` delivers
 one bounded GET's body into the model's context as a labelled, escaped,
 untrusted block (never raw bytes, never the system prompt), and
 `http_download` streams one file into the run workspace under the run's
 shared download budget: a tripped bound pauses the run fail-safe (`exit 6`),
-leaving a resumable partial. Note the destination list is the *only* network
-egress a run has: hosts outside it are refused, and every hop of a redirect
-is re-judged. `runner:<program>` gives the steps that asked for it one tool,
-`run_program`: one allowlisted program with typed argv — no shell, no
-interpolation, one argv element per argument, ever. The programs a run may
-name must be declared in `[jobs.runner]` (`allow` plus the absolute
-`program_dir` they are staged in — see `docs/configuration.md`) and staged
-there as regular, non-symlink, non-script files before the run; the
-directory must sit outside the run's filesystem roots in both directions,
-and the run refuses to start otherwise. A refused interpreter name is
-refused by the grammar itself: `--allow runner:python3` is a usage error
-(exit `2`) naming `interpreter:python3` as the family that approves it,
-refused before any run directory exists — so the admission check below
-keeps the refusal list in force for anything that still reaches it.
+leaving a resumable partial.
 
-The runner is admitted only where the startup sandbox probe proved this
-host. On a host the probe refused, a plan asking for the runner is refused
-as needs-approval naming the missing scope — the honest refusal — because
-the capability is absent, not degraded. On a proven host, every program the
-run approved is checked once, at start: a program missing from the
-directory, staged as a symlink or a script, not declared in
-`[jobs.runner] allow`, or naming a refused interpreter refuses the run
-(exit `3`) naming the program, the directory, and the reason. The refusal
-list stays in force — shells and interpreters (`bash`, `python3`, …) can
-spawn arbitrary children and are refused whatever any allowlist says; what
-is stageable is a purpose-built, single-command binary. Each step can call
-only the programs its own plan asked for: a step scoped to one program
-rejects another allowlisted one.
+Replacing an existing destination takes an optional `expected_digest`: the
+64 lowercase hex sha256 of the destination's current content, as a fresh
+`read` reports it. Without it the download is create-only — an
+existing destination (file, directory, or symlink) is refused before any
+request is made (best effort; the check is repeated at publication under the
+commit gate). With a matching digest the destination is replaced; a
+non-matching digest is refused with a message that does not reveal the real
+digest ("does not match the expected_digest you supplied; read the file with
+read …"), a digest for a missing destination is refused and
+nothing is created, and a malformed digest is refused before any request or
+budget use. A refused publication leaves the destination, the completed
+partial, and its sidecar in place, so a retry with the right precondition
+does not re-download — and the sidecar never grants permission to overwrite.
+Downloads are not covered by `/recovery`, and the digest guard is a
+stale-version check serialized among Saya's own writers, not an
+operating-system compare-and-swap.
+
+Note the destination list is the *only* network
+egress a run has: hosts outside it are refused, and every hop of a redirect
+is re-judged.
+
+Every step also carries `shell`, the same tool the coding root advertises,
+composed once per run over the run's workspace: it runs a command on the host
+by default, in the sandbox when the call sets `sandbox: true`, and a host call
+a headless run cannot ask about falls back to the sandbox or is refused with a
+reason — the section below states the lanes in full. The `runner:<program>`
+and `interpreter:<program>` scopes are gone: a fresh plan or `--allow` naming
+either is a usage error (exit `2`) that points at `shell`, and a persisted
+plan or spec that still names one loads — the scope words are kept on the wire
+— but is refused as needs-approval at approval rather than read as an unknown
+scope.
 
 The grammar also parses `endpoint:<role>=<endpoint>`, and it is **refused
 with a usage error** that names what is missing, because no tool in a run's
@@ -244,51 +1409,210 @@ session: they are never
 persisted, and a resumed session starts empty. `/allow none` states the
 empty approval and seeds nothing — it is not a revoke.
 
+### Headless grants under ask
+
+A session with no prompt surface — `--turn-file`, piped input, or
+`--non-interactive` — cannot answer an approval question. Under
+`--approval-mode ask`, its launch `--allow` token now makes the matching
+tool family usable instead of leaving the tools hidden:
+
+- `workspace-write` — `write` + `edit`
+- `fetch:<destination>` — `http_fetch` (+ `http_download` when a workspace
+  is bound)
+- `command:<program>` — `run_command` (only where the host lane is composed)
+
+Available is not authorised: every call is still judged on its own
+arguments. A fetch grant for one host does not allow another host, a command
+grant names one program, and a call no grant covers is refused without
+prompting and without hanging. The cross-connection fan-out SQL tool has no
+grant token and is never made available by a grant. `read-only`, `never` and Plan mode widen nothing. Grants last for the process that launched them: a
+resumed session (`--resume`) does not restore them. Where a headless
+session needs effects no scope covers, `--approval-mode bypass` is still
+the way.
+
+## Choosing model tools: `--tools` and `[tools] allow`
+
+One setting governs every agent surface. `--tools name,name,...` is a global
+flag: `saya` (the interactive session), `saya ask`, `saya run`, and
+`saya start` all read it, and it overrides `[tools] allow` in every
+config layer. Every other subcommand refuses it with that list of surfaces —
+it is not accepted and dropped.
+
+```bash
+saya --tools read,grep ask "which tables hold orders?"
+saya start my-job "port the report" --write src/ --tools read,edit,shell --approve
+```
+
+Inside a session, `/start --tools …` is the narrower case: it may only
+name tools the session itself advertises, and naming any other is an error that
+lists them. With no flag the job gets the session's list unchanged.
+
+The list only ever narrows. Each surface assembles its tools exactly as it
+would without the flag and then keeps only the names in the list, so a name can
+never grant a tool the surface would otherwise hide: `shell` stays hidden under
+`--approval-mode never`, however the list is spelled. A call to a tool that is not advertised is refused as an unknown tool.
+With no setting, every surface advertises exactly what it does without one.
+Duplicates collapse, `bash` names `shell`, and an empty list, an unknown word,
+a database tool name, or `helpers` with nothing beside it is refused with the
+valid names listed.
+
+Database tools — `schema_discovery`, the bounded SQL family, the query fan-out,
+and the contract tools — are not governed. They follow the selected connection
+and the data-sharing setting (only `schema_discovery` needs no sharing), so
+naming one is refused with that reason instead of being silently ignored. A
+job persists the set it started with, so a resume runs exactly what was
+approved at start, and its helpers get that set minus `helpers`.
+
+## The `shell` tool
+
+The `shell` tool runs commands in the working checkout. The coding root, its
+helpers, every `saya run` step, and the interactive session all advertise it,
+and each builds it from the same implementation, so what a call costs the
+operator cannot differ between them. A surface advertises it unless the mode is
+`never`, and `[tools] allow` is the one switch that takes it away — for the
+coding root that takes it from the root and every helper at once. A helper's
+shell follows the job's mode, except a helper's that cannot write (an `explore`
+one, or any type `[agents]` declares read-only), which is sandbox-only with
+nothing writable.
+
+By default a call runs on this machine — the host lane — and the approval mode
+decides who answers. Under `ask` every host call is put to the operator in the
+coding panel, which shows the exact command and working directory, sanitised so
+no control or invisible format character can rewrite the line being read; the
+answer is `/approve <job-id>` or `/deny <job-id>`, and no answer
+within 120 s is a denial. A command or working directory longer than the
+panel's 2,048-character prompt is refused before the operator is asked — the
+operator never answers for text it cannot read in full. A session puts the same
+call to its own approval prompt, in the same sanitised words. A helper's prompt
+goes to the same panel, naming the helper, and several helpers asking at once
+queue: one prompt is pending at a time. No approval is remembered for a later
+call. Under `bypass` a host call runs without asking.
+
+A call that sets `sandbox: true` runs in the sandbox instead, without asking in
+every mode but `never`: the confinement is the consent. Inside it the command
+runs as `/bin/sh -c <command>`, with the working directory set to the root's
+working checkout or a folder inside it. Writes are allowed only inside the
+working checkout — `.git` included — and all network access is denied; the
+environment is empty except `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, `HOME` (the
+working checkout), `LANG=C.UTF-8` and `TERM=dumb`, so no API keys or database
+credentials are visible. Programs outside `/bin`, `/usr/bin`, `/sbin` and
+`/usr/sbin` cannot run — for example `~/.cargo/bin/cargo`. The sandbox is proven
+at startup, on macOS today; a host the probe refuses has no sandbox lane, so a
+`sandbox: true` call is an ordinary host call there.
+
+A host call inherits this process's environment minus saya's own secrets: every
+environment-variable name the resolved config names as a secret (provider keys
+and every database profile's credentials), `SAYA_API_KEY`, and every name
+already in the environment that starts with `SAYA_`. A child that echoes one of
+those values is scrubbed from the captured output.
+
+With no operator to answer a host call — a headless run or session under `ask`
+— the call runs in the sandbox when one is proven, and its result says so: a
+`lane_notice` field states that no operator could approve a host call, that the
+command ran in the sandbox with no network, and that a job or session
+reaches the host with `--approval-mode bypass`. The reroute is never silent, so
+a command that fails for want of network is attributable to the lane it ran in.
+With no operator and no proven sandbox the call is refused instead, with a
+reason naming the same way out. Under `read-only` a host call is served from
+the sandbox, whose root is write-denied, so the command can read and run but
+change nothing; a host that proves no sandbox has no shell under `read-only`.
+Under `never` the root has no `shell` tool.
+
+A command is capped at 65536 bytes (64 KiB). The timeout defaults to 120 s and
+never exceeds 600 s; stdout and stderr are each capped at 64 KiB and redacted; a
+timeout or a cancel kills the command and every process it started.
+
+## Switching the session's permission mode: `/mode`, Shift+Tab, `--permission-mode`
+
+A session runs under one of four **permission modes**. Each one is a
+projection of the two postures the engine already had — the consent posture
+(`ApprovalPolicy`) and the task posture (`AgentMode`) — so a switch is never a
+second policy path: every decision still resolves through the session's one
+policy.
+
+| mode | what it does |
+| --- | --- |
+| `ask` | every call is put to you (the default) |
+| `accept-edits` | the workspace file family (`write`, `edit`) runs unasked; everything else still asks |
+| `plan` | write-shaped tools are hidden and refuse; `submit_plan` puts a plan to your approval |
+| `bypass` | every call runs without asking; every structural guard still applies |
+
+`/mode` with no argument reports the mode in force; `/mode ask`,
+`/mode accept-edits`, `/mode plan` and `/mode bypass` switch it. `build` is
+kept as an alias for `ask`. A consent posture with no mode of its own
+(`read-only` or `never`, set by `/approvals`) is reported as the pair it is,
+never rounded to one of the four, and is not a cycle member.
+
+**Shift+Tab** walks the same switch: `ask → accept-edits → plan → bypass →
+ask`, skipping `bypass` where the configuration withholds it. Where a prompt,
+plan approval, trust modal, run panel, search or picker owns the keyboard the
+press changes nothing and says so in the transcript rather than being
+swallowed. `?` lists the binding.
+
+**`--permission-mode <mode>`** starts the session in one of the four, and
+overrides whatever a resumed record carried. It is session-surface only:
+`saya ask`, `saya run`, `saya start`, `saya follow-up` and `saya job` refuse
+it rather than ignoring a stated intent. Stating it together with `--approval-mode` is refused — the two
+are spellings of the same consent, and which one won would depend on the order
+the checks ran in. `--permission-mode bypass` is refused unless
+`[permissions] allow_bypass` is true in your user configuration (see
+[configuration.md](configuration.md#permissions)).
+
+`bypass` is the one mode a project's `.saya/config.toml` can never enable: the
+`[permissions]` table is protected, so the attempt is reverted and reported,
+and `/mode bypass`, the Shift+Tab cycle and `--permission-mode bypass` all
+refuse without the key. A **resumed** session whose record says `bypass`
+degrades to `ask` when this process's configuration no longer allows it — a
+record cannot grant a consent the configuration refuses.
+
+One operation backs all three spellings, so they cannot disagree. A switch
+sets the shared policy cells, which means a turn already in flight sees the
+new posture at its next approval; the model's *tool list* is read at turn
+start, so under `plan` the write tools a turn was already shown keep refusing
+until the next turn, and the `plan` switch message says so. Nothing here touches the
+SQL safety layer, the sandbox, the fetch destination list or the deny list:
+every mode answers those the same way.
+
 ## The fourth approval mode: `bypass`
 
 `--approval-mode bypass` (or `/approvals bypass`) runs every tool call
 without asking: one typed, global, informed consent, given once at the flag
 instead of once per call, in the session's own vocabulary — never a euphemism
-and never a softened word. It is a **consent transformation, not a
-containment transformation**: every structural guard still applies, unchanged,
-under every mode. The SQL safety layer still refuses any write statement (a
-refusal from the safety layer, never an approval question); the sandbox, the
-placement guard, and the startup probe still gate `run_program`; path-shaped
+and never a softened word. Headless, it is also how a job or session
+reaches a host `shell`: a driver with no terminal (`--non-interactive`, or no
+TTY) defaults to `never`, which advertises no `shell` at all, and under `ask` a
+host call it cannot ask about runs in the network-less sandbox instead. A
+`saya run` is not one of those: it refuses `bypass` at start. It is a **consent
+transformation, not a containment transformation**: every structural guard
+still applies, unchanged, under every mode. The SQL safety layer still refuses
+any write statement (a
+refusal from the safety layer, never an approval question); a `sandbox: true`
+shell call still runs confined; path-shaped
 names, symlinks, and scripts still refuse; fetches stay HTTPS-only and
 private-range-refused; write-shaped tools still only appear where a workspace
 root binds; and the all-bounds discipline is untouched. Bypass changes only
 who answers the per-call question — and the answer is always yes.
 
-What bypass opens honestly: the write-shaped session tools (`workspace_write`,
-`scratch_sql`, `http_fetch`, `http_download`) are advertised whether or not a
-prompt surface exists — a piped REPL runs under bypass too — and the session's
-interpreter door opens to the interpreters the trusted config staged in
-`[jobs.interpreter] allow` (the project layer is untrusted without
-`--trust-project-config`; the door is the same staged universe under every
-mode — under `ask` it is reachable through a granted
-`interpreter:<program>` token, under bypass without the ask). An interpreter
-child is confined by the same sandbox as any runner child: same fs roots,
-same empty egress — and the process-fork fact is the platform's own: on
-macOS the Seatbelt profile denies fork by omission, so a child an
-interpreter spawns is refused by the sandbox; on Linux nothing in the
-Landlock + namespace confinement restricts fork, so children run, under
-the same bounds as the interpreter itself. What bypass does **not** open,
-said plainly: interpreters outside the staged allow, programs outside
-`[jobs.runner] allow`, unproven hosts (no runner in any mode — and the
-absence is said: "run_program is unavailable: the sandbox probe did not
-prove this host"), and write SQL.
+What bypass opens honestly: the write-shaped session tools (`write`,
+`edit`, `http_fetch`, `http_download`) are advertised
+whether or not a prompt surface exists — a piped REPL runs under bypass too —
+and the session's `shell` runs every host call without asking. On every
+surface, run and session alike, replacing an existing file requires an
+observed `expected_digest` — the sha256 digest from a fresh read or the
+previous write/edit result — and a stale overwrite refuses instead of
+clobbering. For `http_download` the default without the digest is
+create-only: an existing destination — file, directory, or symlink — is
+refused before any request is made. What bypass does **not** open,
+said plainly: the sandbox lane's bounds (a `sandbox: true` call still writes
+only in the workspace, with no network), the fetch destination list, and
+write SQL.
 
 When bypass takes effect — at launch, at `/approvals bypass`, and again on a
 resume — the session prints its activation line: `bypass on: every tool call
-runs without asking; every structural guard still applies.` With interpreters
-staged, the line carries the interpreter warning in the session's wording
-(the staged names, the sandbox bounds, the model-written program, and the
-platform's process-fork fact — on macOS "no process-fork is granted:
-children an interpreter spawns are refused by the sandbox", on Linux
-"nothing in the Linux confinement restricts process-fork: children an
-interpreter spawns run, under the same bounds as the interpreter itself");
-with none staged, it says instead: `no interpreters are staged in
-[jobs.interpreter] allow, so interpreter calls still refuse.` Where the
+runs without asking; every structural guard still applies.` Nothing stages
+interpreters any more — `[jobs.interpreter]` was retired with the interpreter
+capability — so the line's second sentence is always `no interpreters are
+staged, so interpreter calls still refuse.` Where the
 host-command lane composed, the line also states
 `host commands run unsandboxed: as your user, your network, your filesystem.`
 Where the session's deny list is non-empty, the line lists the denied names
@@ -308,7 +1632,7 @@ session mode. A `/run` from a bypass session therefore forwards no mode to
 the child:
 the child states its own scopes or takes the run default (read-only).
 
-Budgets come from `[jobs]` in the config, layered with `--budget KEY=VALUE`
+Budgets come from `[limits.run]` in the config, layered with `--budget KEY=VALUE`
 (`wall-clock=<seconds>`, `turns=<n>`, `tool-calls=<n>`,
 `tokens.orchestrator=<n>`); a zero ceiling is refused as a typo, and the
 environment is never read for budgets — a run is reproducible from its spec
@@ -323,11 +1647,12 @@ pausing with the same `BudgetExhausted`, the partial left resumable. The
 wallet's spend is journaled as a running level while the run claims it —
 the durable record a resume carries, as usage is for the token ceiling.
 `turns` and
-`tool-calls` bound each episode through the agent's own limits, so exhausting
-them ends the step rather than pausing the run. Because every episode calls
+`tool-calls` bound each episode through the agent's own limits, and a step
+that exhausts its ceiling pauses the run (`BudgetExhausted`, resumable) with
+that step incomplete. Because every episode calls
 the single `orchestrator` endpoint today, `tokens.orchestrator` is the only
 token ceiling a run accepts: a `tokens.<role>` key naming any other role —
-from `--budget` or a leftover `[jobs] tokens_per_endpoint` entry — is refused
+from `--budget` or a leftover `[limits.run] tokens_per_endpoint` entry — is refused
 at start, because the engine binds the tightest declared ceiling to the
 endpoint every episode calls, and a ceiling for a role that never runs would
 silently cap the whole run. When per-step roles bind, attribution follows
@@ -341,21 +1666,26 @@ cache hit of zero shows `cache reads 0`. The usage shown for a run paused on
 its token budget is the same arithmetic the ceiling compared (input plus
 output), so the display and the budget that stopped the run agree.
 
-**Two of the three streaming budgets bind the run, not each invocation; the
-third re-arms.** The token ceiling carries: a run that pauses on its token
-budget resumes against the same ceiling, because the resumed run's totals
-are seeded from the usage its journal already records — so it pauses again
-at the run's cumulative spend, and resuming without raising the ceiling
-trips on the first tick, because the run is already past it. The download
-budget carries the same way: the wallet a resume arms is seeded from the
-download spend the journal records, so ten resumes share one wallet instead
-of each spending the declared budget again. The wallet's check is the
-refusal latch — the record of a claim that was refused, never a threshold
-comparison — so a run already past its limit is refused on its next
-download claim, and that refusal is what pauses it; a carried level never
-stands in for a refusal no download made, and the headroom a record leaves
-is claimable until a claim is refused. The wall clock, which no record can
-replay, re-arms in full on a resume. Per-tool-call approval
+**All three streaming budgets bind the run, not each invocation.** The token
+ceiling carries from journaled usage, and the download wallet carries from
+journaled claims. The per-step `turns` and `tool-calls` ceilings bind the run
+too: their counts are journaled with the usage events, and a resumed or
+retried episode starts from what the journal recorded. The wall-clock ceiling
+also carries: Saya journals the UTC
+origin after approval and raises a durable high-water observation while the
+run emits events. Outside forced boundaries, high-water marks persist at a
+one-second cadence. Writes are forced when a run arms or resumes, before
+provider turns and tool requests, and at lifecycle transitions. Resume uses
+the repaired journal to calculate the remaining interval, so pause and
+offline time count and another invocation cannot recharge the ceiling. A
+configured resume refuses with a bounded clock
+explanation when a legacy or torn journal has no valid origin; start a newly
+approved run to obtain a new clock. With no wall-clock ceiling configured,
+this clock remains inactive. A forward system-clock jump can expire a run
+early. A backward jump detected at a persisted observation pauses
+conservatively; a clock change between observations may not be detectable.
+The clock measures first-party elapsed wall time, not CPU time, and no
+independent timer settles a stalled operation yet. Per-tool-call approval
 defaults to `read-only` (read-shaped tools run,
 side-effecting tools are denied). `--approval-mode ask` or `never` denies
 rather than prompts — a run has no per-call question, so every tool that
@@ -373,7 +1703,12 @@ Management subcommands:
   renders what happened, `--format ndjson`/`json` emit the journal's own
   bytes.
 - `saya run resume <id>` — continue a paused or crashed run at its first
-  incomplete step. A run with a live holder refuses.
+  incomplete step. A run with a live holder refuses. A run whose first
+  incomplete step declares `turns` or `tool-calls` budgets needs the count
+  evidence its journal recorded; a journal without it is refused unless
+  `--retry-incomplete` retries that step, reconciling the half-written
+  counts. Retry is not exactly-once: effects the step already produced may
+  repeat, so reconcile them before opting in.
 - `saya run cancel <id>` — record a run cancelled. A run with a live holder
   refuses; cancel the owning process with Ctrl-C instead.
 

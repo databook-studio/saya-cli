@@ -1,8 +1,7 @@
 //! Chapters: one request and everything it produced, held together.
 //!
-//! Phase 3, packet 2 adds the manual fold on top of packet 1's numbering:
-//! a finished chapter collapses to one row carrying its verbatim request
-//! text, and the same keystroke reopens it. Fold state is view state — the
+//! A chapter may fold: a finished chapter collapses to one row carrying its
+//! verbatim request text, and the same keystroke reopens it. Fold state is view state — the
 //! set lives on [`Transcript`](super::Transcript), never persisted, never
 //! replayed — following the `Block.group` precedent.
 //!
@@ -131,8 +130,8 @@ pub(crate) fn folded_row(
     let marker = format!(" ▸ {} lines", shown.saturating_sub(1).max(1));
     // The folded row still says whose turn it is. Without the role word it is
     // a user request painted exactly like body prose, so after the preceding
-    // chapter it reads as that chapter's continuation — the misattribution
-    // Phase 2 fixed for `System` content. The word rides in the text rather
+    // chapter it reads as that chapter's continuation — the same
+    // misattribution `System` content avoids. The word rides in the text rather
     // than making this a label row, because find skips label rows and a
     // folded request must stay findable.
     let lead = label(BlockKind::User).unwrap_or("YOU");

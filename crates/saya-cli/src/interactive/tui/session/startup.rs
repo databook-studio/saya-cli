@@ -3,9 +3,9 @@
 use super::super::transcript::BlockKind;
 use super::super::types::{App, TrustPrompt};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_activation;
-use crate::interactive::session_state::SessionState;
-use crate::interactive::session_trust;
+use crate::interactive::session::permissions::activation as session_activation;
+use crate::interactive::session::permissions::trust as session_trust;
+use crate::interactive::session::state::SessionState;
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ pub(crate) fn build_app(
     runtime: &RuntimeConfig,
     state_db: &SqliteStateStore,
     state: &mut SessionState,
-    session: &mut crate::interactive::session_runtime::SessionRuntime,
+    session: &mut crate::interactive::session::runtime::SessionRuntime,
     trusted_echo: Option<&str>,
     trust_pending: bool,
 ) -> App {
@@ -32,6 +32,7 @@ pub(crate) fn build_app(
         state_db.clone(),
         session.universe(),
     );
+    app.session_metrics = session.session_metrics();
     // A startup fact the user must read: a pinned root that vanished, or any
     // other composition notice, said once into the transcript — the trust
     // answer's echo beside it where this launch trusted a folder — and,
@@ -42,7 +43,13 @@ pub(crate) fn build_app(
     if let Some(echo) = trusted_echo {
         app.transcript.push(BlockKind::System, echo.to_string());
     }
-    if let Some(line) = session_activation::line_if_bypass(state, runtime, &session.universe()) {
+    // A command file the loader refused, or a front-matter key it ignored: a
+    // startup fact about the `commands/` directories, said once here as the
+    // headless loop says it on stderr.
+    for notice in state.user_commands.notices() {
+        app.transcript.push(BlockKind::System, notice.clone());
+    }
+    if let Some(line) = session_activation::line_if_bypass(state, &session.universe()) {
         app.transcript.push(BlockKind::System, line);
     }
     // Bypass × unbound × non-terminal cannot reach the TUI (the TUI needs a

@@ -36,7 +36,7 @@ pub(super) fn kill_process_tree(pid: u32) -> io::Result<()> {
 }
 
 /// Locates `taskkill.exe` through the Windows API, never `PATH` or the
-/// current directory, both of which a host-lane caller can influence.
+/// current directory, both of which a host-path caller can influence.
 fn system_taskkill() -> Option<PathBuf> {
     let mut buffer = vec![0u16; 32_768];
     let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };

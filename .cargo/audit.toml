@@ -15,6 +15,14 @@ ignore = [
     # when Snowflake signing is migrated to a constant-time backend.
     "RUSTSEC-2023-0071",
 
+    # libsqlite3-sys 0.30.1 — C SQLite CVE-2026-119375 (RUSTSEC-2026-0459).
+    # Pulled transitively by `sqlx-sqlite` 0.8.6, which requires exactly
+    # `libsqlite3-sys = 0.30.1`. The newest `sqlx-sqlite` (0.9.0) still caps
+    # the dependency at `<0.38.0` and raises its own MSRV to 1.94, so no sqlx
+    # release admits the patched 0.39.0 while saya's MSRV stays 1.89. Revisit
+    # when a sqlx release admits `libsqlite3-sys >= 0.39.0`.
+    "RUSTSEC-2026-0459",
+
     # rkyv 0.7.x — out-of-bounds read in archive validation (RUSTSEC-2026-0235).
     # Reachable ONLY through `rust_decimal`'s optional `rkyv` feature, which
     # saya does not enable; `cargo tree -i rkyv` is empty, i.e. rkyv is not

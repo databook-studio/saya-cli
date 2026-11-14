@@ -1,8 +1,39 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
+
+mod agent;
+mod coding;
+mod coding_root;
+mod command;
+mod job;
+pub use agent::{FollowUpCommand, StartCommand};
+pub use coding::CodingCommand;
+pub use coding_root::RootMode;
+pub(crate) use job::refusal as job_lane_refusal;
+pub(crate) use job::session_spelling as job_session_spelling;
+mod connection;
+mod foundation;
+mod investigation;
+mod overrides;
+pub(crate) mod print;
+pub use print::PrintOptions;
+pub(crate) mod retired;
+mod run;
+mod runtime;
+mod value_args;
+
+pub use command::Command;
+pub use connection::{ConnectionCommand, ContractsCommand};
+pub use foundation::{ConfigCommand, McpCommand, PreferencesCommand, SessionsCommand};
+pub use investigation::InvestigationCommand;
+pub use retired::RetiredCoding;
+pub use run::RunCommand;
+pub use runtime::{RuntimeCheckAction, RuntimeCommand};
+pub use value_args::{ClaimKindArg, DoctorTaskArg, ForgetReasonArg, ReviewDecisionArg};
 
 const AFTER_HELP: &str = "Examples:\n  \
 saya                                   start the interactive REPL\n  \
 saya ask \"count orders per region\"     one-shot question\n  \
+saya -p \"fix the failing test\"         one-shot headless task\n  \
 echo \"SELECT 1\" | saya query           piped SQL works too\n  \
 saya query --sql \"SELECT 1\"            bounded read-only SQL\n  \
 saya config doctor                     diagnose setup problems\n  \
@@ -18,6 +49,8 @@ saya completions --shell zsh > completion.zsh\n\nExit codes: 0 ok · 2 usage · 
 pub struct Cli {
     #[command(flatten)]
     pub options: GlobalOptions,
+    #[command(flatten)]
+    pub print: PrintOptions,
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -25,44 +58,33 @@ pub struct Cli {
 /// Global options shared by every subcommand and the bare REPL.
 #[derive(Debug, Clone, Args, Default)]
 pub struct GlobalOptions {
-    /// Continue the most recent session.
-    ///
-    /// Not a global flag: its only consumer is the interactive session this
-    /// flag sits beside, and a run is not a session — `saya run --continue`
-    /// is a usage error, never a silently ignored intent. The pre-subcommand
-    /// spelling (`saya --continue run`) is refused by the dispatch guard.
+    /// Continue the most recent session (interactive only; a run is not a session).
     #[arg(long = "continue")]
     pub continue_session: bool,
     /// Resume a saved session by id (see `saya config doctor` / /sessions).
     #[arg(long, global = true)]
     pub resume: Option<String>,
-    /// Bind the session's workspace root explicitly to this directory
-    /// (canonicalised and pinned into the session). Without it the root is
-    /// the git worktree top above the launch directory, and outside any
-    /// worktree nothing binds: the write-shaped tools stay hidden and the
-    /// workspace reads refuse.
+    /// Bind the session workspace root to this directory (default: the git worktree top).
     #[arg(long, value_name = "DIR")]
     pub workspace: Option<std::path::PathBuf>,
-    /// Seed session grants at launch, stated in the `--allow` grammar.
-    /// Session-only: a subcommand is not a session — `saya ask` and `saya run`
-    /// refuse it rather than silently ignoring a stated intent.
+    /// Seed session grants at launch in the `--allow` grammar (session only).
     #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
     pub allow: Vec<String>,
-    /// Deny programs for the session, by bare name (repeatable): a
-    /// user-stated refusal evaluated before every grant, every approval
-    /// prompt, and bypass, at every session door that execs a program by
-    /// name — `run_command`, `run_program`, the interpreter door.
-    /// Refusal-only: it composes nothing. Session-only: `saya ask` and
-    /// `saya run` refuse it rather than silently ignoring a stated intent.
+    /// Deny these program names for the session (repeatable; session only).
     #[arg(long = "deny", value_name = "PROGRAM")]
     pub deny: Vec<String>,
-    /// Read one turn from this file instead of stdin, run exactly that turn,
-    /// then exit. The bytes reach the turn unaltered — blank lines, trailing
-    /// whitespace, code fences — where piped stdin reads line by line and
-    /// folds layout. Session-surface only: `saya ask` and `saya run` refuse
-    /// it rather than silently ignoring a stated intent.
+    /// Allow these command prefixes on the host without asking (repeatable).
+    #[arg(long = "allow-command", value_name = "PREFIX", global = true)]
+    pub allow_command: Vec<String>,
+    /// Refuse these command prefixes in every mode (repeatable).
+    #[arg(long = "deny-command", value_name = "PREFIX", global = true)]
+    pub deny_command: Vec<String>,
+    /// Read one turn from this file instead of stdin, then exit (session only).
     #[arg(long = "turn-file", value_name = "PATH")]
     pub turn_file: Option<std::path::PathBuf>,
+    /// Start in this permission mode: ask|accept-edits|plan|bypass (session only).
+    #[arg(long = "permission-mode", value_name = "MODE")]
+    pub permission_mode: Option<String>,
     /// Connection profile to use (overrides `default_profile` in config).
     #[arg(long, global = true)]
     pub profile: Option<String>,
@@ -72,24 +94,52 @@ pub struct GlobalOptions {
     /// Override the configured provider (ollama|openai|openai_compatible|anthropic|gemini).
     #[arg(long, global = true)]
     pub provider: Option<String>,
+    /// Limit a job to this many helper children at once.
+    #[arg(long, value_name = "N", global = true)]
+    pub agents_max_children: Option<usize>,
+    /// Limit a job to this many model requests in flight at once.
+    #[arg(long, value_name = "N", global = true)]
+    pub agents_max_concurrent_model_requests: Option<usize>,
+    /// Limit jobs to this many logical model requests.
+    #[arg(long, value_name = "N", global = true)]
+    pub coding_max_logical_model_requests: Option<usize>,
+    /// Limit jobs to this many physical transport attempts.
+    #[arg(long, value_name = "N", global = true)]
+    pub coding_max_physical_transport_attempts: Option<usize>,
+    /// Set the job-wide threshold on provider-reported usage.
+    #[arg(long, value_name = "N", global = true)]
+    pub coding_max_job_tokens: Option<u64>,
+    /// Limit each job to this many elapsed seconds.
+    #[arg(long, value_name = "N", global = true)]
+    pub coding_max_elapsed_seconds: Option<u64>,
+    /// The cost ceiling `-p --max-budget-usd` states. Not a flag of its own:
+    /// the one-shot surface folds it into the same `[limits.job]` key the
+    /// config layer reads.
+    #[arg(skip)]
+    pub max_cost_usd: Option<f64>,
     /// Override the configured row cap for query results.
     #[arg(long, value_name = "N", global = true)]
     pub max_rows: Option<usize>,
-    /// Answer with the best of N independent attempts (default 1). Each attempt
-    /// is a full agent run, so N attempts cost roughly N times as much.
+    /// Answer with the best of N independent attempts (default 1; each is a full agent run).
     #[arg(long, value_name = "N", global = true)]
     pub candidates: Option<usize>,
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
-    /// When tool calls need approval: ask | read-only | never | bypass.
-    /// Read-only auto-approves read-shaped tools only; tools with external
-    /// side effects are denied. `bypass` runs every call without asking;
-    /// every structural guard still applies.
+    /// When tool calls need approval: ask|read-only|never|bypass (headless default: never, no `shell`).
     #[arg(long, value_name = "MODE", global = true)]
     pub approval_mode: Option<String>,
+    /// Advertise only these model tools (comma-separated, repeatable).
+    #[arg(long, value_name = "NAME,...", value_delimiter = ',', global = true)]
+    pub tools: Vec<String>,
     /// Output format for subcommands: text | json | ndjson.
-    #[arg(long, value_enum, default_value_t = FormatArg::Text, global = true)]
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = FormatArg::Text,
+        global = true,
+        alias = "output-format"
+    )]
     pub format: FormatArg,
     /// Run without any terminal interaction (CI-safe; approvals deny).
     #[arg(long, global = true)]
@@ -111,34 +161,37 @@ pub struct GlobalOptions {
     /// config layer that enabled it.
     #[arg(long = "no-data-sharing", global = true)]
     pub no_data_sharing: bool,
-    /// Accept security-critical settings (`ai.base_url`, `ai.api_key`,
-    /// `ai.allow_data_sharing`, `run.read_only`) from the project layer's
-    /// `.saya/config.toml`. Off by default: a cloned repository is untrusted.
+    /// Accept security-critical settings from the project's `.saya/config.toml` (off by default).
     #[arg(long, global = true, env = "SAYA_TRUST_PROJECT_CONFIG")]
     pub trust_project_config: bool,
     /// Disable colored output (overrides the detected terminal capability).
     #[arg(long, global = true)]
     pub no_color: bool,
-    /// Colour palette for the TUI: `dark`, `light`, or `auto` (honour
-    /// `COLORFGBG`, falling back to dark when the terminal reports nothing).
-    #[arg(long, value_enum, default_value_t = ThemeArg::Auto, global = true)]
-    pub theme: ThemeArg,
-    /// Show the model's chain-of-thought in the transcript as it streams.
-    /// Off by default: thinking is verbose and restates database contents in
-    /// prose. Display only — reasoning is never persisted to a session file.
+    /// TUI colour palette: dark|light|auto (default: config, then auto).
+    #[arg(long, value_enum, global = true)]
+    pub theme: Option<ThemeArg>,
+    /// Show the model's chain-of-thought in the transcript (off by default).
     #[arg(long, global = true)]
     pub show_thinking: bool,
-    /// Print extraction-trace diagnostics: why a learned fact was or was not
-    /// recorded after a turn (the "memory didn't record" gate).
+    /// Print extraction-trace diagnostics and local phase timings.
     #[arg(long, short, global = true)]
     pub verbose: bool,
 }
+
+/// The refusal for `--tools` on a surface that does not read it. One text:
+/// the CLI dispatch guard and the session's job parser both refuse with
+/// it, so the two surfaces cannot disagree about which surfaces honour the
+/// flag.
+pub(crate) const TOOLS_REFUSAL: &str = "`--tools` narrows the model tools an agent surface \
+     advertises, and it is honoured by the interactive session, `saya ask`, `saya run`, \
+     and `saya start` only: drop the flag, or state it on one of those";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum FormatArg {
     #[default]
     Text,
     Json,
+    #[value(alias = "stream-json")]
     Ndjson,
 }
 
@@ -162,323 +215,11 @@ impl ThemeArg {
     }
 }
 
-#[derive(Debug, Clone, Subcommand)]
-pub enum Command {
-    /// Manage saya's configuration: write starter templates, diagnose setup,
-    /// or print the effective configuration.
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommand,
-    },
-    /// Inspect configured database connections: list profiles, test one, or
-    /// read a profile's schema.
-    Connection {
-        #[command(subcommand)]
-        command: ConnectionCommand,
-    },
-    /// Ask one natural-language question about the database; the agent writes
-    /// and runs the bounded read-only SQL itself. For raw SQL, use `saya query`.
-    Ask {
-        /// The question to ask. Omit it to read the question from `--file`, or
-        /// from stdin when input is piped in.
-        prompt: Option<String>,
-        /// Read the question from this file instead of the positional
-        /// `[PROMPT]`.
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-    /// Run bounded read-only SQL directly against the database, bypassing the
-    /// agent. For a natural-language question, use `saya ask`.
-    Query {
-        /// The SQL to run. Omit it to read the statement from `--file`, or from
-        /// stdin when input is piped in.
-        #[arg(long)]
-        sql: Option<String>,
-        /// Read the SQL from this file instead of `--sql`.
-        #[arg(long)]
-        file: Option<std::path::PathBuf>,
-    },
-    /// Inspect and manage the knowledge saya recalls: list, show, queue,
-    /// remember, forget, or decide a claim.
-    Contracts {
-        #[command(subcommand)]
-        command: ContractsCommand,
-    },
-    /// Run a long-running, resumable job against the configured database:
-    /// `saya run "<goal>"` plans and executes it step by step, pausing (never
-    /// silently stopping) when a budget trips; `saya run resume|cancel|list|
-    /// show|log` manage runs. Scopes must be declared up front with `--allow`:
-    /// a headless run pre-authorizes them, an interactive terminal approves
-    /// the bound plan, its scopes, and its budgets once.
-    Run {
-        /// The run's goal.
-        prompt: Option<String>,
-        /// Approved capability scopes, comma-separated. `none` states a
-        /// deliberately read-only run — the empty scope set — and must stand
-        /// alone. The wired scopes bind: `workspace-write` (writes outside
-        /// reads), `scratch` (a scratch database), `fetch:<scheme>+<host>`
-        /// (network fetches to that scheme and bare host), and
-        /// `runner:<program>` (a program the runner executes directly).
-        /// `interpreter:<program>` grants a shell or interpreter — a program
-        /// that can spawn arbitrary children, so the runner will not choose
-        /// one on its own; naming it here is the only way a run may use one.
-        /// `sql:<connection>` seeds the run's decider with the connection's
-        /// per-call grant: under `--approval-mode ask`, the read-shaped SQL
-        /// tools' calls that name that connection run without asking, and a
-        /// resume re-derives the grant from the run's journal.
-        /// `command:<program>` is refused with a usage error: a run is
-        /// unattended and this scope names unconfined host execution.
-        /// `endpoint:<role>=<endpoint>` is refused with a usage error:
-        /// per-step endpoint roles are not bound. A run states its scopes
-        /// up front or does not start —
-        /// nothing runs unapproved.
-        #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
-        allow: Vec<String>,
-        /// Budget overrides as KEY=VALUE: `wall-clock=<seconds>`,
-        /// `turns=<n>`, `tool-calls=<n>`, or `tokens.orchestrator=<n>` —
-        /// the only token ceiling a run accepts, since every episode calls
-        /// the orchestrator endpoint. Unset keys fall back to `[jobs]`; a
-        /// zero ceiling is refused as a typo, not clamped.
-        #[arg(long, value_name = "KEY=VALUE")]
-        budget: Vec<String>,
-        #[command(subcommand)]
-        command: Option<RunCommand>,
-    },
-    /// Generate shell completion scripts for `saya`.
-    Completions {
-        /// Shell to generate completions for.
-        #[arg(long, value_enum)]
-        shell: clap_complete::Shell,
-    },
-}
+/// The manual Debug impl: the run command's `--param` values never
+/// ride diagnostics.
+#[path = "cli_debug.rs"]
+mod debug;
 
-#[derive(Debug, Clone, Subcommand)]
-pub enum ConfigCommand {
-    /// Write starter config.toml and connections.toml templates to your user
-    /// config directory (the trusted layer), so a following command does not
-    /// warn. Pass `--project` to write this project's untrusted `.saya/` pair
-    /// instead — for team-shared, non-secret settings checked into a repo.
-    Init {
-        /// Write to this project's `.saya/` instead of your user config
-        /// directory. The project layer is untrusted, so a command run
-        /// afterward warns until you pass `--trust-project-config`.
-        #[arg(long)]
-        project: bool,
-    },
-    /// Diagnose configuration: secrets resolve? what provider endpoint is
-    /// configured? Exits non-zero (3) when the setup cannot run a query, so a
-    /// script can tell.
-    Doctor,
-    /// Print the effective (redacted) configuration as JSON.
-    Show,
-}
-
-#[derive(Debug, Clone, Subcommand)]
-pub enum ConnectionCommand {
-    /// List configured connection profiles.
-    List,
-    /// Connect to a profile and report success/latency.
-    Test {
-        /// Name of the connection profile to test.
-        #[arg(value_name = "PROFILE")]
-        profile_name: String,
-    },
-    /// Print a profile's cached schema, or re-discover it live with `--refresh`.
-    Schema {
-        /// Name of the connection profile whose schema to read.
-        #[arg(value_name = "PROFILE")]
-        profile_name: String,
-        /// Re-discover the schema live and refresh the cache, instead of reading
-        /// the cached copy.
-        #[arg(long)]
-        refresh: bool,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
-pub enum ContractsCommand {
-    /// List every recalled contract (claim) for a profile.
-    List {
-        /// Profile whose claims to list; defaults to the active profile.
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// Show one object's contract — every claim saya recalls for that table.
-    Show {
-        /// The object to show, as `catalog.schema.table` (or `schema.table`).
-        table: String,
-        /// Profile whose claim on this object to show; defaults to the active
-        /// profile.
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// List candidate claims awaiting your review (the worklist, not the
-    /// archive).
-    Queue {
-        /// Profile whose candidates to queue; defaults to the active profile.
-        #[arg(long)]
-        profile: Option<String>,
-        /// Maximum candidates to list. Clamped to 200; a queue is a worklist,
-        /// not an archive.
-        #[arg(long)]
-        limit: Option<usize>,
-    },
-    /// Store a confirmed claim about a table, so recall surfaces it on later
-    /// turns. For directive kinds, `--reason` records why it holds.
-    Remember {
-        /// The object the claim is about, as `catalog.schema.table`.
-        table: String,
-        /// Kind of claim to store.
-        #[arg(long, value_enum)]
-        kind: ClaimKindArg,
-        /// The claim's value (a description, an alias, a column name, a role…).
-        #[arg(long)]
-        value: String,
-        /// The column a column-scoped claim is about (for `column-description`
-        /// and `column-role` kinds).
-        #[arg(long)]
-        column: Option<String>,
-        /// Why the directive claim holds — a sentence the model reads alongside
-        /// the value so a claim that contradicts a plausible schema reading
-        /// (use `return_date`, not `rental_date`) loses less often. Forwarded to
-        /// the directive kinds only (grain, time-column, column-role); ignored
-        /// for description/alias. Optional: a claim with no reason is the default.
-        #[arg(long)]
-        reason: Option<String>,
-        /// Profile to store the claim against; defaults to the active profile.
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// Confirm or reject a claim, naming it by the short `ki-xxxx` prefix that
-    /// `contracts list` prints. A prefix matching no claim, or more than one,
-    /// is refused and changes nothing.
-    //
-    // Implementation note, deliberately not a doc comment: clap prints doc
-    // comments verbatim in `--help`, so anything here is user-facing. The
-    // prefix resolves against the resolved profile's claims and the decision
-    // then reaches the existing confirm/reject/use_candidate_once operations —
-    // this is not a second implementation of them.
-    Decide {
-        /// A leading prefix of a stored claim id. Unambiguous-or-refused: zero
-        /// matches or more than one is a typed error that changes nothing.
-        prefix: String,
-        /// The decision to record: `confirm`, `reject`, or `use-once` (admit
-        /// a candidate for one recall without promoting it).
-        #[arg(long, value_enum)]
-        decision: ReviewDecisionArg,
-        /// Profile whose claim to decide; defaults to the active profile.
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// Confirm every candidate claim in the review queue — the same bounded
-    /// set `contracts queue` shows. Every candidate still goes through the
-    /// per-item validation `contracts decide --confirm` applies, so a batch is
-    /// expected to be a mixture: an item dismissed since it was queued, or one
-    /// whose object the cached schema can no longer vet, is refused. Every
-    /// approved item and every refusal (with its reason) is reported by claim
-    /// id; approved items are never rolled back. Exits 0 when anything was
-    /// approved (or nothing was waiting) and 2 when every item was refused.
-    /// Without `--yes` the queue is printed and nothing is approved.
-    //
-    // Implementation note, deliberately not a doc comment: clap prints doc
-    // comments verbatim in `--help`, so anything here is user-facing. This
-    // variant routes through the same `confirm()` the single-item decide path
-    // uses — the batch adds no validation and removes none.
-    ApproveAll {
-        /// Profile whose queue to approve; defaults to the active profile.
-        #[arg(long)]
-        profile: Option<String>,
-        /// Maximum candidates to approve. Clamped to 200, exactly like
-        /// `contracts queue` — this approves the queue you were shown, not the
-        /// whole archive.
-        #[arg(long)]
-        limit: Option<usize>,
-        /// Approve. Without it the command prints the queue and approves
-        /// nothing (the same deny-by-default the `--non-interactive` approval
-        /// policy applies); with it the per-item sweep runs and reports.
-        #[arg(long)]
-        yes: bool,
-    },
-    /// Tombstone a claim so recall stops surfacing it.
-    Forget {
-        /// The stored claim id to forget (the full id, or a `ki-xxxx` prefix
-        /// that names one claim).
-        claim_id: String,
-        /// Why the claim is being forgotten.
-        #[arg(long, value_enum, default_value_t = ForgetReasonArg::UserRequest)]
-        reason: ForgetReasonArg,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
-pub enum RunCommand {
-    /// Continue a paused (or crashed) run at its first incomplete step. The
-    /// run's journal is the authority; a run with a live holder refuses.
-    Resume {
-        /// The id of the run to resume (`saya run list` prints them).
-        run_id: String,
-    },
-    /// Record a run cancelled. A run with a live holder refuses — cancel the
-    /// process that owns it (Ctrl-C) instead; a finished run changes nothing.
-    Cancel {
-        /// The id of the run to cancel.
-        run_id: String,
-    },
-    /// List every run, most recent first.
-    List,
-    /// Show one run's status, goal, scopes, pause reason, and the
-    /// deliverables its steps recorded.
-    Show {
-        /// The id of the run to show.
-        run_id: String,
-    },
-    /// Print one run's journal — every lifecycle and step event, in order.
-    Log {
-        /// The id of the run whose journal to print.
-        run_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ClaimKindArg {
-    Description,
-    Alias,
-    Grain,
-    ColumnDescription,
-    ColumnRole,
-    TimeColumn,
-}
-
-impl ClaimKindArg {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Description => "description",
-            Self::Alias => "alias",
-            Self::Grain => "grain",
-            Self::ColumnDescription => "column-description",
-            Self::ColumnRole => "column-role",
-            Self::TimeColumn => "time-column",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ForgetReasonArg {
-    UserRequest,
-    Incorrect,
-    Obsolete,
-    Privacy,
-}
-
-/// The decision a `/confirm`, `/reject`, or `/use` short-reference command
-/// carries, resolved by `run_contracts` against the stored claim the prefix
-/// names. Spec D. `Confirm` and `Reject` reach the existing mutating ops; `UseOnce`
-/// reaches `use_candidate_once`, which validates and admits for one recall
-/// without promoting — a candidate stays a candidate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ReviewDecisionArg {
-    Confirm,
-    Reject,
-    UseOnce,
-}
+#[cfg(test)]
+#[path = "cli_tests.rs"]
+mod tests;

@@ -1,4 +1,4 @@
-//! The folded summary's fit (re-audit R01): its budget is `width` terminal
+//! The folded summary's fit: its budget is `width` terminal
 //! cells, so marker, prefix, and the request itself are measured in cells
 //! and cut on grapheme boundaries — a wide request paints within `width`,
 //! and a cut never lands between a base and its combining mark.

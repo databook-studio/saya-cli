@@ -1,4 +1,4 @@
-//! What the plan-approval surface shows, before anything runs (DESIGN §7):
+//! What the plan-approval surface shows, before anything runs:
 //! the scopes the run was granted, the plan's steps with the scopes each
 //! one asks for, the run's budgets, and the digests of the workspace
 //! artifacts as they stand at approval time. The text is deterministic —
@@ -72,33 +72,6 @@ pub(super) fn view_of(
     })
 }
 
-/// The interpreter approval's deterministic warning line, for the approved
-/// scopes that carry an interpreter token — `None` for every run that did
-/// not opt in, so the body a run without the grant shows is today's bytes
-/// exactly. The line states what the user is accepting in place of the
-/// typed-argv contract's behavioural half — no euphemism, no dilution into
-/// a generic "dangerous mode" banner. The sentence is built by the shared
-/// helper the session's activation line uses (`approval_text`), so the two
-/// surfaces cannot drift; the run's conditional process-fork clause is the
-/// fact true for runs, and the headless receipt prints the same line before
-/// the first step: what the terminal shows and what the journal records agree.
-pub(super) fn interpreter_warning(approved: &[String]) -> Option<String> {
-    let mut programs = Vec::new();
-    for token in approved {
-        if let Some(program) = token.strip_prefix("interpreter:") {
-            programs.push(program.to_string());
-        }
-    }
-    if programs.is_empty() {
-        return None;
-    }
-    Some(crate::approval_text::interpreter_warning(
-        "run",
-        &programs,
-        "(where process-fork is granted) any children it spawns run arbitrary argv.",
-    ))
-}
-
 /// The approval text: deterministic, one line per fact — the body the modal
 /// shows and the tests assert on.
 pub(super) fn render(view: &PlanApprovalView) -> String {
@@ -111,10 +84,6 @@ pub(super) fn render(view: &PlanApprovalView) -> String {
             view.approved.join(", ")
         }
     ));
-    if let Some(warning) = interpreter_warning(&view.approved) {
-        text.push('\n');
-        text.push_str(&warning);
-    }
     text.push_str("\nplan:");
     for (index, step) in view.steps.iter().enumerate() {
         text.push_str(&format!("\n  {}. {}", index + 1, step.goal));

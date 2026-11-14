@@ -1,6 +1,6 @@
 //! Recall selection: which objects match a request, and in what order.
 //!
-//! Order (plan §11.1), lower tier wins, ties broken by most-recently-seen then
+//! Order: lower tier wins, ties broken by most-recently-seen then
 //! object name for determinism:
 //!  1. an exact `explicit_ref`;
 //!  2. a confirmed `TableAlias` whose every word appears among the prompt's
@@ -14,7 +14,7 @@
 //! No cross-profile fallback: a term that matches nothing in the active profiles
 //! matches nothing. Ambiguity returns every match.
 //!
-//! Reads the D-3 `knowledge_items` table via [`KnowledgeItemStore`] — the same
+//! Reads the `knowledge_items` table via [`KnowledgeItemStore`] — the same
 //! rows the harness-owned learning path writes — so what the harness learns is
 //! what recall supplies. Two store round trips per profile, not one per object:
 //! [`KnowledgeItemStore::knowledge_for_profile`] fetches every item of a
@@ -210,7 +210,7 @@ fn best_tier(
     // `catalog.schema.object` — stops a term like `public` selecting every table
     // in the `public` schema and a short term like `cat` matching the catalog.
     // Substring containment stays (term ⊆ name segment) so a term still selects a
-    // numbered object it prefixes (`orders` → `orders0`); it is now bounded to
+    // numbered object it prefixes (`orders` → `orders0`); it is bounded to
     // the object name, never the catalog/schema segments.
     let name_segment = object.object().to_lowercase();
     let desc_text: Vec<String> = items

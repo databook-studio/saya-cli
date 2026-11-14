@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod label_row_red_tests {
-    // RED: these tests name the `Row` API (`row.text`, `row.is_label`) that
-    // does not exist yet — `WrappedLines` is still `Vec<(BlockKind, String)>`,
-    // so this module fails to compile until `rows.rs` lands.
+    // These tests name the `Row` API (`row.text`, `row.is_label`): a
+    // `WrappedLines` is a run of rows, not `Vec<(BlockKind, String)>`, so the
+    // label and its body stay distinguishable.
     use super::super::super::rows::WrappedLines;
     use super::super::super::{BlockKind, Transcript};
 

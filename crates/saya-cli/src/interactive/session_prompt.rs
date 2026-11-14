@@ -1,4 +1,5 @@
 use crate::SessionState;
+use saya_agent::PermissionMode;
 
 /// Builds a compact one-line status header shown with the interactive prompt:
 /// the active profile, any included databases, the provider/model, the
@@ -51,7 +52,7 @@ pub(crate) fn status_line(state: &SessionState) -> String {
     // The task segment names the done count while anything is tracked, and
     // is absent entirely on an empty list — the other conditional segments'
     // shape, so an untracked session reads exactly as before.
-    let tasks = super::session_tasks_view::tasks_summary(&state.task_list)
+    let tasks = crate::interactive::session::tasks::view::tasks_summary(&state.task_list)
         .map(|summary| format!(" {summary}"))
         .unwrap_or_default();
     format!(
@@ -69,6 +70,10 @@ pub(crate) struct StatusView {
     /// The session's task posture — mirrors `status_line`'s `mode:` segment,
     /// so the TUI bar and the headless header cannot drift.
     pub(crate) agent_mode: String,
+    /// The session's permission mode — the `(approval, agent)` pair
+    /// projected, the one word Shift+Tab moves — or `None` where the pair is
+    /// a consent posture with no mode of its own (`read-only`, `never`).
+    pub(crate) permission_mode: Option<PermissionMode>,
     /// The pinned workspace root, when one binds — mirrors `status_line`'s
     /// segment; `None` renders the no-root shape.
     pub(crate) workspace_root: Option<String>,
@@ -95,11 +100,12 @@ pub(crate) fn status_segments(state: &SessionState) -> StatusView {
         model: state.model.clone(),
         approval_mode: state.approval_mode.clone(),
         agent_mode: state.agent_mode.clone(),
+        permission_mode: crate::interactive::session::permissions::mode::current(state),
         workspace_root: state.workspace_root.clone(),
         sharing_on: state.allow_data_sharing,
         host_composed: state.host_composed,
         denied_programs: state.denied_programs.clone(),
-        task_summary: super::session_tasks_view::tasks_summary(&state.task_list),
+        task_summary: crate::interactive::session::tasks::view::tasks_summary(&state.task_list),
     }
 }
 
@@ -117,11 +123,10 @@ mod tests {
     }
 
     /// The status segment names what is *happening* (`sharing:on` = row values are
-    /// sent to the model provider), not a protection claim. The old label
-    /// (`privacy:on`) read as protection while `allow_data_sharing == true` meant the
-    /// opposite — data *was* being shared — so a user concluded the reverse of the
-    /// truth. This pins the corrected mapping: the shared state is labelled
-    /// `sharing:on`, the private state `sharing:off`.
+    /// sent to the model provider), not a protection claim: `privacy:on` would read
+    /// as protection while `allow_data_sharing == true` means the opposite — data
+    /// *is* being shared. The shared state is labelled `sharing:on`, the private
+    /// state `sharing:off`.
     #[test]
     fn status_line_names_sharing_not_protection() {
         let sharing = status_line(&session_with_sharing(true));
@@ -213,7 +218,21 @@ mod tests {
             "the TUI view mirrors the header"
         );
 
-        state.apply(SlashCommand::Mode(Some(saya_agent::AgentMode::Plan)), &[]);
+        // The switch itself — state, policy and journal — is the permission
+        // module's and is tested there; this test is about the header
+        // following the posture, so the pair is set the way the switch sets
+        // it. `/mode plan` hands the switch back as an action rather than
+        // editing the state here.
+        let action = state.apply(
+            SlashCommand::Mode(Some(saya_agent::PermissionMode::Plan)),
+            &[],
+        );
+        assert!(
+            matches!(action, crate::interactive::SessionAction::Mode(_)),
+            "a named /mode is handed to the loop as a switch, got {action:?}"
+        );
+        let (_, agent_mode) = saya_agent::PermissionMode::Plan.decompose();
+        state.agent_mode = agent_mode.as_str().into();
         let planned = status_line(&state);
         assert!(
             planned.contains("mode:plan"),

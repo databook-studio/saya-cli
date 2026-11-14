@@ -27,7 +27,7 @@ impl App {
         self.transcript.push(BlockKind::System, message);
     }
 
-    /// Queues the most recent assistant answer for the clipboard (F3).
+    /// Queues the most recent assistant answer for the clipboard.
     pub(crate) fn copy_last_answer(&mut self) {
         if self.clipboard_copy.is_some() || self.pending_clipboard.is_some() {
             self.transcript
@@ -50,7 +50,7 @@ impl App {
         }
     }
 
-    /// Queues the whole transcript for the clipboard (F4).
+    /// Queues the whole transcript for the clipboard.
     ///
     /// The model's chain-of-thought is excluded: it restates row values and
     /// column contents in prose, and the clipboard is a channel off-screen —

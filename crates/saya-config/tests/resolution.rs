@@ -18,8 +18,8 @@ fn cli_values_override_every_other_source() {
 #[test]
 fn profile_selection_prefers_flag_then_environment_then_config() {
     let connections = ConnectionsFile::from_toml(
-        "[profiles.first]\ntype = 'duckdb'\npath = ':memory:'\n\
-         [profiles.second]\ntype = 'duckdb'\npath = ':memory:'\n",
+        "[profiles.first]\ntype = 'sqlite'\npath = ':memory:'\n\
+         [profiles.second]\ntype = 'sqlite'\npath = ':memory:'\n",
     )
     .unwrap();
     let config = ConfigFile::from_toml("default_profile = 'first'").unwrap();
@@ -43,8 +43,8 @@ fn process_environment_overrides_the_explicit_env_file() {
 #[test]
 fn multiple_profiles_require_explicit_selection() {
     let connections = ConnectionsFile::from_toml(
-        "[profiles.first]\ntype = 'duckdb'\npath = ':memory:'\n\
-         [profiles.second]\ntype = 'duckdb'\npath = ':memory:'\n",
+        "[profiles.first]\ntype = 'sqlite'\npath = ':memory:'\n\
+         [profiles.second]\ntype = 'sqlite'\npath = ':memory:'\n",
     )
     .unwrap();
     assert!(resolve(ResolutionInput::new(connections)).is_err());
@@ -53,7 +53,7 @@ fn multiple_profiles_require_explicit_selection() {
 #[test]
 fn a_single_profile_is_selected_without_an_explicit_default() {
     let connections =
-        ConnectionsFile::from_toml("[profiles.local]\ntype = 'duckdb'\npath = ':memory:'\n")
+        ConnectionsFile::from_toml("[profiles.local]\ntype = 'sqlite'\npath = ':memory:'\n")
             .unwrap();
     assert_eq!(
         resolve(ResolutionInput::new(connections))

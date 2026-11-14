@@ -5,8 +5,9 @@
 //! Mechanics, each one paired with an adversarial test in
 //! `tests/workspace_containment.rs`:
 //!
-//! - **Argument validation** rejects NUL bytes, empty names, dot components,
-//!   absolute forms, and Windows drive/UNC shapes before any filesystem call.
+//! - **Argument validation** rejects NUL bytes, empty names, absolute forms,
+//!   and Windows drive/UNC shapes before any filesystem call. `.` components
+//!   and a trailing slash are skipped; they do not escape the root.
 //! - **Symlinks are refused, not followed**, at every component, checked via
 //!   `symlink_metadata` (which works on Windows too).
 //! - `..` may cancel an already-validated component but never rises above
@@ -50,21 +51,36 @@
 pub(crate) mod anchor;
 #[cfg(unix)]
 pub(crate) mod anchored;
+mod commit_gate;
 pub mod contain;
 #[cfg(unix)]
 pub(crate) mod dirfd;
 #[cfg(unix)]
 pub(crate) mod download;
+mod download_guard;
 #[cfg(unix)]
 pub(crate) mod fd;
+mod guarded_remove;
+mod guarded_write;
 pub mod manifest;
 pub mod patch;
 pub mod pattern;
 pub mod search;
+mod search_controlled;
+mod search_directory;
 pub mod walk;
 #[cfg(windows)]
 pub(crate) mod windows_identity;
 
-pub use contain::{EntryKind, ListEntry, ReadFile, Workspace};
-pub use contain::{MAX_IO_BYTES, MAX_LIST_ENTRIES, MAX_SCRATCH_IMPORT_BYTES};
-pub use search::{GlobMatch, GrepMatch, GrepOutcome};
+pub use contain::{
+    ControlledReadError, EntryKind, ListEntry, ListOutcome, ReadFile, Workspace, relative_argument,
+};
+pub use contain::{MAX_IO_BYTES, MAX_LIST_ENTRIES};
+pub use guarded_remove::{ControlledRemoveError, PreparedRemoval, RemovalRefusal};
+pub use search::{GlobMatch, GlobOutcome, GrepMatch, GrepOutcome};
+
+pub use search_controlled::{
+    GrepOptions, MAX_CONTEXT, MIN_RESULT_BYTES, PRESENCE_MAX_ENTRIES, PRESENCE_MAX_IGNORE_BYTES,
+    PRESENCE_TIMEOUT, Presence, PresenceBounds, SearchEntry, SearchError, SearchKind, SearchLimits,
+    SearchMatch, SearchOutcome, SearchOutput, SearchQuery, SearchStop,
+};

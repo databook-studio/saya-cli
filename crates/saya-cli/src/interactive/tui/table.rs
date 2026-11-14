@@ -28,7 +28,7 @@ pub(crate) fn row_count_footer(row_count: usize, truncated: bool) -> String {
 }
 
 /// Renders an EXPLAIN result as readable plan text WITHOUT the box-table's 40-char
-/// column cap. A single-column plan (PostgreSQL/DuckDB, one plan line per row) prints
+/// column cap. A single-column plan (PostgreSQL, one plan line per row) prints
 /// one line per row; a multi-column plan (MySQL) prints `column: value` lines per row,
 /// with a blank line between rows.
 pub(crate) fn format_plan(result: &QueryResult) -> String {

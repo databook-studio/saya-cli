@@ -34,7 +34,7 @@ fn escape_json_for_script(s: &str) -> String {
 /// Renders a cell as a plain string. Every cell string passes `redact()`
 /// before it is embedded in the chart HTML: the document is written to a temp
 /// file and opened in a browser, so secret-shaped material in a cell must not
-/// reach it verbatim (DESIGN §6.6). Numeric cells can only produce digits and
+/// reach it verbatim. Numeric cells can only produce digits and
 /// punctuation, so the pass is a no-op for them.
 fn cell_to_string(value: &serde_json::Value) -> String {
     let raw = match value {

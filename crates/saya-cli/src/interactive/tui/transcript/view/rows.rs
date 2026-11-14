@@ -14,8 +14,7 @@ use crate::interactive::tui::wrap;
 /// layer, because `lines()` emits the label rows and `transcript` must not
 /// depend on `ui`; the paint step imports it in the other direction, which
 /// is the way the dependency already runs (`ui` reads `BlockKind` from
-/// here). An earlier packet put a second copy in `ui/labels.rs`; that file
-/// is gone, because two maps drift.
+/// here). The map lives here alone: two copies drift.
 pub(crate) fn label(kind: BlockKind) -> Option<&'static str> {
     match kind {
         BlockKind::User => Some("YOU"),

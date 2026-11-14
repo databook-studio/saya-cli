@@ -25,7 +25,7 @@ pub(crate) struct History {
 #[allow(dead_code)]
 impl History {
     pub(crate) fn load() -> Self {
-        let path = crate::interactive::session_paths::default_history_file();
+        let path = crate::interactive::session::lifecycle::paths::default_history_file();
         let disabled = persistence::is_disabled_env();
         Self::from_path(path, disabled)
     }

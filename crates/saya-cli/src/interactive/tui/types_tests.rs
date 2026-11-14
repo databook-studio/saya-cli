@@ -16,9 +16,9 @@ use support::usage;
 
 /// A session where no
 /// provider reported cached tokens must render the hit rate as "unknown", not
-/// "0%". This is the most skippable test in the slice and the reason the
-/// `Option` fields exist at all: a display layer that renders `None` as 0%
-/// throws away the distinction `2e1c69a` built the type for.
+/// "0%". This is the easiest assertion to skip and the reason the `Option`
+/// fields exist at all: a display layer that renders `None` as 0% throws away
+/// the distinction the type is built for.
 #[test]
 fn cache_hit_rate_is_unknown_when_no_turn_reported_cached_tokens() {
     let mut session = SessionUsage::default();

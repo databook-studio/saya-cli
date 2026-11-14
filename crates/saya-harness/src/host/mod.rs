@@ -1,6 +1,5 @@
 //! The host executor: one PATH-resolved program, typed argv, a built
-//! environment, a stated timeout. No caller yet — this slice builds the
-//! executor only.
+//! environment, a stated timeout.
 //!
 //! Mechanics: the name resolves against the PATH value the child receives
 //! (`resolve`), the child's environment is built from that PATH plus the
@@ -8,7 +7,7 @@
 //! timeout with the shared process-group kill (`crate::proc`) and the
 //! shared output cap and redaction (`runner::output`). There is no staging
 //! directory and no admission battery here — both exist to keep exec inside
-//! one directory, and this lane has no such directory — so a PATH-resolved
+//! one directory, and this path has no such directory — so a PATH-resolved
 //! symlink or script is honoured, not refused.
 
 pub mod env;

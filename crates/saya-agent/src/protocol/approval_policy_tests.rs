@@ -20,6 +20,14 @@ fn bypass_joins_the_mode_vocabulary() {
     );
     assert_eq!(ApprovalPolicy::from_str("never"), Ok(ApprovalPolicy::Never));
     assert!(
+        ApprovalPolicy::from_str("accept-edits").is_err(),
+        "the session consent is not an --approval-mode spelling: a flag every surface accepts must not reach a mode only a session reader can answer"
+    );
+    assert!(
+        ApprovalPolicy::from_str("accept").is_err(),
+        "no shortened spelling exists either"
+    );
+    assert!(
         ApprovalPolicy::from_str("yolo").is_err(),
         "a euphemism is not a spelling: the parse refuses it"
     );

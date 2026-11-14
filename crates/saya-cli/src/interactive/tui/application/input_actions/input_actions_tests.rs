@@ -117,7 +117,7 @@ fn selection_mode_stays_quiet_about_thinking_when_none_is_shown() {
     );
 }
 
-// --- Fieldnotes phase 5, packet 2: the queue is visible and droppable. ------
+// --- The queue is visible and droppable. -----------------------------------
 //
 // `submit()` while busy holds the prompt in `App.pending` with only a generic
 // "Queued …" notice, so the user can never read back what is held. The queue
@@ -125,13 +125,13 @@ fn selection_mode_stays_quiet_about_thinking_when_none_is_shown() {
 // block would read as the active task), and the queue must be droppable via
 // Ctrl+G (`handle_key`) without touching the active request or the draft.
 
-// --- Fieldnotes Phase 9, packet 1: history navigation never eats the draft. -
+// --- History navigation never eats the draft. -----------------------------
 //
 // Up/Down recall fills the draft; it never submits it — and it must never
 // destroy what the user was typing. Entering history (first Up from an unset
 // cursor) stashes the in-progress draft; Down past the newest entry restores
-// it. RED: `history_next` clears the line whenever the cursor is unset,
-// which is every time the user has been typing.
+// it. `history_next` keeps the line whenever the cursor is unset, which is
+// every time the user has been typing.
 
 use crate::interactive::tui::history::History;
 use crate::interactive::tui::types::App;
@@ -156,7 +156,7 @@ pub(super) fn type_draft(app: &mut App, text: &str) {
 }
 
 /// Down at idle — a draft on the line, no history position — leaves the
-/// draft alone. RED: `history_next` clears it today.
+/// draft alone: `history_next` keeps it.
 #[test]
 fn down_at_idle_leaves_the_draft_alone() {
     use crate::interactive::tui::keys::handle_key;
@@ -172,7 +172,7 @@ fn down_at_idle_leaves_the_draft_alone() {
 }
 
 /// Draft, Up (recalls the newest entry), Down (steps past the newest entry
-/// back to the live edge): the original draft returns verbatim. RED today.
+/// back to the live edge): the original draft returns verbatim.
 #[test]
 fn stepping_up_then_back_down_restores_the_draft() {
     use crate::interactive::tui::keys::handle_key;

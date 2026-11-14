@@ -48,11 +48,6 @@ pub enum DatabaseProfile {
         ssl_ca: Option<SecretRef>,
         password: Option<SecretRef>,
     },
-    #[serde(rename = "duckdb")]
-    DuckDb {
-        path: String,
-        read_only: Option<bool>,
-    },
     #[serde(rename = "sqlite")]
     Sqlite {
         path: String,
@@ -151,7 +146,6 @@ impl DatabaseProfile {
         match self {
             Self::Postgres { .. } => SqlDialect::Postgres,
             Self::Mysql { .. } => SqlDialect::Mysql,
-            Self::DuckDb { .. } => SqlDialect::DuckDb,
             Self::Sqlite { .. } => SqlDialect::Sqlite,
             Self::Snowflake { .. } => SqlDialect::Snowflake,
             Self::ClickHouse { .. } => SqlDialect::ClickHouse,

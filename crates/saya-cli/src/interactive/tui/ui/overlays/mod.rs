@@ -1,13 +1,15 @@
 //! Modal overlays: approval, plan approval, trust modal, run panel,
-//! slash-command popup, session picker, and help.
+//! slash-command popup, session picker, investigation picker, and help.
 
 mod approval;
+mod investigation_picker;
 mod menu;
 mod plan_approval;
 mod run_panel;
 mod trust_modal;
 
 pub(super) use approval::{approval_height, draw_approval};
+pub(super) use investigation_picker::draw_investigation_picker;
 pub(super) use menu::draw_menu;
 pub(super) use plan_approval::{draw_plan_approval, plan_approval_height};
 pub(super) use run_panel::{draw_run_panel, run_panel_height};
@@ -87,6 +89,7 @@ pub(super) fn draw_help(frame: &mut Frame<'_>, screen: Rect) {
         "Enter        submit  ·  Alt+Enter  newline  ·  Enter on empty line expands/collapses latest tool group or chapter",
         "/            command popup  ·  @  table references",
         "Tab / Enter  accept popup suggestion  ·  Esc  dismiss",
+        "Shift+Tab    cycle permission mode (ask, accept-edits, plan, bypass)",
         "↑ / ↓        history (input)  ·  overlay navigation",
         "Ctrl+R       search input history  ·  Ctrl+F  find in transcript",
         "PageUp/Dn    scroll transcript",

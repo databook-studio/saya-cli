@@ -6,22 +6,22 @@
 //! append-only event journal a resume replays. The fetch module (`fetch`)
 //! is the fail-closed decision of where a run may reach: the policy itself
 //! performs no network I/O, and the `http_fetch` tool it gates touches the
-//! wire only through that policy. The one database surface the run engine
-//! holds is the run-scoped scratch database (`scratch`, ADR 0003): a
-//! different type with a different policy from every user-database
-//! connector, and never a `DatabaseConnector`.
+//! wire only through that policy.
 
+pub mod coding;
 pub mod endpoints;
 pub mod engine;
 pub mod fetch;
 pub mod host;
+pub mod instructions;
 pub mod journal;
 pub mod lock;
 pub mod paths;
 pub mod proc;
 pub mod run_dir;
 pub mod runner;
-pub mod scratch;
+pub mod runtime;
+pub mod session_lifecycle;
 pub mod workspace;
 
 use std::path::Path;
@@ -43,24 +43,21 @@ pub enum HarnessError {
     LockContended,
 
     /// The path argument is not a usable relative name: NUL bytes, an empty
-    /// string, empty or dot components, or a Windows drive/UNC shape.
+    /// string, an empty name, or a Windows drive/UNC shape. `.` components
+    /// and a trailing slash are skipped — they do not escape the root.
     #[error("workspace path argument is invalid: {path}")]
     InvalidPath { path: String },
 
-    /// The path resolves outside the run workspace: an absolute form or a
-    /// `..` rising above the root.
-    #[error("workspace path escapes the run workspace: {path}")]
-    PathOutsideRoot { path: String },
+    /// The path resolves outside the run workspace: an absolute form outside
+    /// the root or a `..` rising above it. The root is named so the model can
+    /// spell the path relative to it.
+    #[error("workspace path escapes the run workspace rooted at {root}: {path}")]
+    PathOutsideRoot { path: String, root: String },
 
     /// A path component is a symlink. Links are refused, never followed, at
     /// any component.
     #[error("symlink in workspace path is refused: {path}")]
     SymlinkRefused { path: String },
-
-    /// The path names hygiene-denied content (`.git`). Hygiene only — never
-    /// a credentials control.
-    #[error("workspace path names denied hygiene content: {path}")]
-    DeniedName { path: String },
 
     /// A bound (read cap, entry count, file count) was exceeded.
     #[error("workspace bound exceeded for {path}: found {found}, max {max}")]
@@ -99,6 +96,19 @@ pub enum HarnessError {
         current: u64,
     },
 
+    /// A guarded patch's content precondition failed: the file's whole-content
+    /// SHA-256 digest at commit time no longer matches the one the caller
+    /// observed when choosing the edit — the same-size change a length check
+    /// cannot see. The file is untouched; the caller re-reads and retries.
+    #[error(
+        "workspace file content changed since it was observed: expected digest {expected}, found {current}: {path}"
+    )]
+    ContentChanged {
+        path: String,
+        expected: String,
+        current: String,
+    },
+
     #[error("{context}: {source}")]
     Io {
         context: String,
@@ -115,6 +125,12 @@ pub enum HarnessError {
     #[error("workspace path does not exist: {path}")]
     NotFound { path: String },
 
+    /// A create-if-absent refused: the final component already names some
+    /// entry — a file or a directory — and creating would clobber it. The
+    /// existing entry is left untouched.
+    #[error("workspace path already exists: {path}")]
+    AlreadyExists { path: String },
+
     /// A newline-terminated line in the run journal does not parse as a
     /// `RunEvent` — corruption, or an event written by a build that knows
     /// more variants than this one. Fails closed rather than guessed at.
@@ -127,6 +143,20 @@ pub enum HarnessError {
     JournalEncode {
         #[source]
         source: serde_json::Error,
+    },
+
+    /// The session was deleted or is being deleted: a tombstone is present,
+    /// so its lock can never be acquired and deletion proceeds only under
+    /// the session's own lock.
+    #[error("session {id} was deleted or is being deleted")]
+    SessionDeleted { id: String },
+
+    /// The session store refused a lifecycle operation — an invalid id, a
+    /// tombstone that fails closed, or an I/O failure below the store.
+    #[error("session store: {source}")]
+    Store {
+        #[source]
+        source: saya_store::StoreError,
     },
 }
 

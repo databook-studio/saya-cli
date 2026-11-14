@@ -2,7 +2,7 @@
 //!
 //! Recall and the contract read tools classify a stored claim against the
 //! schema *known for its profile*. That knowledge has three genuinely
-//! different shapes, and collapsing any two of them is the P1 bug this module
+//! different shapes, and collapsing any two of them is the bug this module
 //! exists to fix:
 //!
 //! - [`SchemaAvailability::Available`] — a cached schema exists, with the
@@ -32,9 +32,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The staleness bound for **model-facing** recall. A cached schema older than
 /// this must not classify a claim as `Current` — "current" must mean "matches
-/// the schema now", not "matches whatever we last wrote down". See the task
-/// report's freshness argument for why 24h is the default and not a tuning
-/// knob.
+/// the schema now", not "matches whatever we last wrote down". A day is the
+/// horizon over which a cached schema is still a fair description of the live
+/// one; the bound is a policy constant, not a tuning knob.
 pub(crate) const MODEL_SCHEMA_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// The wall clock the model path bounds cached-schema freshness against.

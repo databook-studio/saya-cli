@@ -8,6 +8,7 @@ pub(crate) mod answer;
 mod boundary;
 mod group;
 mod knowledge;
+mod question;
 mod thinking;
 
 pub(crate) use super::transcript::{BlockKind, Transcript};
@@ -44,8 +45,8 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
     }
     // An attempt is starting: record where, and return. Deliberately before
     // the flush below — letting it fall through would collapse a finished
-    // tool group one event earlier than it does today, changing timing this
-    // slice has no business changing.
+    // tool group one event earlier, changing timing the reset path leaves
+    // alone.
     if matches!(event, AgentEvent::TurnStarted) {
         // Fold the finished run BEFORE marking. The mark is positional, and
         // a later flush rewrites blocks *below* it — it pops the live
@@ -60,15 +61,15 @@ pub(crate) fn apply_event(transcript: &mut Transcript, event: AgentEvent, show_t
     // The retry discards what *this attempt* produced, back to the mark
     // `TurnStarted` left — not the whole chapter, which spans the request
     // and holds an earlier step's delivered preamble and completed tool
-    // results (re-audit R02). With no mark, fall back to the old behaviour
-    // rather than leave a failed attempt's partial text on screen.
+    // results. With no mark, fall back to the chapter bound rather than leave
+    // a failed attempt's partial text on screen.
     if matches!(event, AgentEvent::TurnReset) {
         // The rollback owns the whole reset when a mark exists: it truncates
         // to the attempt boundary and pushes the retry notice itself. It must
         // NOT be followed by the boundary dispatch, whose `reset_answer`
         // clears the newest assistant block *in the chapter* — which after a
-        // truncation is the earlier step's preamble, the very evidence this
-        // slice exists to keep.
+        // truncation is the earlier step's preamble, the very evidence the
+        // rollback exists to keep.
         if transcript.rollback_attempt() {
             return;
         }
@@ -88,6 +89,9 @@ mod answer_tests;
 #[cfg(test)]
 #[path = "attempt_tests.rs"]
 mod attempt_tests;
+#[cfg(test)]
+#[path = "clarification_tests.rs"]
+mod clarification_tests;
 #[cfg(test)]
 #[path = "group_collapse_tests.rs"]
 mod group_collapse_tests;

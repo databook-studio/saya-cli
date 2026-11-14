@@ -1,16 +1,16 @@
 //! The startup probe: measures, on the host it runs on and against the real
 //! generator output for this policy, whether the runner's sandbox actually
-//! confines — and reports what it found. Promoted from the M5-3 spike probe
-//! (`tests/sandbox_probe.rs`, merged) into the gate [`RunSandbox::prepare`]
-//! consumes; the spike's file remains the deeper measurement record.
+//! confines — and reports what it found. The gate [`RunSandbox::prepare`]
+//! consumes it; `tests/sandbox_probe.rs` remains the deeper measurement
+//! record.
 //!
 //! The probe records findings; it does not enforce anything itself. A host
 //! that lacks a feature is a recorded result, never a failed build, and the
 //! verdict is fail closed by construction ([`ProbeReport::proves_runner`]).
 //! Every deny a required check counts must carry its EPERM evidence — on
-//! macOS the literal `Operation not permitted` in the child's stderr, the
-//! rule the spike learned the hard way (a TCP timeout is not a sandbox
-//! denial). Every canary runs unprivileged, bounded in wall clock, with
+//! macOS the literal `Operation not permitted` in the child's stderr (a TCP
+//! timeout is not a sandbox denial). Every canary runs unprivileged, bounded
+//! in wall clock, with
 //! captured output capped in bytes.
 //!
 //! Platform batteries: `probe_macos` (Seatbelt), `probe_linux` (Landlock +
@@ -38,7 +38,7 @@ pub(super) fn run(sb: &super::RunSandbox) -> ProbeReport {
     return other_report(sb);
 }
 
-/// Windows: an explicit recorded result, not an absence. Per U9 the runner
+/// Windows: an explicit recorded result, not an absence. The runner
 /// fails closed by construction there: this check can never pass, the spawn
 /// configuration never exists, and the 3-OS matrix stays green with the
 /// runner simply absent.

@@ -1,6 +1,6 @@
 //! Read-only `contracts` commands: `list` and `show`. Both resolve a profile,
 //! call a `crate::contracts` read operation, and map the result to a render DTO.
-//! An unopenable store is a diagnostic on this path, not a crash (plan §12).
+//! An unopenable store is a diagnostic on this path, not a crash.
 
 use super::contracts_map::contract_view;
 use super::contracts_profile::resolve_profile;
@@ -39,8 +39,8 @@ pub(super) async fn list(
     // seed the query with the profile's own objects as explicit refs — the
     // selection, bounds, privacy and validity rules still all run inside recall.
     // The object list comes from `knowledge_items` (the same table `show`/`queue`
-    // read), so a `remember`-written fact is listable the same turn — no split
-    // brain with the legacy `contract_objects` table the old `list_objects` read.
+    // read), so a `remember`-written fact is listable the same turn — one
+    // object source, not two.
     let explicit_refs: Vec<DatabaseObjectRef> =
         match KnowledgeObjectsQuery::first_page(MAX_KNOWLEDGE_PAGE_SIZE) {
             Err(_) => Vec::new(),

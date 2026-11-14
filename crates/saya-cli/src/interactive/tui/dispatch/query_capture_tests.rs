@@ -1,0 +1,151 @@
+//! The snapshot and report labels for an agent capture — the
+//! model-limited wording on success, and the refusal that names why the
+//! latest promoted agent query's rows are not held (never the /sql-only
+//! wording when the gap says an agent query was promoted).
+
+use super::super::outcome::Dispatch;
+use super::apply_query_actions;
+use crate::agent::tools::AgentCapture;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::state::SessionState;
+use crate::interactive::tui::application::tests_support::unused_runtime;
+use crate::interactive::tui::capture::{CapturedResult, agent_evidence};
+use crate::interactive::tui::transcript::{BlockKind, Transcript};
+use crate::slash::{ExportMode, ExportRequest, ReportRequest};
+use saya_types::{QueryResult, SqlDialect};
+
+#[cfg(test)]
+#[path = "query_capture_tests/snapshot_refusals.rs"]
+mod snapshot_refusals;
+
+const EXEC_SQL: &str = "SELECT id FROM users";
+
+/// A captured agent result with its evidence, as the pairing leaves the slot.
+fn agent_captured(rows: usize, row_cap: usize) -> Option<CapturedResult> {
+    let capture = AgentCapture {
+        sql: EXEC_SQL.to_string(),
+        connection: "analytics".to_string(),
+        profile_identity: Some("prof-identity-1".to_string()),
+        dialect: SqlDialect::Sqlite,
+        result: QueryResult {
+            columns: vec!["id".to_string()],
+            rows: (0..rows).map(|i| serde_json::json!([i])).collect(),
+            row_count: rows,
+            truncated: false,
+            executed_sql: EXEC_SQL.to_string(),
+        },
+        row_cap,
+        started_unix_ms: 1_700_000_000_000,
+        finished_unix_ms: 1_700_000_000_005,
+    };
+    let evidence = agent_evidence(&capture);
+    Some(CapturedResult {
+        result: capture.result,
+        evidence,
+    })
+}
+
+fn snapshot_request(path: &std::path::Path) -> ExportRequest {
+    ExportRequest {
+        mode: Some(ExportMode::Snapshot),
+        overwrite: false,
+        path: path.to_string_lossy().into_owned(),
+    }
+}
+
+fn report_request(path: &std::path::Path) -> ReportRequest {
+    ReportRequest {
+        path: path.to_string_lossy().into_owned(),
+        rows: Some(2),
+        overwrite: false,
+    }
+}
+
+fn last_block(transcript: &Transcript, kind: BlockKind) -> Option<String> {
+    transcript
+        .blocks()
+        .iter()
+        .rev()
+        .find(|b| b.kind == kind)
+        .map(|b| b.text.clone())
+}
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "saya-query-capture-{}-{}-{}",
+        name,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).expect("query capture test dir");
+    dir
+}
+
+/// The snapshot of an agent capture says what it is: the rows the agent saw,
+/// model-limited — never plain "Exported N row(s)".
+#[test]
+fn snapshot_of_agent_capture_is_labelled_model_limited() {
+    let dir = temp_dir("agent-snapshot");
+    let path = dir.join("snap.csv");
+    let mut transcript = Transcript::new();
+    let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
+    let outcome = apply_query_actions(
+        &mut Some(SessionAction::Export(snapshot_request(&path))),
+        &mut transcript,
+        &mut state,
+        &mut None,
+        &agent_captured(2, 100),
+        None,
+        &rt,
+    );
+    assert!(
+        !matches!(outcome, Some(Dispatch::SqlTask(_))),
+        "a snapshot never dispatches a query"
+    );
+    let msg = last_block(&transcript, BlockKind::System).expect("success is said");
+    assert!(
+        msg.contains("Exported 2 row(s) the agent saw to"),
+        "the message says whose rows they are: {msg}"
+    );
+    assert!(msg.contains("from snapshot exec"), "{msg}");
+    assert!(
+        msg.contains(
+            "(model-limited: the full result may be larger — use --refresh for a full read)"
+        ),
+        "the message states the scope and the way to a full read: {msg}"
+    );
+}
+
+/// The report of an agent capture names the scope twice: in the file's
+/// provenance and in the success message.
+#[test]
+fn report_of_agent_capture_names_scope() {
+    let dir = temp_dir("agent-report");
+    let path = dir.join("report.md");
+    let mut transcript = Transcript::new();
+    let mut state = SessionState::new("test", None, "model");
+    let rt = unused_runtime();
+    apply_query_actions(
+        &mut Some(SessionAction::Report(report_request(&path))),
+        &mut transcript,
+        &mut state,
+        &mut None,
+        &agent_captured(2, 100),
+        None,
+        &rt,
+    );
+    let written = std::fs::read_to_string(&path).expect("the report was written");
+    assert!(
+        written.contains("Scope: model-limited (first 100 rows)"),
+        "the provenance names the scope: {written}"
+    );
+    let msg = last_block(&transcript, BlockKind::System).expect("success is said");
+    assert!(
+        msg.contains("model-limited: the agent saw only the first 100 rows"),
+        "the success message states the scope: {msg}"
+    );
+}

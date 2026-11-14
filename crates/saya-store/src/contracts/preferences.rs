@@ -1,4 +1,4 @@
-//! Phase 5c-1 — the preferences store.
+//! The preferences store.
 //!
 //! A preference is *not a claim*: it has no object, no schema fingerprint, and
 //! no drift, so it lives in its own table at `user_version = 3`, not in

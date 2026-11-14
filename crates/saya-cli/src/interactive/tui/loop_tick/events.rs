@@ -4,7 +4,7 @@ use super::super::keys::handle_key;
 use super::super::transcript::BlockKind;
 use super::super::types::App;
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_runtime::SessionRuntime;
+use crate::interactive::session::runtime::SessionRuntime;
 use ratatui::crossterm::event::{Event, KeyEventKind, MouseEventKind};
 
 /// Drains one ready terminal event. Returns `Err` only from `event::poll`/`read`.
@@ -13,7 +13,7 @@ pub(crate) fn tick_events(
     session: &mut SessionRuntime,
     runtime: &RuntimeConfig,
     launch: &crate::interactive::session_host::HostLaunch,
-    state: &mut crate::interactive::session_state::SessionState,
+    state: &mut crate::interactive::session::state::SessionState,
     trusted_dir: &mut Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use ratatui::crossterm::event::{poll, read};
@@ -23,6 +23,7 @@ pub(crate) fn tick_events(
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 let before_trust = app.overlays.trust.is_some();
                 handle_key(&mut *app, key.code, key.modifiers);
+                apply_permission_cycle(app, state, session);
                 // A modal answer that bound a directory recomposes the
                 // live session behind the app's snapshot — exactly like
                 // an explicit `--workspace`, through the same composer
@@ -35,9 +36,8 @@ pub(crate) fn tick_events(
                         Ok(()) => {
                             app.session = session.universe();
                             if let Some(line) =
-                                crate::interactive::session_activation::line_if_bypass(
+                                crate::interactive::session::permissions::activation::line_if_bypass(
                                     state,
-                                    runtime,
                                     &session.universe(),
                                 )
                             {
@@ -64,3 +64,32 @@ pub(crate) fn tick_events(
     }
     Ok(())
 }
+
+/// Drains a cycle the key handler queued. Shift+Tab runs through the one
+/// shared permission-mode switch the `/mode` command runs, so the cycle is
+/// not a second path: the pair, the journal and the refusal wording are the
+/// switch's. It runs mid-turn as readily as between turns — the policy's mode
+/// cells are shared, so an in-flight turn's decider reads the new posture at
+/// its next call — and the answer lands in the transcript as a System block,
+/// an Error block on a refusal (a withheld `bypass`, a frozen policy).
+pub(super) fn apply_permission_cycle(
+    app: &mut App,
+    state: &mut crate::interactive::session::state::SessionState,
+    session: &mut SessionRuntime,
+) {
+    if !app.pending_permission_cycle {
+        return;
+    }
+    app.pending_permission_cycle = false;
+    use crate::interactive::session::permissions::mode;
+    let before = state.context_key();
+    match mode::switch(state, session, mode::cycle_from(state)) {
+        Ok(message) => app.transcript.push(BlockKind::System, message),
+        Err(message) => app.transcript.push(BlockKind::Error, message),
+    }
+    state.abandon_question_when_context_changed(&before, session);
+}
+
+#[cfg(test)]
+#[path = "events_tests.rs"]
+mod tests;

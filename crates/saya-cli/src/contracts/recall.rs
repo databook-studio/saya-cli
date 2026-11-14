@@ -8,7 +8,7 @@ use crate::contracts::view::{RecallDiagnostics, RecallOutcome};
 use saya_store::SqliteStateStore;
 use saya_types::{DatabaseObjectRef, ProfileIdentity};
 
-/// Bounds for a recall, from plan §11.2.
+/// Bounds for a recall.
 ///
 /// `max_objects` and `max_claims_per_object` are count bounds [`recall`]/`assemble`
 /// apply to the contracts they return. `max_bytes` is **not** applied by `recall`:
@@ -48,7 +48,7 @@ impl RecallBounds {
 /// stay free of the config crate; the agent runtime maps the config enum
 /// onto this.
 ///
-/// `Confirmed` admits only `Active` items (the D-3 state for a confirmed
+/// `Confirmed` admits only `Active` items (the state for a confirmed
 /// fact). `IncludeCandidates` admits `Pending` items too, so the render
 /// layer can show them plainly labelled as unconfirmed (ADR 0002 §4:
 /// inference is not confirmation; including a candidate is the user opting
@@ -67,8 +67,8 @@ impl RecallMode {
     /// widens to `Pending` so the render layer can show an unconfirmed
     /// inference plainly labelled. `Dismissed` is never admitted — it is the
     /// withdrawn state (rejected/forgotten/contradicted) and recall never
-    /// supplies it. This is the D-3 translation of the old
-    /// `admits(ClaimStatus)` filter: `Active ↔ Confirmed`, `Pending ↔
+    /// supplies it. The state mapping is:
+    /// `Active ↔ Confirmed`, `Pending ↔
     /// Candidate`, `Dismissed ↔ every non-recallable status`.
     pub(crate) fn admits_state(self, state: saya_types::KnowledgeState) -> bool {
         use saya_types::KnowledgeState;
@@ -130,9 +130,9 @@ pub(crate) struct RecallRequest<'a> {
 /// Runs a recall against `store`. Store failure returns an empty outcome with
 /// `store_unavailable: true` — recall degrades answer quality, never the query path.
 ///
-/// Reads the D-3 `knowledge_items` table; a store error from that read
+/// Reads the `knowledge_items` table; a store error from that read
 /// (`KnowledgeStoreError`) degrades to an empty `Ran { store_unavailable }`
-/// outcome, the same fail-soft the legacy `contract_claims` read had.
+/// outcome, a fail-soft read.
 pub(crate) async fn recall(store: &SqliteStateStore, request: RecallRequest<'_>) -> RecallOutcome {
     let selection = match select(store, &request, request.schemas).await {
         Ok(s) => s,

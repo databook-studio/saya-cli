@@ -1,3 +1,4 @@
+use crate::session_lifecycle::tombstone;
 use crate::{SessionHistoryQuery, SessionSummary, StoreError};
 use std::{fs, num::NonZeroUsize, path::Path, time::UNIX_EPOCH};
 
@@ -64,6 +65,9 @@ pub(crate) fn list(
         Err(_) => return Err(StoreError::unavailable()),
     };
     let limit = query.limit();
+    // A tombstoned session is omitted from every page: its deletion is
+    // pending and the id must not resurface through listing.
+    let deleted = tombstone::deleted_ids(root)?;
     let mut history = Vec::with_capacity(limit.saturating_add(1));
     for entry in entries
         .filter_map(Result::ok)
@@ -82,6 +86,9 @@ pub(crate) fn list(
         else {
             continue;
         };
+        if deleted.binary_search(&id).is_ok() {
+            continue;
+        }
         let modified_unix_ns = entry
             .metadata()
             .and_then(|meta| meta.modified())

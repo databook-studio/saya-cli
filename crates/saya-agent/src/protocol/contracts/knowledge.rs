@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// the distinction between "SAYA was not allowed to look" and "SAYA looked and
 /// had nothing". `Ran { store_unavailable: true }` records a store failure that
 /// degraded recall to an empty result — the turn still completes (recall is
-/// fail-soft, spec §3).
+/// fail-soft).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -105,8 +105,8 @@ pub struct ProposedClaimDto {
 }
 
 /// One confirmed claim the turn's SQL contradicted, in the DTO shape that
-/// crosses the crate boundary into [`AgentEvent::KnowledgeOverridden`] (spec
-/// A1). Mirrors nothing about a claim being *used* — the finding says the claim
+/// crosses the crate boundary into [`AgentEvent::KnowledgeOverridden`].
+/// Mirrors nothing about a claim being *used* — the finding says the claim
 /// was contradicted and names the time-named columns the SQL **referenced**
 /// instead, which is all the extractor can prove from names. `claimed_value`
 /// is the value the claim specifies (the claimed time column), carried so a

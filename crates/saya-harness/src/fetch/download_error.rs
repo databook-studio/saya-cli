@@ -75,4 +75,10 @@ pub enum DownloadError {
     /// Containment refused the destination, or the workspace I/O failed.
     #[error("download workspace error: {0}")]
     Workspace(#[from] HarnessError),
+
+    /// The turn was cancelled. Any partial in progress was persisted — the
+    /// sidecar records exactly the bytes on disk, so it stays resumable —
+    /// and the destination was left untouched: nothing was published.
+    #[error("download cancelled")]
+    Cancelled,
 }

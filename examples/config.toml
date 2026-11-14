@@ -10,9 +10,31 @@ api_key = { env = "SAYA_API_KEY" }
 [run]
 read_only = true
 max_rows = 1000
-max_iterations = 12
 candidates = 1
 query_timeout_seconds = 60
+
+# Every surface's ceilings live in [limits]. A value is a positive integer or
+# the exact string "unlimited"; an unset key takes its default, and each
+# [limits.ask] key left unset falls back to [limits.session].
+[limits.session]
+# requests = 24
+# tool_calls = 64
+# elapsed_seconds = 300
+# known_tokens = 250000
+
+[limits.run]
+# turns = 40
+# tool_calls = 25
+# wall_clock_seconds = 1800
+
+[limits.job]
+# budget_mode = "bounded"   # or "uncapped", which removes every ceiling below
+# logical_requests = 80
+# transport_attempts = 240
+# tool_calls = 300
+# known_tokens = 400000
+# job_tokens = 5000000      # optional job-wide ceiling; unset means no limit
+# elapsed_seconds = 1200
 
 [output]
 format = "text"

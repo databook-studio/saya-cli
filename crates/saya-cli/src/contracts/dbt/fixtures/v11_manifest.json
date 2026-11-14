@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v11.json",
+    "dbt_version": "1.7.3"
+  },
+  "nodes": {
+    "model.legacy.dim": {
+      "resource_type": "model",
+      "name": "dim",
+      "database": "warehouse",
+      "schema": "public",
+      "description": "One row per calendar day."
+    }
+  },
+  "sources": {}
+}

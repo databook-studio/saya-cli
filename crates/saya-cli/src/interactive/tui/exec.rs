@@ -3,60 +3,42 @@
 //! The TUI renders the returned event into the transcript.
 
 use crate::config::runtime::RuntimeConfig;
+use crate::interactive::sql_execution::SqlExecution;
+use crate::interactive::sql_operation;
 use crate::render::TerminalEvent;
-use saya_connectors::{ConnectorOptions, build_connector_with_prompt};
-use saya_types::QueryRequest;
+use saya_agent::CancellationToken;
+use std::sync::{Arc, Mutex};
 
-/// Runs a raw SQL query against `profile_name` and returns the result (or an
-/// error) as a `TerminalEvent`. Read-only + row-limit enforcement happen inside
-/// the connector's `execute`. Never prompts (the TUI owns the screen).
+/// Runs a raw SQL query without prompting (the TUI owns the screen).
+/// Async like the spawned worker: the body is the executed source
+/// envelope (binding + timestamps), written into the task's per-task slot
+/// BEFORE the `QueryResult` event is sent, so the completion builds evidence
+/// from the EXECUTED source. Errors write nothing and the slot stays empty.
 pub(crate) async fn run_sql(
     runtime: &RuntimeConfig,
     profile_name: Option<&str>,
     sql: &str,
+    cancellation: &CancellationToken,
+    slot: &Arc<Mutex<Option<SqlExecution>>>,
 ) -> TerminalEvent {
-    let Some(name) = profile_name else {
-        return TerminalEvent::Error {
-            message: "No active profile. Use /connect <profile> first.".into(),
-        };
-    };
-    let profile = match runtime.named_profile(name) {
-        Ok(profile) => profile,
-        Err(error) => {
-            return TerminalEvent::Error {
-                message: error.to_string(),
-            };
-        }
-    };
-    let settings = ConnectorOptions {
-        query_timeout_seconds: runtime.resolved.query_timeout_seconds,
-        read_only: runtime.resolved.read_only,
-        ..Default::default()
-    };
-    let connector =
-        match build_connector_with_prompt(profile, &runtime.secret_resolver(), settings, false)
-            .await
-        {
-            Ok(connector) => connector,
-            Err(error) => {
-                return TerminalEvent::Error {
-                    message: error.to_string(),
-                };
-            }
-        };
-    if let Err(error) = connector.connect().await {
-        return TerminalEvent::Error {
-            message: error.to_string(),
-        };
-    }
-    match connector
-        .execute(QueryRequest::new(
-            sql.to_string(),
-            runtime.resolved.max_rows,
-        ))
-        .await
+    match sql_operation::execute_with_cancellation_and_source(
+        runtime,
+        profile_name,
+        sql,
+        false,
+        cancellation,
+    )
+    .await
     {
-        Ok(result) => TerminalEvent::QueryResult { result },
+        Ok(execution) => {
+            let event = TerminalEvent::QueryResult {
+                result: execution.result.clone(),
+            };
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some(execution);
+            }
+            event
+        }
         Err(error) => TerminalEvent::Error {
             message: error.to_string(),
         },

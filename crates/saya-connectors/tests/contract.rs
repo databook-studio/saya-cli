@@ -7,7 +7,7 @@ struct FakeConnector;
 #[async_trait]
 impl DatabaseConnector for FakeConnector {
     fn dialect(&self) -> SqlDialect {
-        SqlDialect::DuckDb
+        SqlDialect::Sqlite
     }
     async fn connect(&self) -> Result<(), ConnectionError> {
         Ok(())
@@ -29,5 +29,5 @@ async fn a_connector_can_be_used_through_the_public_trait() {
         .await
         .unwrap();
     assert_eq!(result.row_count, 0);
-    assert_eq!(connector.dialect(), SqlDialect::DuckDb);
+    assert_eq!(connector.dialect(), SqlDialect::Sqlite);
 }

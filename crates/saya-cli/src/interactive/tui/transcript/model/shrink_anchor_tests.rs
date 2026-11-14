@@ -1,11 +1,11 @@
-//! Re-audit slice R03: a shrinking mutation below a scrolled reader must not
-//! move the reader. The fold of a completed tool run and the discard of a
-//! buffered run both remove rows from the tail; the boundary used to compute
-//! `growth == 0` for them, so `scroll_up` never fell and the tail-relative
-//! window slid up through history under a reader who pressed nothing. Every
-//! test here renders, mutates, renders — and asserts on the **visible rows**,
-//! never on `scroll_up` alone: an offset that holds while the reader still
-//! moves is exactly the failure this slice closes.
+//! A shrinking mutation below a scrolled reader must not move the reader. The
+//! fold of a completed tool run and the discard of a buffered run both remove
+//! rows from the tail; for those the boundary must not report `growth == 0`,
+//! or `scroll_up` never falls and the tail-relative window slides up through
+//! history under a reader who pressed nothing. Every test here renders,
+//! mutates, renders — and asserts on the **visible rows**, never on
+//! `scroll_up` alone: an offset that holds while the reader still moves is
+//! exactly the failure these tests exist to catch.
 
 use crate::interactive::tui::transcript::MAX_BLOCKS;
 use crate::interactive::tui::transcript::{Block, BlockKind, Transcript, chapters};
@@ -32,9 +32,8 @@ fn flush(t: &mut Transcript) {
 }
 
 /// The bare history: twenty assistant blocks (label + body = two painted rows
-/// each), height 5, scrolled back 15, so `start = 40 - 5 - 15 = 20` — the
-/// re-audit's arithmetic. The trailing `view` warms the wrap cache the
-/// boundary freezes from.
+/// each), height 5, scrolled back 15, so `start = 40 - 5 - 15 = 20`. The
+/// trailing `view` warms the wrap cache the boundary freezes from.
 fn scrolled_history() -> Transcript {
     let mut t = Transcript::new();
     for i in 0..20 {
@@ -58,24 +57,23 @@ fn scrolled_history() -> Transcript {
 /// (the append path holds the anchor at row 20 while they land).
 fn scrolled_history_with_run() -> Transcript {
     let mut t = scrolled_history();
-    t.buffer_tool_request("workspace_write".into(), write_request("north.md"), None);
-    t.buffer_tool_request("workspace_write".into(), write_request("south.md"), None);
-    assert!(t.buffer_tool_completion("workspace_write", "north.md written"));
-    assert!(t.buffer_tool_completion("workspace_write", "south.md written"));
+    t.buffer_tool_request("write".into(), write_request("north.md"), None);
+    t.buffer_tool_request("write".into(), write_request("south.md"), None);
+    assert!(t.buffer_tool_completion("write", "north.md written"));
+    assert!(t.buffer_tool_completion("write", "south.md written"));
     assert!(
         t.blocks()
             .last()
-            .is_some_and(|b| b.text.contains("✓ workspace_write")),
+            .is_some_and(|b| b.text.contains("✓ write")),
         "precondition: the completed run sits at the tail, below the window"
     );
     t
 }
 
-/// Core test (re-audit R03): the fold collapses the run below the window into
-/// one summary block — rows vanish from the tail — and the reader must not
-/// move. Before the fix the boundary computed `growth == 0` for the shrink,
-/// `scroll_up` stayed, and `start` fell with `rem`, sliding the window up
-/// through history.
+/// Core test: the fold collapses the run below the window into one summary
+/// block — rows vanish from the tail — and the reader must not move. A
+/// boundary that computed `growth == 0` for the shrink would leave `scroll_up`
+/// and let `start` fall with `rem`, sliding the window up through history.
 #[test]
 fn a_group_collapsing_below_the_viewport_does_not_move_the_reader() {
     let mut t = scrolled_history_with_run();
@@ -193,10 +191,10 @@ fn tail_follow_is_unchanged_by_a_collapse() {
     for i in 0..20 {
         t.push(BlockKind::Assistant, format!("history line {i}"));
     }
-    t.buffer_tool_request("workspace_write".into(), write_request("north.md"), None);
-    t.buffer_tool_request("workspace_write".into(), write_request("south.md"), None);
-    assert!(t.buffer_tool_completion("workspace_write", "north.md written"));
-    assert!(t.buffer_tool_completion("workspace_write", "south.md written"));
+    t.buffer_tool_request("write".into(), write_request("north.md"), None);
+    t.buffer_tool_request("write".into(), write_request("south.md"), None);
+    assert!(t.buffer_tool_completion("write", "north.md written"));
+    assert!(t.buffer_tool_completion("write", "south.md written"));
     let _ = view_texts(&t, H);
     assert!(
         t.is_following_tail(),

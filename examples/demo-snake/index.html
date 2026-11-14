@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Neon Snake</title>
+<style>
+  :root {
+    --cyan: #39f6ff;
+    --magenta: #ff2fd0;
+    --violet: #b14bff;
+    --ink: #e9f7ff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 24px;
+    background:
+      radial-gradient(circle at 18% 12%, rgba(177, 75, 255, 0.28), transparent 55%),
+      radial-gradient(circle at 82% 88%, rgba(255, 47, 208, 0.22), transparent 55%),
+      radial-gradient(circle at 50% 50%, rgba(57, 246, 255, 0.10), transparent 70%),
+      #05010f;
+    color: var(--ink);
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  /* Faint scanlines for that arcade-cabinet feel. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.035) 0px,
+      rgba(255, 255, 255, 0.035) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    mix-blend-mode: overlay;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(28px, 5vw, 46px);
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: #f4fdff;
+    text-shadow:
+      0 0 6px #fff,
+      0 0 18px var(--cyan),
+      0 0 38px var(--cyan),
+      0 0 64px var(--violet);
+    animation: flicker 6s infinite;
+  }
+
+  @keyframes flicker {
+    0%, 92%, 100% { opacity: 1; }
+    93% { opacity: 0.72; }
+    94% { opacity: 1; }
+    96% { opacity: 0.85; }
+    97% { opacity: 1; }
+  }
+
+  .hud {
+    display: flex;
+    gap: 26px;
+    align-items: center;
+    font-size: 15px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(233, 247, 255, 0.62);
+  }
+
+  .hud b {
+    color: var(--cyan);
+    font-size: 20px;
+    letter-spacing: 0.08em;
+    text-shadow: 0 0 10px var(--cyan), 0 0 24px rgba(57, 246, 255, 0.55);
+  }
+
+  .hud .speed b {
+    color: var(--magenta);
+    text-shadow: 0 0 10px var(--magenta), 0 0 24px rgba(255, 47, 208, 0.55);
+  }
+
+  .stage {
+    position: relative;
+    padding: 10px;
+    border-radius: 18px;
+    background: rgba(9, 3, 24, 0.72);
+    box-shadow:
+      0 0 0 1px rgba(57, 246, 255, 0.35),
+      0 0 22px rgba(57, 246, 255, 0.35),
+      0 0 60px rgba(177, 75, 255, 0.30),
+      inset 0 0 40px rgba(57, 246, 255, 0.06);
+  }
+
+  canvas {
+    display: block;
+    border-radius: 12px;
+    background: #05010f;
+    box-shadow: inset 0 0 60px rgba(57, 246, 255, 0.10);
+    max-width: min(78vh, 92vw);
+    max-height: min(78vh, 92vw);
+    width: 600px;
+    height: 600px;
+    touch-action: none;
+  }
+
+  .hint {
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: rgba(233, 247, 255, 0.42);
+  }
+
+  .hint kbd {
+    font-family: inherit;
+    color: var(--ink);
+    padding: 2px 7px;
+    border-radius: 5px;
+    border: 1px solid rgba(57, 246, 255, 0.45);
+    box-shadow: 0 0 10px rgba(57, 246, 255, 0.28);
+  }
+</style>
+</head>
+<body>
+  <h1>Neon Snake</h1>
+
+  <div class="hud">
+    <span>Score <b id="score">0</b></span>
+    <span class="speed">Speed <b id="speed">0%</b></span>
+  </div>
+
+  <div class="stage">
+    <canvas id="game" width="600" height="600" aria-label="Neon Snake game board"></canvas>
+  </div>
+
+  <p class="hint">
+    <kbd>&larr;</kbd> <kbd>&uarr;</kbd> <kbd>&darr;</kbd> <kbd>&rarr;</kbd> steer
+    &nbsp;&middot;&nbsp; eat the orbs &nbsp;&middot;&nbsp;
+    <kbd>space</kbd> restart
+  </p>
+
+  <script src="game.js"></script>
+  <script>
+    window.addEventListener('load', function () {
+      NeonSnake.mount(document.getElementById('game'), {
+        cell: 24,
+        cols: 25,
+        rows: 25,
+        scoreEl: document.getElementById('score'),
+        speedEl: document.getElementById('speed'),
+      });
+    });
+  </script>
+</body>
+</html>

@@ -58,6 +58,10 @@ pub(super) struct Usage {
     /// reports completion-token breakdowns (e.g. `reasoning_tokens`).
     #[serde(default, alias = "output_tokens_details")]
     pub(super) completion_tokens_details: Option<CompletionTokensDetails>,
+    /// OpenRouter's `usage.cost`, in US dollars. Reported only by gateways
+    /// that price the request; `None` is "not reported", not zero.
+    #[serde(default)]
+    pub(super) cost: Option<f64>,
 }
 
 /// OpenAI `usage.prompt_tokens_details`: the prompt side, including cache hits.
@@ -68,6 +72,11 @@ pub(super) struct PromptTokensDetails {
     /// miss; absent is `None`.
     #[serde(default)]
     pub(super) cached_tokens: Option<u64>,
+    /// `prompt_tokens_details.cache_write_tokens` — unadjusted prompt tokens
+    /// written to cache. This is optional prompt detail, not an extra scalar
+    /// input count.
+    #[serde(default)]
+    pub(super) cache_write_tokens: Option<u64>,
 }
 
 /// OpenAI `usage.completion_tokens_details`: the completion side, including
@@ -121,7 +130,7 @@ mod tests {
         assert_eq!(delta.content.as_deref(), Some("ok"));
     }
 
-    /// Deliverable 4 (OpenAI, with): a usage chunk carrying both detail
+    /// A usage chunk carrying both detail
     /// objects populates the new fields.
     #[test]
     fn usage_with_details_populates_cache_and_reasoning() {
@@ -150,8 +159,8 @@ mod tests {
         );
     }
 
-    /// Deliverable 4 (OpenAI, without — the assertion that matters): a usage
-    /// chunk with no detail objects leaves them `None`, and the two existing
+    /// A usage chunk with no detail objects (the assertion that matters)
+    /// leaves them `None`, and the two existing
     /// counters still parse. Also accepts the `input_tokens`/`output_tokens`
     /// aliases some OpenAI-compatible gateways use.
     #[test]
@@ -167,7 +176,7 @@ mod tests {
         assert_eq!(usage.completion_tokens_details, None);
     }
 
-    /// Deliverable 5 (OpenAI): a reported `cached_tokens: 0` deserialises to
+    /// A reported `cached_tokens: 0` deserialises to
     /// `Some(0)`, distinct from an omitted field (`None`).
     #[test]
     fn reported_zero_cached_tokens_is_some_zero_not_none() {

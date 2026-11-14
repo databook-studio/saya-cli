@@ -6,6 +6,9 @@ use serde::Serialize;
 pub(crate) struct OllamaRequest {
     pub model: String,
     pub messages: Vec<OllamaMessage>,
+    /// Omitted entirely when the surface composes no tool: an empty array is
+    /// not a valid request, and a read-only job with no tool must still run.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<WireTool>,
     pub stream: bool,
     /// Ollama's `format` field — `"json"` constrains the response to valid
@@ -21,8 +24,8 @@ pub(crate) struct OllamaRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub think: Option<bool>,
     /// Ollama's `options` object — a bag of model parameters. Only
-    /// `temperature` is carried, and only when the caller set one, so the
-    /// endpoint's own defaults win otherwise.
+    /// configured generation controls are carried, and only when the caller
+    /// set one, so the endpoint's own defaults win otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<OllamaOptions>,
 }
@@ -32,7 +35,10 @@ pub(crate) struct OllamaRequest {
 /// overrides the endpoint's own default.
 #[derive(Serialize)]
 pub(crate) struct OllamaOptions {
-    pub temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_predict: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -74,11 +80,18 @@ pub(crate) fn request(request: ChatRequest) -> OllamaRequest {
 }
 
 impl OllamaRequest {
-    /// Carry sampling temperature under `options.temperature`. `None` leaves
-    /// `options` off the wire so the endpoint's own default wins — a value the
-    /// caller did not set is never sent.
-    pub(crate) fn with_temperature(mut self, temperature: Option<f32>) -> Self {
-        self.options = temperature.map(|temperature| OllamaOptions { temperature });
+    /// Carry configured generation controls under Ollama's `options` object.
+    /// An absent value stays absent rather than being translated into an
+    /// endpoint-specific unlimited sentinel.
+    pub(crate) fn with_options(
+        mut self,
+        temperature: Option<f32>,
+        num_predict: Option<u32>,
+    ) -> Self {
+        self.options = (temperature.is_some() || num_predict.is_some()).then_some(OllamaOptions {
+            temperature,
+            num_predict,
+        });
         self
     }
 }
@@ -88,7 +101,10 @@ fn messages(values: Vec<ChatMessage>) -> Vec<OllamaMessage> {
         .into_iter()
         .map(|message| OllamaMessage {
             role: message.role,
-            content: message.content,
+            // Ollama's message content is a string on this wire: an image
+            // cannot ride it, and the text says so rather than dropping it
+            // silently.
+            content: super::images::text_with_note(&message.content, &message.images),
             tool_calls: message.tool_calls.into_iter().map(tool_call).collect(),
         })
         .collect()
@@ -123,11 +139,26 @@ mod tests {
                     requires_approval: false,
                     local_state: LocalStateEffect::None,
                 },
+                concurrency: crate::ToolConcurrency::Serial,
                 completion: None,
             }],
             response_format: format,
             reasoning_effort: effort,
         }
+    }
+
+    /// A request with no tools omits the field entirely: an empty `tools`
+    /// array is not a valid request.
+    #[test]
+    fn request_without_tools_omits_the_tools_field() {
+        let mut chat = request_with(ResponseFormat::Text, ReasoningEffort::Default);
+        chat.tools.clear();
+        let body = request(chat);
+        let json = serde_json::to_string(&body).expect("serializes");
+        assert!(
+            !json.contains(r#""tools""#),
+            "a request with no tools must omit the field: {json}"
+        );
     }
 
     /// A JSON-mode request carries Ollama's `format: "json"` spelling.
@@ -198,7 +229,7 @@ mod tests {
     #[test]
     fn temperature_is_carried_under_options_when_configured() {
         let body = request(request_with(ResponseFormat::Text, ReasoningEffort::Default))
-            .with_temperature(Some(0.5));
+            .with_options(Some(0.5), Some(1234));
         let value: serde_json::Value = serde_json::to_value(&body).expect("serializes");
         assert_eq!(
             value["options"]["temperature"].as_f64(),
@@ -213,11 +244,44 @@ mod tests {
     #[test]
     fn options_omitted_when_no_temperature_is_configured() {
         let body = request(request_with(ResponseFormat::Text, ReasoningEffort::Default))
-            .with_temperature(None);
+            .with_options(None, None);
         let value: serde_json::Value = serde_json::to_value(&body).expect("serializes");
         assert!(
             value.get("options").is_none(),
             "no temperature configured must not send options: {value}"
+        );
+    }
+
+    /// Ollama's message content is a string, so an image cannot ride it. The
+    /// result's text says so rather than dropping the image silently.
+    #[test]
+    fn an_image_a_tool_result_carried_is_reported_as_unavailable() {
+        let chat_request = ChatRequest {
+            model: "llama3".into(),
+            messages: vec![ChatMessage {
+                role: "tool".into(),
+                content: r#"{"content":"image/png, 70 bytes"}"#.into(),
+                tool_calls: vec![],
+                tool_call_id: Some("call_1".into()),
+                images: vec![crate::ImageBlock {
+                    media_type: "image/png".into(),
+                    data_base64: "AAAA".into(),
+                }],
+                reasoning: None,
+                reasoning_signature: None,
+            }],
+            ..Default::default()
+        };
+
+        let body = request(chat_request);
+        let content = &body.messages[0].content;
+        assert!(
+            content.contains("image/png") && content.contains("could not be sent"),
+            "the refusal must be stated in the result text: {content}"
+        );
+        assert!(
+            !content.contains("AAAA"),
+            "the image bytes must not be pasted into the text: {content}"
         );
     }
 }

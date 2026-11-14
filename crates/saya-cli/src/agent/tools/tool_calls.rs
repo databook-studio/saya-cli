@@ -4,14 +4,14 @@ use super::sql_format::{collapse_whitespace, format_sql};
 /// and the transcript so the user sees exactly what will run. Returns the SQL
 /// for the query tools (annotated with the target connection, or "all databases"
 /// for the fan-out tool), or `None` for tools with nothing worth showing.
-/// C0 redaction note: the detail rides the same redaction the rest of the
+/// Redaction note: the detail rides the same redaction the rest of the
 /// output does. `path`/`program` name what ran (a relative workspace path, a
 /// bare program name); `content`/argv/stdout/stderr never reach the detail —
 /// the failure tail below is a fixed vocabulary word, never tool output, and
 /// the request detail carries no argument values beyond the key fact.
 pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Option<String> {
     match name {
-        "workspace_write" | "workspace_edit" => {
+        "write" | "edit" => {
             let path = arguments
                 .get("path")
                 .and_then(serde_json::Value::as_str)
@@ -27,7 +27,6 @@ pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Opt
         }
         "bounded_sql_query"
         | "bounded_sql_query_all"
-        | "render_chart"
         | "result_shape"
         | "column_health"
         | "join_check" => {
@@ -41,18 +40,6 @@ pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Opt
                 .and_then(serde_json::Value::as_str)
                 .filter(|value| !value.is_empty());
             Some(match (name, connection) {
-                ("render_chart", connection) => {
-                    let chart_type = arguments
-                        .get("chart_type")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|v| !v.is_empty());
-                    match (connection, chart_type) {
-                        (Some(conn), Some(ct)) => format!("{sql}  (@{conn}) (chart: {ct})"),
-                        (Some(conn), None) => format!("{sql}  (@{conn})"),
-                        (None, Some(ct)) => format!("{sql}  (chart: {ct})"),
-                        (None, None) => sql,
-                    }
-                }
                 (_, Some(connection)) => format!("{sql}  (@{connection})"),
                 ("bounded_sql_query_all", None) => format!("{sql}  (all connected databases)"),
                 _ => sql,
@@ -75,7 +62,6 @@ pub(crate) fn sql_tool_call(name: &str, arguments: &serde_json::Value) -> Option
     match name {
         "bounded_sql_query"
         | "bounded_sql_query_all"
-        | "render_chart"
         | "result_shape"
         | "column_health"
         | "join_check" => {
@@ -99,25 +85,25 @@ pub(crate) fn sql_tool_call(name: &str, arguments: &serde_json::Value) -> Option
     }
 }
 
-/// C0 properties 1, 2 (request half), 4, 5: the shared detail seam both
-/// adapters render from. Placed beside the seam per the testing standard
-/// (unit tests beside the code); the completion half lives in
+/// The shared detail seam both adapters render from, pinned here for the
+/// request half. Placed beside the seam per the testing standard (unit
+/// tests beside the code); the completion half lives in
 /// `saya-agent/tests/c0_name_the_call.rs`, beside the summaries it pins.
 #[cfg(test)]
 mod c0_property_tests {
     use super::tool_call_detail;
 
-    /// Property 1: a `workspace_write` request detail names the file it wrote.
+    /// Property 1: a `write` request detail names the file it wrote.
     #[test]
     fn workspace_write_completion_names_the_file_it_wrote() {
         let detail = tool_call_detail(
-            "workspace_write",
+            "write",
             &serde_json::json!({"path": "notes.md", "content": "hi"}),
         )
-        .expect("workspace_write detail exists");
+        .expect("write detail exists");
         assert!(
             detail.contains("notes.md"),
-            "workspace_write completion must name the file: got {detail:?}"
+            "write completion must name the file: got {detail:?}"
         );
     }
 
@@ -147,7 +133,7 @@ mod c0_property_tests {
 
         let arguments = serde_json::json!({"path": "notes.md", "content": "hi"});
         let piped = terminal_event(saya_agent::AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             arguments,
             Some(saya_agent::ToolEffect {
                 database_data: false,
@@ -159,7 +145,7 @@ mod c0_property_tests {
         .expect("a ToolRequested renders headlessly");
         match piped {
             crate::TerminalEvent::ToolRequested { detail, .. } => {
-                let detail = detail.expect("workspace_write exposes a detail");
+                let detail = detail.expect("write exposes a detail");
                 assert!(
                     detail.contains("notes.md"),
                     "the shared seam must name the file: {detail:?}"
@@ -167,7 +153,7 @@ mod c0_property_tests {
                 assert_eq!(
                     detail,
                     tool_call_detail(
-                        "workspace_write",
+                        "write",
                         &serde_json::json!({"path": "notes.md", "content": "hi"}),
                     )
                     .expect("same seam, same fact"),
@@ -178,14 +164,14 @@ mod c0_property_tests {
         }
     }
 
-    /// Property 5: a tool this slice does not cover keeps today's text,
-    /// byte-exact — `workspace_list` still exposes no detail.
+    /// Property 5: a tool with no detail projection keeps its text
+    /// byte-exact — `list` still exposes no detail.
     #[test]
     fn an_uncovered_tool_keeps_todays_text_byte_exact() {
         assert_eq!(
-            tool_call_detail("workspace_list", &serde_json::json!({"path": "notes"})),
+            tool_call_detail("list", &serde_json::json!({"path": "notes"})),
             None,
-            "workspace_list must keep today's None detail"
+            "list must keep today's None detail"
         );
         assert_eq!(
             tool_call_detail("schema_discovery", &serde_json::json!({})),
@@ -201,10 +187,10 @@ mod c0_property_tests {
     #[test]
     fn request_detail_never_carries_values_beyond_the_key_fact() {
         let write = tool_call_detail(
-            "workspace_write",
+            "write",
             &serde_json::json!({"path": "notes.md", "content": "SECRET-BODY"}),
         )
-        .expect("workspace_write detail exists");
+        .expect("write detail exists");
         assert!(
             !write.contains("SECRET-BODY"),
             "file content must not reach the line: {write:?}"
@@ -218,32 +204,5 @@ mod c0_property_tests {
             run, "pytest",
             "the request detail names the program only: {run:?}"
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn render_chart_tool_call_detail_surfaces_sql() {
-        let detail = tool_call_detail(
-            "render_chart",
-            &serde_json::json!({"sql": "SELECT 1", "chart_type": "bar"}),
-        )
-        .expect("render_chart detail exists");
-        assert!(detail.contains("SELECT 1"));
-        assert!(detail.contains("(chart: bar)"));
-    }
-
-    #[test]
-    fn render_chart_sql_tool_call_surfaces_sql() {
-        let call = sql_tool_call(
-            "render_chart",
-            &serde_json::json!({"sql": "SELECT 1", "chart_type": "bar"}),
-        )
-        .expect("render_chart SqlCall exists");
-        assert_eq!(call.target, None);
-        assert_eq!(call.sql, "SELECT 1");
     }
 }

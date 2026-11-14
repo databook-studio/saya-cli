@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Saya Release"
+  short_description: "Plan, implement, review, merge, and clean"
+  default_prompt: "Use $orchestrate-saya-release to coordinate this Saya release change through planning, implementation, review, acceptance, integration, and cleanup."

@@ -1,4 +1,4 @@
-//! Surfacing contract conflicts in the prompt body — slice 5e.
+//! Surfacing contract conflicts in the prompt body.
 //!
 //! recall (2b-1) already detects conflicts and returns them on the contract;
 //! this module turns that typed `Vec<ContractConflict>` into the in-band marks

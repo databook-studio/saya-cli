@@ -16,9 +16,9 @@
 //! acceptance of a plan the model did not propose. A step asking for a scope
 //! the run was not approved for is refused with
 //! [`PlanRejection::NeedsApproval`]: approval is granted once, by the user,
-//! and a new capability never inherits an earlier plan's approval
-//! (DESIGN §5.3). The approval surface that can act on the ask is M1-10;
-//! here the ask is a typed refusal.
+//! and a new capability never inherits an earlier plan's approval. Here the
+//! ask is a typed refusal; the approval surface that can act on it is
+//! elsewhere.
 
 mod contract;
 mod parse;

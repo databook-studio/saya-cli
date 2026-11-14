@@ -1,6 +1,6 @@
 //! Text shaping for contract views. JSON and NDJSON fall out of the serde
 //! derives on [`TerminalEvent`](super::TerminalEvent); text needs deliberate
-//! shaping, done here. See plan spec §3.
+//! shaping, done here.
 
 use super::{ContractConflictView, ContractQueueItemView, ContractView, Rendered};
 

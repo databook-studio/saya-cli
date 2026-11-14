@@ -1,0 +1,214 @@
+use std::{fmt, io::Write};
+
+use saya_types::{GitObjectId, RepositoryId, Sha256Digest, SnapshotId};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use super::facts::{SnapshotChange, SnapshotStatusFact};
+use super::types::*;
+
+mod errors;
+
+pub use errors::{RedactedIoError, SnapshotError};
+
+#[derive(Serialize)]
+pub(crate) struct SnapshotManifestBody {
+    pub(super) schema_version: u32,
+    pub(super) snapshot_id: SnapshotId,
+    pub(super) repository_id: RepositoryId,
+    pub(super) common_dir_sha256: Sha256Digest,
+    pub(super) repository_root: String,
+    pub(super) common_dir: String,
+    pub(super) base_commit: GitObjectId,
+    pub(super) selection: SnapshotSelection,
+    pub(super) index_sha256: Sha256Digest,
+    pub(super) entries: Vec<SnapshotFileEntry>,
+    pub(super) index_entries: Vec<SnapshotIndexEntry>,
+    pub(super) status: Vec<SnapshotStatusFact>,
+    pub(super) changes: Vec<SnapshotChange>,
+    pub(super) omissions: Vec<SnapshotOmissionFact>,
+    /// Appended last and omitted when empty, so a plan with no warnings keeps
+    /// the exact canonical bytes it had before this field existed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) warnings: Vec<SnapshotWarningFact>,
+    /// How many further sensitive tracked paths the capped warning list does
+    /// not name. Omitted when zero, so a plan below the cap keeps its exact
+    /// canonical bytes.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub(super) warnings_truncated: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+pub struct SnapshotManifest {
+    pub(crate) body: SnapshotManifestBody,
+    pub(crate) manifest_sha256: Sha256Digest,
+    pub(crate) canonical_bytes: Vec<u8>,
+}
+
+impl SnapshotManifest {
+    pub fn snapshot_id(&self) -> &SnapshotId {
+        &self.body.snapshot_id
+    }
+
+    pub fn repository_id(&self) -> &RepositoryId {
+        &self.body.repository_id
+    }
+
+    pub fn common_dir_sha256(&self) -> &Sha256Digest {
+        &self.body.common_dir_sha256
+    }
+
+    pub fn base_commit(&self) -> &GitObjectId {
+        &self.body.base_commit
+    }
+
+    pub fn selection(&self) -> SnapshotSelection {
+        self.body.selection
+    }
+
+    pub fn entries(&self) -> &[SnapshotFileEntry] {
+        &self.body.entries
+    }
+
+    pub fn index_entries(&self) -> &[SnapshotIndexEntry] {
+        &self.body.index_entries
+    }
+
+    pub fn status(&self) -> &[SnapshotStatusFact] {
+        &self.body.status
+    }
+
+    pub fn changes(&self) -> &[SnapshotChange] {
+        &self.body.changes
+    }
+
+    pub fn omissions(&self) -> &[SnapshotOmissionFact] {
+        &self.body.omissions
+    }
+
+    pub fn warnings(&self) -> &[SnapshotWarningFact] {
+        &self.body.warnings
+    }
+
+    /// The number of sensitive tracked paths the capped warning list does not
+    /// name. Zero below [`super::MAX_SNAPSHOT_WARNINGS`].
+    pub fn warnings_truncated(&self) -> u64 {
+        self.body.warnings_truncated
+    }
+
+    pub fn manifest_sha256(&self) -> &Sha256Digest {
+        &self.manifest_sha256
+    }
+
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.canonical_bytes
+    }
+}
+
+impl fmt::Debug for SnapshotManifest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SnapshotManifest")
+            .field("snapshot_id", &self.body.snapshot_id)
+            .field("repository_id", &self.body.repository_id)
+            .field("selection", &self.body.selection)
+            .field("entry_count", &self.body.entries.len())
+            .field("index_entry_count", &self.body.index_entries.len())
+            .field("omission_count", &self.body.omissions.len())
+            .field("warning_count", &self.body.warnings.len())
+            .field("manifest_sha256", &self.manifest_sha256)
+            .finish()
+    }
+}
+
+pub(crate) fn manifest_bytes(body: &SnapshotManifestBody) -> Result<Vec<u8>, SnapshotError> {
+    bounded_json(body, MAX_SNAPSHOT_MANIFEST_BYTES)
+}
+
+/// Serializes `body` in one pass under a hard byte ceiling. A body that
+/// would exceed the ceiling fails before the bytes are returned, so a caller
+/// never holds an over-bound manifest.
+pub(crate) fn bounded_json<T: Serialize>(
+    body: &T,
+    maximum: usize,
+) -> Result<Vec<u8>, SnapshotError> {
+    let mut writer = BoundedManifestWriter::new(maximum);
+    if serde_json::to_writer(&mut writer, body).is_err() {
+        return Err(if writer.exceeded {
+            SnapshotError::ManifestBytesExceeded {
+                measured: writer.measured,
+                limit: writer.maximum,
+            }
+        } else {
+            SnapshotError::Serialization
+        });
+    }
+    Ok(writer.bytes)
+}
+
+pub(crate) fn digest(bytes: &[u8]) -> Result<Sha256Digest, SnapshotError> {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").map_err(|_| SnapshotError::Serialization)?;
+    }
+    Sha256Digest::parse(&hex).map_err(|_| SnapshotError::Serialization)
+}
+
+/// Lowers a streaming SHA-256 over written bytes to the typed digest, with
+/// the same hex encoding as [`digest`]. Consumes the hasher, because
+/// `finalize` takes it by value. Used by the object sink to verify its own
+/// content identity at `finish`; the sink itself exists only on the
+/// supported targets, so this helper is gated to them as well.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn digest_from_hasher(hasher: Sha256) -> Result<Sha256Digest, SnapshotError> {
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").map_err(|_| SnapshotError::Serialization)?;
+    }
+    Sha256Digest::parse(&hex).map_err(|_| SnapshotError::Serialization)
+}
+
+struct BoundedManifestWriter {
+    bytes: Vec<u8>,
+    maximum: usize,
+    measured: usize,
+    exceeded: bool,
+}
+
+impl BoundedManifestWriter {
+    fn new(maximum: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            maximum,
+            measured: 0,
+            exceeded: false,
+        }
+    }
+}
+
+impl Write for BoundedManifestWriter {
+    fn write(&mut self, input: &[u8]) -> std::io::Result<usize> {
+        let measured = self.bytes.len().saturating_add(input.len());
+        if measured > self.maximum {
+            self.exceeded = true;
+            self.measured = measured;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "snapshot manifest byte bound exceeded",
+            ));
+        }
+        self.bytes.extend_from_slice(input);
+        Ok(input.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}

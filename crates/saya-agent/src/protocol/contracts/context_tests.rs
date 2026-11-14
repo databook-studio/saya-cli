@@ -5,7 +5,7 @@
 use super::{CONTEXT_COMPACT_PERCENT, CONTEXT_WARN_PERCENT, context_utilisation_percent};
 
 /// The owner-set thresholds: warn at 70%, compact at 95%. Pinned here so a
-/// later slice cannot silently drift either number — or fork a second copy.
+/// future consumer cannot silently drift either number — or fork a second copy.
 #[test]
 fn the_owner_set_thresholds_are_warn_70_compact_95() {
     assert_eq!(CONTEXT_WARN_PERCENT, 70);

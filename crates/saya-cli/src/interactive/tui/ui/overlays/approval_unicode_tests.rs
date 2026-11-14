@@ -1,14 +1,14 @@
-//! Wide and grapheme-heavy bodies are measured as painted (re-audit R01).
-//! The panel decided its layout with a char-based row count and painted with
-//! ratatui's cell-aware wrap: with wide characters the two disagreed, and the
-//! panel asked for consent while hiding the thing being consented to —
-//! controls off-screen, final facts below an unreachable end-stop. Real
+//! Wide and grapheme-heavy bodies are measured as painted.
+//! A char-based row count disagrees with ratatui's cell-aware wrap once wide
+//! characters are in play, and the panel then asks for consent while hiding
+//! the thing being consented to — controls off-screen, final facts below an
+//! unreachable end-stop. Real
 //! frames through the real `ui::draw`, asserted on the buffer.
 
 use crate::interactive::tui::types::{App, PendingApproval};
 use crate::interactive::tui::ui_snapshot_tests::{empty_app, fixed_status, render_buffer};
 
-/// The re-audit's body shape: `fact line NN ` followed by `日本` ×20 — 13
+/// The wide body shape: `fact line NN ` followed by `日本` ×20 — 13
 /// chars of prefix plus 40 chars that occupy 80 cells, so the char count (53)
 /// and the painted width (93) disagree at the panel's inner width.
 fn wide_detail(lines: usize) -> String {
@@ -18,9 +18,8 @@ fn wide_detail(lines: usize) -> String {
         .join("\n")
 }
 
-/// The same body in equal-length ASCII — the control the re-audit used to
-/// isolate the cause: cells == chars here, so the char arithmetic was never
-/// wrong for it.
+/// The same body in equal-length ASCII — the control that isolates the cause:
+/// cells == chars here, so char arithmetic is never wrong for it.
 fn ascii_detail(lines: usize) -> String {
     (1..=lines)
         .map(|i| format!("fact line {i:02} {}", "x".repeat(80)))
@@ -43,18 +42,17 @@ fn approval_app(detail: String, scroll: usize) -> App {
     app
 }
 
-/// The security-relevant repro: 20 wide logical lines whose char count (20)
-/// equals the answers' budget while their painted rows (60) do not — the
-/// counter picked the flat-fit branch, so the later facts **and the
-/// `[a]`/`[d]` controls** were clipped and scrolling was ignored. The panel
-/// is asking for consent with the controls off-screen.
+/// The security-relevant case: 20 wide logical lines whose char count (20)
+/// equals the answers' budget while their painted rows (60) do not — a
+/// counter that took the flat-fit branch would clip the later facts **and the
+/// `[a]`/`[d]` controls** and ignore scrolling. The panel would be asking for
+/// consent with the controls off-screen.
 ///
 /// The frame is taller than the classic 80×24 floor on purpose: at 80×24 the
 /// layout squeezes the panel below its 24-row request (the transcript's
 /// `Min(1)` loses), the budget shrinks, and this same body already lands in
-/// the overflow branch — where the tests below pin the defect. The false fit
-/// the re-audit executed needs the panel at its requested height, so this
-/// frame grants it.
+/// the overflow branch. The false fit needs the panel at its requested
+/// height, so this frame grants it.
 #[test]
 fn a_wide_body_that_falsely_fits_still_shows_its_controls() {
     let app = approval_app(wide_detail(20), 0);
@@ -82,9 +80,9 @@ fn a_wide_body_reaches_its_final_fact_at_maximum_scroll() {
     );
 }
 
-/// The control, passing before and after the fix: the same body in
-/// equal-length ASCII reaches its final fact. Cells equal chars here, so a
-/// failure means the change broke ASCII measurement — the snapshot is right.
+/// The control: the same body in equal-length ASCII reaches its final fact.
+/// Cells equal chars here, so a failure means the measurement broke ASCII
+/// handling — the snapshot is right.
 #[test]
 fn an_ascii_body_of_equal_length_still_reaches_its_final_fact() {
     let app = approval_app(ascii_detail(30), usize::MAX);

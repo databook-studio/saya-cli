@@ -1,4 +1,5 @@
 /target/
+/target-*/
 /dist/
 .DS_Store
 **/.DS_Store
@@ -33,7 +34,7 @@ vendor/
 # They take no part in the build — cargo fetches dependencies itself.
 vendor-src/
 
-# Python bytecode from the benchmark harness — embeds absolute source paths.
+# Python bytecode from the automated driver — embeds absolute source paths.
 __pycache__/
 *.py[cod]
 
@@ -45,4 +46,5 @@ __pycache__/
 # gate2.log reached the repo in 320c514 before this rule existed.
 /TASK.md
 /run.log
+/REPORT.md
 /gate*.log

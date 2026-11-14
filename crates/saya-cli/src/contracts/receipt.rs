@@ -3,8 +3,7 @@
 //! This is a contract, not presentation: it carries data and IDs only, mirrors
 //! the doc style of [`super::view`], and lives here (not in a render module) for
 //! the same reason [`RecallOutcome`] does — the adapter that renders it is
-//! a later slice. Nothing displays it yet; P1b consumes it. See
-//! `.claude/specs/spec-p1a-recall-receipt.md`.
+//! Nothing displays it yet; a later presentation layer consumes it.
 //!
 //! ## What this names, and what it deliberately does not
 //!
@@ -13,7 +12,7 @@
 //! Recall injects context; the model may ignore it. There is no field here that
 //! could be read as "the model applied this claim", because none was measured.
 //! `supplied` / `included` are the load-bearing words; `applied` / `used` are
-//! avoided on purpose (spec §3, a correctness property).
+//! avoided on purpose (a correctness property).
 //!
 //! `profile` is the human-facing profile **name**, never the opaque
 //! [`ProfileIdentity`]. The identity is a hash over connection material; the
@@ -126,8 +125,8 @@ pub(crate) struct SuppliedContract {
 /// One claim as supplied to the prompt. Carries the claim id (so a later phase
 /// can name exactly which saved claims shaped an answer), its kind, a short
 /// rendered value, and its persisted status — so a `Candidate` reads as
-/// `candidate`, not flattened into a single "included" notion (P1b renders it
-/// differently; P3 acts on it). No raw payload, evidence, or SQL.
+/// `candidate`, not flattened into a single "included" notion (rendering and
+/// acting treat the two differently). No raw payload, evidence, or SQL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SuppliedClaim {
     pub claim_id: ClaimId,

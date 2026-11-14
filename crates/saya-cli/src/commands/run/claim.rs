@@ -63,14 +63,14 @@ pub(super) fn claim_failure(
     exit::connection_failure(message, format)
 }
 
-/// The store's flag mirror of the approved scopes: destination lists, program
-/// allowlists, and bindings live in the run spec file, not the store.
+/// The store's flag mirror of the approved scopes: destination lists and
+/// endpoint bindings live in the run spec file, not the store. The runner
+/// capability is absent, so its flag column is always written `0`.
 fn store_flags(capabilities: &saya_types::Capabilities) -> saya_store::RunCapabilityFlags {
     saya_store::RunCapabilityFlags {
         workspace_write: capabilities.workspace_write,
         fetch: capabilities.fetch.is_some(),
-        runner: capabilities.runner.is_some(),
-        scratch: capabilities.scratch,
+        runner: false,
     }
 }
 

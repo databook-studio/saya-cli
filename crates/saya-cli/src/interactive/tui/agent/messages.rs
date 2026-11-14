@@ -1,5 +1,7 @@
 //! The UI-bound message channel for one streaming turn.
 
+use crate::agent::question_scope::QuestionScope;
+use crate::agent::tools::{AgentCapture, CaptureRefusalReason};
 use saya_agent::{AgentEvent, AgentOutput, ApprovalChoice, CancellationToken};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
@@ -21,9 +23,23 @@ pub(crate) enum StreamMsg {
         grant: Option<String>,
         respond: oneshot::Sender<ApprovalChoice>,
     },
-    /// A system fact the decider must say into the transcript — today, that
-    /// the session journal could not record a grant the user just made. The
-    /// consent stands; the line is missing, and silence would hide it.
+    /// The typed result of one successful agent `bounded_sql_query` — exactly
+    /// what the model saw, sent before the loop's `ToolCompleted` for the
+    /// same call. Consumed by the capture pairing.
+    QueryCaptured(AgentCapture),
+    /// One successful `bounded_sql_query` was refused — the model's view was
+    /// truncated or redacted, or the result is over the accounted capture
+    /// budget: nothing is held, not even a partial. `reason` is what the
+    /// snapshot's refusal names. Consumed by the capture pairing.
+    QueryCaptureRefused {
+        sql: String,
+        connection: String,
+        reason: CaptureRefusalReason,
+    },
+    /// A system fact the decider or the loop must say into the transcript —
+    /// that the session journal could not record a grant the user just made,
+    /// or that a background shell run ended. The consent/run stands; the line
+    /// is the user's own record of it.
     Notice(String),
     Done(Result<AgentOutput, String>),
 }
@@ -33,4 +49,8 @@ pub(crate) struct Stream {
     pub(crate) rx: UnboundedReceiver<StreamMsg>,
     pub(crate) cancel: CancellationToken,
     pub(crate) prompt: String,
+    /// The question scope this turn began with, cloned at spawn: the
+    /// stream-finalize settles BY this scope's identity — the one
+    /// `begin_question` handed out, never a look-alike.
+    pub(crate) question_scope: Option<QuestionScope>,
 }

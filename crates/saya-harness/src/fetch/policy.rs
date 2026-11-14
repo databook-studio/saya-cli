@@ -21,7 +21,7 @@
 //! I/O in this module), so a declared *name* that resolves private is not
 //! caught at the URL level. The resolver side must run [`refuses_address`]
 //! for every address resolution returns for an accepted host —
-//! resolve-then-deny over all returned IPs. Post-check rebinding (U5) is
+//! resolve-then-deny over all returned IPs. Post-check rebinding is
 //! the documented-unmitigated residual.
 
 use std::collections::BTreeSet;
@@ -83,7 +83,7 @@ pub enum FetchRefusal {
 }
 
 /// A URL the policy accepted. Constructible only through a [`FetchPolicy`],
-/// so the fetch tool and downloader (later slices) can take this type and
+/// so the fetch tool and downloader can take this type and
 /// cannot fetch anything this module did not judge.
 #[derive(Clone, Debug)]
 pub struct FetchUrl(Url);
@@ -213,8 +213,8 @@ fn refuses_v6(ip: Ipv6Addr) -> bool {
 }
 
 /// Judges every address resolution returns for an accepted host — the
-/// resolve-then-deny seam the resolver side (the later download slice) must
-/// run per returned IP. Pure: no network I/O here.
+/// resolve-then-deny seam the resolver side must run per returned IP. Pure:
+/// no network I/O here.
 pub fn refuses_address(address: IpAddr) -> Result<(), FetchRefusal> {
     let refused = match address {
         IpAddr::V4(v4) => refuses_v4(v4),

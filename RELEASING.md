@@ -31,12 +31,15 @@ run in order:
    and packages an archive + `.sha256`. Tests and Clippy are **not** re-run here;
    the branch ruleset already gates `main` on the full suite.
 2. **checksums** — verifies every sidecar and aggregates one `SHA256SUMS`.
-3. **publish** — creates the GitHub Release and attaches the archives.
-4. **publish-crates** — publishes the workspace to crates.io in dependency order
+3. **guard-tag** — refuses a pushed tag that disagrees with the manifest
+   version, naming both, and runs on every trigger so no side-effecting job can
+   skip it.
+4. **publish** — creates the GitHub Release and attaches the archives.
+5. **publish-crates** — publishes the workspace to crates.io in dependency order
    via `scripts/publish-crates.sh` (idempotent: skips already-published versions).
-5. **bump-homebrew** — regenerates the tap formula from the published
+6. **bump-homebrew** — regenerates the tap formula from the published
    `SHA256SUMS` via `scripts/update-homebrew-formula.sh` and pushes it to the tap.
-6. **verify-tap** — after the bump, checks that the public tap's formula serves
+7. **verify-tap** — after the bump, checks that the public tap's formula serves
    the tagged version via `scripts/check-homebrew-tap.sh`. The check needs no
    token — the tap is public, and a check gated on `HOMEBREW_TAP_TOKEN` could
    never detect that token being broken, which is the failure it guards against.
@@ -44,8 +47,55 @@ run in order:
    failure during the check also fails, but reports "could not run" rather than
    staleness.
 
-Jobs 4 and 5 no-op unless their secrets are configured, so a release never fails
-because a channel is not set up. Job 6 honors that contract: with
+Before an archive is checksummed, the build scans the executable and the
+generated archive. The archive allowlist is exactly one top-level release
+directory containing one executable (`saya` or `saya.exe`), `README.md`,
+`LICENSE`, and `SECURITY.md`. Before each crates.io publish, including
+`DRY_RUN=1`, the publisher runs `cargo package --locked` with local workspace
+patches, then scans that generated `.crate` payload. Crates may contain only
+Cargo package metadata at the root (`Cargo.toml`, its original form, lock/VCS
+metadata, and `build.rs`), `README.md`, license/copyright files, and regular
+payloads below Cargo's `src`, `tests`, `examples`, `benches`, or
+`proptest-regressions` directories. A crate must have a regular `Cargo.toml`,
+license metadata, and at least one regular source file below `src/`.
+
+Both scanners require canonical relative paths and reject traversal, links,
+special archive entries, encrypted ZIP members, colon/NTFS alternate-stream
+names, and entries outside their allowlists. They reject session/config and
+credential-like filename classes (including `.env*`, credentials/secrets/auth
+JSON, TOML, YAML, and common key/certificate files) while allowing ordinary
+public Rust modules such as `session.rs` and `secret.rs`. The synthetic
+`SAYA_ARTIFACT_FORBIDDEN_SENTINEL` marker is rejected wherever it appears.
+Executable bytes are also checked for known local home/workspace path forms.
+These checks do not identify arbitrary credentials or secrets embedded in
+otherwise legitimate public source or data. This is content checking; checksums
+identify bytes, while signing and build provenance remain separate. The
+Windows native C++ build has no documented source-path remapping equivalent in
+the locked `cc` toolchain, so its artifact scan remains a CI check rather than
+a locally proven remapping guarantee.
+
+The scanner bounds work as well as accepted content: each archive input is at
+most 1 GiB; ZIP central-directory metadata is at most 16 MiB and its declared
+entry count is checked before `ZipInfo` objects are built; there are at most
+20,000 archive entries, each at most 256 MiB, with at most 512 MiB of declared
+and observed file payload. TAR parsing accepts at most 20,000 physical headers,
+limits each GNU/PAX metadata body to 1 MiB and all such bodies to 16 MiB, and
+limits decompressed TAR reads to 512 MiB + 16 MiB + 20,000 KiB + 1 KiB. The
+binary scanner reads in 64 KiB chunks and rejects binaries over 256 MiB.
+
+The artifact scanners require maintained CPython 3.12 or newer, including the
+private `tarfile.TarInfo` hooks `_fromtarfile`, `_proc_pax`, `_proc_gnulong`,
+`_proc_sparse`, `_proc_gnusparse_00`, `_proc_gnusparse_01`, and
+`_proc_gnusparse_10`. Older patch releases that lack any required hook are
+unsupported; the scanner rejects them before TAR parsing. The release workflow uses
+moving GitHub-hosted runner labels rather than pinning Python; current runner
+image documentation lists Python 3.12 on Ubuntu and Windows and Python 3.14 on
+macOS. TAR streaming uses CPython `tarfile`'s private `TarInfo` hooks
+confirmed in maintained CPython 3.12 source and locally with Python 3.14.6.
+Recheck those hooks when upgrading runner images or the supported Python floor.
+
+Jobs 5 and 6 no-op unless their secrets are configured, so a release never fails
+because a channel is not set up. Job 7 honors that contract: with
 `HOMEBREW_TAP_TOKEN` unset it downgrades a stale tap to a `::warning`; with the
 token configured, a stale tap — including a bump that failed on a rejected token
 — fails the release, because `brew install` would otherwise silently serve the
@@ -65,9 +115,10 @@ PAT.
 ## Cutting a release
 
 1. Ensure `main` is green. The branch ruleset requires it: `fmt`, Clippy
-   `-D warnings`, and tests on Linux/macOS/Windows, plus the Rust 1.88 MSRV check.
-2. Move `CHANGELOG.md` `## Unreleased` to `## X.Y.Z — YYYY-MM-DD` and start a
-   fresh `## Unreleased`.
+   `-D warnings`, and tests on Linux/macOS/Windows, plus the Rust 1.89 MSRV check.
+2. Date the `CHANGELOG.md` section heading: change `## X.Y.Z — unreleased` to
+   `## X.Y.Z — YYYY-MM-DD`. The unreleased section is keyed by its version;
+   there is no separate `## Unreleased` heading.
 3. Bump the version to `X.Y.Z` in every crate's `Cargo.toml` **and** in the
    internal path-dependency version requirements (the libraries are published
    crates: `saya-store = { path = "...", version = "X.Y.Z" }`). Run
@@ -109,9 +160,9 @@ resumes from the first unpublished crate. No re-tag is needed.
 
 ## Internal-only paths must not reach a public ref
 
-Agent instructions (`AGENTS.md`, `CLAUDE.md`), editor rules (`.cursor/`),
-`.claude/`, and `docs/standards/` are kept out of the distribution. They are
-gitignored, but that only helps for files that were never committed.
+Workspace guidance, editor configuration, and internal standards are kept out
+of the distribution. These paths are gitignored, but that only helps for files
+that were never committed.
 
 **Deleting a committed file does not unpublish it.** Once a commit that added
 it is reachable from a public ref, `git show <commit>:<path>` returns the

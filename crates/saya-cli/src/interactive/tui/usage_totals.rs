@@ -42,18 +42,19 @@ impl UsageTotals {
     }
 
     fn accumulate(&mut self, usage: &TokenUsage) {
-        self.input_tokens += usage.input_tokens;
-        self.output_tokens += usage.output_tokens;
+        self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(usage.output_tokens);
         if let Some(cached) = usage.cached_input_tokens {
-            self.cached_input_tokens += cached;
+            self.cached_input_tokens = self.cached_input_tokens.saturating_add(cached);
             self.reported_cached = true;
         }
         if let Some(created) = usage.cache_creation_input_tokens {
-            self.cache_creation_input_tokens += created;
+            self.cache_creation_input_tokens =
+                self.cache_creation_input_tokens.saturating_add(created);
             self.reported_cache_creation = true;
         }
         if let Some(reasoning) = usage.reasoning_tokens {
-            self.reasoning_tokens += reasoning;
+            self.reasoning_tokens = self.reasoning_tokens.saturating_add(reasoning);
             self.reported_reasoning = true;
         }
     }

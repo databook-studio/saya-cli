@@ -32,18 +32,6 @@ pub(super) struct BackendPolicy {
 
 const COMMON_DENIED_FUNCTIONS: &[&str] = &["nextval", "setval"];
 
-const DUCKDB_DENIED_FUNCTIONS: &[&str] = &[
-    "read_csv",
-    "read_csv_auto",
-    "read_json",
-    "read_json_auto",
-    "read_parquet",
-    "read_text",
-    "sqlite_scan",
-    "glob",
-    "metadata",
-];
-
 const SQLITE_DENIED_FUNCTIONS: &[&str] = &["load_extension", "readfile", "writefile"];
 
 const SNOWFLAKE_DENIED_FUNCTIONS: &[&str] =
@@ -117,12 +105,6 @@ pub(super) const POSTGRES_POLICY: BackendPolicy = BackendPolicy {
 
 pub(super) const MYSQL_POLICY: BackendPolicy = BackendPolicy {
     denied_functions: MYSQL_DENIED_FUNCTIONS,
-    denied_prefixes: &[],
-    deny_format_clause: false,
-};
-
-pub(super) const DUCKDB_POLICY: BackendPolicy = BackendPolicy {
-    denied_functions: DUCKDB_DENIED_FUNCTIONS,
     denied_prefixes: &[],
     deny_format_clause: false,
 };
