@@ -1,8 +1,12 @@
 use crate::{
-    cli::{Cli, Command, ConfigCommand, ConnectionCommand},
-    commands, config, interactive,
+    cli::{Cli, Command, ConfigCommand, ConnectionCommand, McpCommand},
+    commands, config, demo, interactive,
 };
 use std::{io::IsTerminal, path::Path};
+
+mod dispatch;
+mod print;
+use dispatch::dispatch;
 
 pub fn run(cli: Cli) -> i32 {
     match dispatch(cli) {
@@ -14,54 +18,23 @@ pub fn run(cli: Cli) -> i32 {
     }
 }
 
-use clap::CommandFactory as _;
-
-fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
-    let Some(command) = cli.command.clone() else {
-        if cli.options.non_interactive {
-            return Err("non-interactive mode requires a subcommand".into());
+/// Startup warning: if an earlier `saya setup` was interrupted mid-commit,
+/// every command except `setup` (which offers the recovery interactively) and
+/// `completions` (which must keep its stdout contract clean) says so once, to
+/// stderr. Never auto-restores; a marker read error is a warning, never a crash.
+fn warn_interrupted_setup() {
+    let dir = config::sources::user_config_dir();
+    match crate::setup::pending(&dir) {
+        Ok(Some(_)) => eprintln!(
+            "An interrupted `saya setup` left a recovery marker in {}. \
+             Run `saya setup` to restore or finish it.",
+            dir.display()
+        ),
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("warning: could not check for an interrupted `saya setup`: {error}")
         }
-        return interactive::run(cli);
-    };
-    if let Command::Completions { shell } = command {
-        use clap_complete::generate;
-        let mut cmd = Cli::command();
-        generate(shell, &mut cmd, "saya", &mut std::io::stdout());
-        return Ok(0);
     }
-    if let Command::Config {
-        command: ConfigCommand::Init { project },
-    } = &command
-    {
-        return commands::run_config_init(cli.options.format.into(), *project);
-    }
-    // `--verbose` seeds the extraction-boundary trace before any turn runs.
-    // Until now the flag was declared and read nowhere, so passing it did
-    // nothing and said nothing — a small dishonesty in the one surface a user
-    // reaches for when memory "didn't record".
-    if cli.options.verbose {
-        crate::agent::extraction_trace::enable();
-    }
-    refuse_continue_on_run(&command, cli.options.continue_session)?;
-    refuse_workspace_on_subcommand(Some(&command), cli.options.workspace.as_deref())?;
-    refuse_turn_file_on_subcommand(cli.options.turn_file.as_deref())?;
-    refuse_session_launch_flags_on_subcommand(&command, &cli.options)?;
-    let options = command_options(&cli.options, &command);
-    let runtime = config::runtime::load(&options, Path::new("."))?;
-    let approval = config::runtime::approval_mode(&options)?;
-    let format = config::runtime::format_name(&options, &runtime.resolved);
-    let can_prompt = !options.non_interactive && std::io::stdin().is_terminal();
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(commands::run(
-            command,
-            &runtime,
-            format,
-            approval,
-            can_prompt,
-            options.include_profiles.clone(),
-        ))
 }
 
 /// The `--continue` guard on the run path. The flag continues the
@@ -91,7 +64,9 @@ pub(crate) fn refuse_session_launch_flags_on_subcommand(
 ) -> Result<(), String> {
     if !options.deny.is_empty() {
         return match command {
-            Command::Ask { .. } => Err(crate::interactive::session_deny::ask_surface_refusal()),
+            Command::Ask { .. } => {
+                Err(crate::interactive::session::permissions::deny::ask_surface_refusal())
+            }
             Command::Run { .. } => Err(crate::commands::run::scopes::refuse_deny_on_run()),
             _ => Err(
                 "`--deny` states the interactive session's deny list, not a subcommand: \
@@ -118,6 +93,31 @@ pub(crate) fn refuse_session_launch_flags_on_subcommand(
         });
     }
     Ok(())
+}
+
+/// The `--tools` guard. The flag narrows the model tools an *agent surface*
+/// advertises — the interactive session (including the `saya demo` launch),
+/// `saya ask`, `saya run`, and `saya start`. Every other subcommand has no
+/// tool surface to narrow, so it refuses the flag rather than parsing it and
+/// silently dropping a stated intent.
+pub(crate) fn refuse_tools_on_subcommand(
+    command: Option<&Command>,
+    options: &crate::cli::GlobalOptions,
+) -> Result<(), &'static str> {
+    if options.tools.is_empty() || command.is_none_or(honours_tools) {
+        return Ok(());
+    }
+    Err(crate::cli::TOOLS_REFUSAL)
+}
+
+/// Whether this subcommand composes a tool surface `--tools` can narrow.
+fn honours_tools(command: &Command) -> bool {
+    match command {
+        Command::Ask { .. } | Command::Run { .. } | Command::Demo { .. } => true,
+        // `saya start` is the only start spelling: one list governs it.
+        Command::Start(_) => true,
+        _ => false,
+    }
 }
 
 /// The `--workspace` guard. The flag binds the interactive session's
@@ -156,6 +156,40 @@ fn refuse_turn_file_on_subcommand(turn_file: Option<&Path>) -> Result<(), String
     Ok(())
 }
 
+/// The `--permission-mode` guard. The flag starts the interactive session in
+/// one of the session's four modes — the only surface that reads it, and only
+/// when no subcommand is present. A subcommand is not a session, so the
+/// pre-subcommand spelling is refused rather than silently ignoring a stated
+/// intent.
+fn refuse_permission_mode_on_subcommand(permission_mode: Option<&str>) -> Result<(), String> {
+    if permission_mode.is_some() {
+        return Err(
+            "`--permission-mode` starts the interactive session in a permission mode, not a \
+             subcommand: launch the session (`saya --permission-mode <mode>`) or run the \
+             subcommand without it"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// `--permission-mode` and `--approval-mode` are two spellings of the same
+/// consent: one names the session's mode, the other the posture it decomposes
+/// to. Stating both is refused rather than resolved by precedence — the pair
+/// would depend on which check ran first.
+pub(crate) fn refuse_conflicting_consent(
+    permission_mode: Option<&str>,
+    approval_mode: Option<&str>,
+) -> Result<(), String> {
+    if let (Some(mode), Some(approval)) = (permission_mode, approval_mode) {
+        return Err(format!(
+            "`--permission-mode {mode}` and `--approval-mode {approval}` both state the session's \
+             consent: state one of them, or switch inside the session with `/mode`"
+        ));
+    }
+    Ok(())
+}
+
 fn command_options(
     options: &crate::cli::GlobalOptions,
     command: &Command,
@@ -187,10 +221,9 @@ mod tests {
     use super::*;
     use clap::Parser as _;
 
-    /// G2 slice 5 — `saya --host-commands` is a clap usage error: the flag
-    /// no longer exists, and clap's honest answer to a stale invocation is
-    /// exit 2. Moved from `ask_refuses_the_host_commands_flag` (reason: the
-    /// guard the old test pinned deleted with the flag).
+    /// `saya --host-commands` is a clap usage error: the flag
+    /// does not exist, and clap's honest answer to a stale invocation is
+    /// exit 2.
     #[test]
     fn host_commands_flag_is_now_a_usage_error() {
         for argv in [
@@ -253,6 +286,44 @@ mod tests {
             refuse_workspace_on_subcommand(None, Some(Path::new("/tmp/proj"))).is_ok(),
             "no subcommand: the flag binds the session"
         );
+    }
+
+    /// `--permission-mode` starts the session in a mode; a subcommand is not
+    /// a session, so the pre-subcommand spelling is refused, and the
+    /// post-subcommand one never parses (the flag is not global).
+    #[test]
+    fn permission_mode_before_a_subcommand_is_refused() {
+        let cli = Cli::try_parse_from(["saya", "--permission-mode", "plan", "ask", "question"])
+            .expect("the flag parses before a subcommand");
+        assert!(cli.command.is_some());
+        let error = refuse_permission_mode_on_subcommand(cli.options.permission_mode.as_deref())
+            .expect_err("`--permission-mode` before a subcommand must refuse");
+        assert!(
+            error.contains("interactive session"),
+            "the refusal names the surface that reads the flag: {error}"
+        );
+        assert!(
+            refuse_permission_mode_on_subcommand(None).is_ok(),
+            "no flag: no guard fires"
+        );
+        let error = Cli::try_parse_from(["saya", "ask", "--permission-mode", "plan"])
+            .expect_err("the flag is not global: a subcommand cannot carry it");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    /// The two consent spellings are refused together rather than resolved
+    /// by precedence: the pair a session would run under must not depend on
+    /// which check ran first.
+    #[test]
+    fn permission_mode_with_approval_mode_is_refused() {
+        let error = refuse_conflicting_consent(Some("plan"), Some("ask"))
+            .expect_err("two spellings of one consent must refuse");
+        assert!(
+            error.contains("--permission-mode plan") && error.contains("--approval-mode ask"),
+            "the refusal names both flags: {error}"
+        );
+        assert!(refuse_conflicting_consent(Some("plan"), None).is_ok());
+        assert!(refuse_conflicting_consent(None, Some("bypass")).is_ok());
     }
 
     /// The bare REPL keeps the flag: `saya --continue` parses with no

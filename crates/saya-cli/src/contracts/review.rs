@@ -3,15 +3,15 @@
 //! the store enforces cardinality; this layer enforces "a confirm must not
 //! revive a fact whose dependency is gone".
 //!
-//! Chunk 3 moved these onto `knowledge_items`: confirm/reject/forget mutate an
-//! item's [`KnowledgeState`], show reads `knowledge_for_object`. The receipt
+//! These operations act on `knowledge_items`: confirm/reject/forget mutate an
+//! item's [`KnowledgeState`], and show reads `knowledge_for_object`. The receipt
 //! and list/show stanzas print `ki-…` ids, so the decision ops and the prefix
 //! resolver all key on those (see [`super::decide`]).
 //!
 //! `confirm`/`reject` return the shared render carrier [`ContractClaim`] (built
 //! from the post-mutation item) so the command layer that reads `claim.id` and
 //! `claim.status` keeps compiling without reaching into `knowledge_items`
-//! itself — the CLI presentation migration is a later chunk. The carrier carries
+//! itself — the CLI presentation migration is a later change. The carrier carries
 //! no fingerprint or columns, so returning it leaks nothing the store does not.
 
 use super::op_error::ContractOpError;
@@ -38,13 +38,13 @@ use saya_types::{
 /// the user *introducing* a fact (the user is the source), and it reads
 /// `SchemaUnavailable` — honest, not a false `Current`. An `Active` fact with
 /// no schema is *refused*: re-confirming an existing belief is a re-verification,
-/// and there is nothing to verify against. That asymmetry is the D-3
-/// translation of the legacy `Candidate`-vs-`Stale` distinction (a status-only
+/// and there is nothing to verify against. That asymmetry is the
+/// equivalent of the `Candidate`-vs-`Stale` distinction (a status-only
 /// flip needed no schema; a stale claim had to be revalidated) — both preserved
 /// by their tests.
 ///
 /// A `Dismissed` item is withdrawn and not revivable; confirm refuses with
-/// [`ContractOpError::Conflict`], matching the legacy legal-transition refusal.
+/// [`ContractOpError::Conflict`], matching the legal-transition refusal.
 pub(crate) async fn confirm(
     store: &SqliteStateStore,
     id: &ClaimId,
@@ -96,7 +96,7 @@ pub(crate) async fn confirm(
                 .await?;
         }
     }
-    // Re-read so the carrier reflects the post-mutation state the store now
+    // Re-read so the carrier reflects the post-mutation state the store
     // holds — `revalidate`/`update_state` set `Active`, and the carrier's
     // `status` is derived from `state`.
     let item = store
@@ -133,7 +133,7 @@ pub(crate) async fn approve_all(store: &SqliteStateStore, ids: &[ClaimId]) -> Ve
 /// Rejects `id`: a `Pending` candidate is moved to `Dismissed`. An `Active` or
 /// `Dismissed` item refuses with [`ContractOpError::Conflict`] — rejecting a
 /// confirmed fact is not the undo path (forget is), and a dismissed item is
-/// already withdrawn. Matches the legacy `Candidate`-only legal set.
+/// already withdrawn. Matches the `Candidate`-only legal set.
 pub(crate) async fn reject(
     store: &SqliteStateStore,
     id: &ClaimId,
@@ -172,7 +172,7 @@ pub(crate) async fn reject(
 ///
 /// `reason` is accepted for the command layer's signature; the new store has no
 /// per-forget event, so it is not echoed anywhere (fail-closed: never surface
-/// untrusted input). An unknown id is `NotFound`, matching the legacy refusal.
+/// untrusted input). An unknown id is `NotFound`, matching the refusal.
 pub(crate) async fn forget(
     store: &SqliteStateStore,
     id: &ClaimId,
@@ -221,7 +221,7 @@ fn find_table<'s>(
 /// `schema_binding_json` is the record the item was written with; re-deriving
 /// from `(slot, value)` refreshes it to the current binding format (the payload
 /// and slot have not changed) so a confirm also repairs an item whose stored
-/// binding this build could no longer deserialize. If the slot and payload
+/// binding this build cannot deserialize. If the slot and payload
 /// disagree — only possible for a corrupt row the store's own gate refuses —
 /// fail closed rather than confirm an item we cannot interpret.
 fn binding_to_validate(item: &KnowledgeItem) -> Result<SchemaBinding, ContractOpError> {

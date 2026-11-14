@@ -342,7 +342,7 @@ add it; `cargo audit` runs whenever it is added). Facts from the crates.io
 sparse index (fetched 2026-09-11):
 
 - Latest release: **0.4.7** (2026-07-27); `rust_version = "1.71"` — below this
-  workspace's MSRV 1.88.
+  workspace's MSRV 1.89.
 - Runtime dependencies: `libc ^0.2.186` (already in the tree at 0.2.189),
   `enumflags2 ^0.7`, `thiserror ^2.0` (already workspace-shared). Dev-only:
   `anyhow`, `lazy_static`, `strum`, `strum_macros`. No transitive risk surface

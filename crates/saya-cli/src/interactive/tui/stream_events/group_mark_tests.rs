@@ -1,4 +1,4 @@
-//! Phase 7 packet 1: a tool line's mark matches its outcome — `✓` for a
+//! A tool line's mark matches its outcome — `✓` for a
 //! completion that succeeded, `✗` for one that failed — at both render
 //! sites (the live tail in `tool_buffer.rs` and the flushed group detail
 //! in `stream_events/group.rs`). Driven through `super::apply_event`, the
@@ -119,8 +119,8 @@ fn the_live_tail_and_the_flushed_group_agree_on_the_mark() {
 }
 
 /// `ToolDenied` is a different thing from a failure and already renders
-/// differently (`✗ {name} denied: {reason}` on a System block). This
-/// packet must not merge or move it.
+/// differently (`✗ {name} denied: {reason}` on a System block). The mark
+/// must not merge or move it.
 #[test]
 fn a_denied_tool_still_renders_as_denied() {
     let mut transcript = Transcript::new();
@@ -143,8 +143,8 @@ fn a_denied_tool_still_renders_as_denied() {
 }
 
 /// The collapsed group header already names the failure count honestly
-/// (`▸ 2 tool calls · 1 failed (…) — details below`); this packet leaves
-/// it exactly as it is.
+/// (`▸ 2 tool calls · 1 failed (…) — details below`); it stays exactly as it
+/// is.
 #[test]
 fn the_group_header_still_names_the_failure_count() {
     let events = vec![

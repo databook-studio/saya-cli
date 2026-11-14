@@ -27,7 +27,7 @@ pub enum RunEvent {
     /// The field is [`Option`] because the two ways a journal can state no
     /// scopes mean different things, and a resume must tell them apart:
     /// `None` is the line a journal written **before the field existed**
-    /// carries (the field is absent; `#[serde(default)]` keeps the old
+    /// carries (the field is absent; `#[serde(default)]` keeps the earlier
     /// line parseable, exactly the `Usage` precedent) — "scopes unstated
     /// here", where the documented spec fallback stands in; `Some(words)`
     /// is an approval the journal **did state** — and `Some(vec![])` is
@@ -81,6 +81,14 @@ pub enum RunEvent {
         /// as above.
         #[serde(default)]
         cache_creation_input_tokens: Option<u64>,
+    },
+    /// A durable observation of the run's first-party elapsed clock. The
+    /// origin is written once when execution is approved; later observations
+    /// preserve that origin and raise the high-water mark monotonically.
+    /// An earlier journal may have no such event.
+    WallClockObserved {
+        origin_unix_ms: u64,
+        high_water_unix_ms: u64,
     },
     /// The download wallet's consumed level — every byte the run's downloads
     /// had claimed when the engine journaled this, including claims a failed

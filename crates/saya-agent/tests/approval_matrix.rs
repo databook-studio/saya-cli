@@ -3,8 +3,8 @@
 //! only read-shaped tools — no external side effect, no local-state write. Two
 //! invariants are load-bearing: `requires_approval` does not mean
 //! side-effecting (the SQL tools declare `requires_approval: true,
-//! external_side_effect: false` and stay auto-approved under read-only, which
-//! is what the bench harness runs on), and the decider decides from the
+//! external_side_effect: false` and stay auto-approved under read-only), and
+//! the decider decides from the
 //! declared effect, never from the tool name or arguments.
 
 use saya_agent::{
@@ -19,15 +19,16 @@ fn definition(effect: ToolEffect) -> ToolDefinition {
         read_only: true,
         parameters: serde_json::json!({"type": "object"}),
         effect,
+        concurrency: saya_agent::ToolConcurrency::Serial,
         // The matrix is about effects, not completion wording.
         completion: None,
     }
 }
 
-/// Every effect shape that exists today, and whether read-only approval
-/// permits it. The `render_chart` cell is the behavioural change: the tool
-/// requires approval *and* has an external side effect, so read-only denies it
-/// even though it still advertises itself as a database tool.
+/// Every effect shape that exists, and whether read-only approval
+/// permits it. The `external_side_effect + requires_approval` cell is the
+/// behavioural change: a tool with that shape is denied under read-only even
+/// though it advertises itself as a database tool.
 fn cases() -> Vec<(&'static str, ToolEffect, bool)> {
     vec![
         (
@@ -61,7 +62,7 @@ fn cases() -> Vec<(&'static str, ToolEffect, bool)> {
             true,
         ),
         (
-            "render_chart shape: requires approval AND has an external side effect",
+            "external side effect with requires_approval: approval is the gate, and read-only denies it",
             ToolEffect {
                 database_data: false,
                 external_side_effect: true,
@@ -102,7 +103,7 @@ fn cases() -> Vec<(&'static str, ToolEffect, bool)> {
         ),
         (
             "workspace write shape: no approval prompt, no side effect, but a \
-             local-state write (`workspace_write`, `workspace_edit`)",
+             local-state write (`write`, `edit`)",
             ToolEffect {
                 database_data: false,
                 external_side_effect: false,

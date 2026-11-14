@@ -1,10 +1,10 @@
-//! Phase 8 packet 2: the App-facing "new activity" view state.
+//! The App-facing "new activity" view state.
 //!
 //! The counter is presentation state on the transcript: returning to the live
 //! edge clears it, and it never reaches `SessionState` or anything the model
 //! replays. Beside `new_activity.rs`, the module that exposes it to the app.
 
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::tests_support::idle_app;
 use crate::interactive::tui::transcript::BlockKind;
 use crate::interactive::tui::types::App;

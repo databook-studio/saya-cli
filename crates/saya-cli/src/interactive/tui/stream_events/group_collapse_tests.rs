@@ -1,5 +1,5 @@
-//! Tests for the tool-group collapse/expand properties (C3), driven through `super::apply_event` (moved verbatim
-//! from the inline `tests` module in `stream_events/apply.rs`).
+//! Tests for the tool-group collapse/expand properties, driven through
+//! `super::apply_event`.
 
 use super::{Transcript, apply_event};
 use saya_agent::AgentEvent;
@@ -13,32 +13,33 @@ fn write_effect() -> Option<saya_agent::ToolEffect> {
     })
 }
 
-/// Two successful workspace writes: the shared fixture every C3 property
+/// Two successful workspace writes: the shared fixture every collapse
+/// property
 /// builds its group from.
 fn two_write_calls() -> Vec<AgentEvent> {
     vec![
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "notes.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "notes.md written".into(),
         },
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "other.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "other.md written".into(),
         },
     ]
 }
 
-/// C3 property 1: a collapsed group renders one block whose text equals
+/// Property 1: a collapsed group renders one block whose text equals
 /// the shaper's output — the same string the piped surface would emit, so
 /// the two surfaces cannot drift.
 #[test]
@@ -66,7 +67,7 @@ fn collapsed_group_renders_one_block_equal_to_the_shaper_output() {
     );
 }
 
-/// C3 property 2: toggling expands to the per-call `→` / `✓` lines and
+/// Property 2: toggling expands to the per-call `→` / `✓` lines and
 /// toggling again collapses back to the one-line summary.
 #[test]
 fn toggling_expands_to_the_per_call_lines_and_back() {
@@ -90,11 +91,11 @@ fn toggling_expands_to_the_per_call_lines_and_back() {
     assert_eq!(
         shown,
         vec![
-            "▾ 2 tool calls · ok — workspace_write notes.md, other.md",
-            "→ workspace_write: notes.md",
-            "✓ workspace_write: notes.md written",
-            "→ workspace_write: other.md",
-            "✓ workspace_write: other.md written",
+            "▾ 2 tool calls · ok — write notes.md, other.md",
+            "→ write: notes.md",
+            "✓ write: notes.md written",
+            "→ write: other.md",
+            "✓ write: other.md written",
         ],
         "expanded shows today's per-call lines verbatim under a ▾ header"
     );
@@ -108,12 +109,12 @@ fn toggling_expands_to_the_per_call_lines_and_back() {
         .collect();
     assert_eq!(
         shown,
-        vec!["▸ 2 tool calls · ok — workspace_write notes.md, other.md"],
+        vec!["▸ 2 tool calls · ok — write notes.md, other.md"],
         "collapsed again to the one-line summary"
     );
 }
 
-/// C3 property 3: expansion survives a re-render and a newly streamed
+/// Property 3: expansion survives a re-render and a newly streamed
 /// event — it is view state on the block, not a render-time flag.
 #[test]
 fn expansion_survives_rerender_and_a_newly_streamed_event() {
@@ -156,18 +157,18 @@ fn expansion_survives_rerender_and_a_newly_streamed_event() {
     );
 }
 
-/// C3 property 4: a one-member group renders exactly as today — the same
+/// Property 4: a one-member group renders exactly as today — the same
 /// blocks, byte for byte — with no toggle affordance.
 #[test]
 fn one_member_group_renders_as_today_with_no_toggle() {
     let events = vec![
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "notes.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "notes.md written".into(),
         },
     ];
@@ -178,11 +179,8 @@ fn one_member_group_renders_as_today_with_no_toggle() {
     apply_event(&mut grouped, AgentEvent::complete(), false);
 
     assert_eq!(grouped.blocks().len(), 2, "two per-call blocks, not one");
-    assert_eq!(grouped.blocks()[0].text, "→ workspace_write: notes.md");
-    assert_eq!(
-        grouped.blocks()[1].text,
-        "✓ workspace_write: notes.md written"
-    );
+    assert_eq!(grouped.blocks()[0].text, "→ write: notes.md");
+    assert_eq!(grouped.blocks()[1].text, "✓ write: notes.md written");
     assert!(
         grouped.blocks().iter().all(|b| !b.is_collapsible()),
         "no block may offer a toggle"

@@ -6,9 +6,9 @@
 //! fresh, resumed, or future — composes its policy in bypass mode: the
 //! boundary's admission type (`mode::RunApproval`) refuses bypass at its one
 //! constructor, and the run's composition takes the type, never a raw mode.
-//! Scopes come from `--allow`, budgets from `[jobs]` layered with `--budget`
-//! (never the environment — a run is reproducible from its spec and config,
-//! plan G3); the goal comes from the positional prompt. The engine
+//! Scopes come from `--allow`, budgets from `[limits.run]` layered with `--budget`
+//! (never the environment — a run is reproducible from its spec and config);
+//! the goal comes from the positional prompt. The engine
 //! (`saya-harness`) owns the state machine, the journal, and the
 //! plan/episode drivers; this module builds the collaborators the way `ask`
 //! builds a turn's, drives the steps blocking, and maps the typed outcomes
@@ -36,20 +36,19 @@ mod host;
 mod mode;
 mod reads;
 mod resume;
-// The runner composition's shared guard mechanics (`place_guard`) are the
-// one implementation both composition roots — this run surface and the
-// interactive session — consult, so the module is reachable crate-wide.
-pub(crate) mod runner;
-#[cfg(test)]
-mod runner_tests;
 // The `--allow` grammar is crate-reachable because the session approval's
 // grant token suggester feeds its tokens back through this parser — the
 // parser is the grammar's single authority, never duplicated.
 pub(crate) mod scopes;
 mod start;
-mod tools;
+mod step_tools;
 #[cfg(test)]
-mod tools_tests;
+mod stop_hook_tests;
+mod tools;
+// `pub(crate)` under `cfg(test)`: the allow-list drift test in
+// `agent::tools` reads this module's widest step composition.
+#[cfg(test)]
+pub(crate) mod tools_tests;
 
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
@@ -112,9 +111,10 @@ pub(super) async fn run_command(
         Some(crate::cli::RunCommand::Cancel { run_id }) => {
             cancel::cancel(&run_id, runtime, format, state).await
         }
-        Some(crate::cli::RunCommand::Resume { run_id }) => {
-            resume::resume(&run_id, runtime, format, approval, state).await
-        }
+        Some(crate::cli::RunCommand::Resume {
+            run_id,
+            retry_incomplete,
+        }) => resume::resume(&run_id, runtime, format, approval, state, retry_incomplete).await,
         None => {
             start::start(
                 start::StartInputs {

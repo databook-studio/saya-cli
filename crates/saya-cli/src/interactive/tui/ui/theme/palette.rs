@@ -206,7 +206,7 @@ pub(in crate::interactive::tui) fn kind_style(kind: BlockKind) -> Style {
 }
 
 /// The label-row style: plain, uncoloured, unmodified uppercase words.
-/// Labels are the only thing marking a turn now, so they must read without
+/// Labels are the only thing marking a turn, so they must read without
 /// colour — and every other row keeps its `kind_style`, untouched.
 pub(in crate::interactive::tui) fn label_style() -> Style {
     Style::default()

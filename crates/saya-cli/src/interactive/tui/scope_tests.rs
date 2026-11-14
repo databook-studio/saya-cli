@@ -1,11 +1,10 @@
-//! Phase 6 packet 2 red tests: a rendered result names the connection it came
-//! from and the query that produced it, and keeps naming them after the
-//! active connection changes.
+//! A rendered result names the connection it came from and the query that
+//! produced it, and keeps naming them after the active connection changes.
 //!
 //! The scope line is baked into the table block text at completion time
 //! (`sql_task::complete`, from the `Followup::Sql { connection }` value
-//! captured at dispatch) — the same freezing packet 1's footer relies on — so
-//! copy reads it through `block.text` like every other painted line.
+//! captured at dispatch) — the same freezing the footer relies on — so copy
+//! reads it through `block.text` like every other painted line.
 
 use super::sql_task::{Followup, SqlTask, complete};
 use super::table::{clip_table_block, format_table};
@@ -23,13 +22,13 @@ fn query_result(sql: &str, rows: usize, truncated: bool) -> saya_types::QueryRes
 }
 
 fn sql_task_with_connection(connection: Option<&str>, sql: &str) -> SqlTask {
-    SqlTask {
-        profile: connection.map(str::to_string),
-        sql: sql.to_string(),
-        followup: Followup::Sql {
+    SqlTask::new(
+        connection.map(str::to_string),
+        sql.to_string(),
+        Followup::Sql {
             connection: connection.map(str::to_string),
         },
-    }
+    )
 }
 
 /// Drives `complete` with a `QueryResult` event and returns the table block
@@ -40,6 +39,7 @@ fn completed_table(task: &SqlTask, result: saya_types::QueryResult) -> Block {
         task,
         crate::render::TerminalEvent::QueryResult { result },
         &mut transcript,
+        &mut None,
         &mut None,
     );
     transcript
@@ -163,7 +163,7 @@ fn the_scope_line_does_not_change_what_copy_yields() {
     let task = sql_task_with_connection(Some("sales-demo"), "select region from orders");
     let block = completed_table(&task, query_result("select region from orders", 3, false));
     // Copy reads `block.text` verbatim: the scope line rides along like the
-    // packet-1 footer, never filtered, never rewritten.
+    // footer, never filtered, never rewritten.
     assert_eq!(block.text, block.text.clone());
     assert!(
         block.text.contains("3 row(s)"),

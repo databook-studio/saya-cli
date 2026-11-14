@@ -1,10 +1,28 @@
 use std::collections::BTreeMap;
 
-use crate::{AiProvider, ConfigFile, ConnectionsFile, ThemeChoice};
+use crate::{
+    AgentsFile, AiProvider, ColorChoice, ConfigFile, ConnectionsFile, JobLimitsFile, ThemeChoice,
+    ToolsFile,
+};
 
 /// Command-line values which have the highest configuration precedence.
 #[derive(Debug, Clone, Default)]
 pub struct CliOverrides {
+    /// The `--coding-max-*` flags, which state `[limits.job]` keys. Kept
+    /// under `job` because that is the surface they bound; they preserve
+    /// normal precedence and provenance.
+    pub job: JobLimitsFile,
+    /// Explicit `[agents]` overrides, on the same terms.
+    pub agents: AgentsFile,
+    /// The `--tools` allow list, stated whole. It overrides every config
+    /// layer's `[tools] allow` — the flag is the operator's own word at
+    /// launch, and it only ever narrows.
+    pub tools: ToolsFile,
+    /// `--allow-command`/`--deny-command` rules. They add to the trusted
+    /// layers' `[permissions] allow`/`deny` lists rather than replacing them:
+    /// a flag is one more statement from the same operator, not a different
+    /// layer.
+    pub permissions: crate::PermissionsFile,
     pub profile: Option<String>,
     pub provider: Option<AiProvider>,
     pub model: Option<String>,
@@ -13,6 +31,12 @@ pub struct CliOverrides {
     pub candidates: Option<usize>,
     pub show_thinking: Option<bool>,
     pub theme: Option<ThemeChoice>,
+    /// Explicit colour override for this invocation: `Never` when the
+    /// `--no-color` flag is passed, `None` when absent so the config layers
+    /// and the built-in default keep their ordinary precedence. Resolved in
+    /// the layer chain like every other CLI override, so the provenance names
+    /// the flag instead of the resolved value being mutated after the fact.
+    pub color: Option<ColorChoice>,
     /// Explicitly trust security-critical settings from the project layer's
     /// `.saya/config.toml` (`ai.base_url`, `ai.api_key`,
     /// `ai.allow_data_sharing`, `run.read_only`, and the endpoint pool's

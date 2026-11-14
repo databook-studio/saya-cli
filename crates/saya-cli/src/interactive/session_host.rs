@@ -11,8 +11,7 @@
 //!
 //! The lane is **not contained**: the child runs as the user's uid with the
 //! whole filesystem and network, resolved on the user's PATH. Nothing here
-//! claims a bound the code does not apply — H0's module header is the
-//! register this module matches.
+//! claims a bound the code does not apply.
 
 /// What the launch stated about the lane: the `--deny` refusals and the
 /// user-layer config — read together, once, at composition. Nothing here

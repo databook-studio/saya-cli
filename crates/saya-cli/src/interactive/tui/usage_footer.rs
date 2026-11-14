@@ -95,7 +95,7 @@ mod tests {
 
     /// The footer keeps the original per-turn wording first, then carries the
     /// cumulative session totals inline — the glanceable answer to "what has
-    /// this session cost" that previously required typing `/usage`.
+    /// this session cost", without typing `/usage`.
     #[test]
     fn the_footer_keeps_the_turn_wording_and_adds_session_totals() {
         let footer = transcript_footer(&TokenUsage::new(300, 100), &totals(1300, 600), None, None);
@@ -178,8 +178,8 @@ mod tests {
 
     /// The notice states the percentage, the window, and what happens at the
     /// compact threshold — the user learns the behaviour before it fires.
-    /// The trigger and the text both derive from the shared thresholds, so a
-    /// later slice cannot drift one without the other.
+    /// The trigger and the text both derive from the shared thresholds, so
+    /// neither can drift without the other.
     #[test]
     fn the_notice_derives_from_the_shared_thresholds() {
         let notice = context_warn_notice(72, 200_000).expect("a notice renders");

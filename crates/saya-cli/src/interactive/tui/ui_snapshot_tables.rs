@@ -1,7 +1,7 @@
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
-/// Composed-screen behaviour snapshots (wide result tables and long content).
-/// Moved byte-identical from the hub; plain assertions except the renamed long-content snapshot.
+/// Composed-screen behaviour snapshots (wide result tables and long content):
+/// plain assertions except the long-content snapshot.
 use super::claims::{app_with_wide_table, supplied_claim, supplied_contract};
 use super::support::{bounded_sql_query_effect, empty_app, fixed_status, render_buffer};
 use saya_agent::{AgentEvent, KnowledgeOutcome};
@@ -96,19 +96,19 @@ fn copy_last_answer_does_not_grab_a_table_block() {
 /// painted beneath the row-count footer on the composed screen.
 #[test]
 fn a_completed_result_names_its_connection_and_query() {
-    use super::super::sql_task::{Followup, SqlTask, complete};
+    use super::super::sql_task::{Followup, complete};
     use super::claims::wide_table_result;
 
     let mut app = empty_app();
     app.transcript
         .push(BlockKind::User, "/sql SELECT * FROM orders");
-    let task = SqlTask {
-        profile: Some("analytics".into()),
-        sql: "SELECT * FROM orders".into(),
-        followup: Followup::Sql {
+    let task = super::super::sql_task::SqlTask::new(
+        Some("analytics".into()),
+        "SELECT * FROM orders".into(),
+        Followup::Sql {
             connection: Some("analytics".into()),
         },
-    };
+    );
     complete(
         &task,
         crate::render::TerminalEvent::QueryResult {
@@ -116,6 +116,7 @@ fn a_completed_result_names_its_connection_and_query() {
         },
         &mut app.transcript,
         &mut app.last_query,
+        &mut app.captured,
     );
     let buffer = render_buffer(&app, &fixed_status(), 80, 24);
     assert!(

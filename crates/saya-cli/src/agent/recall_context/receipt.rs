@@ -1,4 +1,4 @@
-//! Building the P1a [`RecallReceipt`] from the contracts that reached the
+//! Building the [`RecallReceipt`] from the contracts that reached the
 //! block. This is the agent-layer glue that populates the contract type in
 //! [`crate::contracts::receipt`]; the type itself owns no construction logic.
 //!

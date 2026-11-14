@@ -1,4 +1,4 @@
-//! P2d §4: the loop's completion summary reflects a tool's *declaration*,
+//! The loop's completion summary reflects a tool's *declaration*,
 //! not its name: the definition's own `completion` text when it carries one,
 //! otherwise the generic wording keyed on the declared `read_only`. A write
 //! tool (`read_only: false`, e.g. one that persists a candidate claim) must
@@ -63,7 +63,8 @@ impl ChatProvider for OneCallProvider {
     }
 }
 
-/// An executor that always succeeds — the summary for an `Ok` is what §4 fixes.
+/// An executor that always succeeds — the summary for an `Ok` is what this
+/// file pins.
 struct OkExecutor;
 
 #[async_trait]
@@ -107,6 +108,7 @@ fn read_only_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
@@ -123,17 +125,18 @@ fn write_tool() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteCandidate,
         },
+        concurrency: saya_agent::ToolConcurrency::Serial,
         completion: None,
     }
 }
 
 /// A tool that is neither a "read-only database tool" nor a "local-state
-/// write" — it writes a file and opens a browser — states what it actually
+/// write" — it writes a file outside the workspace — states what it actually
 /// did instead of borrowing a generic label that would be false.
 fn custom_completion_tool() -> ToolDefinition {
     ToolDefinition {
-        name: "render_chart".into(),
-        description: "writes a chart file and opens it".into(),
+        name: "external_effect_probe".into(),
+        description: "writes a file and opens it".into(),
         read_only: true,
         parameters: serde_json::json!({"type":"object"}),
         effect: ToolEffect {
@@ -142,7 +145,8 @@ fn custom_completion_tool() -> ToolDefinition {
             requires_approval: true,
             local_state: LocalStateEffect::None,
         },
-        completion: Some("chart written and opened".into()),
+        concurrency: saya_agent::ToolConcurrency::Serial,
+        completion: Some("file written and opened".into()),
     }
 }
 
@@ -160,7 +164,7 @@ fn request() -> AgentRequest {
 /// Runs one turn issuing a call to `tool`, with writes permitted (so a
 /// `WriteCandidate` tool is executed, not denied), returning the sink's events.
 /// These tests are about the *completion text* a tool reports, not about who
-/// may run it. `AllowReadOnlyApproval` now denies side-effecting tools — which
+/// may run it. `AllowReadOnlyApproval` denies side-effecting tools — which
 /// is correct, and would silently turn every case below into "the tool never
 /// ran" rather than a statement about summaries. Approving unconditionally
 /// keeps each test measuring the one thing it names.
@@ -212,115 +216,7 @@ fn completed_summary(events: &[AgentEvent]) -> Option<&str> {
     })
 }
 
-/// A read-only tool that succeeds reports a "read-only" completion.
-#[tokio::test]
-async fn read_only_tool_reports_read_only_completion() {
-    let events = run_one(read_only_tool(), &OkExecutor).await;
-    let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert!(
-        summary.contains("read-only"),
-        "a read-only tool reports read-only: got \"{summary}\""
-    );
-    assert!(
-        !summary.contains("write"),
-        "a read-only tool must not report a write: got \"{summary}\""
-    );
-}
-
-/// A write tool that succeeds reports a "local-state write" completion, *not*
-/// "read-only" — the fix at the heart of §4.
-#[tokio::test]
-async fn write_tool_does_not_report_read_only_completion() {
-    let events = run_one(write_tool(), &OkExecutor).await;
-    let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert!(
-        summary.contains("write"),
-        "a write tool reports a write: got \"{summary}\""
-    );
-    assert!(
-        !summary.contains("read-only"),
-        "a write tool must not report read-only — that would overstate: got \"{summary}\""
-    );
-}
-
-/// A write tool that fails reports a write failure whose summary keeps the
-/// "failed" substring, so `tool_metadata.status` still reads "failed".
-#[tokio::test]
-async fn write_tool_failure_summary_keeps_the_failed_substring() {
-    let events = run_one(write_tool(), &FailExecutor).await;
-    let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert!(
-        summary.contains("write"),
-        "a failed write tool still names a write: got \"{summary}\""
-    );
-    assert!(
-        summary.contains("failed"),
-        "the failure summary keeps \"failed\" so tool_metadata reads failed: got \"{summary}\""
-    );
-}
-
-/// A read-only tool that fails reports a read-only failure (the read-only
-/// direction still holds on the failure path).
-#[tokio::test]
-async fn read_only_tool_failure_reports_read_only_failure() {
-    let events = run_one(read_only_tool(), &FailExecutor).await;
-    let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert!(
-        summary.contains("read-only"),
-        "a failed read-only tool still reports read-only: got \"{summary}\""
-    );
-    assert!(
-        summary.contains("failed"),
-        "the failure summary keeps \"failed\": got \"{summary}\""
-    );
-}
-
-/// A tool declaring its own `completion` reports that text — not a generic
-/// label that would be false for what the tool actually did.
-#[tokio::test]
-async fn custom_completion_is_reported_verbatim() {
-    let events = run_one(custom_completion_tool(), &OkExecutor).await;
-    let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert_eq!(
-        summary, "chart written and opened",
-        "the definition's own completion text is reported: got \"{summary}\""
-    );
-    assert!(
-        !summary.contains("read-only database tool"),
-        "a tool that writes a file and opens a browser must not be labelled \
-         a read-only database tool: got \"{summary}\""
-    );
-}
-
-/// The failure summary for a custom-completion tool still keeps the
-/// "failed" substring — `tool_metadata.status` and the statement-outcome
-/// memory both key on it, so a custom completion must not break the
-/// failure signal.
-#[tokio::test]
-async fn custom_completion_failure_keeps_the_failed_substring() {
-    let events = run_one(custom_completion_tool(), &FailExecutor).await;
-    let summary = completed_summary(&events).expect("a ToolCompleted was emitted");
-    assert!(
-        summary.contains("failed"),
-        "the failure summary keeps \"failed\" so tool_metadata reads failed: got \"{summary}\""
-    );
-}
-
-/// `read_only` feeds only the completion labels, never the execution gates —
-/// gating keys on the declared *effect*, which is why an approver that permits
-/// the effect runs both shapes alike. Two tools identical except `read_only`
-/// therefore execute identically.
-#[tokio::test]
-async fn read_only_does_not_gate_execution() {
-    for read_only in [true, false] {
-        let tool = ToolDefinition {
-            read_only,
-            ..custom_completion_tool()
-        };
-        let events = run_one(tool, &OkExecutor).await;
-        assert!(
-            completed_summary(&events).is_some(),
-            "read_only = {read_only}: the tool executed and completed"
-        );
-    }
-}
+#[path = "completion_summary/failed_completions.rs"]
+mod failed_completions;
+#[path = "completion_summary/successful_completions.rs"]
+mod successful_completions;

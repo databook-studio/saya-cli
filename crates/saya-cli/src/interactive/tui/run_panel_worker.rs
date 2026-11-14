@@ -1,5 +1,5 @@
 /// The real run worker end to end against an unreachable provider.
-/// Moved byte-identical from the hub; no snapshots involved.
+/// Plain assertions; no snapshots involved.
 use super::super::run_panel::RunPanel;
 use crate::interactive::tui::application::tests_support::idle_app;
 use saya_agent::ApprovalPolicy;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The real worker end to end against an unreachable provider.
-/// Moved byte-identical from the hub; no snapshots involved.
+/// Plain assertions; no snapshots involved.
 /// The real worker, end to end, against a provider that cannot be reached:
 /// the run claims its directory, the event loop keeps polling promptly while
 /// the worker fails, and the panel ends with the run surface's own words.

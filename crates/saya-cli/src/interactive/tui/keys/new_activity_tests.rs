@@ -1,4 +1,4 @@
-//! Phase 8 packet 2: the key that returns a scrolled reader to the live edge.
+//! The key that returns a scrolled reader to the live edge.
 //!
 //! `Shift+End` is otherwise unbound: bare `End` keeps moving the input
 //! cursor, and the arm sits after the approval and Esc blocks, so it can

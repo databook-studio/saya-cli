@@ -1,122 +1,106 @@
-//! What the empty-state splash shows before the first turn: the mascot, and
-//! the first-run guidance for someone with no database configured yet.
+//! Copy for the home screen: the tiny mascot, the readiness lines the
+//! Status block paints, and the short getting-started hints. The copy lives
+//! here so tests can assert on it.
 
-use super::super::theme::{accent, secondary};
+use super::super::theme::accent;
 use ratatui::{
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
 };
 
-/// The headline shown when no connection profile is configured.
-pub(crate) const NO_DATABASE_HEADLINE: &str = "No database is configured yet.";
+/// The state section's three labels, padded to one width so the three
+/// values align down the screen.
+pub(in crate::interactive::tui) const AI_LABEL: &str = "AI        ";
+pub(in crate::interactive::tui) const PROJECT_LABEL: &str = "Project   ";
+pub(in crate::interactive::tui) const DATABASE_LABEL: &str = "Database  ";
 
-/// The steps under that headline.
-///
-/// Deliberately names no config path. `config init` writes the user config
-/// directory by default, `--project` writes `.saya/`, and init prints whichever
-/// it chose — so the one place that knows the answer is the command itself.
-/// The previous copy hardcoded `.saya/connections.toml` and kept saying it
-/// after the default moved, sending first-run users to a file that is not
-/// created any more.
-pub(in crate::interactive::tui) const NO_DATABASE_STEPS: [&str; 3] = [
-    "Run `saya config init` — it prints where it wrote the files.",
-    "Add your database there, then `saya connection test <name>`.",
-    "Restart saya to pick it up.",
-];
+/// The AI verdict when the provider is configured; the doctor's provider
+/// detail ("ollama, model m") follows it.
+pub(in crate::interactive::tui) const AI_READY: &str = "ready — ";
 
-/// The closing line, after a blank row.
-pub(in crate::interactive::tui) const NO_DATABASE_FOOTER: &str =
-    "`saya config doctor` explains anything still missing.";
+/// The AI verdict when the provider is not configured. The first failing
+/// doctor check's detail follows, then the remedy: the AI line carries
+/// the in-session instruction, never the database line.
+pub(in crate::interactive::tui) const AI_NOT_SET_UP: &str = "not set up — ";
+pub(in crate::interactive::tui) const AI_REMEDY: &str = "; try /setup, /provider or /model";
 
-/// The headline shown when no workspace root is bound, beside the
-/// no-database guidance when both absences hold: the session names the
-/// unbound shape rather than staying silent about it. Two wrapped rows:
-/// the centred renderer wraps, it does not clip, so the copy is one
-/// logical line rendered as its own paragraph below the database guidance.
+/// The bound-project verdict: with a root bound, coding needs nothing
+/// else — the file tools are the difference.
+pub(in crate::interactive::tui) const PROJECT_READY: &str = "ready — file tools are available";
+
+/// The no-database verdict: coding does not wait on a database — the
+/// line reads as optional and offers the two in-window ways to add one.
+pub(in crate::interactive::tui) const DATABASE_NONE: &str =
+    "none yet — optional; /connect or `saya demo`";
+
+/// The home screen's left-column introduction and the right column's two
+/// section headings.
+pub(in crate::interactive::tui) const WELCOME: &str = "Welcome to saya";
+pub(in crate::interactive::tui) const GETTING_STARTED: &str = "Getting started";
+pub(in crate::interactive::tui) const STATUS: &str = "Status";
+
+/// The status line when no model is configured: the provider and mode are
+/// meaningless without one.
+pub(in crate::interactive::tui) const AI_NOT_CONFIGURED: &str = "AI not set up";
+
+/// The three getting-started hints, short enough for a stacked 60-column
+/// home screen. The AI hint names guided setup when the provider is not
+/// ready, and the two commands that change it when it is.
+pub(in crate::interactive::tui) const START_SETUP: &str = "/setup — set up AI and a database";
+pub(in crate::interactive::tui) const START_AI: &str = "/model or /provider — change AI";
+
+/// The database hint: the two in-window ways to add one, or the direct-SQL
+/// door once a profile is configured.
+pub(in crate::interactive::tui) const START_DATABASE: &str =
+    "/connect or `saya demo` — add a database";
+pub(in crate::interactive::tui) const START_SQL: &str = "/sql — run a read-only query";
+
+/// The coding hint: the mode switch and native jobs. Shift+Tab lives here
+/// (never in a footer) so it stays discoverable in both workspace states.
+pub(in crate::interactive::tui) const START_CODE_BOUND: &str =
+    "Shift+Tab — change mode; `saya start` runs a job";
+pub(in crate::interactive::tui) const START_CODE_UNBOUND: &str =
+    "Shift+Tab — change mode; `saya start` — run a job";
+
+/// The headline shown when no workspace root is bound, beside the state
+/// section's own project line when the root is absent: the session names
+/// the unbound shape rather than staying silent about it.
 pub(crate) const NO_WORKSPACE_LINES: [&str; 2] = [
     "No workspace is bound: file tools are unavailable;",
     "launch inside a git worktree or pass `--workspace <dir>`.",
 ];
 
-/// The splash mascot: an owl whose pupils are terminal cursors.
+/// The tiny mascot: a right-facing kangaroo profile — two tall ears, a head
+/// with one eye gap and a snout, a body, and a tail sweeping left to the
+/// ground. Four rows by ten columns, one size only.
 ///
-/// Every row is padded to the same width so `Alignment::Center` shifts them all
-/// by the same amount — a ragged row centres on its own width and skews the
-/// figure. The pupils converge (`▐` in the left socket, `▌` in the right) so the
-/// owl reads as focused rather than vacant; the sockets themselves are gaps, so
-/// when a pupil is absent the eye reads as closed rather than as a hole.
-const SPLASH_ART: [&str; 8] = [
-    "   \u{2584}\u{2584}       \u{2584}\u{2584}   ",
-    "   \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}   ",
-    " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588} ",
-    " \u{2588}\u{2588}\u{2588} \u{2590} \u{2588}\u{2588}\u{2588} \u{258c} \u{2588}\u{2588}\u{2588} ",
-    " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{25bc}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588} ",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
-    "    \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}    ",
-    "     \u{2580}\u{2580}   \u{2580}\u{2580}     ",
+/// Only block glyphs and spaces are used, so it reads as a shape in
+/// monochrome and in 256-colour terminals alike; [`mascot_lines`] paints it
+/// in the theme's iris accent. Keep every row the same width: the left
+/// column centres the figure, and a ragged row would skew it.
+pub(in crate::interactive::tui) const MASCOT: [&str; 4] = [
+    "    \u{2588}\u{2588} \u{2588}\u{2588} ",
+    "  \u{2588}\u{2588}\u{2588} \u{2588}\u{2588}\u{2588}\u{2590}",
+    " \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
+    "\u{2584}\u{2584}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2580}  ",
 ];
 
-/// The compact mascot, used when the full one would push the splash off-screen.
-const SPLASH_ART_COMPACT: [&str; 5] = [
-    "  \u{2584}     \u{2584}  ",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
-    " \u{2588}\u{2588} \u{2590} \u{258c} \u{2588}\u{2588} ",
-    " \u{2588}\u{2588}\u{2588}\u{2588}\u{25bc}\u{2588}\u{2588}\u{2588}\u{2588} ",
-    "  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}  ",
-];
-
-/// The largest mascot that still leaves `content_len` lines of splash text on
-/// screen, or `None` when neither fits. A short terminal drops the art rather
-/// than pushing the tagline and hints off the top — the mascot is decoration,
-/// the text is the thing that has to be read.
-pub(super) fn splash_art(
-    available_height: usize,
-    content_len: usize,
-) -> Option<Vec<Line<'static>>> {
-    if available_height > content_len + SPLASH_ART.len() {
-        Some(art_lines(&SPLASH_ART))
-    } else if available_height > content_len + SPLASH_ART_COMPACT.len() {
-        Some(art_lines(&SPLASH_ART_COMPACT))
-    } else {
-        None
-    }
-}
-
-/// How one glyph of the art is painted.
-///
-/// The art only ever draws the idle face, so `█` is unambiguously body: the
-/// states that would reuse it as a pupil are not rendered here. Were that to
-/// change, the pupils would need their own glyphs rather than a shared one.
-fn glyph_style(ch: char) -> Style {
-    match ch {
-        // The pupils are the cursor — the one part the state system substitutes.
-        '\u{258c}' | '\u{2590}' => Style::default().add_modifier(Modifier::BOLD),
-        // Beak and talons recede so the eyes stay the focus.
-        '\u{25bc}' | '\u{2580}' => Style::default().fg(secondary()),
-        _ => Style::default().fg(accent()),
-    }
-}
-
-/// Builds the mascot rows, coalescing runs of same-styled glyphs so a row is a
-/// handful of spans rather than one per cell.
-///
-/// This walks the row instead of splitting on a single cursor: the owl has two
-/// pupils, and the previous single-split version silently dropped everything
-/// after the first one.
-fn art_lines(rows: &[&'static str]) -> Vec<Line<'static>> {
-    rows.iter()
-        .map(|row| {
-            let mut spans: Vec<Span<'static>> = Vec::new();
-            for ch in row.chars() {
-                let style = glyph_style(ch);
-                match spans.last_mut() {
-                    Some(last) if last.style == style => last.content.to_mut().push(ch),
-                    _ => spans.push(Span::styled(ch.to_string(), style)),
-                }
-            }
-            Line::from(spans)
-        })
+/// Paints the mascot rows in the accent colour.
+pub(super) fn mascot_lines() -> Vec<Line<'static>> {
+    MASCOT
+        .iter()
+        .map(|row| Line::from(Span::styled(*row, Style::default().fg(accent()))))
         .collect()
+}
+
+/// The left column's dim status line: model, provider, and the permission
+/// mode Shift+Tab moves. A session with no model says so instead of
+/// naming a provider it cannot use.
+pub(super) fn status_text(model: &str, provider: &str, mode: &str) -> String {
+    if model.trim().is_empty() {
+        return AI_NOT_CONFIGURED.to_string();
+    }
+    format!("{model} · {provider} · {mode}")
 }
 
 #[cfg(test)]

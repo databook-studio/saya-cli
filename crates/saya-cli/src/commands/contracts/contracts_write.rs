@@ -91,8 +91,8 @@ pub(super) async fn remember(
     // unobserved sentinel and no validation. The check lives in
     // `contracts_remember_schema`; this is the call site. The structural
     // dependency a later drift checks is the `SchemaBinding` the `remember` op
-    // derives from `(slot, payload)`, so the column snapshots the legacy
-    // `ProposeClaim` carried are no longer computed here.
+    // derives from `(slot, payload)`, so the column snapshots are not
+    // computed here.
     let cached = cached_schema(store, identity).await;
     let fingerprint = match resolved_against(&cached, &object) {
         SchemaCheck::Found(table) => fingerprint_of(table),
@@ -107,7 +107,7 @@ pub(super) async fn remember(
     // so a duplicate of a forgotten claim reads as forgotten, not as success.
     // The `ki-…` id is the same in either arm — the stored row, or the
     // pre-existing one a duplicate names — and it stays on the event for JSON
-    // and NDJSON consumers even though the text confirmation no longer shows it.
+    // and NDJSON consumers even though the text confirmation does not show it.
     let (claim_id, action, status, previous) = match outcome {
         RememberOutcome::Stored { id } => (id, "remembered", ClaimStatus::Confirmed, None),
         RememberOutcome::Duplicate { id, state } => {

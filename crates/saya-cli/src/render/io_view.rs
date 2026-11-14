@@ -1,4 +1,4 @@
-//! Render-owned view DTOs for contract import and export (slice 6b).
+//! Render-owned view DTOs for contract import and export.
 //!
 //! Presentation types only, like the other contract view DTOs. `profile` is the
 //! profile *name*, never the opaque identity — the export bytes carry the

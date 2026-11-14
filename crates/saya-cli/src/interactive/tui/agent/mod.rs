@@ -11,8 +11,8 @@ pub(crate) use approval::{ChannelApproval, StreamRequest, approval_capabilities}
 pub(crate) use messages::{Stream, StreamMsg};
 pub(crate) use spawn::start;
 
-// The split test files live beside the old `agent.rs`, one level up:
-// another lane split them while this one split the production code.
+// The split test files live one level up, beside the production module they
+// cover.
 #[cfg(test)]
 #[path = "../agent_tests.rs"]
 mod agent_tests;

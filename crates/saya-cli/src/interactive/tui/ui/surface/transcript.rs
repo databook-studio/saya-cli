@@ -26,8 +26,8 @@ pub(in crate::interactive::tui) const SPINNER: [&str; 10] =
 ///
 /// The gate for this phase is that nothing essential relies on hue alone. A
 /// failure whose only difference from prose is a red foreground fails it,
-/// which is why these glyphs may not be removed until the phase that names
-/// them (failure headline: Phase 7; System content: undecided) lands.
+/// which is why these glyphs stay until a headline names the kind of failure
+/// instead of its colour.
 pub(in crate::interactive::tui) fn unlabelled_glyph(kind: BlockKind) -> Option<&'static str> {
     match kind {
         BlockKind::Error => Some("\u{2717} "),

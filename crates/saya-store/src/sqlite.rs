@@ -4,7 +4,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
 };
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -19,13 +19,12 @@ use tokio::sync::OnceCell;
 /// migrating a new database is quick on a warm local disk and much slower on a
 /// cold or contended one — twenty tests creating databases in parallel while a
 /// virus scanner reads each new file, or a network share. A six-second budget
-/// cancelled those legitimate opens and reported a healthy store as gone.
+/// would cancel those legitimate opens and report a healthy store as gone.
 ///
 /// A separate `saya` process finishing a WAL checkpoint holds the SQLite write
-/// lock briefly; the next opener (the REPL, at startup) used to fail hard on
-/// the first busy attempt and report the store as gone. The opener now waits
-/// for it within this bound and fails honestly past it — a stuck lock is not a
-/// missing store, but an indefinite hang is worse than a typed failure.
+/// lock briefly; the next opener (the REPL, at startup) waits for it within
+/// this bound and fails honestly past it — a stuck lock is not a missing store,
+/// but an indefinite hang is worse than a typed failure.
 pub const OPEN_BUSY_CEILING: Duration = Duration::from_secs(30);
 
 /// Backoff between open attempts while the store is busy. Small enough that a
@@ -49,13 +48,17 @@ impl SqliteStateStore {
         }
     }
 
+    pub fn database_path(&self) -> &Path {
+        &self.path
+    }
+
     pub(crate) async fn pool(&self) -> Result<&SqlitePool, StoreError> {
         self.pool
             .get_or_try_init(|| async {
                 // A sibling process finishing a WAL checkpoint holds the write
                 // lock briefly; the connection's `busy_timeout` covers a single
-                // statement window but a lock held longer than that used to fail
-                // the open hard on the first attempt. Wait for it within a small
+                // statement window but a lock held longer fails the open hard on
+                // the first attempt. Wait for it within a small
                 // bound and retry with backoff; past the ceiling, fail honestly.
                 // A database written by a newer saya surfaces as
                 // `VersionUnsupported` from `open_once` and is returned at once
@@ -70,13 +73,12 @@ impl SqliteStateStore {
                 // database on a cold or contended filesystem — must be left
                 // alone to finish.
                 //
-                // An earlier version budgeted 6s and cancelled the attempt at
-                // that point, which killed the second case: on Windows CI,
-                // twenty store tests creating databases in parallel with a
+                // A six-second budget would cancel the second case: on Windows
+                // CI, twenty store tests creating databases in parallel with a
                 // virus scanner reading each new file, a legitimate open takes
-                // longer than six seconds, so it was cancelled, retried,
-                // cancelled again and reported as `Unavailable`. Removing the
-                // cancellation instead lost the bound altogether: against a
+                // longer than six seconds, so it would be cancelled, retried,
+                // cancelled again and reported as `Unavailable`. Dropping the
+                // cancellation instead loses the bound altogether: against a
                 // held lock, `migrate` waits on sqlx's busy timeout per
                 // statement and an open can cost minutes.
                 //
@@ -124,8 +126,16 @@ impl SqliteStateStore {
             // and broken in the bytes. `knowledge_security.rs` scans for
             // exactly that.
             .pragma("secure_delete", "ON");
+        // One connection, deliberately. SQLite has one writer, and a pooled
+        // sibling connection that has read a table can keep the table lock
+        // while it sits idle; a later `wal_checkpoint(TRUNCATE)` on another
+        // connection then fails with SQLITE_LOCKED ("database table is
+        // locked") after the busy timeout, reporting a committed write as
+        // `Unavailable`. Under load that race fires often enough to fail the
+        // suite. Serialising on one connection removes the cross-connection
+        // lock without changing what any call observes.
         let pool = SqlitePoolOptions::new()
-            .max_connections(4)
+            .max_connections(1)
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(options)
             .await

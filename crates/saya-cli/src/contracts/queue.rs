@@ -5,12 +5,11 @@
 //!
 //! Ordering is `created_unix_ms` ascending (oldest first), then the slot's
 //! canonical string, then the item id — a queue whose order shifts between runs
-//! is one a user cannot work through. The legacy queue sorted by
-//! `evidence_count` from `contract_evidence`; that table is gone by design (a
-//! successful query is not evidence a business definition is true), so the
-//! queue no longer orders by evidence. The carrier still carries the legacy
-//! zero-valued count for wire compatibility, but presentation does not render
-//! it because there are no evidence rows left to measure.
+//! is one a user cannot work through. The queue does not order by evidence:
+//! a successful query is not evidence a business definition is true. The
+//! carrier still carries a zero-valued count for wire compatibility, but
+//! presentation does not render it because there are no evidence rows to
+//! measure.
 //!
 //! The queue reads `knowledge_items` via [`KnowledgeItemStore`] — the same
 //! rows the harness-owned learning path writes — so a candidate the model
@@ -45,12 +44,12 @@ pub(crate) const QUEUE_DEFAULT_LIMIT: usize = 50;
 /// The render carrier for one queued item. Carries the fields the
 /// presentation layer's `queue_item_view` reads (`payload`, `id`, `status`,
 /// `object`) projected from the [`KnowledgeItem`] — plus the `schema_state`
-/// and the legacy `evidence_count` that rides on [`QueuedCandidate`]. A
+/// and the wire-compatible `evidence_count` that rides on [`QueuedCandidate`]. A
 /// dedicated carrier rather than the recall path's `ContractClaim` because the
 /// queue view reads
 /// `payload: Option<ClaimPayload>` (a forgotten-tombstone fallback the recall
 /// carrier's non-optional `value` does not model); a dedicated carrier rather
-/// than the legacy `StoredClaim` because reconstructing one would fabricate a
+/// than a stored claim because reconstructing one would fabricate a
 /// fingerprint and referenced columns the queue never reads. Built from a
 /// `KnowledgeItem`, so it leaks nothing the store does not.
 #[derive(Debug)]
@@ -93,7 +92,7 @@ fn status_for_queue(state: KnowledgeState) -> ClaimStatus {
 
 /// One item waiting for review — a `Pending` candidate. Carries the projected
 /// claim and the per-item schema state (a candidate about a table that has
-/// since changed says so). The legacy evidence count remains zero for the
+/// since changed says so). The evidence count remains zero for the
 /// serialized compatibility shape, but is not a measured queue property.
 #[derive(Debug)]
 pub(crate) struct QueuedCandidate {

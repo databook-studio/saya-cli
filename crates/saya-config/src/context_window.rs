@@ -4,16 +4,16 @@
 //! never have heard of, so the lookup is exact-match and returns `None` for
 //! anything it does not recognise. A wrong window is worse than no window: it
 //! would either refuse work that would have succeeded, or promise headroom that
-//! does not exist. Nothing consumes the answer yet — knowing a window and
-//! acting on it are separate changes, and acting on a table that may be stale
-//! breaks working setups.
+//! does not exist. The answer is consumed when an unset `[ai]
+//! context_byte_budget` is derived from the window (see `resolve.rs`), and a
+//! user-declared window always overrides the table.
 
 /// Context window in tokens for a model identifier, matched exactly.
 ///
 /// `None` means the table does not know the model — "not reported" rather than
 /// a reported zero, the same discipline `TokenUsage` applies to cache counts.
-/// A gateway model that is not in the table stays unknown; callers must behave
-/// exactly as they do today when it is.
+/// A gateway model that is not in the table stays unknown; callers must treat
+/// it as they do any unknown model.
 ///
 /// Names are matched exactly, never by prefix: `glm-5.2` and
 /// `glm-5.2-1m-context` share a prefix and differ enormously, so a substring

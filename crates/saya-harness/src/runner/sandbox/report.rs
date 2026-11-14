@@ -2,8 +2,7 @@
 //! actually works on the host it runs on, and the fail-closed verdict the
 //! runner registration consumes.
 //!
-//! Promoted from the M5-3 spike probe (`tests/sandbox_probe.rs`, merged):
-//! a host that lacks a feature is a recorded result, never a failed build,
+//! A host that lacks a feature is a recorded result, never a failed build,
 //! and the verdict is fail closed by construction — [`ProbeReport::proves_runner`]
 //! is true only when every *required* check on this platform passed. An
 //! optional check failing is recorded context, never proof; a platform the
@@ -134,7 +133,7 @@ impl ProbeReport {
             .collect()
     }
 
-    /// The full report as the spike's probe rendered it: verdict first, then
+    /// The full report as the probe renders it: verdict first, then
     /// every check with its evidence. Written where a human reads it; the
     /// verdict itself is consumed through [`Self::proves_runner`].
     pub fn render(&self) -> String {

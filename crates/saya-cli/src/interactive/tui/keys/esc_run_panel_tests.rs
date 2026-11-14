@@ -43,7 +43,7 @@ fn esc_closes_a_finished_panel() {
     assert!(app.run_panel.is_none(), "the finished panel closes");
 }
 
-/// Phase 5 packet 1: Esc while an agent stream runs asks for a stop — the
+/// Esc while an agent stream runs asks for a stop — the
 /// transcript says "Stop requested" and must not claim the worker already
 /// confirmed ("Stopped.").
 #[test]
@@ -54,6 +54,7 @@ fn esc_says_stop_requested_not_stopped() {
         rx,
         cancel: CancellationToken::new(),
         prompt: "a prompt".into(),
+        question_scope: None,
     });
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     let texts: Vec<&str> = app
@@ -92,6 +93,10 @@ fn esc_cancels_the_agent_stream_before_touching_the_panel() {
             session: std::sync::Arc::clone(&app.session),
             journal: None,
             agent_mode: saya_agent::AgentMode::Build,
+            prior_tool_outcomes: None,
+            continuation: None,
+            compaction_summary: None,
+            question_scope: None,
         });
     app.request.stream = Some(stream);
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

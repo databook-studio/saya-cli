@@ -1,7 +1,7 @@
 use super::super::BlockKind;
 use crate::interactive::tui::application::tests_support::idle_app;
 
-// --- Phase 3, packet 3: automatic fold at the live edge. --------------------
+// --- Automatic fold at the live edge. ---------------------------------------
 // `App::submit()` (the idle path) folds the chapter that just finished before
 // pushing the new `User` block. Guards: fold only while following the tail
 // (no selection state exists; scrolled-away means the user is reading), and

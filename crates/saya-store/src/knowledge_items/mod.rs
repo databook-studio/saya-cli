@@ -11,6 +11,7 @@
 //! Recall, review, queue, and learning callers use this repository; the
 //! compatibility `Vec` reads remain for small administrative/test consumers.
 
+mod batch;
 mod binding;
 mod error;
 mod keys;
@@ -20,9 +21,14 @@ mod records;
 mod writes;
 
 #[cfg(test)]
+mod batch_tests;
+#[cfg(test)]
 mod store_tests;
 
 use async_trait::async_trait;
+pub use batch::{
+    BatchItemOutcome, BatchOutcome, MAX_PENDING_BATCH_ITEMS, NewKnowledgeItem, validate_new_item,
+};
 pub use error::KnowledgeStoreError;
 pub use keys::knowledge_item_id_for;
 pub use pagination::{
@@ -60,6 +66,16 @@ pub trait KnowledgeItemStore: Send + Sync {
         &self,
         request: KnowledgeItemRequest,
     ) -> Result<(), KnowledgeStoreError>;
+    /// Apply a batch of validated imported claims in one transaction: every
+    /// item lands `Pending`, an identical existing item is skipped, and a
+    /// single-valued slot held by a different value — or a forgotten row — is
+    /// reported as a conflict without being overwritten. Any storage failure
+    /// rolls the whole batch back; batches past the cap are refused before
+    /// the transaction opens.
+    async fn apply_pending_batch(
+        &self,
+        items: &[NewKnowledgeItem],
+    ) -> Result<BatchOutcome, KnowledgeStoreError>;
     /// Retrieve a single knowledge item by its unique ID.
     async fn get_knowledge_item(
         &self,
@@ -128,6 +144,12 @@ impl KnowledgeItemStore for SqliteStateStore {
         request: KnowledgeItemRequest,
     ) -> Result<(), KnowledgeStoreError> {
         writes::insert_or_replace(self, &request).await
+    }
+    async fn apply_pending_batch(
+        &self,
+        items: &[NewKnowledgeItem],
+    ) -> Result<BatchOutcome, KnowledgeStoreError> {
+        batch::apply_pending_batch(self, items).await
     }
     async fn get_knowledge_item(
         &self,
@@ -208,8 +230,10 @@ pub(crate) async fn recover_pending_cleanup(pool: &SqlitePool, path: &Path) {
     if !matches!(pending, Ok(value) if value > 0) {
         return;
     }
+    // Stepped to completion (`fetch_optional`), so the checkpoint's row
+    // cursor does not keep a table lock on this connection.
     if sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(pool)
+        .fetch_optional(pool)
         .await
         .is_err()
         || crate::sqlite_support::secure_files(path).is_err()

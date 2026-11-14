@@ -20,6 +20,7 @@ pub(crate) struct CompactOutcome {
     pub(crate) automatic: bool,
     pub(crate) summary: Option<String>,
     pub(crate) compacted_turns: usize,
+    pub(crate) source_identity: Option<[u8; 32]>,
 }
 
 /// A native clipboard helper running in the background alongside an OSC 52 write.
@@ -40,6 +41,24 @@ pub(crate) struct LastQuery {
     pub(crate) sql: String,
     pub(crate) connection: Option<String>,
 }
+
+/// A pending `bounded_sql_query` request awaiting its completion event. The
+/// FIFO between these and [`LastQuery`] is what makes a request a *candidate*
+/// rather than a selectable query: only a successful completion promotes its
+/// candidate into the [`LastQuery`], verbatim — sql and connection alike.
+#[derive(Clone)]
+pub(crate) struct PendingQuery {
+    pub(crate) sql: String,
+    pub(crate) connection: Option<String>,
+}
+
+/// The pending-candidates FIFO bound: at most this many `bounded_sql_query`
+/// requests await their completions, so a runaway agent cannot grow the
+/// app's state without limit even if it requests one query per line. The
+/// next request overflows the FIFO, which is then cleared and marked
+/// desynchronised for the rest of the turn — dropping the oldest candidate
+/// instead would pair every later completion one position late.
+pub(crate) const MAX_PENDING_QUERIES: usize = 32;
 
 /// Presentation state for wide result tables. This is view state: the
 /// transcript block text stays the full, untruncated table (what copy and

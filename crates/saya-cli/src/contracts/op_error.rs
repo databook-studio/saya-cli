@@ -28,8 +28,8 @@ pub(crate) enum ContractOpError {
     #[error("no schema is available to revalidate the claim against")]
     SchemaUnavailable,
     /// The claim's table is not in the live schema, so there is nothing to
-    /// revalidate against. Distinct from [`Self::Conflict`]: nothing conflicts
-    /// — the object is simply gone.
+    /// revalidate against. Distinct from [`Self::Conflict`]: nothing conflicts —
+    /// the object is simply gone.
     #[error(
         "the table this claim describes is no longer in the schema; forget the claim, or refresh if the table still exists"
     )]

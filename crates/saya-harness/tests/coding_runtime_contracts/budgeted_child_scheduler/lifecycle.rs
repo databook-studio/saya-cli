@@ -1,0 +1,203 @@
+use std::{sync::Arc, time::Duration};
+
+use saya_agent::{CancellationReason, CancellationToken};
+use saya_harness::coding::coordinator::{ChildRunError, child_event_channel, run_child_budgeted};
+use saya_types::{BudgetDimension, BudgetEffectState, BudgetObservationValue};
+
+use super::{
+    child_support::{FactoryStats, OpenAiFactory},
+    fixture::{Fixture, limits},
+    openai_server::{ANSWER_RESPONSE, LocalOpenAi},
+};
+
+mod slots;
+
+fn factory(server: &LocalOpenAi, fixture: &Fixture, stats: Arc<FactoryStats>) -> OpenAiFactory {
+    OpenAiFactory {
+        endpoint: server.endpoint.clone(),
+        database: fixture.database.clone(),
+        job: fixture.job.clone(),
+        stats,
+        cancel_on_build: None,
+        retry_delays: vec![Duration::from_millis(5)],
+    }
+}
+
+#[tokio::test]
+async fn dispatched_cancellation_keeps_unknown_usage_and_count_reservations() {
+    let fixture = Fixture::new("dispatched-cancel").await;
+    let authority = fixture.add_child("agent-cancel", "invocation-cancel").await;
+    let (agent, invocation) = (
+        authority.agent_id().clone(),
+        authority.invocation_id().clone(),
+    );
+    let mut server = LocalOpenAi::new().await;
+    let ledger = fixture
+        .ledger(limits(2, 2, 1, 1, 1, Duration::from_secs(5)))
+        .await
+        .unwrap();
+    let spec = fixture.spec(authority, "cancel after send", 2, 1);
+    let (sender, _receiver) = child_event_channel(&spec);
+    let stats = Arc::new(FactoryStats::default());
+    let child_factory = factory(&server, &fixture, Arc::clone(&stats));
+    let cancellation = ledger.cancellation_token();
+    let child_ledger = ledger.clone();
+    let child_cancellation = cancellation.clone();
+    let child = tokio::spawn(async move {
+        run_child_budgeted(
+            spec,
+            &child_factory,
+            sender,
+            child_cancellation,
+            &child_ledger,
+        )
+        .await
+    });
+    assert_eq!(server.request().await, Some(1));
+    cancellation.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(2), child)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        result,
+        Err(ChildRunError::Cancelled {
+            reason: CancellationReason::User
+        })
+    ));
+    stats.assert_invocation_cancellation(CancellationReason::User);
+    let snapshot = ledger.snapshot().await;
+    assert_eq!(snapshot.logical_requests, 1);
+    assert_eq!(snapshot.transport_attempts, 1);
+    assert!(snapshot.unknown_transport_attempts >= 1);
+    assert!(snapshot.unknown_logical_requests >= 1);
+    // Saya gave up on the request when cancellation settled: its slot is free
+    // again and the child has no unknown effect, though the provider may
+    // still bill the request and its usage stays unknown.
+    assert_eq!(snapshot.model_slots_active, 0);
+    assert!(!ledger.child_started(&agent, &invocation).await);
+    let durable = fixture
+        .store
+        .list_coding_budget_reservations(&fixture.job, None, 10)
+        .await
+        .unwrap();
+    for dimension in [
+        BudgetDimension::LogicalRequests,
+        BudgetDimension::TransportAttempts,
+    ] {
+        let record = durable
+            .items
+            .iter()
+            .find(|record| {
+                record
+                    .reservation
+                    .charges()
+                    .iter()
+                    .any(|charge| charge.dimension() == dimension)
+            })
+            .unwrap_or_else(|| panic!("missing durable {dimension:?} reservation"));
+        let settlement = record.settlement.as_ref().unwrap();
+        // The cancelled request and its send only lost their usage, which is
+        // not an unresolved effect.
+        assert_eq!(
+            settlement.effect_state(),
+            BudgetEffectState::Settled,
+            "{dimension:?}"
+        );
+        assert!(
+            settlement.observations().iter().any(|observation| {
+                observation.dimension() == dimension
+                    && observation.value() == BudgetObservationValue::Unknown
+            }),
+            "missing unknown {dimension:?} observation"
+        );
+    }
+    let recovery = fixture
+        .store
+        .coding_recovery_status(&fixture.job)
+        .await
+        .unwrap();
+    assert_eq!(recovery.unresolved_reservations, 0);
+    server.respond_sse(ANSWER_RESPONSE);
+    server.shutdown().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn root_deadline_cancels_and_joins_a_child_with_an_open_provider_request() {
+    let fixture = Fixture::new("deadline-child").await;
+    let authority = fixture
+        .add_child("agent-deadline", "invocation-deadline")
+        .await;
+    let mut server = LocalOpenAi::new().await;
+    // The deadline outlasts the bounded dispatch wait below so preparation
+    // cannot win the race; dispatch is asserted before the deadline outcome.
+    let ledger = fixture
+        .ledger(limits(2, 2, 1, 1, 1, Duration::from_secs(3)))
+        .await
+        .unwrap();
+    let spec = fixture.spec(authority, "wait forever", 2, 1);
+    let (sender, _receiver) = child_event_channel(&spec);
+    let stats = Arc::new(FactoryStats::default());
+    let child_factory = factory(&server, &fixture, Arc::clone(&stats));
+    let child_ledger = ledger.clone();
+    let caller_cancellation = CancellationToken::new();
+    let child_cancellation = caller_cancellation.clone();
+    let child = tokio::spawn(async move {
+        run_child_budgeted(
+            spec,
+            &child_factory,
+            sender,
+            child_cancellation,
+            &child_ledger,
+        )
+        .await
+    });
+    assert_eq!(
+        server.request_within(Duration::from_secs(2)).await,
+        Some(1),
+        "first provider request was not observed before the deadline"
+    );
+    let result = tokio::time::timeout(Duration::from_secs(20), child)
+        .await
+        .expect("child did not finish after the root deadline elapsed")
+        .unwrap()
+        .expect("a deadline-stopped child completes with its answering-budget output");
+    // A controlled answering run surfaces a budget-dimension cancellation as a
+    // truncated output, not a cancelled error: the answering admission maps a
+    // Budget cancellation reason to Limit("answering budget stopped") (saya-agent
+    // src/loop_runner/admission.rs cancellation_error), the turn converts a
+    // cancelled receive into that limit and returns Ok(budget_output)
+    // (src/loop_runner/turn.rs, and the top-of-turn check in
+    // src/loop_runner/runner.rs), and the coordinator passes a non-User-reason Ok
+    // through (src/coding/coordinator/api.rs run_child_inner). The deadline still
+    // cancels and joins the child: the invocation and ledger tokens below carry
+    // the ElapsedTime reason and the child slot drains.
+    assert!(
+        result.truncated,
+        "the deadline stop surfaces as a truncated answering-budget output"
+    );
+    assert_eq!(result.answer, "");
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        saya_agent::AgentEvent::AnsweringBudgetStopped {
+            dimension: saya_agent::BudgetDimension::ElapsedTime
+        }
+    )));
+    stats.assert_invocation_cancellation(CancellationReason::Budget(
+        saya_agent::BudgetDimension::ElapsedTime,
+    ));
+    assert_eq!(caller_cancellation.reason(), None);
+    assert_eq!(
+        ledger.cancellation_token().reason(),
+        Some(CancellationReason::Budget(
+            saya_agent::BudgetDimension::ElapsedTime
+        ))
+    );
+    let snapshot = ledger.snapshot().await;
+    assert!(!snapshot.poisoned);
+    assert_eq!(snapshot.child_slots_active, 0);
+    server.respond_sse(ANSWER_RESPONSE);
+    server.shutdown().await;
+    fixture.close().await;
+}

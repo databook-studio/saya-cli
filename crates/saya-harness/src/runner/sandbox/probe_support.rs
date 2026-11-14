@@ -1,6 +1,11 @@
 //! The probe's shared plumbing: the bounded child run, the captured-output
-//! type, and the kernel identity line — promoted from the spike probe's
-//! helpers. Shared by the platform batteries.
+//! type, and the kernel identity line. Shared by the platform batteries.
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "probe_entry.rs"]
+mod owned_entry;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) use owned_entry::OwnedProbeDirectory;
 
 #[cfg(not(windows))]
 use std::{

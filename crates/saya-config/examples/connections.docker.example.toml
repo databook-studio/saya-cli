@@ -1,0 +1,20 @@
+# Example connection profiles for local Docker database services.
+# TLS is intentionally disabled here — for localhost development only.
+
+[profiles.local_postgres]
+type = "postgresql"
+host = "127.0.0.1"
+port = 5432
+database = "postgres"
+user = "postgres"
+password = { env = "SAYA_LOCAL_POSTGRES_PASSWORD" }
+sslmode = "disable"
+
+[profiles.local_mysql]
+type = "mysql"
+host = "127.0.0.1"
+port = 3306
+database = "app"
+user = "app"
+password = { env = "SAYA_LOCAL_MYSQL_PASSWORD" }
+sslmode = "disable"

@@ -3,18 +3,37 @@
 use super::super::super::agent::StreamMsg;
 use super::super::super::stream_events::apply_event;
 use super::super::super::transcript::BlockKind;
-use super::super::super::types::{App, LastQuery, PendingApproval};
-use crate::interactive::session_state::SessionState;
-use saya_agent::{AgentEvent, UsageCall};
+use super::super::super::types::{
+    App, LastQuery, MAX_PENDING_QUERIES, PendingApproval, PendingQuery,
+};
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
+use crate::interactive::tui::capture_agent::{AgentCaptureOutcome, promote_agent_capture};
+use crate::render::tool_groups::is_failure_summary;
+use saya_agent::{AgentEvent, ProviderRecoveryPhase, UsageCall};
 
 impl App {
-    /// Drains any queued agent-stream messages into the transcript. Returns true
-    /// when the request just finished (so the caller can persist the session).
-    pub(crate) fn drain_stream(&mut self, state: &mut SessionState) -> bool {
+    /// The drain loop proper: pulls the stream's channel messages into the
+    /// transcript. The two entry points — with and without the session
+    /// runtime — live in `question.rs`, beside the question settle they
+    /// drive.
+    pub(super) fn drain_inner(
+        &mut self,
+        state: &mut SessionState,
+        mut session: Option<&mut SessionRuntime>,
+    ) -> bool {
         let mut messages = Vec::new();
+        let mut sender_gone = false;
         if let Some(stream) = self.request.stream.as_mut() {
-            while let Ok(msg) = stream.rx.try_recv() {
-                messages.push(msg);
+            loop {
+                match stream.rx.try_recv() {
+                    Ok(msg) => messages.push(msg),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        sender_gone = true;
+                        break;
+                    }
+                }
             }
         }
         let prompt = self
@@ -23,102 +42,59 @@ impl App {
             .as_ref()
             .map(|s| s.prompt.clone())
             .unwrap_or_default();
-        let mut finished = false;
-        for msg in messages {
-            match msg {
-                StreamMsg::Event(event) => {
-                    match &event {
-                        AgentEvent::ToolRequested {
-                            name, arguments, ..
-                        } => {
-                            self.request.activity = Some(name.clone());
-                            if matches!(
-                                name.as_str(),
-                                "bounded_sql_query" | "bounded_sql_query_all"
-                            ) && let Some(sql) = arguments.get("sql").and_then(|v| v.as_str())
-                            {
-                                let connection = arguments
-                                    .get("connection")
-                                    .and_then(|v| v.as_str())
-                                    .filter(|s| !s.is_empty())
-                                    .map(str::to_string);
-                                self.last_query = Some(LastQuery {
-                                    sql: sql.to_string(),
-                                    connection,
-                                });
-                            }
-                        }
-                        AgentEvent::AssistantText { .. } | AgentEvent::ToolCompleted { .. } => {
-                            self.request.activity = None;
-                        }
-                        // The failed attempt's partial answer was discarded
-                        // and the turn is retrying; the spinner falls back to
-                        // plain thinking instead of a stale tool label until
-                        // the re-streamed answer arrives.
-                        AgentEvent::TurnReset => {
-                            self.request.activity = None;
-                        }
-                        // The answer has streamed but the turn is not over:
-                        // extraction is a second provider call the loop awaits.
-                        // Without this the status bar falls back to "thinking"
-                        // beside a finished answer, which reads as a hang.
-                        AgentEvent::KnowledgeLearningStarted => {
-                            self.request.activity = Some("learning".into());
-                        }
-                        // The last answering call's input is the freshest context-size
-                        // figure the provider gave — the numerator for the
-                        // footer's utilisation. The extraction call's prompt
-                        // is not the conversation, so it never updates this.
-                        AgentEvent::Usage {
-                            call: UsageCall::Answer,
-                            usage,
-                        } => {
-                            self.request.last_answering_input = Some(usage.input_tokens);
-                        }
-                        _ => {}
-                    }
-                    apply_event(&mut self.transcript, event, state.show_thinking);
-                }
-                StreamMsg::Notice(message) => {
-                    // A system fact the decider said — today, that the
-                    // session journal could not record a grant the user
-                    // just made. The consent stands; the missing audit
-                    // line must not be silent.
-                    self.transcript.push(BlockKind::System, message);
-                }
-                StreamMsg::ApprovalRequest {
-                    tool,
-                    detail,
-                    grant,
-                    respond,
-                } => {
-                    self.request.pending_approval = Some(PendingApproval {
-                        tool,
-                        detail,
-                        grant,
-                        // Every fresh approval opens at the top of its fact
-                        // body: the offset is per-pending-approval state.
-                        scroll: 0,
-                        respond,
-                    });
-                }
-                StreamMsg::Done(result) => {
-                    self.settle_done(result, state, prompt.clone());
-                    finished = true;
-                }
-            }
+        let drained_work = !messages.is_empty();
+        let mut finished = self.drain_messages(messages, state, prompt.clone(), &mut session);
+        // A worker that died without ever posting `Done` left the stream
+        // busy forever: no settle, `request.stream` stuck Some. Settle once,
+        // exactly as a `Done(Err(..))` arm would, on the first drained-empty
+        // tick after the sender dropped — a batch that carried work without
+        // a `Done` is a mid-turn tick the stream keeps — and the tick loop
+        // re-drains within the frame, so the wedge cannot persist.
+        if !finished && sender_gone && !drained_work {
+            self.settle_done(
+                Err("the agent worker stopped unexpectedly".to_string()),
+                state,
+                prompt.clone(),
+                session.take(),
+            );
+            finished = true;
         }
         if finished {
+            self.request.pending_approval = None;
             self.request.stream = None;
             self.request.started = None;
             self.request.activity = None;
+            // The turn is over: no pending candidate may survive into the
+            // next turn, where it could be promoted by an unmatched
+            // completion. The desynchronised mark resets with the FIFO:
+            // the next turn pairs from a trusted FIFO again.
+            self.pending_queries.clear();
+            self.pending_queries_desync = false;
+            // No unmatched capture survives the turn either: its completion
+            // never came, and pairing it later would attach a foreign result.
+            self.agent_captures.clear_queue();
             // The numerator belongs to the turn that reported it; the next
             // turn must not show this one's figure if the provider goes
             // silent.
             self.request.last_answering_input = None;
+            self.request.known_answering_usage = None;
         }
         // No forced scroll: when the user is at the bottom the newest lines show
         // automatically; when they've scrolled up to read, streaming leaves them.
         finished
     }
 }
+
+/// The connection an unnamed agent `bounded_sql_query` runs on: the session's
+/// active profile, or — when none is selected — the profile the session runs
+/// on (the runtime's resolved default). Both are readable here, on `App`, at
+/// request time; an unnamed query promoted into `LastQuery` must carry it so
+/// `/investigation save` can save "the connection that actually ran it".
+fn session_connection(state: &SessionState, app: &App) -> Option<String> {
+    state
+        .profile
+        .clone()
+        .or_else(|| app.runtime.resolved.profile_name.clone())
+}
+
+include!("drain/messages.rs");

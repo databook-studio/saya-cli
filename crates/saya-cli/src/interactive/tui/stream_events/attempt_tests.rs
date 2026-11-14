@@ -1,10 +1,10 @@
-//! Attempt-boundary tests for the answer lifecycle (re-audit R02).
+//! Attempt-boundary tests for the answer lifecycle.
 //!
 //! `TurnReset` means "discard what *this attempt* produced". Chapter scoping
-//! (slice B) fixed crossing a `User` boundary; it does not fix crossing a
-//! provider receive *within* one request, where an earlier step's preamble
-//! and its completed tool results live in the same chapter. These replay the
-//! re-audit's sequence against the transcript directly — no provider.
+//! answers for a `User` boundary; it does not answer for a provider receive
+//! *within* one request, where an earlier step's preamble and its completed
+//! tool results live in the same chapter. These replay the sequence against
+//! the transcript directly — no provider.
 
 use super::answer::RETRY_NOTICE;
 use super::{BlockKind, Transcript, apply_event};
@@ -137,8 +137,8 @@ fn repeated_retries_roll_back_to_their_own_attempt() {
     );
 }
 
-/// Slice B's invariant, re-asserted here because this slice replaces the
-/// path that enforced it.
+/// The chapter boundary's invariant, re-asserted here through the attempt
+/// boundary.
 #[test]
 fn a_retry_still_does_not_touch_a_previous_chapter() {
     let mut t = Transcript::new();

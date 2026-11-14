@@ -1,4 +1,4 @@
-//! Phase 8 packet 2: the App-facing "new activity" view counter.
+//! The App-facing "new activity" view counter.
 //!
 //! The count itself lives on `Transcript` beside `scroll_up` (the append hook
 //! that raises it is there); this module is the app's seam onto it — an

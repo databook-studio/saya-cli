@@ -181,91 +181,11 @@ fn seeded_events() -> Vec<RunEvent> {
     ]
 }
 
-/// Text mode renders the shaper's own line per event, in write order, one
-/// line per recorded event — including the usage event the engine journals
-/// per provider call.
-#[tokio::test]
-async fn run_log_text_renders_the_journals_events_in_write_order() {
-    let _env = lock_env().await;
-    let root = temp_root("text");
-    unsafe { set_runs_dir(&root.join("runs")) };
-    let runtime = runtime_at(&root);
-    let store = store_at(&root).await;
-    let events = seeded_events();
-    seed_run(&root, &store, "r-log-text", &events).await;
+#[path = "run_log_reads/text.rs"]
+mod text;
 
-    let (code, out, err) = run_log("r-log-text", &runtime, &store, RenderFormat::Text).await;
+#[path = "run_log_reads/ndjson.rs"]
+mod ndjson;
 
-    assert_eq!(code, 0, "stderr: {err}");
-    let expected = [
-        "run started",
-        "plan approved",
-        "step 1 started",
-        "usage · primary · tokens 100 · cache reads unknown · cache writes unknown · turns unknown · tool calls unknown",
-        "step 1 completed",
-        "run completed",
-    ]
-    .join("\n");
-    assert_eq!(
-        out,
-        format!("{expected}\n"),
-        "the log is the journal, in write order, one line per event"
-    );
-
-    unsafe { restore_runs_dir(None) };
-    let _ = fs::remove_dir_all(root);
-}
-
-/// JSON and NDJSON keep the journal's own bytes: the message carries the
-/// events' one serde path, in write order — the framing machine consumers parse.
-#[tokio::test]
-async fn run_log_ndjson_carries_the_journals_own_lines() {
-    let _env = lock_env().await;
-    let root = temp_root("ndjson");
-    unsafe { set_runs_dir(&root.join("runs")) };
-    let runtime = runtime_at(&root);
-    let store = store_at(&root).await;
-    let events = seeded_events();
-    seed_run(&root, &store, "r-log-wire", &events).await;
-
-    let (code, out, err) = run_log("r-log-wire", &runtime, &store, RenderFormat::Ndjson).await;
-
-    assert_eq!(code, 0, "stderr: {err}");
-    let envelope: serde_json::Value = serde_json::from_str(out.trim_end()).unwrap();
-    let message = envelope["message"].as_str().expect("result envelope");
-    let expected = events
-        .iter()
-        .map(|event| serde_json::to_string(event).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert_eq!(
-        message, expected,
-        "the NDJSON framing is the journal's own serialization, in write order"
-    );
-
-    unsafe { restore_runs_dir(None) };
-    let _ = fs::remove_dir_all(root);
-}
-
-/// A run with no journal events renders something honest rather than an
-/// empty success that reads as "the journal was empty on purpose".
-#[tokio::test]
-async fn a_run_with_no_journal_events_renders_something_honest() {
-    let _env = lock_env().await;
-    let root = temp_root("empty");
-    unsafe { set_runs_dir(&root.join("runs")) };
-    let runtime = runtime_at(&root);
-    let store = store_at(&root).await;
-    seed_run(&root, &store, "r-log-empty", &[]).await;
-
-    let (code, out, err) = run_log("r-log-empty", &runtime, &store, RenderFormat::Text).await;
-
-    assert_eq!(code, 0, "stderr: {err}");
-    assert!(
-        out.contains("no journal events"),
-        "the honest message, not empty output: {out:?}"
-    );
-
-    unsafe { restore_runs_dir(None) };
-    let _ = fs::remove_dir_all(root);
-}
+#[path = "run_log_reads/empty_journal.rs"]
+mod empty_journal;

@@ -39,8 +39,8 @@ pub(crate) fn push_knowledge_overridden(
     }
 }
 
-// Extraction timed out or errored after the turn succeeded (spec
-// packet-54). Trails the answer — emitted after the loop — so a System
+// Extraction timed out or errored after the turn succeeded. Trails the
+// answer — emitted after the loop — so a System
 // block pushed here lands below the assistant text, where "and I did
 // not learn from this turn" belongs. Shares the shaper with the
 // headless path so the wording lives in one place; the line is never
@@ -55,8 +55,8 @@ pub(crate) fn push_learning_skipped(
     }
 }
 
-// The extraction circuit breaker tripped this turn (owner decision 3).
-// Trails the answer, immediately after the turn's own
+// The extraction circuit breaker tripped this turn. Trails the answer,
+// immediately after the turn's own
 // `push_learning_skipped` block, so the two read together. Shares the
 // shaper with the headless path; the line is never empty for a known
 // model/miss pair, so the block always pushes.

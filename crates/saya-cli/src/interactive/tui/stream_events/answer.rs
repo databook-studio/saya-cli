@@ -43,10 +43,10 @@ pub(crate) fn push_assistant_text(transcript: &mut Transcript, text: &str) {
 
 /// The retry notice, worded exactly as the piped surface renders
 /// `TerminalEvent::TurnReset` (`render/mod.rs`). A literal copy, not a
-/// shared constant: `render/mod.rs` is outside this packet's owned paths,
-/// so the parity test `the_retry_notice_matches_the_piped_surface` guards
-/// the wording instead — it derives the expected string from the piped
-/// adapter at runtime and fails on any drift.
+/// shared constant: `render/mod.rs` lives in another module, so the test
+/// `the_retry_notice_matches_the_piped_surface` guards the wording instead —
+/// it derives the expected string from the piped adapter at runtime and fails
+/// on any drift.
 pub(crate) const RETRY_NOTICE: &str = "provider stream interrupted — retrying";
 
 /// The index of the live assistant answer in the chapter in flight, if any:
@@ -66,8 +66,8 @@ fn live_answer_index(transcript: &Transcript) -> Option<usize> {
     // Chapter is not attempt. When an attempt boundary is known, an answer
     // block that predates it belongs to an earlier step of this request and
     // is not the live answer to resume into — appending the retried text to
-    // it overwrites delivered evidence (re-audit R02). Without a mark the
-    // chapter bound stands, which is slice B's behaviour.
+    // it overwrites delivered evidence. Without a mark the chapter bound
+    // stands.
     match transcript.attempt_start() {
         Some(start) if index < start => None,
         _ => Some(index),

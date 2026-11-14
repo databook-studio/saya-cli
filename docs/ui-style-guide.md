@@ -1,11 +1,9 @@
 # saya TUI style guide
 
-saya follows the **Claude Code / Anthropic design language** — a warm, low-chroma
-palette, a single accent used sparingly, secondary content that recedes, and status
-coded by meaning — but with its **own signature colour** rather than Anthropic's
-orange. saya's mark is a refined **iris violet**. Design-language sources: Claude
-Code theme-token docs (`code.claude.com/docs/en/terminal-config`) and Anthropic's
-brand-guidelines (`github.com/anthropics/skills`).
+saya uses a warm, low-chroma palette, a single accent used sparingly, secondary
+content that recedes, and status colours that carry meaning. Its interface has a
+project-owned visual system: iris violet is the signature accent, with distinct
+colours for user input, supporting text, and status.
 
 ## Palette
 

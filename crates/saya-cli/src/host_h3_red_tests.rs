@@ -1,37 +1,33 @@
-//! H3 red — bypass, status, docs: the lane's last slice.
+//! Bypass, status, and docs for the host-command route.
 //!
-//! Each test below names a seam H3 adds: the lane fact on the bypass
+//! Each test below names a seam: the route fact on the bypass
 //! activation line, the denied-names segment, the status header's `host:`
-//! segment, and the help-parity extension. Written before any of them
-//! exists; the failing output is pasted verbatim into `REPORT.md` before
-//! any green edit.
+//! segment, and the help-agreement extension.
 
-use crate::interactive::session_activation::{HOST_LANE_FACT, bypass_line, denied_segment};
+use crate::interactive::session::permissions::activation::{
+    HOST_LANE_FACT, bypass_line, denied_segment,
+};
+use crate::interactive::session::permissions::deny as session_deny;
 
-/// The bypass activation line states the lane when composed: host commands
+/// The bypass activation line states the route when composed: host commands
 /// run unsandboxed — as the user, their network, their filesystem.
 #[test]
 fn the_bypass_activation_line_states_the_lane_when_composed() {
-    let line = bypass_line(&[], false, true, &[]);
+    let line = bypass_line(true, &[]);
     assert!(
         line.contains(HOST_LANE_FACT),
         "the composed line states the lane fact: {line}"
     );
 }
 
-/// The uncomposed activation line keeps today's exact bytes: adding the lane
+/// The uncomposed activation line keeps today's exact bytes: adding the route
 /// fact must not silently reword the common case.
 #[test]
 fn the_uncomposed_activation_line_keeps_its_exact_bytes() {
-    let line = bypass_line(&[], false, false, &[]);
+    let line = bypass_line(false, &[]);
     assert!(
         !line.contains(HOST_LANE_FACT),
         "the uncomposed line states no lane fact: {line}"
-    );
-    let staged = bypass_line(&["python3".to_owned()], false, false, &[]);
-    assert!(
-        !staged.contains(HOST_LANE_FACT),
-        "the staged-interpreter variant states no lane fact either: {staged}"
     );
 }
 
@@ -51,10 +47,10 @@ fn the_activation_line_states_the_denied_names_when_nonempty() {
 }
 
 /// Bypass allows every host ask and structural refusals still refuse:
-/// lane-off, path-shaped, not-on-PATH, timeout, and denied.
+/// host commands off, path-shaped, not-on-PATH, timeout, and denied.
 #[test]
 fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
-    // G2 properties 6 (deny) and 7 (runs) live beside this pin by design
+    // The deny and runs properties live beside this pin by design
     // (reason: the structural-refusal suite is the natural home for
     // "untouched" pins): `a_denied_name_still_refuses_under_ask_and_bypass`
     // and `runs_still_refuse_command_scopes` below.
@@ -91,7 +87,7 @@ fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
     );
     // A denied name refuses before bypass's auto-allow (the decider-level
     // deny refusal carrying its typed wording to the model).
-    let denied = crate::interactive::session_deny::denied_call_program(
+    let denied = session_deny::denied_call_program(
         "run_command",
         &serde_json::json!({"program": "curl"}),
         &["curl".to_owned()],
@@ -101,8 +97,8 @@ fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
         Some("curl"),
         "a denied name refuses under bypass"
     );
-    // Lane-off refuses the composition gate: the `/allow` composition
-    // refusal names the workspace-root fact.
+    // With the host route off, the composition gate refuses: the `/allow`
+    // composition refusal names the workspace-root fact.
     let refusal = crate::interactive::allow_refusal::composition_refusal(
         "command:npm",
         &crate::approval_facts::ApprovalFacts::default(),
@@ -123,15 +119,15 @@ fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
     );
 }
 
-/// G2 property 6 — a denied name still refuses under ask and under bypass:
+/// Property 6 — a denied name still refuses under ask and under bypass:
 /// the decider-level deny fires before the grant lookup, the prompt, and
 /// bypass's auto-allow. Kept beside the structural suite (reason: deny is
-/// the lane-blind door this slice must not touch).
+/// the route-blind door this module must not touch).
 #[test]
 fn a_denied_name_still_refuses_under_ask_and_bypass() {
     use saya_agent::{ApprovalDecision, ApprovalPolicy, SessionPolicy};
     for mode in [ApprovalPolicy::Ask, ApprovalPolicy::Bypass] {
-        let denied = crate::interactive::session_deny::denied_call_program(
+        let denied = session_deny::denied_call_program(
             "run_command",
             &serde_json::json!({"program": "curl"}),
             &["curl".to_owned()],
@@ -142,16 +138,15 @@ fn a_denied_name_still_refuses_under_ask_and_bypass() {
             "a denied name refuses under {mode:?}"
         );
         let policy = SessionPolicy::new(mode);
-        let gate =
-            crate::interactive::session_deny::SessionDeny::from_names(vec!["curl".to_owned()])
-                .expect("a bare name builds");
+        let gate = session_deny::SessionDeny::from_names(vec!["curl".to_owned()])
+            .expect("a bare name builds");
         assert!(
             gate.contains("curl"),
             "the deny gate fires before {mode:?}'s own decision"
         );
         let _ = policy;
     }
-    let open = crate::interactive::session_deny::denied_call_program(
+    let open = session_deny::denied_call_program(
         "run_command",
         &serde_json::json!({"program": "make"}),
         &["curl".to_owned()],
@@ -160,10 +155,10 @@ fn a_denied_name_still_refuses_under_ask_and_bypass() {
     let _ = ApprovalDecision::Ask;
 }
 
-/// G2 property 7 — runs still refuse `command:` permanently: policy, not
+/// Property 7 — runs still refuse `command:` permanently: policy, not
 /// the session precondition, so the design's deletion changes nothing here.
 /// Kept beside the structural suite (reason: the run refusal is the
-/// permanent pin the session lane must not move).
+/// permanent pin the session route must not move).
 #[test]
 fn runs_still_refuse_command_scopes() {
     use crate::commands::run::scopes::{Surface, parse};
@@ -199,11 +194,10 @@ fn the_status_header_carries_the_host_segment_and_the_denied_names() {
     );
 }
 
-/// The help-parity suite extends to the new token and the deny flag: the
-/// root help names `--deny` (and no longer names the deleted
-/// `--host-commands`), the `/allow` help names `command:<program>`, and the
-/// `/allow` help states the deny list's not-bounded clause. Kept whole
-/// (reason: only the deleted-flag assertion moved — to absence).
+/// The help-agreement suite extends to the new token and the deny flag: the
+/// root help names `--deny` (and does not name `--host-commands`), the
+/// `/allow` help names `command:<program>`, and the `/allow` help states the
+/// deny list's not-bounded clause.
 #[test]
 fn the_help_parity_suite_extends_to_the_token_and_both_flags() {
     use clap::CommandFactory as _;

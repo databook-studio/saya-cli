@@ -1,25 +1,31 @@
-//! The one process core both child lanes consume: the wait, the
+//! The one process core both child paths consume: the wait, the
 //! process-tree kill, and the post-exit orphan sweep on unix.
 //!
-//! The contained lane (`runner`) and the host lane (`host`) share process
+//! The contained path (`runner`) and the host path (`host`) share process
 //! mechanics — how a child is waited on, how a timeout or cancellation
 //! reaches its process tree, and how a detached descendant left behind after
 //! a natural unix exit is swept and reported. They share nothing about
 //! confinement: what is exec'd, what the child may touch, and what its
-//! environment holds are each lane's own decision. A group-kill that drifted
+//! environment holds are each path's own decision. A group-kill that drifted
 //! between two copies is the bug that leaves orphaned children, so there is
 //! exactly one copy, here.
 
 use std::{
     io,
     process::ExitStatus,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
 use saya_agent::CancellationToken;
 
-use super::runner::output::{OUTPUT_CAP_BYTES, OutputRing, ProgramOutcome, StreamCapture};
+use super::runner::output::{ProgramOutcome, StreamCapture};
+
+mod pipes;
+pub use pipes::Pipes;
+/// The sink pair a background run attaches to its pumps: the seam that lets a
+/// run keep the bytes it has not been asked for yet, beside the rings the
+/// joined path captures from.
+pub(crate) use pipes::{OutputSinks, RawChunkSink};
 
 #[cfg(windows)]
 mod windows;
@@ -94,54 +100,7 @@ pub async fn wait(
     })
 }
 
-/// The captured stdio rings for one child: stdout and stderr pumped on
-/// dedicated threads from spawn until EOF, bounded by the shared cap.
-pub struct Pipes {
-    stdout: Arc<OutputRing>,
-    stderr: Arc<OutputRing>,
-    pumps: Vec<std::thread::JoinHandle<()>>,
-}
-
-impl Pipes {
-    /// Takes the child's pipes and starts the pumps. The pipes must be
-    /// piped; a missing pipe is a wait failure, never a silent gap.
-    pub fn take(
-        stdout: &mut Option<impl io::Read + Send + 'static>,
-        stderr: &mut Option<impl io::Read + Send + 'static>,
-    ) -> io::Result<Self> {
-        let stdout_ring = Arc::new(OutputRing::new(OUTPUT_CAP_BYTES));
-        let stderr_ring = Arc::new(OutputRing::new(OUTPUT_CAP_BYTES));
-        let stdout_pipe = stdout
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stdout not captured"))?;
-        let stderr_pipe = stderr
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stderr not captured"))?;
-        let pumps = vec![
-            pump(Arc::clone(&stdout_ring), stdout_pipe),
-            pump(Arc::clone(&stderr_ring), stderr_pipe),
-        ];
-        Ok(Self {
-            stdout: stdout_ring,
-            stderr: stderr_ring,
-            pumps,
-        })
-    }
-
-    /// Joins the pumps and redacts both rings through the single capture
-    /// gate both lanes share.
-    pub fn finish(self, secrets: &[String]) -> (StreamCapture, StreamCapture) {
-        for pump in self.pumps {
-            let _ = pump.join();
-        }
-        (
-            super::runner::output::capture(&self.stdout, secrets),
-            super::runner::output::capture(&self.stderr, secrets),
-        )
-    }
-}
-
-/// Builds the outcome shape both lanes report from one settled wait and its
+/// Builds the outcome shape both paths report from one settled wait and its
 /// captured streams: exit code is data, kills and sweeps are reported.
 pub fn outcome(
     program: String,
@@ -239,11 +198,4 @@ pub fn sweep_process_group(pgid: u32) -> bool {
 pub fn sweep_process_group(pgid: u32) -> bool {
     let _ = pgid;
     false
-}
-
-fn pump(
-    ring: Arc<OutputRing>,
-    pipe: impl io::Read + Send + 'static,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || ring.pump(pipe))
 }

@@ -22,7 +22,7 @@
 //!    path redacts unconditionally (`output::capture`); no call site can
 //!    skip it. The capture also scrubs the resolved credential values
 //!    themselves — `redact()` is pattern-based and a value echoed bare
-//!    carries no marker, measured by the M5-7 battery — so the registry pass
+//!    carries no marker, measured by the exfiltration battery — so the registry pass
 //!    cannot be skipped either: `capture` takes the injected values as its
 //!    parameter.
 //!
@@ -155,8 +155,8 @@ impl CredentialSource for StaticCredentialSource {
 /// resolved values in declaration order: the capture boundary scrubs them
 /// from the child's captured output, because `redact()` is pattern-based and
 /// a value echoed bare (`NAME=<value>`, the exact shape an environment dump
-/// produces) carries no marker for it to recognise — measured by the M5-7
-/// battery.
+/// produces) carries no marker for it to recognise — measured by the
+/// exfiltration battery.
 pub(crate) fn inject(
     command: &mut std::process::Command,
     credentials: &[Credential],

@@ -4,17 +4,23 @@
 use super::super::super::transcript::BlockKind;
 use super::super::super::types::App;
 use super::super::super::usage_footer;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::continuation::compaction::automatic as auto_compact;
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 use saya_agent::AgentOutput;
 
 impl App {
     /// Handles a settled stream: the `Done` arm of the drain loop, lifted out
-    /// so `drain.rs` stays under the size cap.
+    /// so `drain.rs` stays under the size cap. `session`, when the caller
+    /// holds the session runtime, settles or abandons the turn's question
+    /// scope by the outcome the stream ended with (see `question.rs`); test
+    /// callers without a session pass `None` and settle nothing.
     pub(super) fn settle_done(
         &mut self,
         result: Result<AgentOutput, String>,
         state: &mut SessionState,
         prompt: String,
+        session: Option<&mut SessionRuntime>,
     ) {
         // Whether the user asked this stream to stop: Esc fires the
         // token before the worker's settle arrives. Read before
@@ -25,30 +31,31 @@ impl App {
             .stream
             .as_ref()
             .is_some_and(|stream| stream.cancel.is_cancelled());
-        // Whether this run continued after the provider capped a
-        // response mid-answer: the loop re-instructs, the partial
-        // stays discarded, and the resume anchors live in earlier
-        // tool results. A finished turn that continued is not a
-        // turn boundary for compaction — compacting there risks
-        // the very lines the resume needs. `TurnReset` (retried
-        // transport attempts) re-streams the same answer and is
-        // not a continuation; only the output-cap re-instruction
-        // counts. `output.truncated` is that signal: it is set
-        // only when a run salvaged an answer after a ceiling ran
-        // out, never on a natural completion.
-        let continued = result
-            .as_ref()
-            .map(|output| output.truncated)
-            .unwrap_or(false);
+        // The two suppression gates, derived from the settled output by
+        // `compaction_gates`: `continued` is the admitted continuation
+        // (`ProviderContinuationPhase::Continuing`) — the loop
+        // re-instructs, the partial stays discarded, and the resume
+        // anchors live in earlier tool results — and `terminal_stop` is a
+        // budget/terminal salvage (`output.truncated`). Either suppresses
+        // compaction at this boundary; only the first is a continuation.
+        // `TurnReset` (retried transport attempts) re-streams the same
+        // answer and sets neither gate. An error/absent result derives
+        // neither.
+        let (continued, terminal_stop) = auto_compact::compaction_gates(result.as_ref().ok());
+        // The turn's question settles or abandons now that its stream has
+        // ended — read AFTER `stop_confirmed` above, so the abandon's token
+        // cancel can never reclassify an error as the user's stop.
+        if let Some(session) = session {
+            super::question::settle_stream_question(session, self.request.stream.as_ref(), &result);
+        }
+        // A completed checklist call writes the live session cell before a
+        // later provider request can fail. Copy it at the stream's settlement
+        // boundary for every outcome so the next turn cannot reseed stale
+        // recorded state over an accepted write.
+        state.task_list = self.session.tasks().current();
         match result {
             Ok(output) => {
-                state.task_list = self.session.tasks().current();
-                state.record_turn(
-                    prompt.clone(),
-                    output.answer.clone(),
-                    output.used_bounded_sql_query,
-                    output.tool_metadata.clone(),
-                );
+                state.record_agent_output(prompt.clone(), &output);
                 let usage = &output.usage;
                 // Accumulate into the session total before the
                 // footer is built, so its session segment
@@ -84,12 +91,12 @@ impl App {
                     // percentage, so the flag is untouched —
                     // absence is not zero. `off` silences it
                     // along with the automatic trigger.
-                    if crate::interactive::auto_compact::warning_enabled(
-                        self.runtime.resolved.ai.compaction,
-                    ) && let Some(percent) = saya_agent::context_utilisation_percent(
-                        self.request.last_answering_input,
-                        window,
-                    ) {
+                    if auto_compact::warning_enabled(self.runtime.resolved.ai.compaction)
+                        && let Some(percent) = saya_agent::context_utilisation_percent(
+                            self.request.last_answering_input,
+                            window,
+                        )
+                    {
                         if percent >= saya_agent::CONTEXT_WARN_PERCENT {
                             if !state.context_warned {
                                 state.context_warned = true;
@@ -113,17 +120,23 @@ impl App {
                     // Capture the values before the finish block
                     // below clears the per-turn numerator.
                     let auto_input = self.request.last_answering_input;
-                    let fire = crate::interactive::auto_compact::should_auto_compact(
-                        &crate::interactive::auto_compact::AutoCompactInput {
-                            mode: self.runtime.resolved.ai.compaction,
-                            answering_input: auto_input,
-                            window,
-                            continued,
-                            compact_running: self.compact_task.is_some(),
-                            auto_failed: state.auto_compact_failed,
-                        },
-                    );
-                    if fire {
+                    let fire = auto_compact::should_auto_compact(&auto_compact::AutoCompactInput {
+                        mode: self.runtime.resolved.ai.compaction,
+                        answering_input: auto_input,
+                        window,
+                        continued,
+                        terminal_stop,
+                        compact_running: self.compact_task.is_some(),
+                        auto_failed: state.auto_compact_failed,
+                    });
+                    if fire && !super::question::output_pends_clarification(&output) {
+                        // The REPL's identical rule (session_auto_compact):
+                        // a pending clarification is never authority for
+                        // automatic work — this turn ended asking the user a
+                        // question, and compacting now would rewrite the
+                        // conversation before they answer. The gate is local
+                        // to the boundary; `should_auto_compact` stays the
+                        // pure predicate.
                         crate::interactive::compact_task::start_automatic(self, state);
                     }
                 }
@@ -135,6 +148,9 @@ impl App {
                 state.usage.record_learning(output.learning_usage);
             }
             Err(error) => {
+                if let Some(usage) = self.request.known_answering_usage {
+                    state.usage.answering.record_call(&usage);
+                }
                 // The stop's confirmation, not a failure: the
                 // token says this app asked, the worker's settle
                 // text says the worker confirmed — kept work

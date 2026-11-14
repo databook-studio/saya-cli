@@ -10,20 +10,34 @@
 pub(crate) mod agent;
 mod application;
 mod atref;
+// pub(crate) so the agent layer's capture hook can reuse the same accounted
+// budget as the direct `/sql` path — one source of truth, never a copy.
+pub(crate) mod capture;
+mod capture_agent;
+#[cfg(test)]
+mod capture_tests;
 mod clipboard;
+mod coding;
 mod complete;
+#[cfg(test)]
+#[path = "continuation_acceptance_tests.rs"]
+mod continuation_acceptance_tests;
 mod dispatch;
 mod dispatch_actions;
 mod dispatch_contracts;
+mod dispatch_investigation;
 mod dispatch_runs;
 mod exec;
-mod export;
+pub(crate) mod export;
 mod fuzzy;
 mod history;
 mod input;
 mod keys;
 pub(crate) mod loop_tick;
+#[cfg(test)]
+mod metrics_summary_tests;
 pub(crate) mod replay;
+mod replay_task;
 mod run_panel;
 mod run_panel_apply;
 #[cfg(test)]
@@ -35,10 +49,16 @@ mod run_worker;
 mod scope_tests;
 pub(crate) mod session;
 mod session_save;
+mod setup_apply;
 mod sql_task;
+mod startup_readiness;
 mod stream_events;
 mod table;
 mod terminal;
+// The `/setup` handoff boundary: the slash command wires it into the loop.
+mod terminal_handoff;
+#[cfg(test)]
+mod terminal_handoff_tests;
 pub(crate) mod transcript;
 #[cfg(test)]
 mod truncation_tests;
@@ -49,6 +69,9 @@ pub(crate) mod ui;
 mod ui_snapshot_tests;
 mod usage_footer;
 mod usage_totals;
+mod worker_permits;
+#[cfg(test)]
+mod worker_permits_tests;
 pub(crate) mod wrap;
 
 pub(crate) use session::{TrustOutcome, TuiSession, run};

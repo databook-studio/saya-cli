@@ -124,6 +124,63 @@ impl CompactionMode {
     }
 }
 
+/// How hard the model is asked to think before it answers.
+///
+/// Unset is `adaptive`: the loop picks `high` on the first request of a run
+/// and after a failed tool result, and `low` otherwise. `adaptive` is also
+/// accepted explicitly so the policy can be stated; there is deliberately no
+/// `default` spelling, because unset already names it and a second name would
+/// be a knob with two positions meaning one thing.
+///
+/// There is no `minimal`. The OpenAI-family wire spells it
+/// `"minimal"`, and some gateways reject that spelling outright with HTTP
+/// 400, so offering it as a *setting* would offer a value that can fail every
+/// request on the deployment the user configured. The agent's own extraction
+/// call still asks for it internally (that path drops the spelling on the
+/// wires that cannot carry it); a user setting is held to a stricter bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// Let the loop choose per turn: `high` on the first request and after a
+    /// failed tool result, `low` otherwise. The same policy an unset key gets.
+    Adaptive,
+    /// Ask for less thinking than the endpoint would do unasked.
+    Low,
+    /// A middle effort.
+    Medium,
+    /// Ask for the most thinking the provider offers.
+    High,
+}
+
+impl ReasoningEffort {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Adaptive => "adaptive",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ReasoningEffort;
+
+    /// `adaptive` is a real config spelling, distinct from `low`, so an
+    /// operator can state the default policy instead of relying on absence.
+    #[test]
+    fn adaptive_round_trips_as_a_config_value() {
+        let value: ReasoningEffort = serde_json::from_str("\"adaptive\"").expect("adaptive parses");
+        assert_eq!(value, ReasoningEffort::Adaptive);
+        assert_eq!(value.as_str(), "adaptive");
+        assert_eq!(
+            serde_json::to_string(&ReasoningEffort::Adaptive).expect("serializes"),
+            "\"adaptive\""
+        );
+    }
+}
+
 /// Memory operational mode.
 ///
 /// - `Off`: memory is completely disabled — no store queries, no proposals, no observation logging.

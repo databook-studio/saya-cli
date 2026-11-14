@@ -12,9 +12,23 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 license = "Apache-2.0"
 repository = "https://github.com/databook-studio/saya-cli"
+
+# Lint policy shared by every crate through `[lints] workspace = true`. CI runs
+# clippy with `-D warnings`, which promotes these to errors, so a local
+# `cargo clippy` applies the same policy as the gate.
+[workspace.lints.rust]
+# Edition 2024's warn-by-default compatibility set, including
+# `unsafe_op_in_unsafe_fn`. No new group is added; this states what rustc
+# already warns on.
+rust_2024_compatibility = "warn"
+
+[workspace.lints.clippy]
+# Clippy's default set (correctness, suspicious, style, complexity, perf).
+# Pedantic and nursery stay off; CI's `-D warnings` promotes this set.
+all = { level = "warn", priority = -1 }
 
 [workspace.dependencies]
 async-trait = "0.1"
@@ -25,6 +39,10 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time", "net", "signal"] }
 toml = "1.1"
 futures-util = "0.3"
+# Bounded workspace search: typed Git rules and explicitly limited regex compilation.
+gix-ignore = "=0.22.1"
+globset = "=0.4.20"
+regex = "=1.13.1"
 sqlparser = { version = "0.53", features = ["visitor"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "json", "chrono", "uuid", "bigdecimal"] }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
@@ -33,10 +51,11 @@ bigdecimal = { version = "0.4", features = ["serde"] }
 bytes = "1"
 ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
-duckdb = { version = "=1.10505.0", features = ["bundled", "chrono", "serde_json", "uuid"] }
+rmcp = { version = "=3.10.0", default-features = false, features = ["server", "transport-io"] }
 base64 = "0.23"
 rsa = { version = "0.9", features = ["pem", "pkcs5"] }
 sha2 = { version = "0.10", features = ["oid"] }
+unicode-normalization = "0.1.25"
 url = "2"
 terminal-colorsaurus = "1.0.3"
 

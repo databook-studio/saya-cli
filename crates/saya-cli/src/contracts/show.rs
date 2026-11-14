@@ -1,7 +1,7 @@
 //! Assembling one object's contract for display, split from [`super::review`]
 //! by concern: this module only *reads* (`knowledge_for_object`); the
-//! confirm/reject/forget *mutations* live in `review.rs`. Chunk 3 moved this
-//! onto `knowledge_items`, so `contracts show` and the `contract_read` agent
+//! confirm/reject/forget *mutations* live in `review.rs`. This module reads
+//! `knowledge_items`, so `contracts show` and the `contract_read` agent
 //! tool read the same table recall does — no split brain with the recall path.
 
 use super::op_error::ContractOpError;
@@ -25,7 +25,7 @@ use saya_types::{DatabaseObjectRef, KnowledgeState};
 /// [`SchemaAvailability`], so a missing or unreadable cache classifies
 /// `LiveSchemaUnavailable` rather than collapsing to an empty tree that would
 /// read `Stale`. The state is the worst verdict across the kept items — the
-/// same aggregation `recall` uses. Validity is the D-4 binding model
+/// same aggregation `recall` uses. Validity is the binding model
 /// ([`item_validity_for`]): an unrelated column changing never invalidates, a
 /// gone bound column reads `Invalid` (→ `Stale`).
 ///

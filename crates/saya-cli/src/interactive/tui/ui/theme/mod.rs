@@ -21,9 +21,9 @@ pub(in crate::interactive::tui) use palette::{
     secondary, status_bg, success, warning,
 };
 pub(crate) use palette::{decide_public, set_color_enabled, set_theme};
-// Test-only shims so the moved `tests.rs` keeps its `super::…` paths
-// byte-identical: the theme's own tests are the only readers. `resolve_theme`
-// moved here too — `detect` is the only production caller now, and it reads
-// straight from `palette`, not through this module's namespace.
+// Test-only shims so `tests.rs` can keep its `super::…` paths: the theme's
+// own tests are the only readers. `detect` is the only production caller of
+// `resolve_theme`, and it reads straight from `palette`, not through this
+// module's namespace.
 #[cfg(test)]
 use palette::{COLOR_ENABLED, decide, resolve_theme};

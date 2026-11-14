@@ -3,13 +3,18 @@
 //! literal (several payloads cross crates and are `#[non_exhaustive]`).
 
 use super::{
-    KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, ToolEffect, UsageCall,
+    BudgetDimension, KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
+    ProviderContinuationPhase, ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto,
+    ToolEffect, UsageCall,
 };
 use crate::AgentEvent;
 use crate::protocol::streaming::TokenUsage;
 
 impl AgentEvent {
+    pub fn answering_budget_stopped(dimension: BudgetDimension) -> Self {
+        Self::AnsweringBudgetStopped { dimension }
+    }
+
     pub fn assistant_text(text: impl Into<String>) -> Self {
         Self::AssistantText { text: text.into() }
     }
@@ -37,6 +42,48 @@ impl AgentEvent {
     /// flight.
     pub fn turn_started() -> Self {
         Self::TurnStarted
+    }
+
+    /// Builds typed, nonterminal provider-attempt recovery progress.
+    pub fn provider_recovery(
+        phase: ProviderRecoveryPhase,
+        reason: ProviderRecoveryReason,
+        attempt: u8,
+        limit: u8,
+    ) -> Self {
+        Self::ProviderRecovery {
+            phase,
+            reason,
+            attempt,
+            limit,
+        }
+    }
+
+    /// Builds the typed provider-continuation transition. The caller is
+    /// `receive` at the admitted continuation (`Continuing`, carrying the
+    /// pending `ContinuationProgress` values) or the loop's truncation guard
+    /// when the allowance is spent (`Exhausted`).
+    pub fn provider_continuation(phase: ProviderContinuationPhase, index: u32, limit: u32) -> Self {
+        Self::ProviderContinuation {
+            phase,
+            index,
+            limit,
+        }
+    }
+
+    /// Builds the per-cut [`AgentEvent::StreamCutRecovered`] event. The caller
+    /// is the loop's stream-cut continuation arm, once per admitted
+    /// continuation, carrying the ceiling the next request will ask for.
+    pub fn stream_cut_recovered(
+        elapsed_secs: u32,
+        estimated_tokens: u32,
+        ceiling_after: u32,
+    ) -> Self {
+        Self::StreamCutRecovered {
+            elapsed_secs,
+            estimated_tokens,
+            ceiling_after,
+        }
     }
 
     /// Builds the per-call request event. `effect` is the tool's **declared
@@ -108,12 +155,28 @@ impl AgentEvent {
         Self::Complete
     }
 
+    /// Builds the turn-ending [`AgentEvent::ClarificationNeeded`] event. The
+    /// caller is the loop's clarification arm, when a `request_clarification`
+    /// call lands with a valid question; `question` and `options` arrive
+    /// already sanitised and bounded by the arm's parser.
+    pub fn clarification_needed(question: impl Into<String>, options: Vec<String>) -> Self {
+        Self::ClarificationNeeded {
+            question: question.into(),
+            options,
+        }
+    }
+
     /// Builds the per-call [`AgentEvent::Usage`] event for one provider call's
     /// reported token counts. The caller is `receive` (answering rounds) or the
     /// CLI runtime (the extraction call), and each passes the call kind so a
     /// consumer can tell the answer's cost from the extraction's.
     pub fn usage(call: UsageCall, usage: TokenUsage) -> Self {
         Self::Usage { call, usage }
+    }
+
+    /// Builds usage from an attempt that settled without a usable response.
+    pub fn failed_attempt_usage(usage: TokenUsage) -> Self {
+        Self::FailedAttemptUsage { usage }
     }
 
     /// Builds the terminal `AnswerDesignated` event carrying the SQL the model

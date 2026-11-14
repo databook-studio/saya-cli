@@ -12,12 +12,14 @@
 //! enforcement applies (imported from the enforcing constant or composed
 //! member, not re-typed).
 
+mod command_file;
 mod fetch_tools;
+mod plan;
 mod run_command;
-mod run_program;
 mod scope;
 mod session_line;
 mod session_tools;
+mod shell;
 mod sql_family;
 
 use saya_agent::SessionGrants;
@@ -35,28 +37,25 @@ pub(crate) struct ApprovalFacts {
     pub(crate) row_cap: usize,
     /// The resolved query timeout, in seconds, every connector applies.
     pub(crate) sql_timeout_seconds: u64,
-    /// The session's runner composition, when the host proved.
-    pub(crate) runner: Option<RunnerFacts>,
     /// The fetch member's bounds and the shared download wallet.
     pub(crate) fetch: Option<FetchFacts>,
-    /// The scratch member's bounds, where scratch was composed.
-    pub(crate) scratch: Option<ScratchFacts>,
     /// The bound workspace root, where one binds.
     pub(crate) workspace_root: Option<PathBuf>,
-    /// The host-command lane's facts, when the lane composed (H1): a
+    /// The host-command route's facts, when the route is composed: a
     /// workspace root bound plus a launch-or-user-layer statement. `None`
     /// contributes no lines and parses no `command:` token.
     pub(crate) host: Option<HostFacts>,
-    /// The session's host lane ran a command — the fact `run_program`'s
-    /// prompt states (§3 rule 6): a prior host child can have rewritten a
-    /// staged binary, so staged-binary integrity is outside saya's control.
-    /// Set by the runtime after a host call settles; prompts read it.
-    pub(crate) host_ran: bool,
     /// The session's deny list: bare program names every door refuses
-    /// before grant, prompt, and bypass — session-wide, lane-blind. Empty
-    /// refuses nothing. Present even when the host lane is off: deny gates
+    /// before grant, prompt, and bypass — session-wide, route-blind. Empty
+    /// refuses nothing. Present even when the host route is off: deny gates
     /// the doors every session already has.
     pub(crate) denied_programs: Vec<String>,
+    /// The session state directory where an over-bound command's exact bytes
+    /// are saved for the operator, when this decider belongs to a session.
+    /// The deciders fill it from the journal they already hold; `None` — a
+    /// headless or one-shot decider — makes the prompt show the whole command
+    /// rather than hide a tail it cannot save.
+    pub(crate) approval_dir: Option<PathBuf>,
 }
 
 impl ApprovalFacts {
@@ -70,28 +69,17 @@ impl ApprovalFacts {
             ..ApprovalFacts::default()
         }
     }
+
+    /// Binds the session state directory an over-bound command's exact bytes
+    /// are saved under. The deciders call this with the journal's directory;
+    /// every other construction leaves it `None`.
+    pub(crate) fn with_approval_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.approval_dir = dir;
+        self
+    }
 }
 
-/// The runner composition's facts, read off the composed spawn and scopes.
-#[derive(Clone, Default)]
-pub(crate) struct RunnerFacts {
-    /// The spawn's filesystem roots (`fs_roots`), in composition order —
-    /// the first is the child's pinned cwd.
-    pub(crate) fs_roots: Vec<PathBuf>,
-    /// The spawn's egress endpoints; empty is the fail-closed composition.
-    pub(crate) net_allow: Vec<(String, u16)>,
-    /// The configured per-child timeout ceiling, in seconds; a call may
-    /// narrow it, never widen it.
-    pub(crate) timeout_seconds: u64,
-    /// The runner door's programs.
-    pub(crate) runner_programs: Vec<String>,
-    /// The interpreter door's programs, when the config staged any.
-    pub(crate) interpreter_programs: Vec<String>,
-    /// The credentials the composition declared for the child's environment.
-    pub(crate) credentials_declared: usize,
-}
-
-/// The fetch member's facts: the tool-lane bounds the composed member runs
+/// The fetch member's facts: the tool route bounds the composed member runs
 /// under, and the shared download wallet (by clone, so the remaining budget
 /// is read live at ask time).
 #[derive(Clone)]
@@ -102,40 +90,33 @@ pub(crate) struct FetchFacts {
     pub(crate) download: Option<saya_harness::fetch::DownloadBudget>,
 }
 
-/// The scratch member's bounds — the harness's own enforcement constants,
-/// which the session's scratch runs under (the session never narrows them).
-#[derive(Clone, Copy)]
-pub(crate) struct ScratchFacts {
-    pub(crate) row_cap: usize,
-    pub(crate) timeout_seconds: u64,
-}
-
-/// The host-command lane's composition facts (H1): what the lane's own
-/// prompt may state, and what `/allow command:<x>` consults. The lane is
+/// The host-command route's composition facts: what the route's own
+/// prompt may state, and what `/allow command:<x>` consults. The route is
 /// off unless stated at launch or in the user layer, and it never composes
 /// without a bound workspace root.
 ///
-/// H1 carries the facts the composition gate and the universe read; the
-/// per-call prompt body that states `timeout_seconds` and `pass_env` lands
-/// with H2 (facts slice), which is why no prompt code reads them yet.
+/// The composition gate and the universe read these facts. The prompt body
+/// that states the per-call fields (`timeout_seconds`, `pass_env`) is not
+/// wired yet.
 #[derive(Clone)]
 pub(crate) struct HostFacts {
     /// The workspace root the child runs with as its cwd.
     pub(crate) workspace_root: PathBuf,
     /// The per-call timeout ceiling, in seconds — a call may narrow it,
-    /// never widen it. Read by H2's prompt body; H1 composes and stores it.
+    /// never widen it. Stored at composition; the prompt body reads it when
+    /// wired.
     #[cfg_attr(not(test), allow(dead_code))]
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) timeout_seconds: u64,
-    /// The parent variable names the built child environment carries. Read
-    /// by H2's prompt body; H1 composes and stores it.
+    /// The parent variable names the built child environment carries. Stored
+    /// at composition; the prompt body reads it when wired.
     #[cfg_attr(not(test), allow(dead_code))]
     #[cfg_attr(test, allow(dead_code))]
     pub(crate) pass_env: Vec<String>,
 }
 
 impl HostFacts {
-    /// The test seam: a composed lane over a fixed root, the executor's own
+    /// The test seam: a composed route over a fixed root, the executor's own
     /// ceiling, and no passed variables.
     #[cfg(test)]
     pub(crate) fn for_tests() -> Self {
@@ -168,19 +149,39 @@ pub(crate) fn call_facts(
         | "result_shape"
         | "column_health"
         | "join_check" => sql_family::sql_facts(name, arguments, facts, primary, session_line),
-        "render_chart" => sql_family::chart_facts(arguments, primary),
-        "run_program" => run_program::facts(arguments, facts, session_line, grant),
         "run_command" => run_command::facts(arguments, facts, session_line, grant),
-        "workspace_write" => {
-            session_tools::workspace_write_facts(arguments, facts, session_line, grant)
-        }
-        "scratch_sql" => session_tools::scratch_facts(arguments, facts, session_line),
-        "scratch_import" => session_tools::scratch_import_facts(arguments, facts, session_line),
+        "shell" => shell::facts(arguments, facts, session_line),
+        "write" => session_tools::workspace_write_facts(arguments, facts, session_line, grant),
+        "edit" => session_tools::workspace_edit_facts(arguments, facts, session_line, grant),
         "http_fetch" | "http_download" => {
             fetch_tools::facts(name, arguments, grant, facts, session_line)
         }
+        "submit_plan" => plan::facts(arguments),
         _ => None,
     }
+}
+
+/// Whether the answer to an ask is still bound to the bytes the operator was
+/// shown: for an over-bound shell command, the private file must hold exactly
+/// the command that will run. The file is removed either way — the answer,
+/// allow or deny, ends the pending approval. `true` where no over-bound
+/// command was shown.
+pub(crate) fn answer_binding_holds(name: &str, arguments: &Value, facts: &ApprovalFacts) -> bool {
+    shell::answer_binding_holds(name, arguments, facts)
+}
+
+/// Removes every saved approval command under a session state directory. The
+/// session's end sweeps what an abandoned ask left; an answered ask removes
+/// its own file as it answers.
+pub(crate) fn remove_saved_commands(state_dir: &std::path::Path) {
+    command_file::remove_all(state_dir);
+}
+
+/// The saved approval commands under `state_dir`, for the tests that pin the
+/// one-file lifecycle.
+#[cfg(test)]
+pub(crate) fn saved_commands(state_dir: &std::path::Path) -> Vec<PathBuf> {
+    command_file::saved(state_dir)
 }
 
 /// Renders the fact lines under a family header; every line keeps the

@@ -21,9 +21,8 @@ pub use plan::{
     StepSpec,
 };
 pub use scope::{
-    Capabilities, Destination, EndpointBindings, FetchScope, InterpreterScope,
-    MAX_ENDPOINT_BINDINGS, MAX_FETCH_DESTINATIONS, MAX_RUNNER_PROGRAMS, RunnerScope, is_bare_name,
-    is_name_shaped, is_refused_runner_program,
+    Capabilities, Destination, EndpointBindings, FetchScope, MAX_ENDPOINT_BINDINGS,
+    MAX_FETCH_DESTINATIONS, is_bare_name, is_name_shaped, is_refused_runner_program,
 };
 pub use spec::{MAX_GOAL_BYTES, RunId, RunSpec};
 
@@ -76,39 +75,11 @@ pub enum RunContractError {
     #[error("fetch destination is not a well-shaped scheme and host")]
     InvalidDestination,
 
-    #[error("runner scope must declare at least one program")]
-    EmptyPrograms,
-
-    #[error("runner scope declares too many programs")]
-    TooManyPrograms,
-
-    #[error("runner program name is not a valid program name")]
-    InvalidProgram,
-
-    #[error("interpreter scope must declare at least one program")]
-    EmptyInterpreterPrograms,
-
-    #[error("interpreter scope declares too many programs")]
-    TooManyInterpreterPrograms,
-
-    #[error("interpreter program name is not a valid program name")]
-    InvalidInterpreterProgram,
-
-    #[error(
-        "interpreter program is not a shell or interpreter the runner refuses — the \
-         interpreter family is the refusal list; every other program belongs to the \
-         runner family"
-    )]
-    InterpreterProgramNotRefused,
-
     #[error("step {0} declares too many credentials ({1})")]
     TooManyStepCredentials(usize, usize),
 
     #[error("step {0} declares a credential that is not a valid name")]
     InvalidStepCredential(usize),
-
-    #[error("step {0} declares credentials beside an interpreter scope")]
-    CredentialsWithInterpreter(usize),
 
     #[error("endpoint name is not a valid name")]
     InvalidEndpointName,

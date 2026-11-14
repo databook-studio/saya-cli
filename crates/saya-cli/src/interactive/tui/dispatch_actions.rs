@@ -5,9 +5,9 @@ use saya_store::{
 
 use super::transcript::{BlockKind, Transcript};
 use crate::config::runtime::RuntimeConfig;
-use crate::interactive::session_resume::{SessionDefaults, block_on, resume_session};
-use crate::interactive::session_runtime::SessionRuntime;
-use crate::interactive::session_state::SessionState;
+use crate::interactive::session::lifecycle::resume::{SessionDefaults, block_on, resume_session};
+use crate::interactive::session::runtime::SessionRuntime;
+use crate::interactive::session::state::SessionState;
 
 /// Lists saved sessions (shared with the `/history` command).
 pub(super) fn list_sessions(transcript: &mut Transcript, store: &FsSessionStore) {
@@ -70,17 +70,22 @@ pub(super) fn resume(
                 Ok(()) => {
                     *state = loaded;
                     state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
+                    // The header facts ride the NEW universe: `reacquire`
+                    // recomposed it, and the swapped-in state arrived with
+                    // the `#[serde(skip)]` defaults.
+                    state.sync_host_posture(&session.universe());
                     transcript.push(BlockKind::System, format!("Resumed session {id}"));
                     if let Some(notice) = session.notice() {
                         transcript.push(BlockKind::System, notice.to_string());
                     }
                     // A resumed bypass session re-prints its activation line
                     // — the mode is real again, in its own words.
-                    if let Some(line) = crate::interactive::session_activation::line_if_bypass(
-                        state,
-                        runtime,
-                        &session.universe(),
-                    ) {
+                    if let Some(line) =
+                        crate::interactive::session::permissions::activation::line_if_bypass(
+                            state,
+                            &session.universe(),
+                        )
+                    {
                         transcript.push(BlockKind::System, line);
                     }
                 }
@@ -89,5 +94,42 @@ pub(super) fn resume(
         }
         Ok(None) => transcript.push(BlockKind::Error, format!("Session not found: {id}")),
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
+    }
+}
+
+/// Continues the session in a small successor: the shared steps run once in
+/// `session_rotate_run` for both surfaces, so this adapter only renders the
+/// outcome. The adoption tail is the typed `/resume` one — the successor's
+/// notice and (under bypass) its activation line ride the swap — and the
+/// app-level adoption (universe, metrics, query-state retirement) happens
+/// through the loop's id-change check once this returns.
+pub(super) fn rotate(
+    transcript: &mut Transcript,
+    state: &mut SessionState,
+    runtime: &RuntimeConfig,
+    store: &FsSessionStore,
+    session: &mut SessionRuntime,
+) {
+    use crate::interactive::session::lifecycle::rotate_run::{
+        RotateResult, rotate_session, rotated_message,
+    };
+    match rotate_session(store, runtime, state, session) {
+        RotateResult::Rotated { old, new } => {
+            transcript.push(BlockKind::System, rotated_message(&old, &new));
+            if let Some(notice) = session.notice() {
+                transcript.push(BlockKind::System, notice.to_string());
+            }
+            // A bypass successor re-prints its activation line: the mode is
+            // real again, in its own words.
+            if let Some(line) = crate::interactive::session::permissions::activation::line_if_bypass(
+                state,
+                &session.universe(),
+            ) {
+                transcript.push(BlockKind::System, line);
+            }
+        }
+        RotateResult::Refused(message) | RotateResult::Incomplete(message) => {
+            transcript.push(BlockKind::Error, message);
+        }
     }
 }

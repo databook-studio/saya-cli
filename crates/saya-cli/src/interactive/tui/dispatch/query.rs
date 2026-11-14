@@ -1,47 +1,157 @@
 //! Query follow-ups: `/export`, `/chart`, and `/explain` re-run the last
-//! query on a worker task with the matching follow-up.
+//! query on a worker task with the matching follow-up. The export snapshot
+//! is the exception: it writes the captured result itself, with no query.
 
+use super::super::capture_agent::CaptureGap;
 use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::LastQuery;
 use super::chart::parse_chart_args;
 use super::outcome::Dispatch;
-use crate::interactive::session_commands::SessionAction;
-use crate::interactive::session_state::SessionState;
+use super::query_source_guard::{refuse_rerun, rerun_label};
+use crate::config::runtime::RuntimeConfig;
+use crate::interactive::session::commands::SessionAction;
+use crate::interactive::session::state::SessionState;
+use crate::slash::{ExportMode, ExportRequest};
+use saya_types::ResultScope;
 
+/// One entry for every caller: before any re-run entry (`--refresh`/legacy
+/// refresh, `/chart`, bare `/explain`) spawns its task, the source guard
+/// refuses when the stored alias now resolves to a different source.
+/// Snapshot and report read the capture only and never consult the guard.
 pub(super) fn apply_query_actions(
-    action: SessionAction,
+    action: &mut Option<SessionAction>,
     transcript: &mut Transcript,
     state: &mut SessionState,
     last_query: &mut Option<LastQuery>,
+    captured: &Option<super::super::capture::CapturedResult>,
+    capture_gap: Option<CaptureGap>,
+    runtime: &RuntimeConfig,
 ) -> Option<Dispatch> {
-    match action {
-        SessionAction::Export(path) => apply_export(path, transcript, state, last_query),
+    // The arms this helper owns; anything else stays in `action` for the
+    // next helper in the chain.
+    if !matches!(
+        action,
+        Some(
+            SessionAction::Export(_)
+                | SessionAction::Report(_)
+                | SessionAction::Chart(_)
+                | SessionAction::Explain(_)
+        )
+    ) {
+        return None;
+    }
+    let current = action.take()?;
+    // The re-run guard resolves the stored label again with the caller's
+    // runtime; entries that never re-run skip it via `rerun_label`.
+    if let Some(label) = rerun_label(&current, state, last_query)
+        && refuse_rerun(captured, &label, runtime, transcript)
+    {
+        return Some(Dispatch::Handled);
+    }
+    match current {
+        SessionAction::Export(request) => apply_export(
+            request,
+            transcript,
+            state,
+            last_query,
+            captured,
+            capture_gap,
+        ),
+        SessionAction::Report(request) => {
+            report::apply_report(&request, transcript, captured);
+            Some(Dispatch::Handled)
+        }
         SessionAction::Chart(args) => apply_chart(args, transcript, state, last_query),
         SessionAction::Explain(arg) => apply_explain(arg, transcript, state, last_query),
-        _ => None,
+        // The guard decided ownership; if it ever drifts, put the action
+        // back and report "not mine" rather than dropping it.
+        other => {
+            *action = Some(other);
+            None
+        }
     }
 }
 
 fn apply_export(
-    path: String,
+    request: ExportRequest,
     transcript: &mut Transcript,
     state: &mut SessionState,
     last_query: &mut Option<LastQuery>,
+    captured: &Option<super::super::capture::CapturedResult>,
+    capture_gap: Option<CaptureGap>,
 ) -> Option<Dispatch> {
+    // The snapshot is the result the user already inspected: written here
+    // from the capture, with no query dispatched at all.
+    if request.mode == Some(ExportMode::Snapshot) {
+        export_snapshot(&request, captured, capture_gap, transcript);
+        return Some(Dispatch::Handled);
+    }
     match last_query.as_ref() {
         Some(lq) => {
-            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-                profile: lq.connection.clone().or(state.profile.clone()),
-                sql: lq.sql.clone(),
-                followup: super::super::sql_task::Followup::Export { path },
-            }));
+            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+                lq.connection.clone().or(state.profile.clone()),
+                lq.sql.clone(),
+                super::super::sql_task::Followup::Export { request },
+            )));
         }
         None => transcript.push(
             BlockKind::System,
             "Nothing to export yet — run a query first.",
         ),
     }
-    None
+    Some(Dispatch::Handled)
+}
+
+/// Writes the captured result to the destination, naming the execution and
+/// the capture time so the user can tell exactly which run a snapshot is
+/// of. Nothing here queries a database. When the latest promoted query was
+/// an agent query whose rows were not captured, the refusal names the gap —
+/// the capture budget, the model-view reason (truncated or redacted), or
+/// nothing when no capture arrived — instead of the /sql-only wording.
+fn export_snapshot(
+    request: &ExportRequest,
+    captured: &Option<super::super::capture::CapturedResult>,
+    capture_gap: Option<CaptureGap>,
+    transcript: &mut Transcript,
+) {
+    let Some(capture) = captured else {
+        let message = match capture_gap {
+            Some(gap) => gap.message(),
+            None => "No captured result to snapshot. Captures last only for this session and \
+                 only for /sql results — run /sql again, or use /export --refresh."
+                .to_string(),
+        };
+        transcript.push(BlockKind::Error, message);
+        return;
+    };
+    let path = std::path::Path::new(&request.path);
+    match super::super::export::write_result_overwrite(&capture.result, path, request.overwrite) {
+        Ok(n) => {
+            // A model-limited capture is labelled as what it is — the rows the
+            // agent saw, not the full result.
+            let mut msg = if matches!(capture.evidence.scope, ResultScope::ModelLimited { .. }) {
+                format!(
+                    "Exported {n} row(s) the agent saw to {} from snapshot exec {} \
+                         (model-limited: the full result may be larger — \
+                         use --refresh for a full read)",
+                    request.path,
+                    capture.evidence.short_id(),
+                )
+            } else {
+                format!(
+                    "Exported {n} row(s) to {} from snapshot exec {} (captured {} UTC)",
+                    request.path,
+                    capture.evidence.short_id(),
+                    super::super::capture::clock_hh_mm_ss(capture.evidence.finished_unix_ms),
+                )
+            };
+            if capture.result.truncated {
+                msg.push_str(" (result was truncated)");
+            }
+            transcript.push(BlockKind::System, msg);
+        }
+        Err(msg) => transcript.push(BlockKind::Error, msg),
+    }
 }
 
 fn apply_chart(
@@ -53,18 +163,18 @@ fn apply_chart(
     match last_query.as_ref() {
         Some(lq) => {
             let (kind, path) = parse_chart_args(&args);
-            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-                profile: lq.connection.clone().or(state.profile.clone()),
-                sql: lq.sql.clone(),
-                followup: super::super::sql_task::Followup::Chart { kind, path },
-            }));
+            return Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+                lq.connection.clone().or(state.profile.clone()),
+                lq.sql.clone(),
+                super::super::sql_task::Followup::Chart { kind, path },
+            )));
         }
         None => transcript.push(
             BlockKind::System,
             "Nothing to chart yet — run a query first.",
         ),
     }
-    None
+    Some(Dispatch::Handled)
 }
 
 fn apply_explain(
@@ -82,12 +192,23 @@ fn apply_explain(
             BlockKind::System,
             "Nothing to explain — run a query first, or pass SQL: /explain SELECT ...",
         );
-        return None;
+        return Some(Dispatch::Handled);
     };
     let trimmed = sql.trim().trim_end_matches(';').trim();
-    Some(Dispatch::SqlTask(super::super::sql_task::SqlTask {
-        profile: connection.or_else(|| state.profile.clone()),
-        sql: format!("EXPLAIN {trimmed}"),
-        followup: super::super::sql_task::Followup::Explain,
-    }))
+    Some(Dispatch::SqlTask(super::super::sql_task::SqlTask::new(
+        connection.or_else(|| state.profile.clone()),
+        format!("EXPLAIN {trimmed}"),
+        super::super::sql_task::Followup::Explain,
+    )))
 }
+
+#[path = "query/report.rs"]
+mod report;
+
+#[cfg(test)]
+#[path = "query_capture_tests.rs"]
+mod capture_tests;
+
+#[cfg(test)]
+#[path = "query_tests.rs"]
+mod tests;

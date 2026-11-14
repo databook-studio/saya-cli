@@ -2,11 +2,13 @@
 
 use super::super::history::History;
 use super::super::input::InputBuffer;
+use super::super::startup_readiness::StartupReadiness;
 use super::super::transcript::{BlockKind, Transcript};
-use super::super::types::{App, MAX_INPUT_ROWS, OverlayState, RequestState};
+use super::super::types::{AgentCaptures, App, MAX_INPUT_ROWS, OverlayState, RequestState};
 use crate::config::runtime::RuntimeConfig;
 use saya_store::SqliteStateStore;
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 impl App {
@@ -14,7 +16,7 @@ impl App {
         profiles: Vec<String>,
         runtime: Arc<RuntimeConfig>,
         state_db: SqliteStateStore,
-        session: Arc<crate::interactive::session_universe::SessionUniverse>,
+        session: Arc<crate::interactive::session::universe::SessionUniverse>,
     ) -> Self {
         let mut transcript = Transcript::new();
         transcript.push(
@@ -26,6 +28,7 @@ impl App {
             input: InputBuffer::new(),
             transcript,
             profiles,
+            startup: StartupReadiness::from_runtime(&runtime),
             pending: None,
             request: RequestState::default(),
             overlays: OverlayState::default(),
@@ -34,14 +37,23 @@ impl App {
             viewport: Cell::new((0, 0)),
             ctrl_c_armed: false,
             at_refs: Vec::new(),
+            starter_questions: Vec::new(),
             pending_clipboard: None,
+            pending_permission_cycle: false,
             clipboard_copy: None,
             session_save: None,
             sql_task: None,
             compact_task: None,
+            session_metrics: None,
+            replay_task: None,
             pending_session_save: None,
             last_query: None,
+            captured: None,
+            pending_queries: VecDeque::new(),
+            pending_queries_desync: false,
+            agent_captures: AgentCaptures::new(),
             wide_table: Default::default(),
+            coding_panel: None,
             run_panel: None,
             runtime,
             state_db,
@@ -51,18 +63,23 @@ impl App {
         }
     }
 
-    /// Whether the UI is busy: an agent request is streaming **or** a direct-SQL
-    /// command is running off-thread. The status-bar spinner, the queued-prompt
-    /// gate, and the submit-time queue check all read this so a running query is
-    /// treated like a streaming agent — visible, and a second command is held
-    /// rather than dispatched over the first.
+    /// Whether the UI is busy: an agent request is streaming, a direct-SQL
+    /// command is running off-thread, or a saved-investigation replay is
+    /// running off-thread. The status-bar spinner, the queued-prompt gate,
+    /// and the submit-time queue check all read this so a running query or
+    /// replay is treated like a streaming agent — visible, and a second
+    /// command is held rather than dispatched over the first.
     ///
-    /// The cancel paths (Esc, Ctrl+C in `keys.rs`) detach a SQL task *before*
-    /// they reach the agent-cancel branch, so broadening this predicate to cover
-    /// SQL tasks never makes Esc claim a query was cancelled when it was only
-    /// detached. See [`App::detach_sql_task`].
+    /// The cancel paths (Esc, Ctrl+C in `keys.rs`) detach a SQL task or a
+    /// replay *before* they reach the agent-cancel branch, so broadening
+    /// this predicate to cover off-thread queries never makes Esc claim a
+    /// query was cancelled when it was only detached. See
+    /// [`App::detach_sql_task`] and [`App::detach_replay_task`].
     pub(crate) fn is_busy(&self) -> bool {
-        self.request.stream.is_some() || self.sql_task.is_some() || self.compact_task.is_some()
+        self.request.stream.is_some()
+            || self.sql_task.is_some()
+            || self.compact_task.is_some()
+            || self.replay_task.is_some()
     }
 
     /// Number of visible text rows the input box should show when wrapped to

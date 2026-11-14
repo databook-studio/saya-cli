@@ -1,10 +1,9 @@
 //! Status-bar tests: the approval colour map pins the mode grammar.
 //!
-//! Approval no longer paints on the bottom bar — it removed the posture
-//! entirely (see `status_split_tests.rs`), leaving it to the top context
-//! line alone. `approval_colour` stays as the grammar's colour mapping
-//! (a caller may still reach for it), so it is pinned here directly rather
-//! than through the bar it no longer paints on.
+//! Approval paints on the top context line alone; the bottom bar carries no
+//! posture (see `status_split_tests.rs`). `approval_colour` is the grammar's
+//! colour mapping — a caller may reach for it directly — so it is pinned here
+//! directly rather than through the bar.
 
 use super::super::theme::{danger, secondary, success, warning};
 use super::approval_colour;
@@ -19,6 +18,7 @@ fn the_status_colour_map_has_an_arm_for_every_mode() {
     for (mode, expected) in [
         ("read-only", success()),
         ("ask", warning()),
+        ("accept-edits", warning()),
         ("never", danger()),
         ("bypass", danger()),
     ] {

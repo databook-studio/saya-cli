@@ -16,11 +16,11 @@
 //! - `control_read_outside_roots` + `read_denied_outside_roots`;
 //! - `control_net_connect` + `egress_denied_other_port` (EPERM) +
 //!   `egress_allowed_endpoint` — every attempted connect to the allowed port
-//!   must land on a listener that actually calls `accept()` (the spike's
+//!   must land on a listener that actually calls `accept()` (the
 //!   starved-listener lesson: one that never accepts turns timeouts into
 //!   false denials).
 //!
-//! The canary programs are the spike's (`/bin/echo`, `/bin/mkdir`,
+//! The canary programs are `/bin/echo`, `/bin/mkdir`,
 //! `/bin/cat`, `/bin/bash`, all single-command — measured never to need
 //! `process-fork`), so the probe profile is the real generator output plus
 //! only the canary program directory.
@@ -33,7 +33,7 @@ use super::{
     macos_canary::{
         CANARY_PROGRAM_DIR, ProbeListener, TempRoot, expect_deny, plain, sandboxed, unique,
     },
-    probe_support::{check_exited_ok, uname_line},
+    probe_support::{OwnedProbeDirectory, check_exited_ok, uname_line},
     report::{Check, ProbeReport},
 };
 
@@ -46,7 +46,10 @@ use super::{
 fn probe_policy(sb: &RunSandbox, listener_port: u16) -> Result<RunSandbox, String> {
     let mut net = sb.net_allow().to_vec();
     net.push(("127.0.0.1".to_owned(), listener_port));
-    let policy = RunSandbox::new(sb.fs_roots().to_vec(), net).map_err(|e| e.to_string())?;
+    let policy = RunSandbox::new(sb.fs_roots().to_vec(), net)
+        .map_err(|e| e.to_string())?
+        .with_read_only_roots(sb.read_only_roots().to_vec())
+        .map_err(|e| e.to_string())?;
     match sb.process_fork_reason() {
         Some(reason) => policy.with_process_fork(reason).map_err(|e| e.to_string()),
         None => Ok(policy),
@@ -180,7 +183,18 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
         Some(&denied_target),
     ));
 
-    let inside_target = root.join(unique("allowed-write"));
+    let mut owned_entry = match OwnedProbeDirectory::create(&root, &unique("allowed-write")) {
+        Ok(entry) => entry,
+        Err(_) => {
+            checks.push(Check::fail(
+                "write_allowed_inside_root",
+                true,
+                "could not create a fresh owned canary namespace",
+            ));
+            return ProbeReport::new("macos", uname, checks);
+        }
+    };
+    let inside_target = owned_entry.target();
     let allowed = sandboxed(
         &profile,
         &root,
@@ -188,7 +202,8 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
         &[&inside_target.to_string_lossy()],
     );
     let created = inside_target.is_dir();
-    checks.push(if allowed.exited_ok() && created {
+    let owned_target = allowed.exited_ok() && created && owned_entry.record_created_target();
+    checks.push(if owned_target {
         Check::pass(
             "write_allowed_inside_root",
             true,
@@ -207,6 +222,19 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
                  {created}):\n{}",
                 allowed.summary()
             ),
+        )
+    });
+    checks.push(if owned_entry.cleanup() {
+        Check::pass(
+            "probe_owned_entries_removed",
+            true,
+            "removed the exact empty owned canary entries",
+        )
+    } else {
+        Check::fail(
+            "probe_owned_entries_removed",
+            true,
+            "could not remove the exact empty owned canary entries",
         )
     });
 

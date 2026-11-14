@@ -17,6 +17,9 @@
 //! same failure as a weakened assertion.
 
 #[cfg(test)]
+#[path = "ui_snapshot_approval_modal.rs"]
+mod approval_modal;
+#[cfg(test)]
 #[path = "ui_snapshot_claims.rs"]
 mod claims;
 #[cfg(test)]
@@ -42,7 +45,9 @@ mod support;
 mod tables;
 
 pub(crate) use claims::{proposed_claim, supplied_claim, supplied_contract};
-pub(crate) use support::{empty_app, fixed_status, render_buffer, unused_runtime, unused_store};
+pub(crate) use support::{
+    empty_app, empty_app_with_startup, fixed_status, render_buffer, unused_runtime, unused_store,
+};
 
 use super::stream_events::apply_event;
 use saya_agent::{AgentEvent, KnowledgeOutcome};
@@ -143,7 +148,7 @@ fn learned_and_noted_trailing_answer() {
     insta::assert_snapshot!(buffer);
 }
 
-/// Phase 3 packet 2: a folded finished chapter paints as one body row
+/// A folded finished chapter paints as one body row
 /// carrying the verbatim request — never a summary — and unfolding restores
 /// the painted rows.
 #[test]
@@ -173,52 +178,11 @@ fn a_folded_chapter_paints_its_request_as_one_row() {
     insta::assert_snapshot!(folded);
 }
 
-// --- The tool-approval modal renders the shared fact body. -------------------
-
-/// The approval modal renders the per-call fact body verbatim — the same
-/// `call_facts` output the terminal prompt renders — plus the shared answers
-/// line. This is the modal half of the parity property: the body the modal
-/// shows is the body the terminal prompt shows, byte for byte.
-#[test]
-fn approval_modal_renders_the_shared_fact_body() {
-    let mut app = empty_app();
-    let tool = crate::interactive::session_definitions::http_fetch();
-    let arguments = serde_json::json!({"url": "https://api.github.com/repos/x/y"});
-    let facts = crate::approval_facts::ApprovalFacts {
-        fetch: Some(crate::approval_facts::FetchFacts {
-            fetch_body_bytes: 61_440,
-            fetch_seconds: 30,
-            fetch_redirects: 5,
-            download: None,
-        }),
-        ..crate::approval_facts::ApprovalFacts::default()
-    };
-    let grant = crate::grant_token::grant_token(&tool.name, &arguments, None, &facts);
-    let detail = crate::approval_facts::call_facts(
-        &tool.name,
-        &arguments,
-        grant.as_deref(),
-        &facts,
-        None,
-        None,
-    );
-    let (respond, _answer) = tokio::sync::oneshot::channel();
-    app.request.pending_approval = Some(super::types::PendingApproval {
-        tool: tool.name.clone(),
-        detail,
-        grant,
-        scroll: 0,
-        respond,
-    });
-    let buffer = render_buffer(&app, &fixed_status(), 80, 24);
-    insta::assert_snapshot!(buffer);
-}
-
-// --- Fieldnotes phase 8, packet 2: new activity below the fold. -------------
+// --- New activity below the fold. -------------------------------------------
 
 /// A scrolled-up reader with rows below the fold sees the quiet count and the
 /// key back in the status bar, while the transcript window stays put. This is
-/// the whole packet on the real paint path: an invitation, never a jump.
+/// the whole behaviour on the real paint path: an invitation, never a jump.
 #[test]
 fn new_activity_below_the_fold_shows_the_count_and_the_key_back() {
     use super::transcript::BlockKind;
@@ -247,9 +211,9 @@ fn new_activity_below_the_fold_shows_the_count_and_the_key_back() {
     insta::assert_snapshot!(buffer);
 }
 
-// --- Fieldnotes phase 6, packet 3: output actions name their scope. ---------
+// --- Output actions name their scope. ---------------------------------------
 //
-// `copy_behaviour_is_unchanged` proves the packet changed words only: Ctrl+Y
+// `copy_behaviour_is_unchanged` proves only the wording differs: Ctrl+Y
 // still yields the last assistant block (never a table, never thinking) and
 // Ctrl+B still yields the full transcript minus `Thinking`. The help-overlay
 // hint test pins that both copy keys name their scope before acting.

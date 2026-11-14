@@ -1,10 +1,10 @@
 //! The `http_fetch` and `http_download` tool definitions: what the model is
 //! told each tool is, and how its effect is declared.
 
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect};
+use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 
 /// The `http_fetch` tool definition. The effect is honest about how fetch is
-/// gated (DESIGN §6.3): `external_side_effect`, without a per-call approval
+/// gated: `external_side_effect`, without a per-call approval
 /// prompt — a run approves its fetch scope once with its plan, and this
 /// policy plus the destination list are the gate.
 pub fn http_fetch_definition() -> ToolDefinition {
@@ -34,6 +34,10 @@ pub fn http_fetch_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::None,
         },
+        // One fetch changes nothing of the agent's, so a turn that fetches
+        // several declared URLs may overlap them. The download writes the
+        // workspace and keeps its serial order.
+        concurrency: ToolConcurrency::Concurrent,
         completion: Some("fetched a declared URL into context".into()),
     }
 }
@@ -64,6 +68,10 @@ pub fn http_download_definition() -> ToolDefinition {
                 "destination": {
                     "type": "string",
                     "description": "Where the file lands, relative to the run workspace. Contained: it cannot escape the workspace."
+                },
+                "expected_digest": {
+                    "type": "string",
+                    "description": "Optional destination precondition. Omitted: the download creates the destination only and an existing file is refused. To replace an existing file you must read it first and pass the sha256 digest you observed (64 lowercase hex characters); never invent or guess a digest."
                 }
             },
             "required": ["url", "destination"],
@@ -75,6 +83,7 @@ pub fn http_download_definition() -> ToolDefinition {
             requires_approval: false,
             local_state: LocalStateEffect::WriteWorkspace,
         },
+        concurrency: ToolConcurrency::Serial,
         completion: Some("downloaded a declared URL into the run workspace".into()),
     }
 }

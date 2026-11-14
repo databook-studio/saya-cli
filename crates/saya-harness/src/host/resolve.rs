@@ -1,8 +1,8 @@
 //! Program resolution and the built PATH: a bare name resolved against
 //! the PATH value the child receives — first regular-file match in order.
-//! Not the parent's PATH. There is no staging directory on this lane and no
+//! Not the parent's PATH. There is no staging directory on this path and no
 //! admission battery: both exist to keep exec inside one directory, and
-//! this lane has no such directory.
+//! this path has no such directory.
 
 use std::{
     io,
@@ -65,7 +65,7 @@ impl HostConfig {
     /// Builds the config. `path` is the exact PATH value the child
     /// receives — resolution searches it, in order. `workspace_root` is the
     /// directory the child runs with as its cwd: the no-room-to-run-anywhere
-    /// shape — a child that needs a different cwd is a child this lane has
+    /// shape — a child that needs a different cwd is a child this path has
     /// no room for, and the prompt's `cwd: pinned to <root>` line states
     /// this field. The timeout is the ceiling; zero is refused.
     pub fn new(

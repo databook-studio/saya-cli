@@ -7,6 +7,7 @@ fn bound_routine() -> StatusView {
         model: "qwen".into(),
         approval_mode: "read-only".into(),
         agent_mode: "build".into(),
+        permission_mode: None,
         workspace_root: Some("/home/user/proj".into()),
         sharing_on: false,
         host_composed: false,
@@ -141,12 +142,16 @@ fn warnings_are_dropped_last_stated_first() {
 
 /// The approval segment keeps the approval mode's own colour, so `bypass`
 /// ("every call runs without asking") and `never` read as danger at a
-/// glance, not as the same amber as `ask`. The bottom bar no longer names
-/// the mode, so this row is the only place the signal can live.
+/// glance, not as the same amber as `ask`. The bottom bar names the mode but
+/// not its colour, so this row is the only place the signal can live.
+///
+/// `accept-edits` is a session-only posture — the launch grammar refuses the
+/// spelling — and it widens the consent the way `ask` does not, so it must
+/// carry its own arm rather than fall through the catch-all as grey.
 #[test]
 fn the_approval_segment_is_coloured_by_its_mode() {
     use super::super::status::approval_colour;
-    for mode in ["ask", "never", "bypass"] {
+    for mode in ["ask", "accept-edits", "never", "bypass"] {
         let mut view = bound_routine();
         view.approval_mode = mode.into();
         let spans = context_spans_for_test(&view, 200);

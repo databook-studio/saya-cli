@@ -1,5 +1,4 @@
-//! Tests for the live tail and approval-denial group boundaries, driven through `super::apply_event` (moved verbatim
-//! from the inline `tests` module in `stream_events/apply.rs`).
+//! Tests for the live tail and approval-denial group boundaries, driven through `super::apply_event`.
 
 use super::{Transcript, apply_event};
 use saya_agent::AgentEvent;
@@ -13,26 +12,27 @@ fn write_effect() -> Option<saya_agent::ToolEffect> {
     })
 }
 
-/// Two successful workspace writes: the shared fixture every C3 property
+/// Two successful workspace writes: the shared fixture every collapse
+/// property
 /// builds its group from.
 fn two_write_calls() -> Vec<AgentEvent> {
     vec![
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "notes.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "notes.md written".into(),
         },
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "other.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "other.md written".into(),
         },
     ]
@@ -56,10 +56,10 @@ fn open_group_shows_per_call_lines_live_until_the_boundary() {
     assert_eq!(
         texts,
         vec![
-            "→ workspace_write: notes.md",
-            "✓ workspace_write: notes.md written",
-            "→ workspace_write: other.md",
-            "✓ workspace_write: other.md written",
+            "→ write: notes.md",
+            "✓ write: notes.md written",
+            "→ write: other.md",
+            "✓ write: other.md written",
         ],
         "before the boundary the stream shows today's lines live"
     );
@@ -71,11 +71,7 @@ fn open_group_shows_per_call_lines_live_until_the_boundary() {
         .collect();
     assert_eq!(
         texts,
-        vec![
-            "▸ 2 tool calls · ok — workspace_write notes.md, other.md",
-            "",
-            "done",
-        ],
+        vec!["▸ 2 tool calls · ok — write notes.md, other.md", "", "done",],
         "the boundary collapses the run and the text follows"
     );
 }
@@ -94,7 +90,7 @@ fn approvals_are_untouched() {
     apply_event(
         &mut transcript,
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "a.md", "content": "hi"}),
             write_effect(),
         ),
@@ -103,7 +99,7 @@ fn approvals_are_untouched() {
     apply_event(
         &mut transcript,
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "a.md written".into(),
         },
         false,
@@ -124,8 +120,8 @@ fn approvals_are_untouched() {
     assert_eq!(
         texts,
         vec![
-            "→ workspace_write: a.md",
-            "✓ workspace_write: a.md written",
+            "→ write: a.md",
+            "✓ write: a.md written",
             "✗ run_command denied: denied",
         ],
         "one-member groups stay verbatim and the denial is its own line"
@@ -140,7 +136,7 @@ fn last_block_text(transcript: &Transcript) -> Option<&str> {
     transcript.blocks().last().map(|b| b.text.as_str())
 }
 
-/// C0 property 4 (TUI half): the `→` request block names the same file
+/// Property 4 (TUI half): the `→` request block names the same file
 /// the piped half pins beside the shared seam — both adapters render
 /// from `tool_call_detail`, so they cannot drift.
 #[test]
@@ -151,7 +147,7 @@ fn tui_request_block_names_the_same_file_as_the_piped_line() {
     apply_event(
         &mut transcript,
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "notes.md", "content": "hi"}),
             Some(ToolEffect {
                 database_data: false,

@@ -37,7 +37,7 @@ sslmode = "require"
 
 /// Writes starter templates to the user config directory (the trusted layer),
 /// so a fresh `config init` followed by any command does not warn. This is the
-/// default — see S18. Returns a message naming where the files went.
+/// default. Returns a message naming where the files went.
 pub(crate) fn create_user_files(user_dir: &Path) -> io::Result<String> {
     create_files_with(
         user_dir,

@@ -2,20 +2,36 @@
 
 use super::super::history::History;
 use super::super::input::InputBuffer;
+use super::super::startup_readiness::StartupReadiness;
 use super::super::transcript::Transcript;
 use super::overlays::OverlayState;
 use super::request::RequestState;
-use super::tasks::{ClipboardCopy, CompactOutcome, LastQuery, SessionSave, WideTableView};
+use super::tasks::{
+    ClipboardCopy, CompactOutcome, LastQuery, PendingQuery, SessionSave, WideTableView,
+};
+use super::{AgentCaptures, CapturedResult};
 use crate::config::runtime::RuntimeConfig;
+use crate::local_metrics::LocalMetrics;
 use saya_store::{RedactedSession, SqliteStateStore};
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::sync::Arc;
+
+// `application` is private to the TUI tree; the compaction-worker tests at
+// the `interactive` level reach the shared idle-app fixture through here.
+#[cfg(test)]
+pub(crate) use crate::interactive::tui::application::tests_support::idle_app;
 
 /// Interactive application state.
 pub(crate) struct App {
     pub(crate) input: InputBuffer,
     pub(crate) transcript: Transcript,
     pub(crate) profiles: Vec<String>,
+    /// The startup fact set computed once at composition: the AI
+    /// provider's readiness, phrased for the splash's state section.
+    /// Facts only — the doctor module guarantees no secret value in the
+    /// detail — and never recomputed per frame.
+    pub(crate) startup: StartupReadiness,
     pub(crate) pending: Option<String>,
     pub(crate) request: RequestState,
     pub(crate) overlays: OverlayState,
@@ -28,9 +44,19 @@ pub(crate) struct App {
     pub(crate) ctrl_c_armed: bool,
     /// `@table` / `@table.column` references from the active profiles' cached schema.
     pub(crate) at_refs: Vec<String>,
+    /// Starter questions derived from the active profile's cached schema,
+    /// computed where the schema tree was already in hand (`reload_at_refs`);
+    /// empty when nothing is cached. The empty state's examples section shows
+    /// these instead of the static prompts — paint only reads them.
+    pub(crate) starter_questions: Vec<String>,
     /// Text queued for the system clipboard, fulfilled by the run loop via the OS
     /// clipboard tool (pbcopy/wl-copy/xclip/clip) plus an OSC 52 escape for SSH.
     pub(crate) pending_clipboard: Option<String>,
+    /// Set by the Shift+Tab key handler, drained by the same tick's event
+    /// loop. The switch itself needs the session's one policy and its
+    /// journal, which the key path does not hold, so the press only marks
+    /// the intent — the `pending_clipboard` shape.
+    pub(crate) pending_permission_cycle: bool,
     pub(crate) clipboard_copy: Option<ClipboardCopy>,
     pub(crate) session_save: Option<SessionSave>,
     /// In-flight direct-SQL command (/sql, /export, /chart, /explain) running
@@ -41,24 +67,64 @@ pub(crate) struct App {
         std::sync::mpsc::Receiver<crate::render::TerminalEvent>,
         super::super::sql_task::SqlTask,
         std::time::Instant,
+        saya_agent::CancellationToken,
     )>,
     /// In-flight `/compact` running off-thread; polled each loop tick so the
     /// UI never blocks on the summariser. `None` until `/compact` runs.
     pub(crate) compact_task: Option<std::sync::mpsc::Receiver<CompactOutcome>>,
+    /// The runtime-only collector shared with the session; `None` unless
+    /// --verbose. The compaction worker records its Compaction phase here.
+    pub(crate) session_metrics: Option<Arc<LocalMetrics>>,
+    /// In-flight `/investigation run` replay, running off-thread like
+    /// the direct-SQL task; polled each loop tick so the UI never blocks on
+    /// the replay. The `Instant` is when the replay was dispatched, for the
+    /// detach message's elapsed time; the task names the investigation for
+    /// the status bar and that message.
+    pub(crate) replay_task: Option<(
+        std::sync::mpsc::Receiver<super::super::replay_task::ReplayDone>,
+        super::super::replay_task::ReplayTask,
+        std::time::Instant,
+    )>,
     pub(crate) pending_session_save: Option<RedactedSession>,
     pub(crate) last_query: Option<LastQuery>,
+    /// The latest direct-`/sql` result and its execution evidence, held in
+    /// memory only: [`CapturedResult`] carries no serde derives and lives on
+    /// `App` (which nothing serializes), so the session save payload —
+    /// `SessionState::redacted()` — never carries captured rows. Only the
+    /// `Followup::Sql` success path sets or clears it (errors, `/chart`,
+    /// `/explain`, `/export`, and agent tool results leave it alone).
+    pub(crate) captured: Option<CapturedResult>,
+    /// Pending `bounded_sql_query` candidates awaiting their completion
+    /// events: a request alone never becomes the selectable query, only a
+    /// successful completion promotes the front candidate (and a failure or
+    /// denial consumes it). Bounded by `MAX_PENDING_QUERIES`; cleared when
+    /// the turn ends. Fan-out (`bounded_sql_query_all`) never enters it.
+    pub(crate) pending_queries: VecDeque<PendingQuery>,
+    /// Set when [`App::pending_queries`] overflowed this turn: the pairing
+    /// between requests and completions is no longer trusted, so no
+    /// completion promotes anything and new candidates are not queued.
+    /// Resets with the FIFO when the turn ends; `last_query` keeps its
+    /// previous value meanwhile.
+    pub(crate) pending_queries_desync: bool,
+    /// The agent-capture pairing state: the bounded queue of
+    /// unmatched capture outcomes for the current turn — cleared at turn end
+    /// and on FIFO desync — plus the gap reason the snapshot's refusal reads
+    /// when the latest promoted agent query's rows are not held. In memory
+    /// only, like [`CapturedResult`].
+    pub(crate) agent_captures: AgentCaptures,
     /// Horizontal-scroll / column-selection state for wide result tables.
     /// Lives on the view, never on the transcript data.
     pub(crate) wide_table: WideTableView,
     /// The run panel: a run driven from the session, as a worker task
     /// (`run_panel.rs`). `None` until a run starts; its episode transcript
     /// and step list live here, never in the session conversation.
+    pub(crate) coding_panel: Option<super::super::coding::CodingPanel>,
     pub(crate) run_panel: Option<super::super::run_panel::RunPanel>,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) state_db: SqliteStateStore,
     /// The session's composed tool universe — the executor and definitions
     /// every turn of this session dispatches through.
-    pub(crate) session: Arc<crate::interactive::session_universe::SessionUniverse>,
+    pub(crate) session: Arc<crate::interactive::session::universe::SessionUniverse>,
     pub(crate) should_quit: bool,
     /// The startup trust modal's answer, stashed when the modal closes with
     /// a bound directory and drained exactly once by the event loop (see

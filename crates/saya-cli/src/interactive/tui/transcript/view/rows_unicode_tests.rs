@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod cell_budget_tests {
-    // Audit finding F07: the wrap budget is measured in display cells and
+    // The wrap budget is measured in display cells and
     // every break lands on a grapheme boundary. A `char` is not a cell — `日`
     // is one `char` and two cells, a combining mark is several `char`s and
     // one cell — so a row budgeted by scalar count paints past the frame and
@@ -19,8 +19,8 @@ mod cell_budget_tests {
     }
 
     /// What a `width`-column frame paints of one row: the row's leading
-    /// cells. A row wider than the frame loses its tail — the audit counted
-    /// 18 of 36 characters displayed exactly this way.
+    /// cells. A row wider than the frame loses its tail — 18 of 36 characters
+    /// are displayed exactly this way.
     fn visible_in_frame(row: &str, width: usize) -> &str {
         let mut end = 0;
         let mut used = 0;
@@ -43,9 +43,9 @@ mod cell_budget_tests {
 
     #[test]
     fn cjk_text_is_wrapped_not_clipped() {
-        // The audit's reproduction: a 36-character CJK answer in a 20-column
-        // frame. Recovery of the whole string from the visible rows is the
-        // assertion; counting rows is not.
+        // The reproduction: a 36-character CJK answer in a 20-column frame.
+        // Recovery of the whole string from the visible rows is the assertion;
+        // counting rows is not.
         let answer: String = (0..36)
             .map(|i| char::from_u32(0x4E00 + i).unwrap())
             .collect();

@@ -15,17 +15,18 @@
 //!
 //! The policy performs no network I/O itself; the tool runs
 //! [`refuses_address`] for every address resolution returns for an accepted
-//! host (resolve-then-deny, all returned IPs). Post-check rebinding (U5) is
+//! host (resolve-then-deny, all returned IPs). Post-check rebinding is
 //! the documented-unmitigated residual. The run's per-step executor member
 //! ([`FetchTools`]) wires both tools into a run's toolset: the step's
 //! policy, the run's shared transport and wallet, and the rendered
-//! untrusted-block lane with its pre-bound and backstop (S2 decision 1).
+//! untrusted-block path with its pre-bound and backstop.
 
 pub mod adapter;
 pub mod budget;
 pub mod definition;
 pub mod download;
 mod download_error;
+mod download_guard;
 mod download_limits;
 pub mod limits;
 pub mod policy;
@@ -37,14 +38,17 @@ pub mod transport;
 
 mod partial;
 
-pub use adapter::FetchTools;
+pub use adapter::{FetchTools, bounded_block_envelope};
 pub use budget::{DEFAULT_MAX_RUN_BYTES, DownloadBudget};
 pub use definition::{http_download_definition, http_fetch_definition};
-pub use download::http_download;
+pub use download::{DownloadCall, http_download, http_download_cancellable};
 pub use download_error::{DownloadError, DownloadOutcome};
 pub use download_limits::{DEFAULT_MAX_FILE_BYTES, DEFAULT_REQUEST_TIMEOUT, DownloadLimits};
 pub use limits::{ENVELOPE_SLACK, FetchLimits};
 pub use policy::{FetchDestination, FetchPolicy, FetchRefusal, FetchUrl, refuses_address};
 pub use reqwest_transport::ReqwestTransport;
-pub use tools::{FetchOutcome, FetchToolError, HttpFetchTool};
-pub use transport::{FetchBody, FetchRequest, FetchTransport, FetchTransportError, WireResponse};
+pub use tools::{BodyBound, FetchOutcome, FetchToolError, HttpFetchTool};
+pub use transport::{
+    FetchBody, FetchHeaderError, FetchHeaders, FetchRequest, FetchTransport, FetchTransportError,
+    MAX_HEADER_BYTES, MAX_REQUEST_HEADERS, WireResponse,
+};

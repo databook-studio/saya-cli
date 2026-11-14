@@ -1,4 +1,4 @@
-//! Phase 8 packet 3: reaching an old result without opening every chapter.
+//! Reaching an old result without opening every chapter.
 //!
 //! A result is a `BlockKind::Table` block, addressed by its place in block
 //! order — no id, ordinal, or jump target is stored. These drive the real key

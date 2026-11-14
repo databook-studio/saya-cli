@@ -1,6 +1,7 @@
 //! Unit tests for the scope-line shaper: wording, truncation, and the
 //! no-connection / no-query edges. Completion-level behaviour (capture at
-//! dispatch, retention after a profile change, clip parity, copy) lives in
+//! dispatch, retention after a profile change, identical clipping, copy)
+//! lives in
 //! `scope_tests.rs`, which drives `sql_task::complete`.
 
 use super::scope::{SCOPE_SQL_CHARS, scope_line, with_scope_line};

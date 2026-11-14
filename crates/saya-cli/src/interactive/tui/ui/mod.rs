@@ -14,9 +14,9 @@ use chrome::draw_context_line;
 use chrome::draw_status;
 use input::draw_input;
 use overlays::{
-    approval_height, draw_approval, draw_help, draw_menu, draw_picker, draw_plan_approval,
-    draw_run_panel, draw_search, draw_trust_modal, plan_approval_height, run_panel_height,
-    trust_modal_height,
+    approval_height, draw_approval, draw_help, draw_investigation_picker, draw_menu, draw_picker,
+    draw_plan_approval, draw_run_panel, draw_search, draw_trust_modal, plan_approval_height,
+    run_panel_height, trust_modal_height,
 };
 use ratatui::{
     Frame,
@@ -80,7 +80,13 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
         // The empty state names the unbound workspace when the status bar's
         // view carries no root: `None` renders the no-root shape beside the
         // no-database guidance, never instead of it.
-        draw_empty_state(frame, app, chunks[1], Some(status.workspace_root.is_some()));
+        draw_empty_state(
+            frame,
+            app,
+            status,
+            chunks[1],
+            Some(status.workspace_root.is_some()),
+        );
     }
     if run_panel_h > 0 {
         draw_run_panel(frame, app, chunks[2]);
@@ -113,6 +119,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, status: &StatusView) {
     }
     if app.overlays.picker.is_some() {
         draw_picker(frame, app, frame.area());
+    }
+    if app.overlays.investigations.is_some() {
+        draw_investigation_picker(frame, app, frame.area());
     }
     if app.overlays.show_help {
         draw_help(frame, frame.area());

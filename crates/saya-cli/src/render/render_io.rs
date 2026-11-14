@@ -1,4 +1,4 @@
-//! Text shaping for contract import/export reports (slice 6b). JSON and NDJSON
+//! Text shaping for contract import/export reports. JSON and NDJSON
 //! fall out of the serde derives on [`TerminalEvent`](super::TerminalEvent); the
 //! text form needs deliberate shaping, done here. Mirrors
 //! [`render_contract`](super::render_contract).

@@ -10,7 +10,7 @@
 /// equals its singularized form (so a plural prompt term `rentals` names the
 /// singular table `rental`), or contains it as a substring (so `orders` still
 /// selects `orders0`). Containment is term ⊆ segment, never the reverse: a long
-/// term must not match a short table (spec §3 — bidirectional containment is a
+/// term must not match a short table (bidirectional containment is a
 /// trap).
 ///
 /// `singular_key` is deliberately small and not a stemmer; see it for the rule
@@ -29,9 +29,9 @@ pub(super) fn name_matches(name_segment: &str, term: &str) -> bool {
 /// An alias is a **phrase** — "account managers", "gross margin", "active
 /// customers" — and the terms are single word-ish tokens, because that is what
 /// `terms::extract` produces by splitting on non-alphanumerics. Comparing the
-/// whole alias to one token by equality, which is what this replaced, meant no
-/// multi-word alias could ever match: `"account managers"` is never equal to
-/// `"account"` or to `"managers"`. That silently disabled recall for the most
+/// whole alias to one token by equality means no multi-word alias can ever
+/// match: `"account managers"` is never equal to
+/// `"account"` or to `"managers"`. That would silently disable recall for the most
 /// valuable kind of fact SAYA can hold, since a single word that already names
 /// the table is rarely worth recording in the first place.
 ///
@@ -106,9 +106,9 @@ mod alias_tests {
     }
 
     /// The regression. `terms::extract` splits on non-alphanumerics, so a
-    /// question about "account managers" arrives as two tokens and the old
-    /// equality check could never match the stored phrase. Every multi-word
-    /// alias — which is most of the ones worth storing — was unrecallable.
+    /// question about "account managers" arrives as two tokens and an
+    /// equality check cannot match the stored phrase. Every multi-word
+    /// alias — which is most of the ones worth storing — would be unrecallable.
     #[test]
     fn a_multi_word_alias_matches_the_words_of_the_question() {
         assert!(alias_matches(

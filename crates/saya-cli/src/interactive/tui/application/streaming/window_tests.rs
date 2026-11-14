@@ -1,5 +1,4 @@
-//! Window and model lookups behind the footer: live-model switches, unusual magnitudes, exact-match table behaviour (moved verbatim from `streaming_tests.rs`, via
-//! `streaming/footer_tests.rs`).
+//! Window and model lookups behind the footer: live-model switches, unusual magnitudes, exact-match table behaviour.
 
 use super::*;
 
@@ -20,6 +19,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

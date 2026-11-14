@@ -9,7 +9,7 @@
 //! run and a headless run cannot drift into two paths.
 //!
 //! The plan-approval surface rides here too: the host's modal answers it
-//! (the M1-10 channel, `ask.rs`'s shape) rather than any stdin prompt —
+//! (the same channel as `ask.rs`) rather than any stdin prompt —
 //! approval stays the engine's one gate, shown once.
 
 use saya_agent::{AgentEventSink, CancellationToken};

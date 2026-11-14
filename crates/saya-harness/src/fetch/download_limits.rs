@@ -1,20 +1,20 @@
 //! The explicit bounds of one download, and their provisional defaults.
 //!
 //! A run states them once with its scope; overrunning any of them is a typed
-//! error, never a silent short file. The defaults are provisional until M5
-//! measures real runs (U8).
+//! error, never a silent short file. The defaults are provisional until real
+//! runs are measured.
 
 use std::time::Duration;
 
 /// Provisional per-file byte bound: large enough for a corpus artifact,
 /// small enough that one URL cannot silently fill a disk. Provisional until
-/// M5 measures real runs (U8).
+/// real runs are measured.
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Provisional per-request wall clock, matching the `[ai] timeout` default.
 /// With resumable partials a longer transfer is a sequence of budgeted
-/// attempts, not one unbounded one. Provisional until M5 measures real runs
-/// (U8).
+/// attempts, not one unbounded one. Provisional until real runs are
+/// measured.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The redirect bound, matching the fetch tool: room for a legitimate

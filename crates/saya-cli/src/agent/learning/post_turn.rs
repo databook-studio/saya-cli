@@ -75,7 +75,7 @@ pub(crate) async fn run_post_turn_extraction(
     );
     let gate = ProposalGating::evaluate(&turn_record, &drained_obs, !overridden.is_empty());
     if !gate.is_run() {
-        // Gate decline stays silent on screen (decision 2); trace it for
+        // A gate decline stays silent on screen; trace it for
         // observability when debugging the boundary.
         trace_extraction(
             "gate_declined",
@@ -92,9 +92,9 @@ pub(crate) async fn run_post_turn_extraction(
     // still waiting on, so say so before starting it.
     sink.emit(AgentEvent::KnowledgeLearningStarted).await;
     let extraction_started = std::time::Instant::now();
-    // No wall-clock ceiling on this call — an explicit owner decision that
-    // departs from AGENTS.md's "bound untrusted work — time" rule for this
-    // one path. A slow model may take as long as it needs; the call is
+    // No wall-clock ceiling on this call — a deliberate departure from
+    // AGENTS.md's "bound untrusted work — time" rule for this one path. A slow
+    // model may take as long as it needs; the call is
     // bounded only by the provider transport's own limits (the per-attempt
     // connect timeout, the per-chunk stream idle timeout, the output-token
     // ceiling, bounded retries). A stalled or truncated reply trips the
@@ -146,9 +146,9 @@ pub(crate) async fn run_post_turn_extraction(
                 LearningSkipReason::Failed,
             ))
             .await;
-            // Emitted after this turn's own `KnowledgeLearningSkipped`
-            // (decision 3), only on the attempt that just tripped the
-            // breaker — never again this session.
+            // Emitted after this turn's own `KnowledgeLearningSkipped`, only on
+            // the attempt that just tripped the breaker — never again this
+            // session.
             if let Some(misses) = tripped {
                 sink.emit(AgentEvent::knowledge_learning_disabled(model, misses))
                     .await;

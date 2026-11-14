@@ -1,0 +1,13 @@
+//! Pure authority attenuation for native coding children.
+
+mod admission;
+mod approval;
+mod authority;
+mod issuance;
+mod values;
+
+pub use approval::ChildApprovalDecider;
+pub use authority::{
+    AuthorityError, AuthorityRefusal, ChildAuthorityRequest, ChildAuthorityView, ChildRole,
+    PlatformSupport, RootDelegationInput, RootDelegationScope,
+};

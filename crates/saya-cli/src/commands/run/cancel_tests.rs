@@ -1,4 +1,4 @@
-//! The cancellation parity the TUI run panel depends on: the panel's
+//! The cancellation behavior the TUI run panel depends on: the panel's
 //! in-process stop (`record_cancelled`, the same function the panel worker
 //! calls) and `saya run cancel` must write the *same durable record* — the
 //! engine path, the journal tail, and the store status — never two
@@ -6,14 +6,49 @@
 
 use super::{CancelOutcome, record_cancelled};
 use crate::cli::RunCommand;
-use crate::commands::run_management;
+use crate::commands::{
+    run::{HostRun, RunRequest, start_for_panel},
+    run_management,
+};
 use crate::config::runtime::RuntimeConfig;
 use crate::render::RenderFormat;
 use saya_harness::journal::Journal;
+use saya_harness::lock::RunLock;
 use saya_harness::run_dir::RunDir;
 use saya_store::{NewRun, RunBudgets, RunCapabilityFlags, RunStatus, RunStore, SqliteStateStore};
-use saya_types::{RunEvent, RunId};
-use std::{collections::BTreeMap, fs, path::Path, path::PathBuf};
+use saya_types::{Capabilities, RunEvent, RunId, RunPlan, StepSpec};
+use std::{collections::BTreeMap, ffi::OsString, fs, path::Path, path::PathBuf, time::Duration};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+    sync::{Mutex, oneshot},
+};
+
+static RUNS_DIR_TEST_LOCK: Mutex<()> = Mutex::const_new(());
+
+struct RunsDirEnv(Option<OsString>);
+
+impl RunsDirEnv {
+    fn set(path: PathBuf) -> Self {
+        let previous = std::env::var_os("SAYA_RUNS_DIR");
+        // SAFETY: both tests that mutate this variable hold the shared test
+        // mutex and restore it through this guard before returning.
+        unsafe { std::env::set_var("SAYA_RUNS_DIR", path) };
+        Self(previous)
+    }
+}
+
+impl Drop for RunsDirEnv {
+    fn drop(&mut self) {
+        match self.0.take() {
+            // SAFETY: the two test callers retain RUNS_DIR_TEST_LOCK through
+            // this guard's drop, serializing process-environment mutation.
+            Some(value) => unsafe { std::env::set_var("SAYA_RUNS_DIR", value) },
+            // SAFETY: same serialized test scope as the restore arm above.
+            None => unsafe { std::env::remove_var("SAYA_RUNS_DIR") },
+        }
+    }
+}
 
 pub(in crate::commands::run) fn temp_root(label: &str) -> PathBuf {
     let stamp = std::time::SystemTime::now()
@@ -109,78 +144,46 @@ async fn durable_record(
     (events.last().unwrap().clone(), status)
 }
 
-/// Cancelling the same way both surfaces do: the panel's stop and
-/// `saya run cancel` on twin runs leave identical records — journal tail and
-/// store status — and a later `saya run cancel` of the panel-cancelled run
-/// reports it already finished, not a second cancellation.
-#[tokio::test]
-async fn the_panel_stop_and_saya_run_cancel_write_the_same_record() {
-    let root = temp_root("parity");
-    // `runs_dir()` resolves `SAYA_RUNS_DIR` at call time; this is the only
-    // unit test in this crate that touches it, and it restores on exit.
-    let previous = std::env::var_os("SAYA_RUNS_DIR");
-    // SAFETY: single-threaded test-local mutation; `previous` is restored
-    // before the function returns, and no other unit test reads the variable.
-    unsafe { std::env::set_var("SAYA_RUNS_DIR", root.join("runs")) };
-    let store = SqliteStateStore::new(root.join("state.sqlite3"));
-    let runtime = runtime_at(&root);
-    let panel_run = seed_claimed_run(&root, &store, "r-panel-cancel").await;
-    let headless_run = seed_claimed_run(&root, &store, "r-headless-cancel").await;
+include!("cancel_tests/durable_record.rs");
 
-    cancel_like_the_panel(&root, &store, &panel_run).await;
-    let code = run_management(
-        RunCommand::Cancel {
-            run_id: headless_run.as_str().to_string(),
-        },
-        &runtime,
-        RenderFormat::Text,
-        saya_agent::ApprovalPolicy::ReadOnly,
-        &store,
-    )
-    .await
-    .expect("the headless cancel succeeds");
-    assert_eq!(code, 0, "cancelling a live-holder-free run succeeds");
+include!("cancel_tests/lock_lifecycle.rs");
 
-    let (panel_tail, panel_status) = durable_record(&store, &root, &panel_run).await;
-    let (headless_tail, headless_status) = durable_record(&store, &root, &headless_run).await;
-    assert_eq!(
-        panel_tail, headless_tail,
-        "both surfaces leave the same journal tail"
-    );
-    assert_eq!(
-        panel_tail,
-        RunEvent::Cancelled,
-        "the tail is the cancellation"
-    );
-    assert_eq!(panel_status, RunStatus::Cancelled);
-    assert_eq!(
-        panel_status, headless_status,
-        "the store statuses cannot disagree"
-    );
+include!("cancel_tests/wall_clock_exit.rs");
 
-    // The panel-cancelled run reads as already finished to the CLI surface —
-    // one cancellation, wherever it came from.
-    let again = run_management(
-        RunCommand::Cancel {
-            run_id: panel_run.as_str().to_string(),
-        },
-        &runtime,
-        RenderFormat::Text,
-        saya_agent::ApprovalPolicy::ReadOnly,
-        &store,
-    )
-    .await
-    .unwrap();
-    assert_eq!(again, 0);
-    match previous {
-        Some(value) => {
-            // SAFETY: same single-threaded test scope as above.
-            unsafe { std::env::set_var("SAYA_RUNS_DIR", value) };
-        }
-        None => {
-            // SAFETY: same single-threaded test scope as above.
-            unsafe { std::env::remove_var("SAYA_RUNS_DIR") };
+async fn read_http_request(socket: &mut tokio::net::TcpStream) -> Vec<u8> {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 2048];
+    loop {
+        let count = socket.read(&mut buffer).await.unwrap();
+        assert_ne!(count, 0, "provider request closes before headers complete");
+        request.extend_from_slice(&buffer[..count]);
+        let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") else {
+            continue;
+        };
+        let headers = String::from_utf8_lossy(&request[..end]);
+        let length = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length: ")
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .expect("Ollama request has a content length");
+        if request.len() >= end + 4 + length {
+            return request;
         }
     }
-    let _ = fs::remove_dir_all(root);
+}
+
+async fn write_ollama_response(socket: &mut tokio::net::TcpStream, content: &str) {
+    let body = format!(
+        "{}\n",
+        serde_json::json!({"message": {"content": content}, "done": true})
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    socket.write_all(response.as_bytes()).await.unwrap();
 }
