@@ -8,7 +8,7 @@ pub(crate) fn usage(input: u64, output: u64) -> TokenUsage {
 
 /// Learning-call usage: the separately-labelled learning section,
 /// absent-vs-zero distinction, timeout safety, and learning-off output.
-/// Moved byte-identical from the hub; no snapshots involved.
+/// Plain assertions; no snapshots involved.
 /// The extraction call's usage is labelled apart from the answering total. A
 /// session that ran extraction reports a separate "Learning call" section; the
 /// two totals must not be merged — the learning call is invisible in the

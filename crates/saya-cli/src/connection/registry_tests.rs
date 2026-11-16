@@ -54,7 +54,7 @@ fn test_resolve_behavior() {
 
     // Insert primary and secondary
     reg.insert("primary_db", make_entry(SqlDialect::Postgres, Some("p1")));
-    reg.insert("secondary_db", make_entry(SqlDialect::DuckDb, Some("p2")));
+    reg.insert("secondary_db", make_entry(SqlDialect::Sqlite, Some("p2")));
 
     // resolve(None) and resolve(Some("")) return primary entry
     let primary_entry = reg.resolve(None).unwrap();
@@ -66,7 +66,7 @@ fn test_resolve_behavior() {
 
     // resolve(Some(known)) returns known secondary entry
     let secondary_entry = reg.resolve(Some("secondary_db")).unwrap();
-    assert_eq!(secondary_entry.dialect, SqlDialect::DuckDb);
+    assert_eq!(secondary_entry.dialect, SqlDialect::Sqlite);
     assert_eq!(secondary_entry.profile_id.as_deref(), Some("p2"));
 
     // resolve(Some(unknown)) returns Err listing available connections
@@ -86,7 +86,7 @@ fn test_names_insertion_order() {
 
     reg.insert("primary_db", make_entry(SqlDialect::Postgres, None));
     reg.insert("alpha", make_entry(SqlDialect::Mysql, None));
-    reg.insert("beta", make_entry(SqlDialect::DuckDb, None));
+    reg.insert("beta", make_entry(SqlDialect::Sqlite, None));
 
     assert_eq!(reg.len(), 3);
     assert!(!reg.is_empty());
@@ -113,13 +113,13 @@ fn test_describe_context() {
     assert!(reg.describe_context().is_none());
 
     // Two connections: describe_context is Some(...) containing both names and dialects
-    reg.insert("db2", make_entry(SqlDialect::DuckDb, None));
+    reg.insert("db2", make_entry(SqlDialect::Sqlite, None));
     let ctx = reg
         .describe_context()
         .expect("context should be Some for >1 connections");
 
     assert!(ctx.contains("- db1 (postgresql)"));
-    assert!(ctx.contains("- db2 (duckdb)"));
+    assert!(ctx.contains("- db2 (sqlite)"));
     assert!(ctx.contains("connection"));
     assert!(ctx.contains("schema and query tools"));
 }

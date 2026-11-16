@@ -1,19 +1,21 @@
 //! Shared contract-application operations: the typed layer every adapter renders.
 //!
-//! This slice computes and selects; it writes nothing to the store on the recall
+//! This module computes and selects; it writes nothing to the store on the recall
 //! path and adds no policy of its own on the review path beyond what the
 //! knowledge-items store already enforces (cardinality at the storage boundary).
-//! Presentation (rendering, clap, slash, agent tools) is a later slice — these
+//! Presentation (rendering, clap, slash, agent tools) lives elsewhere — these
 //! modules return typed data only.
 
 pub(crate) mod args;
 mod assemble;
 mod availability;
 mod conflict;
+pub(crate) mod dbt;
 mod decide;
 mod knowledge_validity;
 mod name_match;
 mod op_error;
+pub(crate) mod portable;
 mod queue;
 mod recall;
 mod receipt;
@@ -25,8 +27,8 @@ mod show;
 pub(crate) mod terms;
 mod use_once;
 mod view;
-// P2b-1: the override detector. A pure function nobody calls yet — P2b-2 will
-// run it against the SQL the model generated and the [`RecallReceipt`] recall
+// The override detector. A pure function nobody calls yet — a later caller
+// runs it against the SQL the model generated and the [`RecallReceipt`] recall
 // supplied. Mirrors the `PromptTerms` re-export pattern below.
 mod override_det;
 
@@ -34,7 +36,7 @@ mod override_det;
 mod tests;
 
 // This `pub(crate)` surface is the contract operations API the adapters
-// (2b-2/3/4: rendering, clap, slash, agent tools) will consume. Nothing in this
+// (rendering, clap, slash, agent tools) will consume. Nothing in this
 // crate references it yet outside tests, so the re-exports read as unused in a
 // lib build — they are not dead code, they are the boundary this module exposes.
 #[allow(unused_imports)]
@@ -61,7 +63,7 @@ pub(crate) use show::show;
 pub(crate) use conflict::conflicts_for;
 #[allow(unused_imports)]
 pub(crate) use use_once::use_candidate_once;
-// D-2: the computed validity vocabulary over KnowledgeState. Pure, uncalled
+// The computed validity vocabulary over KnowledgeState. Pure, uncalled
 // yet — a later caller will switch to it. Re-exported here
 // alongside the other contract operations, reading unused like the others
 // until something consumes it.
@@ -77,7 +79,7 @@ pub(crate) use view::{
 // alongside the other contract operations the adapters will consume.
 #[allow(unused_imports)]
 pub(crate) use receipt::{RecallOutcomeKind, RecallReceipt, SuppliedClaim, SuppliedContract};
-// `PromptTerms` is the prompt-recall signal the agent runtime (2b-3b) consumes
+// `PromptTerms` is the prompt-recall signal the agent runtime consumes
 // alongside the recall request types above.
 #[allow(unused_imports)]
 pub(crate) use terms::PromptTerms;

@@ -3,8 +3,15 @@ use saya_types::ConnectionError;
 use tokio::time::timeout;
 
 use super::{auth, client::SnowflakeConnector, errors};
+use crate::CancelRequestOutcome;
 
 pub(crate) async fn cancel(connector: &SnowflakeConnector) -> Result<(), ConnectionError> {
+    request_cancel(connector).await.map(|_| ())
+}
+
+pub(crate) async fn request_cancel(
+    connector: &SnowflakeConnector,
+) -> Result<CancelRequestOutcome, ConnectionError> {
     let handle = connector
         .active
         .lock()
@@ -36,6 +43,6 @@ pub(crate) async fn cancel(connector: &SnowflakeConnector) -> Result<(), Connect
     response
         .status()
         .is_success()
-        .then_some(())
+        .then_some(CancelRequestOutcome::RemoteRequestAccepted)
         .ok_or_else(errors::query)
 }

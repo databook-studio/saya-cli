@@ -1,10 +1,11 @@
 //! Program resolution and the built PATH: a bare name resolved against
 //! the PATH value the child receives — first regular-file match in order.
-//! Not the parent's PATH. There is no staging directory on this lane and no
+//! Not the parent's PATH. There is no staging directory on this path and no
 //! admission battery: both exist to keep exec inside one directory, and
-//! this lane has no such directory.
+//! this path has no such directory.
 
 use std::{
+    ffi::OsString,
     io,
     path::{Path, PathBuf},
     time::Duration,
@@ -65,7 +66,7 @@ impl HostConfig {
     /// Builds the config. `path` is the exact PATH value the child
     /// receives — resolution searches it, in order. `workspace_root` is the
     /// directory the child runs with as its cwd: the no-room-to-run-anywhere
-    /// shape — a child that needs a different cwd is a child this lane has
+    /// shape — a child that needs a different cwd is a child this path has
     /// no room for, and the prompt's `cwd: pinned to <root>` line states
     /// this field. The timeout is the ceiling; zero is refused.
     pub fn new(
@@ -135,13 +136,15 @@ impl HostConfig {
                 program: program.to_owned(),
             });
         }
-        for dir in self.path.split(':') {
+        for dir in self.path.split(path_separator()) {
             if dir.is_empty() {
                 continue;
             }
-            let candidate = Path::new(dir).join(program);
-            if is_regular_file(&candidate) {
-                return Ok(candidate);
+            for name in candidate_names(program) {
+                let candidate = Path::new(dir).join(&name);
+                if is_regular_file(&candidate) {
+                    return Ok(candidate);
+                }
             }
         }
         Err(HostError::NotOnPath {
@@ -158,6 +161,41 @@ impl HostConfig {
         for (name, value) in build_env(&self.path, &self.env) {
             command.env(name, value);
         }
+    }
+}
+
+/// The character that separates directories in the PATH value the child
+/// receives: `:` on unix, `;` on Windows.
+#[cfg(not(windows))]
+fn path_separator() -> char {
+    ':'
+}
+#[cfg(windows)]
+fn path_separator() -> char {
+    ';'
+}
+
+/// The file names one PATH entry is searched for, in order. Unix searches the
+/// bare name. Windows searches the name itself and then each extension in
+/// `PATHEXT` (defaulting to the standard executable list when the variable is
+/// absent), which is how `cmd.exe` resolves a bare program name. A name that
+/// already carries an extension is searched verbatim.
+fn candidate_names(program: &str) -> Vec<OsString> {
+    #[cfg(not(windows))]
+    {
+        vec![OsString::from(program)]
+    }
+    #[cfg(windows)]
+    {
+        let mut names = vec![OsString::from(program)];
+        if Path::new(program).extension().is_none() {
+            let pathext =
+                std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned());
+            for extension in pathext.split(';').filter(|entry| !entry.is_empty()) {
+                names.push(OsString::from(format!("{program}{extension}")));
+            }
+        }
+        names
     }
 }
 

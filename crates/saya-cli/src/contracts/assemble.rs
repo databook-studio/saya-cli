@@ -11,12 +11,12 @@
 //! `crate::agent::recall_context`.
 //!
 //! This module computes each contract's schema state (including `Stale`, the
-//! `Invalid` verdict under D-4's name) and returns the contract regardless of
+//! `Invalid` verdict under its own name) and returns the contract regardless of
 //! state — it does **not** decide who sees it. That decision is
 //! [`super::retrieval`]'s: a `Stale` contract is dropped for the model and kept
 //! for human review, in one place rather than per adapter.
 //!
-//! Validity is [`super::knowledge_validity::item_validity_for`] — the D-4
+//! Validity is [`super::knowledge_validity::item_validity_for`] — the
 //! binding model. A fact depends only on what its `SchemaBinding` names, so an
 //! unrelated column changing never invalidates; a gone or retyped bound column
 //! reads `Invalid` (→ `Stale`), and an absent/unreadable schema reads
@@ -88,7 +88,7 @@ fn build_contract(
         .find(|(p, _)| p == candidate.object.profile())
         .map(|(_, avail)| avail);
     let availability = live.unwrap_or(&SchemaAvailability::Missing);
-    // Aggregate the per-item D-4 verdict into the contract's schema state. The
+    // Aggregate the per-item verdict into the contract's schema state. The
     // `ContractClaim` projection (for render/receipt/conflict) is built beside
     // the verdict so a row that fails to parse its id is dropped here rather
     // than surfacing a half-built carrier downstream.

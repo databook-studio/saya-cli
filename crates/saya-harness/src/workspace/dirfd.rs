@@ -17,7 +17,7 @@ use std::{
 };
 
 use super::anchor::Anchor;
-use super::contain::{Workspace, argument_components};
+use super::contain::{Workspace, argument_components, relative_argument};
 use super::fd::{mkdir_at, open_dir_at, stat_at};
 use crate::{HarnessError, io_error};
 
@@ -29,7 +29,26 @@ impl Workspace {
     /// own record of the path is kept for error display and for callers that
     /// need a `PathBuf`; containment never re-resolves it.
     pub(crate) fn anchor(&self, rel: &str, allow_create: bool) -> Result<Anchor, HarnessError> {
-        let comps = argument_components(rel)?;
+        self.anchor_inner(rel, allow_create, false)
+    }
+
+    /// Like [`Self::anchor`], but the final component may itself be a
+    /// symlink. The returned anchor still never follows it, so the caller
+    /// can read the link target; every intermediate component refuses a
+    /// symlink exactly as [`Self::anchor`] does.
+    pub(crate) fn anchor_link(&self, rel: &str) -> Result<Anchor, HarnessError> {
+        self.anchor_inner(rel, false, true)
+    }
+
+    fn anchor_inner(
+        &self,
+        rel: &str,
+        allow_create: bool,
+        allow_final_symlink: bool,
+    ) -> Result<Anchor, HarnessError> {
+        let rel = relative_argument(self.root(), rel)?;
+        let rel = rel.as_ref();
+        let comps = argument_components(self.root(), rel)?;
         let mut dir: Arc<OwnedFd> = Arc::clone(self.root_dir_fd());
         let mut path = self.root().to_path_buf();
         let mut depth = 0usize;
@@ -39,6 +58,7 @@ impl Workspace {
                 if depth == 0 {
                     return Err(HarnessError::PathOutsideRoot {
                         path: rel.to_string(),
+                        root: self.root().display().to_string(),
                     });
                 }
                 depth -= 1;
@@ -76,9 +96,9 @@ impl Workspace {
                                 path: rel.to_string(),
                             });
                         }
-                        // A real directory that failed to open: the old
-                        // walk would have proceeded and failed at the next
-                        // component with the same permission error.
+                        // A real directory that failed to open: a walk that
+                        // continued would fail at the next component with the
+                        // same permission error.
                         return Err(io_error("scan workspace path", &path, error));
                     }
                     if error.kind() != io::ErrorKind::NotFound {
@@ -115,7 +135,7 @@ impl Workspace {
                 .into()
         };
         let stat = match stat_at(dir.as_raw_fd(), &name) {
-            Ok(stat) if stat.is_symlink() => {
+            Ok(stat) if stat.is_symlink() && !allow_final_symlink => {
                 return Err(HarnessError::SymlinkRefused {
                     path: rel.to_string(),
                 });

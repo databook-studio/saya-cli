@@ -8,9 +8,30 @@ use crate::interactive::tui::types::App;
 use crate::interactive::tui::wrap::{cell_width, truncate_cells};
 
 /// The bar's cancel hint, kept verbatim in one place: the busy row reserves
-/// exactly this before anything else is sized, so no other span can push it
-/// off the bar.
+/// the painted hint's width ([`busy_hint`]'s choice) before anything else is
+/// sized, so no other span can push it off the bar.
 pub(super) const CANCEL_HINT: &str = "  (Esc to cancel) ";
+
+/// The busy row's detach hint, twin of [`CANCEL_HINT`]: what a running
+/// direct-SQL task or saved-investigation replay offers. Neither has a
+/// cancellation token — Esc detaches and the result is discarded — so the
+/// hint must not promise a cancellation Esc does not perform. Both words are
+/// six cells, so the width plan reserves the same room either way.
+pub(super) const DETACH_HINT: &str = "  (Esc to detach) ";
+
+/// The busy row's stop hint: what Esc actually does to what is in flight. A
+/// direct-SQL task or a replay running off-thread reads [`DETACH_HINT`]; an
+/// agent stream — which owns a real cancellation token — keeps
+/// [`CANCEL_HINT`]. `/compact` runs off-thread with no Esc arm either way, so
+/// it keeps the standing wording; this decision covers exactly the two key
+/// paths that detach (see `App::detach_in_flight_query`).
+pub(super) fn busy_hint(app: &App) -> &'static str {
+    if app.sql_task.is_some() || app.replay_task.is_some() {
+        DETACH_HINT
+    } else {
+        CANCEL_HINT
+    }
+}
 
 /// The busy row's separator between the action phrase and the status detail.
 pub(super) const SEPARATOR: &str = "· ";
@@ -43,8 +64,8 @@ pub(super) fn bare_action_width(activity: Option<&str>) -> usize {
 /// The cancel hint and the fixed chrome it rides with (spinner frame, elapsed
 /// time, separator) come off the frame width first — the hint is the one
 /// affordance naming how to stop a running request, so it is never what the
-/// row drops (audit F06: it painted last and paid for every other span's
-/// overflow). What remains is spent in the shedding hierarchy:
+/// row drops — an affordance painted last pays for every other span's
+/// overflow. What remains is spent in the shedding hierarchy:
 ///
 /// 1. the routine status detail sheds, trailing segment first, before the
 ///    action truncates — the context line's drop-rank scale is the design's
@@ -55,10 +76,10 @@ pub(super) fn bare_action_width(activity: Option<&str>) -> usize {
 /// 3. the new-activity notice sheds only when even the bare action cannot
 ///    fit beside it.
 ///
-/// The old floor (`MIN_ACTION_ROOM`, 63) is dropped rather than clamped:
-/// with the hint reserved first and the room measured against the real
-/// frame, the floor's one remaining effect was to defy the shed and overrun
-/// the row — the defect itself. Where the frame cannot afford even the
+/// There is no fixed floor (`MIN_ACTION_ROOM`, 63) to clamp against: with
+/// the hint reserved first and the room measured against the real frame, a
+/// floor would defy the shed and overrun the row. Where the frame cannot
+/// afford even the
 /// pinned 63-char target, [`action_text`]'s own floor (`MIN_DETAIL_CHARS`)
 /// falls back to the bare tool name, the honest degradation the design
 /// already owns.
@@ -72,21 +93,31 @@ pub(super) struct BusyRowPlan {
     pub status_segments: usize,
 }
 
-/// Reserves the hint and its fixed chrome off the frame width, then spends
-/// what is left down the shedding hierarchy. The caller passes the status
-/// detail's per-segment widths so the arithmetic stays here, beside the
-/// constants the row is measured with.
+/// The busy row's fixed chrome, measured in cells by the caller: reserved
+/// off the frame width before anything elastic is sized. `hint` is the
+/// painted hint's width ([`busy_hint`]'s decision), so the plan reserves the
+/// one that actually paints rather than a constant.
+pub(super) struct BusyChrome {
+    pub lead: usize,
+    pub spinner: usize,
+    pub elapsed: usize,
+    pub hint: usize,
+}
+
+/// Reserves the fixed chrome ([`BusyChrome`] plus the separator) off the
+/// frame width, then spends what is left down the shedding hierarchy. The
+/// caller passes the status detail's per-segment widths so the arithmetic
+/// stays here, beside the constants the row is measured with.
 pub(super) fn busy_row_plan(
     frame_width: usize,
-    lead_width: usize,
-    spinner_width: usize,
-    elapsed_width: usize,
+    chrome: BusyChrome,
     segment_widths: &[usize],
     full_action_width: usize,
     bare_action_width: usize,
 ) -> BusyRowPlan {
-    let chrome = spinner_width + elapsed_width + cell_width(SEPARATOR) + cell_width(CANCEL_HINT);
-    let base = frame_width.saturating_sub(chrome);
+    let lead_width = chrome.lead;
+    let chrome_width = chrome.spinner + chrome.elapsed + cell_width(SEPARATOR) + chrome.hint;
+    let base = frame_width.saturating_sub(chrome_width);
     // Everything fits: paint all of it, notice included.
     if lead_width + full_action_width + segment_widths.iter().sum::<usize>() <= base {
         return BusyRowPlan {

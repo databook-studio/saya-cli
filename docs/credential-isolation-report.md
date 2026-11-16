@@ -3,9 +3,9 @@
 - **Status:** measured findings from the M5-7 credential-isolation battery
   (`crates/saya-harness/tests/credential_isolation.rs`, 6 tests), in the
   ADR-0003 shape (measured facts → what changed → sign-off question).
-  Companion to `docs/run-program-escape-report.md` (M5-4); that document's
-  discipline — a deny counts only with evidence, and a plausible
-  configuration is not a fact — applies here.
+  Companion to the M5-4 escape battery; that battery's discipline — a deny
+  counts only with evidence, and a plausible configuration is not a fact —
+  applies here.
 - **Date:** 2026-09-11
 - **Host:** the same macOS 26.6.2 (Darwin 25.6.0, arm64) host the M5-3/M5-4
   measurements ran on. The battery is macOS-gated like the escape battery:

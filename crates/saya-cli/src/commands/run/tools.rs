@@ -6,27 +6,29 @@
 //! The composite dispatches the four fixed harness tool names to their
 //! member executors and falls through to `DatabaseTools` for everything
 //! else — whose typed `UnsupportedTool` refusal for unknown names makes the
-//! fall-through total and predictable. All three tool members are wired:
-//! scratch (S1), fetch (S2), and the runner (S3) — each rides the composites
-//! of the steps that asked for its scope, and only those, each built from
-//! that step's own narrowed scope.
+//! fall-through total and predictable. The scope-gated member is wired the
+//! same way — fetch rides the composite of the steps that asked for its
+//! scope, and only those, each built from that step's own narrowed
+//! scope. The command door is no scope: every step carries `shell`, the same
+//! tool the coding root advertises, composed once per run over the run's
+//! workspace.
 
 use std::sync::Arc;
 
-use saya_agent::CancellationToken;
+use saya_agent::{ApprovalPolicy, CancellationToken, ToolExecutor};
 use saya_harness::engine::StepToolset;
 use saya_harness::fetch::{
     DownloadBudget, DownloadLimits, FetchDestination, FetchLimits, FetchPolicy, FetchTools,
     FetchTransport, http_download_definition, http_fetch_definition,
 };
-use saya_harness::runner::{RunProgram, SharedCredentialSource, StaticCredentialSource};
-use saya_harness::scratch::ScratchSql;
+use saya_harness::runner::HostPolicy;
 use saya_harness::workspace::Workspace;
 use saya_types::StepSpec;
 
+use super::step_tools::RunStepTools;
+use crate::agent::tools::consent::Prompt;
+use crate::agent::tools::shell_policy::{self, Background, ShellPlacement, ShellTool};
 use crate::agent::tools::{DatabaseTools, RunTools};
-
-use super::runner::RunRunner;
 
 /// The run-level fetch wiring, built once per run at assemble when — and
 /// only when — the run approved a fetch scope: the shared transport and the
@@ -39,31 +41,78 @@ pub(super) struct RunFetch {
     pub(super) budget: DownloadBudget,
 }
 
+/// Builds the run's `shell`: the same tool the coding root advertises
+/// (`agent::tools::shell_policy`), composed over the run's workspace. `None`
+/// where the mode is `never`, or where the mode is `read-only` and this host
+/// proves no sandbox — a read-only run has no shell that could reach outside
+/// one. `operator` is the approver a host call under `ask` reaches; a
+/// headless run has none, so a host call falls back to the sandbox when one
+/// is proven and is refused with a reason when none is.
+pub(super) fn run_shell(
+    workspace: &Arc<Workspace>,
+    policy: ApprovalPolicy,
+    prompt: Option<Prompt>,
+    host: HostPolicy,
+    cancellation: CancellationToken,
+    rules: saya_config::CommandRules,
+) -> Option<Arc<ShellTool>> {
+    if !shell_policy::advertised(policy) {
+        return None;
+    }
+    shell_policy::compose(
+        ShellPlacement::root(workspace.root()),
+        policy,
+        prompt,
+        host,
+        cancellation,
+        // A run's shell outlives its steps but not its process: the family
+        // stays the coding root's, where a job owns what it started.
+        Background::Off,
+        rules,
+    )
+    .map(Arc::new)
+}
+
 /// The run-level collaborators the toolset builder narrows per step: what
 /// the composition root built once per run (the shared database tools, the
 /// scope-gated admissions — already `None` unless the run approved the
-/// scope — the workspace, the privacy gate, and the cancellation the
-/// runner's children answer). The composite each toolset wraps is the
-/// shared `RunTools` (`agent::tools`), composed per step from the step's
-/// own capabilities, so a step without a member refuses its names as
-/// unknown tools before any permit is consulted.
+/// scope — the run's shell, the workspace, and the privacy gate). The
+/// composite each toolset wraps is the shared `RunTools` (`agent::tools`),
+/// composed per step from the step's own capabilities, so a step without a
+/// member refuses its names as unknown tools before any permit is consulted.
 pub(super) struct ToolsetInputs<'a> {
     pub(super) database: &'a Arc<DatabaseTools>,
-    pub(super) scratch: Option<&'a Arc<ScratchSql>>,
     pub(super) fetch: Option<&'a RunFetch>,
-    pub(super) runner: Option<&'a RunRunner>,
+    /// The run's `shell`, built once per run. `None` means this run has no
+    /// shell at all (mode `never`, or read-only with no proven sandbox), so
+    /// no step advertises it.
+    pub(super) shell: Option<&'a Arc<ShellTool>>,
+    /// The run's MCP lane, built once per run from the user's configured
+    /// servers. `None` means the run's mode reaches no server, or the
+    /// configuration names none, so no step advertises an `mcp__` tool.
+    pub(super) mcp: Option<&'a Arc<crate::mcp::client::McpTools>>,
     pub(super) workspace: &'a Arc<Workspace>,
     pub(super) allow_query_data: bool,
-    pub(super) cancellation: &'a CancellationToken,
+    /// The one `[tools] allow` list this invocation resolved. Applied after
+    /// each step's composition, so it can only take a member away: a name it
+    /// holds that this step never composed stays refused, exactly as before.
+    pub(super) tools: &'a saya_config::ResolvedTools,
+    /// The run's hook engine, built once per run from the user's `[hooks]`
+    /// table. `None` where the user configured none, or where the run's
+    /// admitted mode keeps no host lane — a hook is a host command, and a
+    /// `read-only` or `never` run has no lane to run one in.
+    pub(super) hooks: Option<&'a Arc<crate::agent::hooks::Hooks>>,
 }
 
 /// Builds one toolset per plan step, aligned with the steps, prebuilt by the
 /// composition root after the plan binds so admission failures surface
 /// before the run starts. Each toolset is built from that step's own
 /// capabilities — the thing the approval view shows — so a step that did
-/// not ask for a tool never has its definition, and the run-level
+/// not ask for a scope never has its definition, and the run-level
 /// admissions narrow again per step. The episode driver's own filter stays
-/// as the second lock behind construction.
+/// as the second lock behind construction. The run's `shell` is the one
+/// member every step carries, and the run's hooks — when the user stated
+/// any — sit in front of every step's composite.
 ///
 /// No state store is passed, so contract tools are absent from a run's
 /// universe by construction — a run episode is a synthetic conversation,
@@ -71,41 +120,36 @@ pub(super) struct ToolsetInputs<'a> {
 pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<StepToolset> {
     let ToolsetInputs {
         database,
-        scratch,
         fetch,
-        runner,
+        shell,
+        mcp,
         workspace,
         allow_query_data,
-        cancellation,
+        tools: tools_allow,
+        hooks,
     } = inputs;
-    // The credential seam a runner member carries: nothing declares runner
-    // credentials yet, so the resolver resolves nothing — the seam is here
-    // so a declaration surface rides the same construction.
-    let resolver: SharedCredentialSource = Arc::new(StaticCredentialSource::new(Vec::new()));
+    // The notebook edit is offered only where the run's workspace actually
+    // holds a notebook. A step's list is fixed for the run — the toolsets are
+    // built once, before the first episode — so the bounded presence check is
+    // made once here, before any step is composed, and a workspace with no
+    // notebook pays the model no context for the tool. `read` of a `.ipynb`
+    // keeps working either way; a call to the edit while it is not offered is
+    // refused as an unknown tool, the same refusal a member this run never
+    // composed gets.
+    let notebooks = crate::agent::tools::notebook_present(Some(workspace.as_ref()));
     steps
         .iter()
         .map(|step| {
-            // A run's approval is its approved scopes, and
-            // `permit_external_effects` is derived from them (fetch or
-            // runner — the same egress union the episode driver derives its
-            // permit from; the interpreter family deliberately carries none
-            // because an interpreter child is wired with an empty
-            // `net_allow`): a step that approved no egress never approved a
-            // chart either, so `render_chart` stays hidden there — the same
-            // advertised-but-always-refused defect the session surface had.
-            let mut definitions = DatabaseTools::definitions_with_chart_save(
+            // A run's approval is its approved scopes: the database surface
+            // and the step's own write permit. The `render_chart` model tool
+            // is advertised nowhere, so no egress-derived permit is
+            // consulted here.
+            let mut definitions = DatabaseTools::definitions(
                 allow_query_data,
                 false,
                 false,
                 step.capabilities.workspace_write,
-                step.capabilities.fetch.is_some() || step.capabilities.runner.is_some(),
-                step.capabilities.workspace_write,
             );
-            let scratch = scratch.filter(|_| step.capabilities.scratch);
-            if scratch.is_some() {
-                definitions.push(ScratchSql::definition());
-                definitions.push(ScratchSql::import_definition());
-            }
             // The step's fetch member: its own policy built from the
             // destinations *this step* declared — never the run's union —
             // over the run's shared transport, workspace, and wallet.
@@ -114,52 +158,69 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
                 definitions.push(http_fetch_definition());
                 definitions.push(http_download_definition());
             }
-            // The step's runner member: the run's proven spawn shared by
-            // clone (cloning grants nothing), the *step's* narrowed scopes
-            // — never the run's union — the resolved default timeout, and
-            // the run's cancellation. Both doors ride the one tool: the
-            // step's `RunnerScope` opens the runner door, its
-            // `InterpreterScope` the interpreter door, and each is `None`
-            // when the step did not ask, so a step that asked for one never
-            // holds the other.
-            let runner = runner
-                .filter(|_| {
-                    step.capabilities.runner.is_some() || step.capabilities.interpreter.is_some()
-                })
-                .map(|wiring| {
-                    let runner_scope = step.capabilities.runner.clone();
-                    let interpreter_scope = step.capabilities.interpreter.clone();
-                    if runner_scope.is_none() && interpreter_scope.is_none() {
-                        unreachable!(
-                            "the builder only builds a runner member for a step that asked"
-                        );
-                    }
-                    Arc::new(
-                        RunProgram::for_step(
-                            wiring.spawn.clone(),
-                            runner_scope,
-                            interpreter_scope,
-                            wiring.timeout,
-                            Arc::clone(&resolver),
-                        )
-                        .with_cancellation(cancellation.clone()),
-                    )
-                });
-            if let Some(runner) = &runner {
-                definitions.push(runner.definition());
+            // The step's command door: the run's one shell, shared by clone
+            // (cloning grants nothing — the composition already decided what
+            // lanes exist), advertised by every step.
+            if shell.is_some() {
+                definitions.push(shell_policy::definition());
             }
-            StepToolset {
-                executor: Arc::new(
+            // The configured servers' tools, appended after the members that
+            // existed before them: a mode that reaches no server composed no
+            // lane, and the lane's own reports say which servers failed.
+            if let Some(mcp) = mcp {
+                definitions.extend(mcp.definitions());
+            }
+            // A run step's notebook edit is a member of the step's composition,
+            // not a per-turn decision: this run's workspace holds no notebook,
+            // so the step does not offer it at all. Dropping the definition
+            // leaves every other tool's position — and so the request's cached
+            // prefix — exactly as it was.
+            if !notebooks {
+                crate::agent::tools::drop_notebook_edit(&mut definitions);
+            }
+            crate::agent::tools::narrow(&mut definitions, tools_allow);
+            // The step's own goal is its request text: `list` and the other
+            // default-suppressed tools appear only when it asks for them, or
+            // when the user named them in `[tools] allow`.
+            let evidence =
+                crate::agent::tools::advertisement::Evidence::new(step.goal.clone(), false);
+            definitions.retain(|definition| {
+                crate::agent::tools::advertisement::advertised(
+                    &evidence,
+                    tools_allow,
+                    &definition.name,
+                )
+            });
+            let step_tools: Arc<dyn ToolExecutor> = Arc::new(RunStepTools {
+                shell: shell.cloned(),
+                mcp: mcp.cloned(),
+                notebook_edit: notebooks,
+                evidence,
+                tools: tools_allow.clone(),
+                inner: Arc::new(
                     RunTools::compose(
                         Arc::clone(database),
-                        scratch.cloned(),
                         fetch.map(|run_fetch| {
                             Arc::new(fetch_tools(run_fetch, &step.capabilities, workspace))
                         }),
-                        runner,
                     )
-                    .with_chart_save_permit(step.capabilities.workspace_write),
+                    .with_tools(tools_allow.clone()),
                 ),
+            });
+            // The run's hooks sit outermost, so the step's own refusals — a
+            // member this step never composed, a name the list removed, the
+            // shell's own lane decision — have all already happened by the
+            // time a `PreToolUse` hook sees the call. A hook can refuse a
+            // call here; it can never let one through.
+            let executor = match hooks {
+                Some(hooks) => Arc::new(crate::agent::hooks::HookGate::new(
+                    Arc::clone(hooks),
+                    step_tools,
+                )) as Arc<dyn ToolExecutor>,
+                None => step_tools,
+            };
+            StepToolset {
+                executor,
                 definitions,
             }
         })

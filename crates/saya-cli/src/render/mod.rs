@@ -1,30 +1,43 @@
+use crate::config::doctor_task::TaskCheck;
 use saya_agent::{
     KnowledgeOutcome, LearningSkipReason, OverrideFindingDto, ProposedClaimDto,
-    SuppliedContractDto, TokenUsage, ToolEffect, UsageCall, read_only_permits,
+    ProviderRecoveryPhase, ProviderRecoveryReason, SuppliedContractDto, TokenUsage, ToolEffect,
+    UsageCall, read_only_permits,
 };
 use saya_config::OutputFormat;
 use saya_types::{QueryResult, SchemaTree};
 use serde::Serialize;
+mod coding;
 mod contract_view;
 mod io_view;
+mod render_clarification;
 mod render_contract;
 mod render_delta;
+mod render_doctor;
 mod render_io;
 mod render_json;
+// The scripted run's one terminal result: the text-mode warning shape and
+// the json/ndjson `turn_result` rendering.
 mod render_learned;
 mod render_memory;
+pub(crate) mod render_turn;
 /// The shared tool-call grouper and shaper both adapters consume: the piped
-/// text renderer buffers through it, the TUI transcript follows in slice 3.
+/// text renderer buffers through it, the TUI transcript follows.
 pub(crate) mod tool_groups;
+pub(crate) use coding::render_coding_result;
 pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
 pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportView};
+/// Re-exported for the TUI, which renders [`AgentEvent::ClarificationNeeded`]
+/// as the transcript's Question block, and for the ask-path tests, which pin
+/// the block text — one shaper, both surfaces.
+pub(crate) use render_clarification::clarification_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeProposed`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_learned::knowledge_learned_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeOverridden`] in
-/// `apply_event` and shares this shaper so the wording lives in one place (A1).
+/// `apply_event` and shares this shaper so the wording lives in one place.
 pub(crate) use render_memory::knowledge_overridden_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
 /// `apply_event` and shares this shaper so the wording lives in one place.
@@ -34,13 +47,24 @@ pub(crate) use render_memory::knowledge_supplied_text;
 pub(crate) use render_memory::learning_disabled_text;
 /// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningSkipped`]
 /// in `apply_event` and shares this shaper so the wording lives in one place
-/// (packet-54).
 pub(crate) use render_memory::learning_skipped_text;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,
     Json,
     Ndjson,
+}
+
+/// Stable machine label for one possible effect of an incomplete run step.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeEffectCode {
+    #[serde(rename = "write")]
+    WorkspaceWrite,
+    Fetch,
+    ExternalSideEffect,
+    LocalStateWrite,
+    Unknown,
 }
 impl From<crate::cli::FormatArg> for RenderFormat {
     fn from(value: crate::cli::FormatArg) -> Self {
@@ -60,427 +84,29 @@ impl From<OutputFormat> for RenderFormat {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "event", rename_all = "snake_case")]
-pub enum TerminalEvent {
-    AssistantText {
-        text: String,
-    },
-    ToolRequested {
-        name: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        detail: Option<String>,
-        /// The tool's **declared effect**, carried from the event the loop
-        /// emitted so the text line's effect claim is derived from the same
-        /// declaration the approval gate reads — never from the tool's name.
-        /// Absent only when no declaration exists (an unknown tool, which
-        /// cannot run), and skipped on the wire then, so a stream that never
-        /// declared a tool keeps the shape it always had.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        effect: Option<ToolEffect>,
-    },
-    ToolCompleted {
-        name: String,
-        summary: String,
-    },
-    ToolDenied {
-        name: String,
-        reason: String,
-    },
-    /// What memory **supplied** to the turn, emitted once before the provider
-    /// call. Carries the outcome, the supplied contracts (claim DTOs,
-    /// no opaque identity), and the count the bounds dropped. Text is shaped in
-    /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
-    KnowledgeSupplied {
-        outcome: KnowledgeOutcome,
-        contracts: Vec<SuppliedContractDto>,
-        dropped_by_bounds: usize,
-    },
-    /// One fact SAYA came away from the turn knowing (`AgentEvent::KnowledgeProposed`).
-    /// Emitted once per learned claim, after the answer. Text is shaped in
-    /// [`render_learned`] and carries no claim id — learning is not something the
-    /// user asked for, so it must not hand them a hash to manage. JSON/NDJSON keep
-    /// the DTO whole, id included, for machine consumers.
-    KnowledgeLearned {
-        claim: ProposedClaimDto,
-    },
-    /// A confirmed claim the turn's SQL **contradicted**. Emitted at
-    /// most once per turn, after the loop, carrying every finding the detector
-    /// raised. The finding says the SQL **referenced** columns, never that it
-    /// **used** them — the extractor cannot prove role. Text is shaped in
-    /// [`render_memory`]; JSON/NDJSON fall out of the serde derive.
-    KnowledgeOverridden {
-        findings: Vec<OverrideFindingDto>,
-    },
-    /// Post-turn extraction was skipped after the turn succeeded — no memory
-    /// was recorded, and the line says so. Trails the answer.
-    /// Text is shaped in [`render_memory`]; JSON/NDJSON fall out of the serde
-    /// derive.
-    KnowledgeLearningSkipped {
-        reason: LearningSkipReason,
-    },
-    /// The extraction circuit breaker tripped this turn — no more extraction
-    /// requests this session (`AgentEvent::KnowledgeLearningDisabled`).
-    /// Trails the answer, after `KnowledgeLearningSkipped`. Text is shaped
-    /// in [`render_memory`]; JSON/NDJSON fall out of the serde derive.
-    KnowledgeLearningDisabled {
-        model: String,
-        misses: u32,
-    },
-    Complete,
-    /// The provider stream failed mid-answer and the turn is being retried
-    /// (`AgentEvent::TurnReset`). The partial answer printed so far is
-    /// discarded; the retry re-streams the full answer. Carried on the
-    /// JSON/NDJSON stream under its own tag so a machine consumer can replace
-    /// the text it accumulated instead of appending; the text adapter prints a
-    /// one-line notice, because an answer that silently restarts mid-stream
-    /// would read as the model repeating itself.
-    TurnReset,
-    /// The SQL the model designated as the answering query for the turn.
-    /// Carried on the NDJSON stream so a harness can pair the answer with its
-    /// query; silent in the text adapter, where the SQL was already shown when
-    /// the query ran.
-    AnswerDesignated {
-        sql: String,
-    },
-    /// The consensus decision over multiple candidate attempts — emitted once,
-    /// after all attempts, whenever more than one attempt ran. Carries the
-    /// winning SQL (or `None` when the attempts disagreed with no tie-break)
-    /// and the vote tallies. Text is shaped inline; JSON/NDJSON fall out of the
-    /// serde derive.
-    ConsensusDecided {
-        sql: Option<String>,
-        attempts: usize,
-        voted: usize,
-        votes: usize,
-        margin: usize,
-        tied: bool,
-        probe_broke_tie: bool,
-    },
-    /// The token counts one provider call reported (`AgentEvent::Usage`),
-    /// named by `call` so a consumer can keep the answering rounds' cost apart
-    /// from the extraction call's. Carried on the JSON/NDJSON stream for
-    /// machine consumers; the text adapter renders nothing, because the
-    /// interactive surfaces for it already exist (the per-turn token line and
-    /// `/usage`) and a pipe's reader has the answer above it.
-    Usage {
-        call: UsageCall,
-        usage: TokenUsage,
-    },
-    Result {
-        message: String,
-    },
-    QueryResult {
-        result: QueryResult,
-    },
-    Schema {
-        schema: SchemaTree,
-    },
-    NotImplemented {
-        feature: String,
-    },
-    Diagnostic {
-        message: String,
-    },
-    Error {
-        message: String,
-    },
-    ContractList {
-        contracts: Vec<ContractView>,
-    },
-    ContractShow {
-        contract: ContractView,
-    },
-    ContractChanged {
-        claim_id: String,
-        action: String,
-        status: String,
-    },
-    ContractRemembered {
-        /// Carried for machine consumers only. The text renderer never prints
-        /// it: a 64-character hash is the system's business, and a script that
-        /// remembers then forgets still needs a handle without a second call.
-        claim_id: String,
-        object: String,
-        kind: String,
-        value: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        column: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        previous: Option<String>,
-        action: String,
-        status: String,
-    },
-    ContractQueue {
-        items: Vec<ContractQueueItemView>,
-    },
-    ContractImport {
-        report: ContractImportView,
-    },
-    ContractExport {
-        report: ContractExportView,
-    },
-}
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rendered {
-    pub stdout: String,
-    pub stderr: String,
+/// How a scripted (`--turn-file`) turn ended, named in the one
+/// `turn_result` terminal event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnStatus {
+    Completed,
+    Failed,
+    Cancelled,
+    BudgetStopped,
 }
 
-pub fn render_event(event: &TerminalEvent, format: RenderFormat) -> Rendered {
-    match format {
-        RenderFormat::Text => text_event(event),
-        RenderFormat::Json | RenderFormat::Ndjson => render_json::render(event),
-    }
-}
+include!("render_mod/terminal_event.rs");
+include!("render_mod/render_entry.rs");
+include!("render_mod/text_adapter.rs");
+include!("render_mod/recovery_labels.rs");
+#[cfg(test)]
+#[path = "resume_event_tests.rs"]
+mod resume_event_tests;
 
-pub(crate) fn sanitize_terminal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\n' | '\t' => out.push(c),
-            '\x00'..='\x1F' | '\x7F' | '\u{0080}'..='\u{009F}' => {}
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Shapes the `ToolRequested` line: the one a pipe reader sees *before* a tool
-/// runs, naming what the call may do to their machine. The `read-only` claim
-/// is derived from the tool's **declared effect** through
-/// [`read_only_permits`] — the same predicate the approval policy gates on —
-/// so the line and the gate cannot drift: a workspace-write tool (including
-/// `scratch_sql`, which declares the same effect), a network-reaching tool,
-/// or any future effect that fails the predicate is never announced as
-/// read-only.
-///
-/// The other half of the wording is a deliberate non-claim: when the
-/// declaration does not prove read-only, the line says only "Using tool".
-/// A positive per-effect label ("writing the workspace", "network access")
-/// would need a match over the effect variants kept current by hand, and its
-/// default arm would be exactly the defect this fixes — a new variant silently
-/// rendering under the wrong claim. "Read-only" is the one claim the declared
-/// effect proves cheaply, and only that one is made; the detail line (the SQL,
-/// the path) and the tool's name carry what the call actually does.
-fn tool_requested_text(name: &str, detail: Option<&str>, effect: Option<&ToolEffect>) -> String {
-    let head = if effect.is_some_and(read_only_permits) {
-        format!("Using read-only tool: {name}\n")
-    } else {
-        format!("Using tool: {name}\n")
-    };
-    match detail {
-        Some(detail) => format!("{head}  {detail}\n"),
-        None => head,
-    }
-}
-
-fn text_event(event: &TerminalEvent) -> Rendered {
-    let rendered = match event {
-        TerminalEvent::Diagnostic { message } | TerminalEvent::Error { message } => Rendered {
-            stdout: String::new(),
-            stderr: format!("{message}\n"),
-        },
-        TerminalEvent::AssistantText { text } => render_delta::text(text),
-        TerminalEvent::ToolRequested {
-            name,
-            detail,
-            effect,
-        } => Rendered {
-            stdout: tool_requested_text(name, detail.as_deref(), effect.as_ref()),
-            stderr: String::new(),
-        },
-        TerminalEvent::ToolCompleted { name, summary } => Rendered {
-            stdout: format!("{name}: {summary}\n"),
-            stderr: String::new(),
-        },
-        TerminalEvent::ToolDenied { name, reason } => Rendered {
-            stdout: format!("Approval denied for {name}: {reason}\n"),
-            stderr: String::new(),
-        },
-        TerminalEvent::KnowledgeSupplied {
-            outcome,
-            contracts,
-            dropped_by_bounds,
-        } => Rendered {
-            stdout: render_memory::knowledge_supplied_text(*outcome, contracts, *dropped_by_bounds),
-            stderr: String::new(),
-        },
-        TerminalEvent::KnowledgeLearned { claim } => Rendered {
-            stdout: render_learned::knowledge_learned_text(claim),
-            stderr: String::new(),
-        },
-        TerminalEvent::KnowledgeOverridden { findings } => Rendered {
-            stdout: render_memory::knowledge_overridden_text(findings),
-            stderr: String::new(),
-        },
-        TerminalEvent::KnowledgeLearningSkipped { reason } => Rendered {
-            stdout: render_memory::learning_skipped_text(*reason),
-            stderr: String::new(),
-        },
-        TerminalEvent::KnowledgeLearningDisabled { model, misses } => Rendered {
-            stdout: render_memory::learning_disabled_text(model, *misses),
-            stderr: String::new(),
-        },
-        TerminalEvent::Complete => Rendered {
-            stdout: "\n".into(),
-            stderr: String::new(),
-        },
-        TerminalEvent::TurnReset => Rendered {
-            stdout: "provider stream interrupted — retrying\n".into(),
-            stderr: String::new(),
-        },
-        TerminalEvent::AnswerDesignated { .. } => Rendered {
-            stdout: String::new(),
-            stderr: String::new(),
-        },
-        TerminalEvent::ConsensusDecided {
-            sql,
-            attempts,
-            voted,
-            votes,
-            margin: _,
-            tied,
-            probe_broke_tie,
-        } => Rendered {
-            stdout: consensus_text(
-                sql.as_deref(),
-                *attempts,
-                *voted,
-                *votes,
-                *tied,
-                *probe_broke_tie,
-            ),
-            stderr: String::new(),
-        },
-        TerminalEvent::Usage { .. } => Rendered {
-            stdout: String::new(),
-            stderr: String::new(),
-        },
-        TerminalEvent::Result { message } => Rendered {
-            stdout: format!("{message}\n"),
-            stderr: String::new(),
-        },
-        TerminalEvent::QueryResult { result } => Rendered {
-            stdout: query_text(result),
-            stderr: String::new(),
-        },
-        TerminalEvent::Schema { schema } => Rendered {
-            stdout: format!("{}\n", schema_text(schema)),
-            stderr: String::new(),
-        },
-        TerminalEvent::NotImplemented { feature } => Rendered {
-            stdout: format!("Not implemented: {feature}\n"),
-            stderr: String::new(),
-        },
-        TerminalEvent::ContractList { contracts } => render_contract::list(contracts),
-        TerminalEvent::ContractShow { contract } => render_contract::show(contract),
-        TerminalEvent::ContractChanged {
-            claim_id,
-            action,
-            status,
-        } => render_contract::changed(claim_id, action, status),
-        TerminalEvent::ContractRemembered {
-            claim_id: _,
-            object,
-            kind,
-            value,
-            column,
-            previous,
-            action,
-            status,
-        } => render_contract::remembered(
-            object,
-            kind,
-            value,
-            column.as_deref(),
-            previous.as_deref(),
-            action,
-            status,
-        ),
-        TerminalEvent::ContractQueue { items } => render_contract::queue(items),
-        TerminalEvent::ContractImport { report } => render_io::import(report),
-        TerminalEvent::ContractExport { report } => render_io::export(report),
-    };
-    Rendered {
-        stdout: sanitize_terminal(&rendered.stdout),
-        stderr: sanitize_terminal(&rendered.stderr),
-    }
-}
-
-fn query_text(result: &QueryResult) -> String {
-    let mut output = result.columns.join("\t");
-    if !output.is_empty() {
-        output.push('\n');
-    }
-    for row in &result.rows {
-        let value = match row {
-            serde_json::Value::Array(values) => values
-                .iter()
-                .map(display_value)
-                .collect::<Vec<_>>()
-                .join("\t"),
-            value => display_value(value),
-        };
-        output.push_str(&value);
-        output.push('\n');
-    }
-    if result.truncated {
-        output.push_str("[truncated]\n");
-    }
-    output
-}
-
-fn display_value(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(value) => value.clone(),
-        value => value.to_string(),
-    }
-}
-
-/// Shapes the `ConsensusDecided` line: how many attempts ran, how many voted,
-/// and — when there is a winner — which SQL is believed. The line trails the
-/// answer, naming the picked query so a reader knows which attempt's prose to
-/// trust. No result rows; SQL text only, like `AnswerDesignated`.
-fn consensus_text(
-    sql: Option<&str>,
-    attempts: usize,
-    voted: usize,
-    votes: usize,
-    tied: bool,
-    probe_broke_tie: bool,
-) -> String {
-    let head = format!("consensus · {attempts} attempts, {voted} voted, {votes} agreed");
-    match sql {
-        Some(sql) => {
-            let how = if probe_broke_tie {
-                "tie broken by evidence"
-            } else {
-                "agreed"
-            };
-            format!("{head} · {how}, believing: {sql}\n")
-        }
-        None if tied => format!("{head} · tied, no winner\n"),
-        None => format!("{head} · no winner\n"),
-    }
-}
-
-fn schema_text(schema: &SchemaTree) -> String {
-    schema
-        .databases
-        .iter()
-        .flat_map(|database| {
-            database.schemas.iter().flat_map(move |schema| {
-                schema
-                    .tables
-                    .iter()
-                    .map(move |table| format!("{}.{}.{}", database.name, schema.name, table.name))
-            })
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
+include!("render_mod/query_and_schema.rs");
+#[cfg(test)]
+#[path = "print_tests.rs"]
+mod print_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -575,6 +201,24 @@ mod tests {
         assert_eq!(
             text_rendered_col.stdout,
             "replaced column-role for pagila.public.rental (col: rental_date): \"timestamp\" -> \"event_time\"\n"
+        );
+    }
+
+    #[test]
+    fn provider_recovery_renders_the_fixed_tool_protocol_reason() {
+        let rendered = render_event(
+            &TerminalEvent::ProviderRecovery {
+                phase: ProviderRecoveryPhase::NotRetried,
+                reason: ProviderRecoveryReason::ToolCallProtocol,
+                attempt: 1,
+                limit: 4,
+            },
+            RenderFormat::Text,
+        );
+
+        assert_eq!(
+            rendered.stdout,
+            "provider recovery: not retried attempt 1 of 4 (invalid tool-call identifiers)\n"
         );
     }
 }

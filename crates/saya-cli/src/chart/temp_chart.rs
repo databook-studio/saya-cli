@@ -1,10 +1,10 @@
-//! Reserved automatic chart files (DESIGN §6.6).
+//! Reserved automatic chart files.
 //!
 //! [`TempChart`] reserves a fresh private path with `create_new` and keeps
 //! the resulting handle open through HTML writing. Writing through the
 //! reserved descriptor — never by reopening the path — closes the
 //! reservation/output replacement window: a symlink swapped in after
-//! reservation cannot redirect the write (A006).
+//! reservation cannot redirect the write.
 
 use std::collections::hash_map::RandomState;
 use std::fs::{File, OpenOptions};
@@ -63,15 +63,6 @@ pub(crate) fn reserve_temp_chart() -> Result<TempChart, String> {
         }
     }
     Err("failed to allocate a unique chart file".into())
-}
-
-/// Test-only serialization for the shared session chart registry: every
-/// chart test takes this before touching recorded files.
-#[cfg(test)]
-pub(crate) fn lock_charts_for_test() -> std::sync::MutexGuard<'static, ()> {
-    use std::sync::Mutex;
-    static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap()
 }
 
 #[cfg(test)]

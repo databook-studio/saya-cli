@@ -1,9 +1,9 @@
-//! The busy bar's cell accounting (re-audit R01): every width the row is
-//! planned against is terminal cells, never `char`s. Slice D pinned the
-//! cancel affordance with ASCII, where a char is a cell; a CJK char paints
-//! two cells, so wide text reopened the defect. These render real frames and
-//! assert the painted buffer — the seam `status_cancel_tests` established —
-//! plus the detail truncation's units through `action_text` directly.
+//! The busy bar's cell accounting: every width the row is planned against is
+//! terminal cells, never `char`s. ASCII is where a char is a cell; a CJK char
+//! paints two cells, so wide text would slip past a char-based budget. These
+//! render real frames and assert the painted buffer — the seam
+//! `status_cancel_tests` established — plus the detail truncation's units
+//! through `action_text` directly.
 
 use super::super::action_line::action_text;
 use crate::interactive::tui::types::App;
@@ -18,11 +18,12 @@ fn busy_stream() -> crate::interactive::tui::agent::Stream {
         rx,
         cancel: saya_agent::CancellationToken::new(),
         prompt: String::new(),
+        question_scope: None,
     }
 }
 
-/// A busy app running `bounded_sql_query` against `sql`: the audit's
-/// reproduction — a streaming request, one open call whose target is the SQL.
+/// A busy app running `bounded_sql_query` against `sql`: a streaming request,
+/// one open call whose target is the SQL.
 fn busy_app(sql: &str) -> App {
     let mut app = empty_app();
     app.request.stream = Some(busy_stream());
@@ -36,9 +37,9 @@ fn busy_app(sql: &str) -> App {
     app
 }
 
-/// Slice D's case with a wide target: 30 CJK pairs are 60 `char`s but 120
+/// The same case with a wide target: 30 CJK pairs are 60 `char`s but 120
 /// cells — double what a char count claims, so the reserved cancel hint is
-/// pushed off the row again. The painted buffer is the judge.
+/// pushed off the row. The painted buffer is the judge.
 #[test]
 fn the_cancel_hint_survives_a_long_cjk_action_at_100_columns() {
     let app = busy_app(&"日本".repeat(30));

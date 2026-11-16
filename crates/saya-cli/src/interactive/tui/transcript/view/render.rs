@@ -33,9 +33,9 @@ impl Transcript {
             // advance, so a folded run starts exactly where the previous
             // block carries a different chapter — no search — and ends at
             // the first differing chapter after it: one scan over the run,
-            // once per folded chapter, never per visited block (audit F08:
-            // the old branch scanned the slice twice per visited block
-            // before even asking whether it was folded).
+            // once per folded chapter, never per visited block: two whole-slice
+            // scans per visited block would run before even asking whether the
+            // block was folded.
             if self.is_folded(block.chapter)
                 && (i == 0 || {
                     #[cfg(test)]
@@ -122,7 +122,7 @@ pub(super) fn chapter_run_end(blocks: &[Block], start: usize) -> usize {
         .map_or(blocks.len(), |rel| start + 1 + rel)
 }
 
-/// Benchmark seam for the scale tests: counts the block-chapter comparisons
+/// Measurement seam for the scale tests: counts the block-chapter comparisons
 /// range discovery performs while rendering. `cfg(test)` only — the notes
 /// compile out of production builds entirely.
 #[cfg(test)]

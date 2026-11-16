@@ -3,7 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{SessionWorkspace, bind, check_state_overlap, resolve_root};
+use super::{
+    SessionWorkspace, bind, bind_from_pins, bind_with_state_roots, check_state_overlap,
+    resolve_root, resolve_root_with,
+};
 
 fn temp_dir(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("saya-session-ws-{label}-{}", std::process::id()));
@@ -41,16 +44,85 @@ fn an_explicit_workspace_must_exist() {
     let _ = fs::remove_dir_all(&parent);
 }
 
-/// Outside a git worktree with no explicit statement, nothing binds —
-/// the no-root default.
+/// Outside a git worktree with no explicit statement, the launch cwd binds
+/// as a plain folder — decision 1: a plain folder is the session workspace.
 #[test]
-fn outside_a_worktree_nothing_binds() {
+fn plain_cwd_binds() {
     let dir = temp_dir("no-worktree");
     let nested = dir.join("deep").join("deeper");
     std::fs::create_dir_all(&nested).unwrap();
-    let bound = bind(None, &nested).expect("the resolution runs");
-    assert!(bound.is_none(), "no .git above: nothing binds");
+    let bound = bind(None, &nested)
+        .expect("the resolution runs")
+        .expect("a plain folder binds in place");
+    assert_eq!(bound.root, std::fs::canonicalize(&nested).unwrap());
+    assert_eq!(bound.workspace.root(), bound.root);
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// The user's home directory is dangerous: capturing it would copy a
+/// credential store into the baseline. It binds nothing, and the notice
+/// names the refusal rather than pretending the folder is absent.
+#[test]
+fn home_cwd_refused() {
+    let dir = temp_dir("home");
+    let control = temp_dir("home-control");
+    let home = std::fs::canonicalize(&dir).unwrap();
+    // A plain folder still binds...
+    assert!(
+        resolve_root_with(None, &control, Some(&home), None)
+            .expect("the resolution runs")
+            .is_some(),
+        "a plain folder beside home binds in place"
+    );
+    // ...but home itself binds nothing.
+    let resolved = resolve_root_with(None, &dir, Some(&home), None).expect("the resolution runs");
+    assert!(
+        resolved.is_none(),
+        "the home directory binds nothing in place"
+    );
+    let _ = fs::remove_dir_all(&control);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A plain folder that overlaps a saya state root refuses the binding: the
+/// state roots stay outside the file tools' reach.
+#[test]
+fn state_overlap_refused() {
+    let state = temp_dir("overlap-plain");
+    let project = state.join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let state = std::fs::canonicalize(&state).unwrap();
+    let error = bind_with_state_roots(None, &project, std::slice::from_ref(&state))
+        .map(|bound| bound.is_some())
+        .expect_err("a plain folder inside a state root must refuse");
+    assert!(
+        error.contains(state.display().to_string().as_str()),
+        "the refusal must name the state root: {error}"
+    );
+    let _ = fs::remove_dir_all(&state);
+}
+
+/// A resume keeps its recorded pin: the shell's plain cwd is never
+/// re-derived over it, and no in-place notice is said for the pin.
+#[test]
+fn resume_pin_unchanged() {
+    let project = temp_dir("resume-pin");
+    std::fs::create_dir_all(project.join(".git")).unwrap();
+    let plain = temp_dir("resume-cwd");
+    // A fresh session now binds the plain folder in place...
+    assert_eq!(
+        resolve_root(None, &plain).expect("resolves"),
+        Some(std::fs::canonicalize(&plain).unwrap()),
+        "the fresh session binds its plain cwd"
+    );
+    // ...but a resume keeps the recorded pin whatever the shell's cwd is.
+    let pin = std::fs::canonicalize(&project).unwrap();
+    let (bound, notice) = bind_from_pins(None, Some(pin.to_str().unwrap()), true, &plain)
+        .expect("the pinned resume runs");
+    assert_eq!(bound.expect("the pin binds").root, pin);
+    assert_eq!(notice, None, "a pinned resume says no in-place notice");
+    let _ = fs::remove_dir_all(&project);
+    let _ = fs::remove_dir_all(&plain);
 }
 
 /// Inside a git worktree, the worktree top binds — from a subdirectory too:
@@ -154,7 +226,11 @@ fn resolve_root_mirrors_the_binding() {
     );
     assert!(resolve_root(None, &project).expect("resolves").is_some());
     let plain = temp_dir("resolve-plain");
-    assert!(resolve_root(None, &plain).expect("resolves").is_none());
+    assert_eq!(
+        resolve_root(None, &plain).expect("resolves"),
+        Some(std::fs::canonicalize(&plain).unwrap()),
+        "a plain folder resolves to itself"
+    );
     let _ = fs::remove_dir_all(&project);
     let _ = fs::remove_dir_all(&plain);
 }

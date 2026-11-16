@@ -1,6 +1,6 @@
 //! `run_command`'s fact lines: the absence said in the sandbox line's slot,
 //! then the bounds the code applies. A shell- or interpreter-family name
-//! additionally carries the no-euphemism warning with this lane's clause —
+//! additionally carries the no-euphemism warning with this route's clause —
 //! the model writes the program the interpreter runs, and there is no
 //! sandbox; it runs as you.
 
@@ -10,7 +10,7 @@ use super::{ApprovalFacts, HostFacts, body};
 use saya_types::is_refused_runner_program;
 
 /// The call's typed argv, as the call states it — one element per argument,
-/// displayed as the host lane will pass it. Interior whitespace is collapsed
+/// displayed as the host route will pass it. Interior whitespace is collapsed
 /// so a hostile element cannot split the line; the journal carries verbatim
 /// argv.
 fn argv_line(program: &str, arguments: &Value) -> String {

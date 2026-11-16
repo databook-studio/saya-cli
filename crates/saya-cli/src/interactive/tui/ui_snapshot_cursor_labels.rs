@@ -1,17 +1,17 @@
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
-/// Composed-screen behaviour snapshots (input cursor mapping and transcript label rows), moved byte-identical from the hub.
-/// Plain assertions only — the five `insta` snapshots stay in the hub.
+/// Composed-screen behaviour snapshots (input cursor mapping and transcript
+/// label rows). Plain assertions only — the five `insta` snapshots stay in the
+/// hub.
 use super::support::{empty_app, empty_app_with_text, fixed_status, render_buffer, render_cursor};
 use saya_agent::AgentEvent;
 
 // --- Input box: wrap-aware cursor mapping through the real render path. -------
 //
-// These are the regression tests for the input-box truncation defect
-// (databook-studio/saya-cli#57). A question longer than the terminal width used
-// to render as one truncated row with the cursor pinned against the right
-// border. The fix wraps the line and maps the logical cursor to a visual
-// (row, col) against the inner width. Each test draws through the real
+// A question longer than the terminal width must not render as one truncated
+// row with the cursor pinned against the right border: the line wraps and the
+// logical cursor maps to a visual (row, col) against the inner width. Each
+// test draws through the real
 // `ui::draw` and reads the cursor position back, so a mapping regression is
 // caught here rather than by eye.
 //
@@ -25,7 +25,7 @@ const INPUT_INNER_WIDTH: usize = 38;
 
 /// A line exactly the inner width keeps the cursor on the single row at the
 /// column just past the text — no wrap, no spurious extra row, cursor not
-/// pinned against the border. (Spec test list item 1, rendered.)
+/// pinned against the border.
 #[test]
 fn input_cursor_stays_on_one_row_for_an_exact_width_line() {
     let mut app = empty_app();
@@ -42,9 +42,8 @@ fn input_cursor_stays_on_one_row_for_an_exact_width_line() {
 
 /// A line one character over wraps to two visual rows and the cursor lands on
 /// the second row, at column 1 (after the wrapped char). This is the
-/// make-or-break case: the old path pinned the cursor against the right
-/// border; the wrap-aware path puts it on row 2. (Spec test list item 2,
-/// rendered — deliverable 1.)
+/// make-or-break case: a border-pinned cursor would sit against the right
+/// border; the wrap-aware path puts it on row 2.
 #[test]
 fn input_cursor_wraps_to_second_row_when_line_exceeds_width() {
     let mut app = empty_app();
@@ -52,8 +51,8 @@ fn input_cursor_wraps_to_second_row_when_line_exceeds_width() {
     app.input.set_text("a".repeat(INPUT_INNER_WIDTH + 1));
     let (x, y) = render_cursor(&app, &fixed_status(), 40, 24);
     // inner.x = 1; the cursor is on the second visual row at col 1 (after the
-    // single wrapped 'a') -> screen x = 2. The old path put x at the border
-    // (40) because it used the logical column.
+    // single wrapped 'a') -> screen x = 2. A logical-column mapping would put
+    // x at the border (40) instead.
     assert_eq!(
         x, 2,
         "one char over: cursor column is 2 (inner.x=1 + wrapped col=1), not the border"
@@ -99,12 +98,11 @@ fn input_empty_buffer_cursor_at_origin() {
     assert_eq!(y, 22, "empty buffer: cursor at inner top row");
 }
 
-// --- Fieldnotes phase 2, packet 2B-3: label rows paint. --------------------
+// --- Label rows paint. -----------------------------------------------------
 //
-// RED packet: label rows exist in `lines()` (measured) but `view()` /
-// `wide_view()` elide them before the window slice and the painters skip
-// them, so measured height exceeds painted height. These tests fail until
-// the elision is removed and the label word paints on its own row.
+// A label row must be measured and painted alike: `lines()` counts it, so
+// `view()` / `wide_view()` keep it in the window and the painters draw it.
+// An elision there would make measured height exceed painted height.
 
 /// A long user request wrapping to several rows shows `YOU` exactly once:
 /// the label introduces the turn, the body rows carry no label.

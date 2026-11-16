@@ -1,50 +1,111 @@
 # The mascot
 
-saya is an owl: it watches everything and touches nothing, which is what
-read-only means. Its pupils are terminal cursors — the one detail that keeps the
-mark saya's rather than a generic bird, and the only thing the state system
-changes.
+saya is a kangaroo: upright, alert, always ready to leap. The state lives in the
+one visible eye — the pouch is a quiet lip and holds nothing.
 
-## Terminal states
+## Concept
 
-The pupils are two glyphs in one row of the block art. Substitute them and the
-whole expression system falls out of it.
+A kangaroo stands in three-quarter side view, facing right. It has a small head
+with a long muzzle and the nose at the tip; two tall, leaf-shaped ears with
+rounded tips; a pear-shaped body leaning slightly forward, with a narrow chest
+and wide hips; a large rounded haunch at the back of the hips; two short
+forearms held in front of the chest; one long hind foot flat on the ground,
+pointing forward; and a thick tail that tapers to a point on the ground behind
+it, forming a tripod with the foot. Those shapes — the long ears, the muzzle,
+the haunch, the long foot and the tapered tail — carry the species; everything
+else is face.
 
-| State | Pupils | Behaviour |
+The face reports the state. Idle has a round eye. Thinking half-closes the eye
+and blinks. Answering opens it wide with a highlight. Error flattens it to a red
+line. The pouch is a lip across the belly, nothing more: no cursor, no glyph, no
+second thing competing with the eye.
+
+## Palette
+
+| Token | Hex | Use |
 | --- | --- | --- |
-| idle | `▐` `▌` | steady, with an occasional blink |
-| thinking | `▐` `▌` | blink quickly, or track side to side in SVG |
-| answering | `█` `█` | solid and wide, no timer |
-| error | `─` `─` | flat, rendered in red `#e5695f` |
+| iris | `#9d8bf5` | body, head, tail, eye highlights; ground shadow at 20% |
+| shade | `#8171e6` | haunch, inner ears, hind foot, forearms, pouch lip |
+| ink | `#17151f` | eye, nose, mouth |
+| error | `#e5695f` | the error eye only |
 
-Colours: body in iris `#9d8bf5`, shade in `#8171e6`, sockets and beak in ink
-`#17151f`, pupils in the foreground. The pupils converge — `▐` in the left
-socket, `▌` in the right — so the owl reads as focused rather than vacant.
+The body is filled in shade, then a large offset circle of iris is clipped to
+the silhouette. What the circle misses is a crescent rim that follows the form;
+the haunch is the large shade mass at the back of the hips. A straight-edged
+band reads as a crease; a half-and-half split bisects the body.
+
+## States
+
+The eye is the state. The pouch does not change.
+
+| State | Eye | Behaviour |
+| --- | --- | --- |
+| idle | round | steady; the hero blinks gently every 5.4s |
+| thinking | half-closed | the lid sinks and lifts, slowly |
+| answering | wide open, with highlight | held wide, no animation |
+| error | flat line in `#e5695f` | static, red |
+
+The hero (`saya-kangaroo.svg`) also gives each ear a small twitch. The static
+file and the idle/answering/error states do not move. Thinking's lid is the one
+state whose motion is part of the state.
 
 ## Assets
 
 | File | Use |
 | --- | --- |
-| `saya-owl.svg` | the README header — ground shadow, blinking eyelid |
-| `saya-owl-static.svg` | same, no animation (print, or anywhere motion is unwanted) |
-| `saya-mark.svg` | the bare mark, no ground — favicons, avatars, small sizes |
+| `saya-kangaroo.svg` | README header — ground shadow, gentle eye blink and ear twitch |
+| `saya-kangaroo-static.svg` | same, no animation (print, or anywhere motion is unwanted) |
+| `saya-mark.svg` | head in profile — snout, two tall ears, one eye — filling the viewBox; favicons, avatars, 16px |
 | `states/*.svg` | the four states above |
-| `splash.txt`, `splash-compact.txt` | the block art, mirrored in `ui/splash.rs` |
 
-All the SVGs share one body path and one face geometry; edit them together or
-the family drifts. Three rules the current shapes encode, each of which was a
-mistake first:
+All the SVGs share one body path, one face geometry, one tail and one hind foot;
+edit them together or the family drifts. The rules the shapes encode, each of
+which was a mistake first:
 
-- The shade is a **crescent** — the body filled in shade, then a large offset
-  circle of the body colour clipped to the silhouette. A straight-edged band
-  reads as a crease across a round form, and a half-and-half split bisects the
-  face.
-- Idle blinks with an **eyelid**, not by hiding the pupils. Fading a pupil out
-  leaves a black void where the cursor was, which reads as an empty stare. The
-  block art gets this free: its sockets are gaps, so a missing pupil is a closed
-  eye.
-- The pupils are **taller than they are wide**. Give them the sockets'
-  proportions and they stop reading as cursors.
+- The figure is a **three-quarter side view facing right**, not front-on. One
+  eye is visible; the far eye is hidden by the muzzle. A front-on face reads as
+  a cat or a fox.
+- The head is **small relative to the body**, with a **long muzzle** and the
+  nose at the tip. A round head with a centred nose loses the species.
+- The ears are **long, upright leaves with rounded tips**, not short pointy
+  triangles.
+- The body is **pear-shaped and leans slightly forward**: narrow chest, wide
+  hips. A large rounded **haunch** sits at the back of the hips. A straight
+  barrel reads as a generic animal.
+- The hind foot is **one long flat foot** pointing right, clearly longer than
+  the head. Do not draw two separate slabs.
+- The tail is **thick at the base, long and tapered to a point**, lying on the
+  ground behind (left), forming a tripod with the foot. A short, bushy tail
+  reads as a squirrel.
+- The arms are **two short forearms with small paws**, held in front of the
+  chest. They do not hang like a second pair of legs.
+- The pouch is a **lip, not a hole**, and it sits on the belly only. A shade
+  band sags across the belly; a filled ink pocket reads as a hole through the
+  body at 16px; an empty lip reads as a pocket.
+- The shade is a **crescent**. The body is filled in shade, then a large offset
+  circle of the body colour is clipped to the silhouette. The rim follows the
+  curve; the haunch is the shade mass at the rear. A straight band reads as a
+  crease.
+- The **eye is the only state channel**. Do not add a second glyph.
+- The viewBox is **cropped to the figure plus its shadow**: the content is
+  centred with even margins (about 28px left/right, 12px top/bottom) rather than
+  sitting in a corner of an uncropped 200px square.
+- The mark is the **head alone** — snout, two tall ears, one eye — and fills its
+  viewBox so it still reads at 16×16.
 
-The block art is duplicated in `ui/splash.rs` rather than loaded from these
-files, so the binary needs no assets at runtime. Change one, change both.
+## Terminal mascot
+
+The TUI home screen paints a tiny block-glyph kangaroo — four rows by ten
+columns, in profile facing right: two tall ears, a head with one eye gap and
+a snout, a body, and a tail sweeping left to the ground. It is drawn in the
+iris accent:
+
+```text
+    ██ ██
+  ███ ███▐
+ ███████
+▄▄█████▀
+```
+
+It is one `const` in `ui/surface/splash.rs`, so the owner can redraw it. The
+SVG kangaroo above stays the docs mascot; the terminal does not render it.

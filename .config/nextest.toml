@@ -7,11 +7,15 @@
 # Fail fast locally so the red test is the first thing you see.
 fail-fast = true
 # Surface slow tests without failing on them — live/DB tests are legitimately slow.
-slow-timeout = { period = "60s", terminal-after = 3 }
+slow-timeout = { period = "60s", terminate-after = 3 }
 
 [profile.ci]
 # In CI we want the full failure picture in one run, not the first failure.
 fail-fast = false
+# A hung test must fail the run, not consume the job's wall-clock cap. Windows
+# demo fixtures legitimately take ~210 s, so the CI period is doubled; three
+# consecutive slow periods with no completion still terminate the test.
+slow-timeout = { period = "120s", terminate-after = 3 }
 # No retries by default: a unit/integration test that only passes on retry is a
 # bug to fix, not a state to mask. Retries are scoped to the live binaries below.
 retries = 0

@@ -1,15 +1,55 @@
 //! Shared public contracts for SAYA CLI.
 
+mod coding;
+mod context_doc;
+mod continuation;
 mod contract;
 mod dialect;
+mod edit_checkpoint;
 mod error;
+pub mod evidence;
+pub mod investigation;
+mod params;
 mod profile;
+mod project_preference;
 mod query;
 mod redaction;
 mod run;
 mod schema;
 mod session_tasks;
 
+pub use coding::{
+    APPROVAL_REQUEST_VERSION, AgentId, ApprovalDisposition, ApprovalNetworkDestination,
+    ApprovalNetworkScheme, ApprovalRequestContext, ApprovalRequestError, ApprovalRequestV1,
+    ApprovalScope, ApprovalScopeError, BUDGET_POLICY_V2_VERSION, BUDGET_POLICY_VERSION,
+    BUDGET_RESERVATION_VERSION, BUDGET_SETTLEMENT_VERSION, BudgetCharge, BudgetDimension,
+    BudgetEffectState, BudgetError, BudgetLimitPolicyV1, BudgetLimitPolicyV2, BudgetObservation,
+    BudgetObservationValue, BudgetPolicyError, BudgetReservationV1, BudgetSettlementV1,
+    CHECKOUT_OPERATION_VERSION, CODING_EVENT_VERSION, CheckoutDtoError, CheckoutOperationState,
+    CheckoutOperationV1, CheckoutValueError, ChildInvocationRecord, CodingBudgetMode,
+    CodingBudgetPolicy, CodingEventError, CodingEventKind, CodingEventV1, CodingIdError,
+    CodingResultOutcome, DigestError, GitObjectId, InvocationId, JobApprovalAction, JobId,
+    JobState, JobStateTransitionError, MANAGED_CHECKOUT_RECORD_VERSION, MAX_APPROVAL_REQUEST_BYTES,
+    MAX_BUDGET_ENDPOINT_BYTES, MAX_BUDGET_ENTRIES, MAX_CHECKOUT_RECORD_BYTES, MAX_CHILD_FOLLOW_UPS,
+    MAX_CODING_EVENT_BYTES, MAX_MANAGED_CHECKOUT_PATH_BYTES, MAX_RECEIPT_PATH_BYTES,
+    MAX_RECEIPT_PATH_SET_BYTES, MAX_RECEIPT_PATHS, MAX_RECEIPT_REFERENCE_BYTES,
+    MAX_RESULT_RECEIPT_BYTES, MAX_SNAPSHOT_WARNING_PATH_BYTES, ManagedCheckoutId,
+    ManagedCheckoutLifecycle, ManagedCheckoutPath, ManagedCheckoutRecordData,
+    ManagedCheckoutRecordV1, RESULT_RECEIPT_VERSION, ReceiptError, RepositoryId,
+    RepositoryMutationAction, ResultReceiptV1, Sha256Digest, SnapshotId, SnapshotWarningReason,
+    WorkspacePath, sha256_hex,
+};
+pub use context_doc::{
+    CONTEXT_FORMAT, CONTEXT_FORMAT_VERSION, ContextDocumentV1, ContextError, ContextItem,
+    MAX_DOCUMENT_BYTES, MAX_ITEM_BYTES, MAX_ITEMS, MAX_ORIGIN_NOTE_BYTES, PortableObject,
+    PortablePayload,
+};
+pub use continuation::{
+    CONTINUATION_VERSION, CheckFact, CheckOutcome, ContinuationError, FactProvenance, FileFact,
+    GeneratedNarrative, MAX_CHECK_FACTS, MAX_CHECK_LABEL_CHARS, MAX_CONTINUATION_BYTES,
+    MAX_FACT_PATH_BYTES, MAX_FILE_FACTS, MAX_NARRATIVE_BYTES, MAX_USER_NOTES_BYTES,
+    NarrativeSource, SessionContinuationV1, SourceBoundary,
+};
 pub use contract::{
     BindingValidity, CLAIM_PAYLOAD_VERSION, Cardinality, ClaimId, ClaimOrigin, ClaimPayload,
     ClaimStatus, ColumnRequirement, ColumnRole, ContractError, DatabaseObjectKind,
@@ -21,17 +61,41 @@ pub use contract::{
     validate_table,
 };
 pub use dialect::SqlDialect;
+pub use edit_checkpoint::{
+    BeforeImage, CHECKPOINT_VERSION, CheckpointError, CheckpointId, CheckpointPolicy,
+    CheckpointRefusal, CheckpointState, CheckpointUsage, EditCheckpoint, EditSource, FileVersion,
+    MAX_CHECKPOINT_FILE_BYTES, MAX_CHECKPOINT_PATH_BYTES, MAX_CHECKPOINT_RECORD_BYTES,
+    MAX_CHECKPOINT_SESSION_BYTES, MAX_CHECKPOINTS_PER_SESSION, RestoreEligibility, admit,
+    restore_eligibility,
+};
 pub use error::ConnectionError;
+pub use evidence::{
+    EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, MAX_EVIDENCE_KNOWLEDGE_IDS,
+    ResultScope,
+};
+pub use investigation::{
+    INVESTIGATION_FORMAT, INVESTIGATION_FORMAT_VERSION, InvestigationDefinitionV1,
+    InvestigationError, InvestigationId, MAX_CONNECTION_CHARS, MAX_DEFINITION_BYTES,
+    MAX_DESCRIPTION_BYTES, MAX_FINGERPRINT_BYTES, MAX_OBJECT_BYTES, MAX_OBJECTS, MAX_SQL_BYTES,
+};
+pub use params::{
+    BoundParam, MAX_PARAM_DESCRIPTION_BYTES, MAX_PARAM_NAME_CHARS, MAX_PARAMETERS, ParamError,
+    ParamType, ParamValue, ParameterSpec, is_valid_param_name,
+};
 pub use profile::{DatabaseProfile, MySqlSslMode, PostgresSslMode, SecretRef, SnowflakeAuth};
+pub use project_preference::{
+    MAX_PREFERENCE_RECALL_BYTES, MAX_PREFERENCE_RECORD_BYTES, MAX_PREFERENCE_TEXT_BYTES,
+    MAX_PROJECT_PREFERENCES, PROJECT_PREFERENCE_VERSION, PreferenceError, PreferenceId,
+    PreferenceSource, ProjectPreference, WorktreeId, validate_set,
+};
 pub use query::{QueryRequest, QueryResult};
 pub use redaction::{CREDENTIAL_ENV_PREFIX, redact, redact_counted};
 pub use run::{
     Budgets, Capabilities, Deliverable, DeliverableArtifact, Destination, EndpointBindings,
-    FetchScope, InterpreterScope, MAX_BUDGET_ENDPOINTS, MAX_ENDPOINT_BINDINGS,
-    MAX_FETCH_DESTINATIONS, MAX_GOAL_BYTES, MAX_OUTPUT_HINTS, MAX_RUNNER_PROGRAMS,
-    MAX_STEP_CREDENTIALS, OutputHint, PauseReason, RunContractError, RunEvent, RunFailureCode,
-    RunId, RunPlan, RunSpec, RunnerScope, StepSpec, is_bare_name, is_name_shaped,
-    is_refused_runner_program,
+    FetchScope, MAX_BUDGET_ENDPOINTS, MAX_ENDPOINT_BINDINGS, MAX_FETCH_DESTINATIONS,
+    MAX_GOAL_BYTES, MAX_OUTPUT_HINTS, MAX_STEP_CREDENTIALS, OutputHint, PauseReason,
+    RunContractError, RunEvent, RunFailureCode, RunId, RunPlan, RunSpec, StepSpec, is_bare_name,
+    is_name_shaped, is_refused_runner_program,
 };
 pub use schema::{Column, Database, ForeignKey, Schema, SchemaTree, Table};
 pub use schema::{
@@ -42,3 +106,16 @@ pub use session_tasks::{
     MAX_SESSION_TASKS, MAX_TASK_NOTE_CHARS, MAX_TASK_TITLE_CHARS, SessionTask, SessionTaskError,
     SessionTaskList, TaskStatus,
 };
+
+pub use coding::{
+    CodingDiagnosticFault, CodingFailureClass, CodingRunFailure, JoinedResultError, JoinedResultV1,
+    MAX_JOINED_ANSWER_BYTES, MAX_JOINED_RESULT_BYTES,
+};
+
+pub use coding::{
+    MAX_THINKING_BUDGET_TOKENS, MAX_TRANSPORT_SPAN_BYTES, ThinkingEffort, ThinkingMode,
+    ThinkingSpanData, TransportCallKind, TransportOutcome, TransportSpanData, TransportSpanError,
+    TransportSpanV1,
+};
+
+pub use coding::{TokenBudgetError, TokenBudgetPolicyData, TokenBudgetPolicyV1};

@@ -1,0 +1,146 @@
+//! The one answering budget and stop source owned by one user question.
+
+use super::limits::{AnsweringSurface, answering_deadline, answering_limits};
+use crate::config::runtime::RuntimeConfig;
+use crate::local_metrics::LocalMetrics;
+use saya_agent::{AnsweringScope, BudgetDimension, CancellationReason, CancellationToken};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// Keeps every answering invocation for a question on one admission wallet.
+///
+/// The elapsed source starts before connector setup. Calling
+/// [`QuestionScope::finish_segment`] stops it before post-turn learning, so
+/// ancillary work neither consumes nor is cancelled by answering time.
+#[derive(Clone)]
+pub(crate) struct QuestionScope {
+    inner: Arc<QuestionInner>,
+}
+
+struct QuestionInner {
+    answering: AnsweringScope,
+    active_time: Mutex<ActiveTime>,
+    metrics: Option<Arc<LocalMetrics>>,
+    stop_requested_at: Mutex<Option<Instant>>,
+}
+
+struct ActiveTime {
+    remaining: Option<Duration>,
+    active_since: Option<Instant>,
+}
+
+impl QuestionScope {
+    /// The interactive session's scope: `[limits.session]`.
+    pub(crate) fn session(runtime: &RuntimeConfig, cancellation: CancellationToken) -> Self {
+        Self::build(
+            runtime,
+            AnsweringSurface::Session,
+            cancellation,
+            collected_metrics(),
+        )
+    }
+
+    /// The one-shot `ask` scope: `[limits.ask]`, each unset key fallen back to
+    /// `[limits.session]` at resolve time.
+    pub(crate) fn ask(runtime: &RuntimeConfig, cancellation: CancellationToken) -> Self {
+        Self::build(
+            runtime,
+            AnsweringSurface::Ask,
+            cancellation,
+            collected_metrics(),
+        )
+    }
+
+    /// The session's scope with the metrics collector supplied by the caller.
+    /// Test-only: production always takes the collector from the environment.
+    #[cfg(test)]
+    pub(crate) fn with_metrics(
+        runtime: &RuntimeConfig,
+        cancellation: CancellationToken,
+        metrics: Option<Arc<LocalMetrics>>,
+    ) -> Self {
+        Self::build(runtime, AnsweringSurface::Session, cancellation, metrics)
+    }
+
+    fn build(
+        runtime: &RuntimeConfig,
+        surface: AnsweringSurface,
+        cancellation: CancellationToken,
+        metrics: Option<Arc<LocalMetrics>>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(QuestionInner {
+                answering: AnsweringScope::new(answering_limits(runtime, surface), cancellation),
+                active_time: Mutex::new(ActiveTime {
+                    remaining: answering_deadline(runtime, surface),
+                    active_since: None,
+                }),
+                metrics,
+                stop_requested_at: Mutex::new(None),
+            }),
+        }
+    }
+
+    pub(crate) fn metrics(&self) -> Option<Arc<LocalMetrics>> {
+        self.inner.metrics.clone()
+    }
+
+    pub(crate) fn cancellation(&self) -> CancellationToken {
+        self.inner.answering.cancellation_token()
+    }
+
+    /// Identity of the shared inner: two clones of one `begin_question`
+    /// scope are the same question; scopes of different questions never
+    /// are. `Arc::ptr_eq` on the one `Arc<QuestionInner>` every clone
+    /// shares — no counter noise, no resurrected identity.
+    pub(crate) fn is_same_question(&self, other: &QuestionScope) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    pub(crate) fn answering_scope(&self) -> AnsweringScope {
+        self.inner.answering.clone()
+    }
+
+    /// Opens one exclusive charged source segment and returns its remaining
+    /// deadline. No async runtime is required to construct the scope.
+    pub(crate) fn begin_segment(&self) -> Option<Duration> {
+        let mut active = self.inner.active_time.lock().expect("active time lock");
+        assert!(
+            active.active_since.is_none(),
+            "overlapping question segments"
+        );
+        if active
+            .remaining
+            .is_some_and(|remaining| remaining.is_zero())
+        {
+            self.cancellation()
+                .cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+            return Some(Duration::ZERO);
+        }
+        active.active_since = Some(Instant::now());
+        active.remaining
+    }
+
+    /// Debits the current source segment once. It is safe for each early
+    /// source-return path to call this because a finished segment has no start.
+    pub(crate) fn finish_segment(&self) {
+        let mut active = self.inner.active_time.lock().expect("active time lock");
+        let Some(started) = active.active_since.take() else {
+            return;
+        };
+        if let Some(remaining) = active.remaining.as_mut() {
+            *remaining = remaining.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                self.cancellation()
+                    .cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
+            }
+        }
+    }
+}
+
+fn collected_metrics() -> Option<Arc<LocalMetrics>> {
+    crate::local_metrics::enabled().then(|| Arc::new(LocalMetrics::new()))
+}
+
+#[path = "question_scope_cancel.rs"]
+mod question_scope_cancel;

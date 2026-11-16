@@ -14,20 +14,27 @@ use crate::fetch::DownloadBudget;
 use crate::{HarnessError, journal::JournalWire, workspace::Workspace};
 
 use crate::engine::episode::{EpisodeCollaborators, EpisodeError, EpisodeRequest, ManifestBounds};
-use crate::engine::sink::EngineSinkError;
 use crate::engine::state::RunState;
+use crate::engine::{AnsweringCountError, clock::ElapsedClockError, sink::EngineSinkError};
 
 /// What resume found in the journal and what it did about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeOutcome {
-    /// The run continues at the plan's first incomplete step — an in-flight
-    /// step restarted from its beginning — and every remaining step ran
-    /// through the episode driver. `state` is where the run ended.
+    /// The run continues at the plan's first incomplete step, with each
+    /// permitted restart beginning a fresh episode. `state` is where it ended.
     Resumed { first_step: usize, state: RunState },
     /// Nothing was left to run: the journal already records a terminal
     /// state, or every step is complete and resume recorded the completion
     /// the crash had left unwritten.
     Settled { state: RunState },
+    /// The journal shows an incomplete step that may already have produced
+    /// effects. Resume paused without invoking the provider or tools. An
+    /// operator may reconcile those effects, then opt into a fresh retry.
+    IncompleteEffects {
+        step: usize,
+        goal: String,
+        effects: Vec<ResumeEffect>,
+    },
     /// The journal's run has no approval on record. Approval is explicit;
     /// resume runs nothing and records nothing.
     Unapproved,
@@ -35,10 +42,38 @@ pub enum ResumeOutcome {
     NoRun,
 }
 
+/// The operator's policy for an incomplete step that may have produced effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IncompletePolicy {
+    /// Refuse to repeat effectful or unknown work unless the operator opts in.
+    #[default]
+    Conservative,
+    /// Start a fresh attempt after the operator has reconciled possible effects.
+    Retry,
+}
+
+/// A conservative reason an incomplete step could not be replayed safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeEffect {
+    WorkspaceWrite,
+    Fetch,
+    ExternalSideEffect,
+    LocalStateWrite,
+    Unknown,
+}
+
 /// Why resume refused or stopped. Data, not prose: `saya-cli` renders these.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ResumeError {
+    /// A finite per-step grant cannot be reconstructed from durable count evidence.
+    #[error("step {step} answering-count evidence is not safe to continue: {source}")]
+    CountEvidence {
+        step: usize,
+        #[source]
+        source: AnsweringCountError,
+    },
+
     /// The run directory's single-writer lock is held by a live process:
     /// another engine owns the run.
     #[error("run directory is locked by another engine: {source}")]
@@ -51,6 +86,13 @@ pub enum ResumeError {
     Journal {
         #[source]
         source: HarnessError,
+    },
+    /// A configured whole-run wall clock cannot be established safely from
+    /// the repaired journal or current system clock.
+    #[error("run elapsed clock cannot be established: {source}")]
+    ElapsedClock {
+        #[source]
+        source: ElapsedClockError,
     },
     /// A resumed step failed, or a gate refused it.
     #[error("resumed episode failed: {source}")]
@@ -73,18 +115,22 @@ pub struct ResumeRun<'a> {
     pub run_id: RunId,
     pub store: Arc<dyn RunStore>,
     pub plan: RunPlan,
+    /// Default-deny retry policy for steps whose journal state is Started or
+    /// Failed and whose declared effects may already have happened.
+    pub incomplete_policy: IncompletePolicy,
     pub workspace: Workspace,
     pub collaborators: EpisodeCollaborators<'a>,
     pub request: EpisodeRequest,
     pub bounds: ManifestBounds,
-    /// The run's declared wall-clock ceiling, armed again for the resumed steps.
+    /// The run's declared whole-run wall-clock ceiling. Resume derives its
+    /// remaining interval from the repaired journal clock origin.
     pub wall_clock: Option<Duration>,
     /// The run's token ceiling. It binds the **run**, not each invocation:
     /// `resume` seeds the sink's usage totals from the journal's usage
     /// record, so a resumed run continues against the same ceiling instead
     /// of re-arming it in full — resuming a run that already paused on this
-    /// ceiling, without raising it, trips on the first tick. The wall clock
-    /// above, which no record can replay, re-arms per invocation.
+    /// ceiling, without raising it, trips on the first tick. The configured
+    /// wall clock instead carries its journaled origin across invocations.
     pub token_ceiling: Option<u64>,
     /// The run's download wallet, armed again so a resumed run keeps its
     /// declared download posture: the composition root hands the same

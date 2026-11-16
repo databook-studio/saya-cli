@@ -9,6 +9,7 @@ use ratatui::text::Span;
 
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::wrap::cell_width;
+use saya_agent::PermissionMode;
 
 use super::super::super::theme::{accent, secondary};
 
@@ -27,14 +28,28 @@ pub(super) struct BarWords {
 }
 
 /// Builds the bar's words: the included count collapses to `+N`, and the
-/// mode segment is absent at the default (`build`).
+/// mode segment is absent at the default (`ask`).
 pub(super) fn bar_words(view: &StatusView) -> BarWords {
     BarWords {
         name: view.profile.clone(),
         plus_n: (!view.included.is_empty()).then(|| format!(" +{}", view.included.len())),
         model: view.model.clone(),
-        mode: (view.agent_mode != "build").then(|| view.agent_mode.clone()),
+        mode: mode_word(view),
         tasks: view.task_summary.clone(),
+    }
+}
+
+/// The bar's mode word: the session's permission mode, which is the one word
+/// Shift+Tab moves — absent at the default `ask`, the shape the default
+/// `build` had, so a routine session reads exactly as before. A pair with no
+/// mode of its own (`read-only`, `never`, set by `/approvals`) keeps the task
+/// posture the segment has always shown, so the bar never loses the one word
+/// it had.
+fn mode_word(view: &StatusView) -> Option<String> {
+    match view.permission_mode {
+        Some(PermissionMode::Ask) => None,
+        Some(mode) => Some(crate::interactive::session::permissions::mode::name(mode).to_owned()),
+        None => (view.agent_mode != "build").then(|| view.agent_mode.clone()),
     }
 }
 

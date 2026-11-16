@@ -1,9 +1,58 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConfigError {
+    #[error("job extension profile is invalid or exceeds its bounds")]
+    InvalidCodingExtension,
+    /// An `[agents]` entry that is not a usable helper type: a name that is not
+    /// a bounded lowercase identifier (or is one of the table's own two
+    /// settings), a key that is not a table at all, or a declaration that would
+    /// widen a type instead of narrowing it. A helper type is a shape, so a
+    /// widening entry is refused rather than silently ignored.
+    #[error("invalid [agents] entry {name:?}: {reason}")]
+    InvalidAgentType { name: String, reason: String },
+    /// An `[agents.<name>] model` is copied into the provider request its
+    /// helpers send, so it carries exactly the bound an endpoint's own model
+    /// carries — the same value, in the same place.
+    #[error("setting agents.{name}.model has {value} characters; the limit is {max}")]
+    AgentModelTooLong {
+        name: String,
+        value: usize,
+        max: usize,
+    },
+    #[error("limits.job.budget_mode = \"uncapped\" conflicts with explicitly configured {setting}")]
+    JobBudgetModeConflict { setting: &'static str },
+    /// A `[limits.job]` dimension written as `"unlimited"`. The durable
+    /// budget policy is either finite or uncapped, so a mixed one has no
+    /// spelling: the message names the key that does remove every ceiling.
+    #[error(
+        "setting {key} cannot be `unlimited`: write limits.job.budget_mode = \"uncapped\" \
+         to remove every coding ceiling at once"
+    )]
+    JobLimitUnlimited { key: &'static str },
+    /// A `[web_search]` setting that cannot be used as stated. Every case is
+    /// a different fix and the reason carries the whole of it, the way
+    /// [`ConfigError::InvalidAgentType`] carries its own.
+    #[error("invalid [web_search]: {reason}")]
+    InvalidWebSearch { reason: &'static str },
+    /// A `web_search.provider` that names no backend saya has. Refused rather
+    /// than ignored: a provider that resolved to "no search" would leave the
+    /// user believing they had configured one.
+    #[error(
+        "web_search.provider {provider:?} is not a search backend; use \"searxng\" or \"brave\""
+    )]
+    WebSearchProviderUnknown { provider: String },
+    /// An `[mcp_servers]` entry that cannot be started as stated: a name that
+    /// is not a usable server name, no `command`, a bound exceeded, or a
+    /// remote server, which this release does not support. Every case is a
+    /// different fix and the reason carries the whole of it.
+    #[error("invalid [mcp_servers]: {reason}")]
+    InvalidMcpServers { reason: String },
     #[error("invalid TOML: {0}")]
     Parse(String),
+    #[error("config file has {bytes} bytes; maximum is {max_bytes}")]
+    ConfigFileTooLarge { bytes: usize, max_bytes: usize },
     #[error("invalid environment value for {name}: {reason}")]
     InvalidEnvironment { name: String, reason: String },
     #[error("no connection profile was selected")]
@@ -60,6 +109,11 @@ pub enum ConfigError {
         min: usize,
         max: usize,
     },
+    /// A `[limits]` dimension written as anything but a positive integer or the
+    /// literal `unlimited`. `key` is the full dotted config key, so the message
+    /// names the exact line to fix.
+    #[error("setting {key} must be a positive integer or the literal `unlimited`")]
+    InvalidLimit { key: &'static str },
     /// An endpoint's model or base URL is too long to carry safely through
     /// provider construction and diagnostics. The source field is carried so
     /// an inherited `[ai]` value is distinguished from an endpoint override.
@@ -71,8 +125,9 @@ pub enum ConfigError {
         max: usize,
     },
     /// A map-valued setting carries a key that cannot name the thing it
-    /// keys — a `[jobs] tokens_per_endpoint` endpoint name that is empty,
-    /// carries whitespace or control characters, or exceeds the name bound.
+    /// keys — a `[limits.run] tokens_per_endpoint` endpoint name that is
+    /// empty, carries whitespace or control characters, or exceeds the name
+    /// bound.
     /// That shape is what the run contracts reject at plan-validation time,
     /// so it is caught at resolve time instead, far from the config mistake.
     /// The key is carried because the field name alone cannot point at the
@@ -85,29 +140,6 @@ pub enum ConfigError {
     /// role" ambiguous. Rejected rather than resolved last-wins.
     #[error("endpoint {0:?} is declared more than once in [ai.endpoints]; remove the duplicate")]
     DuplicateEndpointName(String),
-    /// A `[jobs.runner] allow` entry is not a program the runner can honour:
-    /// a bare, non-repeating name in the run-scoped shape that is not a shell
-    /// or interpreter. The reason is carried because "why not" is the whole
-    /// diagnostic — the shapes refused here are refused by the runner tool
-    /// too, so approving one would approve a capability that cannot exist.
-    #[error("setting {field} has an invalid runner program {program:?}: {reason}")]
-    InvalidRunnerProgram {
-        field: &'static str,
-        program: String,
-        reason: &'static str,
-    },
-    /// A `[jobs.interpreter] allow` entry is not a name the interpreter
-    /// family can carry: a bare, non-repeating name in the run-scoped shape
-    /// that IS on the runner's refusal list — the family is that list,
-    /// mirrored at resolve time so the two universes stay disjoint by
-    /// construction. The reason is carried for the same "why not" reason as
-    /// the runner entry's.
-    #[error("setting {field} has an invalid interpreter program {program:?}: {reason}")]
-    InvalidInterpreterProgram {
-        field: &'static str,
-        program: String,
-        reason: &'static str,
-    },
     /// A `[host_commands]` `pass_env` entry that is not a well-formed
     /// `NAME=value` name. The child's own rule, checked at resolve so the
     /// refusal names the section, not the spawn.
@@ -128,59 +160,67 @@ pub enum ConfigError {
     },
     /// A project-layer `[session_commands]` section: a model-writable file
     /// must never state the deny list. A model-writable deny could name every
-    /// `[jobs.runner] allow` entry, herding the session's work off the
-    /// contained doors onto the unsandboxed lane — refusal as escalation.
-    /// A hard refusal — `--trust-project-config` does not unlock it.
+    /// program the session's work needs, herding it off the contained doors
+    /// onto the unsandboxed host lane — refusal as escalation. A hard
+    /// refusal — `--trust-project-config` does not unlock it.
     #[error(
         "project-layer [session_commands] is refused: the project config is model-writable once \
-         workspace_write is granted, and a model-writable file must never state the session \
+         write is granted, and a model-writable file must never state the session \
          deny list; state it in your user config or at launch instead"
     )]
     SessionCommandsFromProject,
     /// A project-layer `[host_commands]` section: a model-writable file must
     /// never shape unsandboxed execution — not enable it, not widen its
     /// timeout, not name its env. A hard refusal — the project file is
-    /// model-writable once `workspace_write` is granted, and
+    /// model-writable once `write` is granted, and
     /// `--trust-project-config` does not unlock it. No deny-list stub rides
-    /// along: H2 owns deny.
+    /// along: the deny list is a separate section.
     #[error(
         "project-layer [host_commands] is refused: the project config is model-writable once \
-         workspace_write is granted, and a model-writable file must never shape unsandboxed \
+         write is granted, and a model-writable file must never shape unsandboxed \
          execution; state host commands in your user config or at launch instead"
     )]
     HostCommandsFromProject,
-    /// A `[jobs.runner] program_dir` that is a relative path. The canonical
-    /// form must not depend on the working directory the config was loaded
-    /// from — a relative path would resolve to a different directory per
-    /// invocation, and the run's probe verdict is only as real as the one
+    /// A `[job] program_dir` that is a relative path. The canonical form
+    /// must not depend on the working directory the config was loaded from —
+    /// a relative path would resolve to a different directory per invocation,
+    /// and the host's program provisioning is only as real as the one
     /// directory it proved.
     #[error(
-        "setting runner.program_dir {path:?} must be an absolute path: the canonical form \
+        "setting job.program_dir {path:?} must be an absolute path: the canonical form \
          must not depend on the working directory the config was loaded from"
     )]
-    RelativeRunnerProgramDir { path: String },
-    /// `[jobs.runner] allow` names programs while `program_dir` is
-    /// undeclared. The runner resolves every allowlisted program inside one
-    /// directory and nowhere else, so an allowlist without its directory
-    /// approves programs that cannot run — the same typed resolve error
-    /// every other `[jobs]` mistake gets, never a silently-approved
-    /// capability that gates nothing.
-    #[error(
-        "[jobs.runner] allow names programs but runner.program_dir is undeclared: stage \
-         the allowlisted programs in one directory and set program_dir to its absolute path"
-    )]
-    RunnerAllowWithoutProgramDir,
-    /// `[jobs.interpreter] allow` names interpreters while
-    /// `[jobs.runner] program_dir` is undeclared. The approved interpreter's
-    /// bytes are staged in that one directory — the same directory the
-    /// runner resolves every program against — so a universe without it
-    /// approves interpreters that cannot run: the same typed resolve error
-    /// every other `[jobs]` mistake gets, never a capability that gates
-    /// nothing.
-    #[error(
-        "[jobs.interpreter] allow names interpreters but runner.program_dir is undeclared: \
-         the interpreters are staged in the runner's program directory — stage them there \
-         and set program_dir to its absolute path"
-    )]
-    InterpreterAllowWithoutProgramDir,
+    RelativeCodingProgramDir { path: String },
+    /// A key stated in the wrong one of the two tables whose names differ by
+    /// one letter: `[job]`, the job host's own settings, and `[jobs]`, a run's
+    /// download budgets. The collision is diagnosed by name rather than left
+    /// to serde's `unknown field`, which cannot say which table was meant —
+    /// see `model::job_keys`.
+    #[error("{message}")]
+    MisplacedJobKey { message: String },
+    /// A `[tools] allow` list that does not name a set of governed tools: an
+    /// empty list, a word that names no tool, or a connection-tied tool. The
+    /// inner error carries the whole refusal — including the valid names — so
+    /// the user is told what to write instead.
+    #[error(transparent)]
+    ToolsAllow(#[from] crate::ToolsAllowError),
+    /// One `[hooks]` entry that cannot be run: an empty or oversized command,
+    /// an argv over its bounds, or a timeout outside its range. Carries the
+    /// event and the entry's one-based position, so the fix points at the line
+    /// rather than at the table.
+    #[error("invalid [hooks] {event} entry #{index}: {reason}")]
+    InvalidHook {
+        event: &'static str,
+        index: usize,
+        reason: String,
+    },
+    /// More hooks for one event than the engine will run. Each entry is a
+    /// process on the agent loop's own path, so the count is a bound on the
+    /// loop rather than a policy the user widens by writing more entries.
+    #[error("setting hooks.{event} lists {value} entries; the limit is {max}")]
+    TooManyHooks {
+        event: &'static str,
+        value: usize,
+        max: usize,
+    },
 }

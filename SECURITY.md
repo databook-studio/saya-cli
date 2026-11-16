@@ -27,7 +27,7 @@ maintainers listed by the `databook-studio` organization with reproduction
 steps, affected version, and impact. Do not include live credentials or raw
 customer data.
 
-PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake are supported database paths;
+PostgreSQL, MySQL, SQLite, and Snowflake are supported database paths;
 Snowflake live validation remains opt-in. Provider execution is available
 through Ollama, OpenAI, OpenAI-compatible gateways, Anthropic, and Gemini; fully
 offline agent use is not implemented. Release archives are checksummed, but
@@ -36,12 +36,12 @@ CI or local packaging.
 
 saya enforces read-only at the **database session level** — PostgreSQL
 `default_transaction_read_only`, MySQL `transaction_read_only`, SQLite
-`query_only`, and a read-only DuckDB open — in addition to fail-closed,
+`query_only` — in addition to fail-closed,
 statement-class SQL/AST filtering. Statement filtering alone cannot prove that
 an arbitrary database function is side-effect free, and Snowflake has no
 equivalent session switch, so you must still connect with a **least-privilege,
 read-only database role**. Use restrictive filesystem permissions for
-DuckDB/SQLite file paths; do not bypass these boundaries by adding write
+SQLite file paths; do not bypass these boundaries by adding write
 credentials to examples.
 
 ## Runs write; interactive sessions do not
@@ -61,14 +61,6 @@ reachable from any run:**
   refused at every component, opens are no-follow with a post-open identity
   check, and writes are atomic at `0600` and never executable. The tool is
   absent from a run's tool list unless the run approved `workspace-write`.
-- **A run-scoped scratch database** (see
-  [ADR 0003](docs/adr-0003-scratch-database.md)). One DuckDB file per run, with
-  DuckDB's external access disabled, so it can neither read files nor load
-  extensions nor reach the network. It is a different type from every user
-  database connector and never enters the connection registry — there is no
-  path from a scratch write to a database you registered. Not yet reachable
-  from any run: its scope is refused until the wiring lands (see
-  `docs/commands.md`).
 - **Outbound HTTP.** A run may fetch only destinations it declared and you
   approved: HTTPS only, private and link-local addresses refused, redirects
   re-judged at every hop, and every DNS-resolved address checked before

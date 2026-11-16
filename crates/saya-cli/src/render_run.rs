@@ -175,7 +175,7 @@ pub(crate) struct RunShowStanza<'a> {
     pub spec: Option<(&'a str, &'a str)>,
     pub paused: Option<PauseReason>,
     /// Rendered here rather than by the caller so `/runs` and `saya run show`
-    /// cannot diverge: the parity suite asserts they are byte-identical, and
+    /// cannot diverge: the equivalence suite asserts they are byte-identical, and
     /// a section added at one call site only would break that silently.
     pub deliverables: &'a [String],
     /// The per-endpoint usage the run's journal records, folded per endpoint

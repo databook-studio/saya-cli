@@ -6,17 +6,17 @@
 //! **without** ratatui's `.wrap()` — so this module is the single source of
 //! truth for the rendered line breaks. The cursor mapping in [`super::cursor`]
 //! reuses these same breaks, so the cursor can never disagree with what is
-//! rendered — the trap the spec calls out (a wrap that does not match its own
-//! cursor is worse than today's truncation).
+//! rendered — a wrap that does not match its own cursor is worse than a
+//! truncated line.
 //!
 //! **Known limitation — display width.** Wrapping is by *char count*, not
 //! terminal cell width (a CJK character counts as 1 here but occupies 2
-//! cells). It no longer matches the transcript pane: `wrap_word_aware` went
+//! cells). The transcript pane does not wrap this way: `wrap_word_aware` is
 //! cell-aware (the shared `tui::wrap` helper it and the approval panel both
 //! use). The char model stays here because the cursor mapping in
 //! [`super::cursor`] depends on these exact breaks; a long CJK line can
 //! overflow the visible box and the cursor drifts right of its true cell.
-//! Display-width-aware wrapping is the follow-up.
+//! Display-width-aware wrapping is unimplemented here.
 
 /// Greedy word wrap of one logical line into visual lines of at most `width`
 /// chars. Fits as many words per line as `width` allows; the whitespace that

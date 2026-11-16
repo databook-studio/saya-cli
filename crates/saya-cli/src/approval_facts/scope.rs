@@ -14,28 +14,20 @@
 /// offer — `None` renders no sentence, ever. The sentence names only the
 /// offered token's scope:
 ///
-/// - `run_command` / `run_program`: the token covers that program with any
-///   arguments for the session.
+/// - `run_command`: the token covers that program with any arguments for the
+///   session.
 /// - fetch tools: the token covers that scheme and host, any path.
 /// - `workspace-write`: the token covers every workspace write, not this
 ///   one path.
 ///
-/// Any other token — `sql:`, `scratch`, a family this sentence does not
-/// name — renders no sentence: the sentence appears only where the packet
-/// wrote one, never a grant the wording was not built for.
+/// Any other token — `sql:`, a family this sentence does not
+/// name — renders no sentence: the sentence appears only for a grant the
+/// wording was built for, never one it was not.
 pub(super) fn scope_sentence(name: &str, grant: Option<&str>) -> Option<String> {
     let token = grant?;
     match name {
         "run_command" => {
             let program = token.strip_prefix("command:")?;
-            Some(format!(
-                "  [s] covers {program} with any arguments for this session — not just this argv"
-            ))
-        }
-        "run_program" => {
-            let program = token
-                .strip_prefix("runner:")
-                .or_else(|| token.strip_prefix("interpreter:"))?;
             Some(format!(
                 "  [s] covers {program} with any arguments for this session — not just this argv"
             ))
@@ -47,7 +39,7 @@ pub(super) fn scope_sentence(name: &str, grant: Option<&str>) -> Option<String> 
                 "  [s] covers {scheme} on {host}, any path, for this session — not just this URL"
             ))
         }
-        "workspace_write" if token == "workspace-write" => Some(
+        "write" | "edit" if token == "workspace-write" => Some(
             "  [s] covers every workspace write for this session — not this path alone".to_string(),
         ),
         _ => None,
@@ -62,10 +54,10 @@ mod tests {
     fn no_grant_offered_means_no_scope_sentence() {
         for name in [
             "run_command",
-            "run_program",
             "http_fetch",
             "http_download",
-            "workspace_write",
+            "write",
+            "edit",
         ] {
             assert_eq!(scope_sentence(name, None), None);
         }
@@ -76,13 +68,32 @@ mod tests {
         assert_eq!(scope_sentence("run_command", Some("sql:analytics")), None);
         assert_eq!(scope_sentence("http_fetch", Some("workspace-write")), None);
         assert_eq!(
-            scope_sentence("workspace_write", Some("fetch:https+example.com")),
+            scope_sentence("write", Some("fetch:https+example.com")),
+            None
+        );
+        assert_eq!(
+            scope_sentence("edit", Some("fetch:https+example.com")),
             None
         );
         assert_eq!(
             scope_sentence("bounded_sql_query", Some("sql:analytics")),
             None
         );
-        assert_eq!(scope_sentence("scratch_sql", Some("scratch")), None);
+    }
+
+    /// The edit tool is the write tool's effect class: one `[s]` sentence —
+    /// the same words — covers both guarded file tools.
+    #[test]
+    fn the_workspace_edit_ask_states_the_same_write_scope() {
+        assert_eq!(
+            scope_sentence("edit", Some("workspace-write")),
+            scope_sentence("write", Some("workspace-write")),
+            "one scope sentence for both guarded file tools"
+        );
+        assert!(
+            scope_sentence("edit", Some("workspace-write"))
+                .is_some_and(|sentence| sentence.contains("every workspace write")),
+            "the sentence says what [s] widens to"
+        );
     }
 }

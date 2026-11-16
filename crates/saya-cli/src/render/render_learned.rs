@@ -2,9 +2,9 @@
 //! user sees when SAYA comes away from a turn knowing something it did not
 //! know before.
 //!
-//! Until now neither adapter rendered this event: the TUI dropped it on its
-//! catch-all arm and the headless renderer printed `unrecognized agent event`.
-//! That was the worst place in the product to be silent — the whole pitch is
+//! Both adapters render this event rather than dropping it on the TUI's
+//! catch-all arm or printing `unrecognized agent event` headlessly.
+//! That would be the worst place in the product to be silent — the whole pitch is
 //! that memory accumulates without being managed, and the one moment that
 //! proves it showed nothing, or an error string.
 //!

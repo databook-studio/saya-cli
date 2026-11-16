@@ -12,20 +12,26 @@ use std::{ffi::OsStr, io, io::Read, os::fd::AsRawFd};
 use sha2::{Digest, Sha256};
 
 use super::anchor::Anchor;
-use super::contain::{EntryKind, ListEntry, ReadFile, Workspace};
+use super::contain::{
+    EntryKind, ListEntry, ListOutcome, ReadFile, Workspace, enumeration_cap, serve_bounded,
+};
 use super::fd::{DirStream, FinalStat, open_dir_at, stat_at};
 use crate::{HarnessError, io_error};
+
+mod controlled_read;
+pub(crate) use controlled_read::read as read_controlled;
 
 /// Reads a workspace file under containment: the anchored walk, a no-follow
 /// open, and a post-open identity check so the bytes served belong to the
 /// file that was scanned. At most `max_bytes` are returned, with `truncated`
 /// set when the file holds more. The digest covers the whole file — hashed
-/// in the same open, streamed in 64 KiB chunks — so a truncated read still
+/// in the same open, streamed in 64 KiB blocks — so a truncated read still
 /// names the state an edit precondition can state. Files larger than the
 /// operation's file ceiling refuse before any byte is hashed: the refusal
 /// names the scanned size and the bound, so a very large file costs a stat,
-/// not a full hash. Ordinary reads retain the 8 MiB backstop; scratch CSV
-/// import calls this same contained open with its separate 32 MiB ceiling.
+/// not a full hash. Ordinary reads retain the 8 MiB backstop; the staged
+/// source read calls this same contained open with its separate 32 MiB
+/// ceiling.
 pub(crate) fn read(
     ws: &Workspace,
     rel: &str,
@@ -124,7 +130,7 @@ pub(crate) fn list(
     ws: &Workspace,
     rel: &str,
     max_entries: usize,
-) -> Result<Vec<ListEntry>, HarnessError> {
+) -> Result<ListOutcome, HarnessError> {
     // The listed directory is opened no-follow relative to the anchored
     // parent, and every entry's kind/size stat resolves against the stream's
     // own descriptor — never against a path that could be swapped underneath.
@@ -190,22 +196,16 @@ pub(crate) fn list(
             name,
             kind,
             size: stat.as_ref().map(FinalStat::len).unwrap_or(0),
+            mtime: stat.as_ref().and_then(FinalStat::modified),
         });
-        // Checked after the push, so the refusal fires when a directory holds
-        // MORE than `max_entries` entries — the (max+1)-th entry trips the
-        // bound with found > max, matching the search bounds and the walk's
-        // visited bound; a quietly shortened listing would read as the whole
-        // directory.
-        if entries.len() > max_entries {
-            return Err(HarnessError::BoundsExceeded {
-                path: rel.to_string(),
-                found: entries.len() as u64,
-                max: max_entries as u64,
-            });
+        // The enumeration itself is bounded: one entry past the ceiling is
+        // enough to know the directory holds more than was counted, so a
+        // flood costs a bounded read rather than an unbounded one.
+        if entries.len() > enumeration_cap(max_entries) {
+            break;
         }
     }
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(entries)
+    Ok(serve_bounded(entries, max_entries))
 }
 
 pub(crate) fn final_stat<'a>(

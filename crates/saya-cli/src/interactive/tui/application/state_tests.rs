@@ -1,24 +1,31 @@
 use super::tests_support::{idle_app, in_flight_task};
 use super::*;
+use crate::interactive::tui::worker_permits::test_permit_lock;
 
 #[test]
 fn idle_app_admits_a_sql_command() {
+    // Admission acquires a process-wide worker permit on Start, so the test
+    // must not race the cap tests' held phase over the shared pool.
+    let _serialized = test_permit_lock();
     let app = idle_app();
-    assert!(matches!(app.admit_second_sql(), SecondSqlDecision::Start));
+    assert!(matches!(
+        app.admit_second_sql(),
+        SecondSqlDecision::Start(_)
+    ));
     assert!(!app.is_busy(), "idle app is not busy");
 }
 
-/// The result-loss root cause: `is_busy()` ignored SQL tasks, so the
-/// `!is_busy()` queued-prompt gate stayed open while a query ran and a
-/// second command dispatched, replacing `app.sql_task` and dropping the
-/// first receiver. With `is_busy()` covering SQL tasks the gate now holds
-/// the second command — the first is preserved and reports its result.
+/// The result-loss case: an `is_busy()` that ignored SQL tasks leaves the
+/// `!is_busy()` queued-prompt gate open while a query runs, so a second
+/// command dispatches, replaces `app.sql_task` and drops the first receiver.
+/// With `is_busy()` covering SQL tasks the gate holds the second command —
+/// the first is preserved and reports its result.
 #[test]
 fn is_busy_covers_a_running_sql_task_so_the_gate_holds_a_second_command() {
     let mut app = idle_app();
     assert!(!app.is_busy(), "idle is not busy");
     app.sql_task = Some(in_flight_task());
-    // A running query now reads as busy, so the `!is_busy()` gate will not
+    // A running query reads as busy, so the `!is_busy()` gate will not
     // dispatch a queued line over it.
     assert!(app.is_busy(), "a running SQL task must count as busy");
     // The first task is still tracked — nothing replaced it.
@@ -45,7 +52,7 @@ fn second_sql_command_at_the_handler_is_rejected_not_silently_dropped() {
                 "reject must not claim cancellation: {msg}"
             );
         }
-        SecondSqlDecision::Start => panic!(
+        SecondSqlDecision::Start(_) => panic!(
             "a second SQL command at the handler must be rejected, not started (silent result loss)"
         ),
     }
@@ -54,31 +61,30 @@ fn second_sql_command_at_the_handler_is_rejected_not_silently_dropped() {
 }
 
 #[test]
-fn detach_sql_task_clears_the_task_and_says_it_is_still_running() {
+fn detach_sql_task_requests_cancellation_and_clears_the_task() {
     let mut app = idle_app();
     app.sql_task = Some(in_flight_task());
+    let cancellation = app.sql_task.as_ref().unwrap().3.clone();
     app.detach_sql_task();
-    // The UI no longer tracks the query (spinner stops, gate reopens).
+    // The UI stops tracking the query (spinner stops, gate reopens).
     assert!(app.sql_task.is_none(), "detach clears the in-flight task");
     assert!(!app.is_busy());
-    // The message must be honest: it is still running server-side, NOT cancelled.
+    assert!(cancellation.is_cancelled(), "detach signals the task token");
     let last = app
         .transcript
         .blocks()
         .last()
         .expect("a message was posted");
-    let text = last.text.to_lowercase();
     assert!(
-        text.contains("running"),
-        "message says still running: {text}"
+        last.text
+            .contains("Cancellation requested; query detached and may still be running."),
+        "message reports only a cancellation request: {}",
+        last.text
     );
     assert!(
-        !text.contains("cancel"),
-        "detach must not claim cancellation: {text}"
-    );
-    assert!(
-        text.contains("discarded"),
-        "message says the result is discarded: {text}"
+        !last.text.contains("SELECT") && !last.text.contains("analytics"),
+        "message contains no query or profile data: {}",
+        last.text
     );
 }
 
@@ -113,6 +119,7 @@ fn running_sql_task_is_visible_in_the_status_bar() {
         model: "qwen".into(),
         approval_mode: "read-only".into(),
         agent_mode: "build".into(),
+        permission_mode: None,
         workspace_root: None,
         sharing_on: true,
         host_composed: false,

@@ -1,5 +1,4 @@
-//! Numerator orderings: the last answering report wins in multi-round turns; errored turns leave no stale numerator (moved verbatim from `streaming_tests.rs`, via
-//! `streaming/footer_tests.rs`).
+//! Numerator orderings: the last answering report wins in multi-round turns; errored turns leave no stale numerator.
 
 use super::*;
 
@@ -20,6 +19,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 
@@ -108,10 +108,10 @@ fn a_second_answering_report_replaces_the_first() {
     );
 }
 
-/// An errored turn that had already reported usage: no footer, no session
-/// total, and — the part a later turn would expose — no leftover numerator.
-/// The reset lives in the shared finish block; if it moved into the Ok arm
-/// only, the next turn would resurrect the errored turn's ctx figure.
+/// An errored turn that had already reported usage retains the known spend,
+/// but makes no footer and leaves no stale numerator. The reset lives in the
+/// shared finish block; if it moved into the Ok arm only, the next turn would
+/// resurrect the errored turn's ctx figure.
 #[test]
 fn an_errored_turn_pushes_no_footer_and_leaves_no_stale_numerator() {
     let (mut app, mut state) = app_with_model("gpt-4o");
@@ -138,12 +138,12 @@ fn an_errored_turn_pushes_no_footer_and_leaves_no_stale_numerator() {
         "the errored turn's numerator is cleared"
     );
     assert_eq!(
-        state.usage.answering.turns, 0,
-        "an errored turn records no session usage"
+        state.usage.answering.turns, 1,
+        "an errored turn retains its known provider receipt"
     );
 
     // A later turn whose provider stays silent must show no stale ctx figure,
-    // and the session totals must not include the errored turn.
+    // while the session total keeps the earlier known receipt.
     let footer = run_turn(
         &mut app,
         &mut state,
@@ -154,7 +154,7 @@ fn an_errored_turn_pushes_no_footer_and_leaves_no_stale_numerator() {
         "the errored turn's report must not leak into the next footer: {footer}"
     );
     assert!(
-        footer.contains("session 64000 in / 20 out"),
-        "the errored turn contributed nothing to the session totals: {footer}"
+        footer.contains("session 128000 in / 40 out"),
+        "the next turn adds to, rather than replaces, the errored turn's known spend: {footer}"
     );
 }

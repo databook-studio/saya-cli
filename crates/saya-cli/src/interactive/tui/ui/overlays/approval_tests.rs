@@ -1,13 +1,13 @@
-//! The approval panel's answers stay painted however long the fact body is:
-//! a body that outruns the capped panel used to push the answers line out of
-//! the panel while the keys still worked — a guessed keypress still consented
-//! (audit finding F05). These tests paint real composed frames through the
-//! real `ui::draw` onto a `TestBackend` and assert on the buffer.
+//! The approval panel's answers stay painted however long the fact body is: a
+//! body that outruns the capped panel must not push the answers line out of
+//! the panel while the keys still work, or a guessed keypress consents without
+//! anything on screen. These tests paint real composed frames through the real
+//! `ui::draw` onto a `TestBackend` and assert on the buffer.
 
 use crate::interactive::tui::types::{App, PendingApproval};
 use crate::interactive::tui::ui_snapshot_tests::{empty_app, fixed_status, render_buffer};
 
-/// The audit's repro: a detail body whose wrapped rows outrun the capped
+/// A detail body whose wrapped rows outrun the capped
 /// panel, so the answers line — last in the flat paragraph — is the first
 /// thing clipped.
 fn long_detail() -> String {

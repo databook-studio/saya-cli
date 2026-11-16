@@ -1,5 +1,4 @@
-//! Reset and ordering invariants: TurnReset through the channel path and post-Done reports (moved verbatim from `streaming_tests.rs`, via
-//! `streaming/footer_tests.rs`).
+//! Reset and ordering invariants: TurnReset through the channel path and post-Done reports.
 
 use super::*;
 
@@ -20,6 +19,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

@@ -200,7 +200,7 @@ fn a_failed_run_says_what_failed() {
     insta::assert_snapshot!(buffer);
 }
 
-/// Phase 5 packet 1: a stopped run says "Run stopped." — never the engine's
+/// A stopped run says "Run stopped." — never the engine's
 /// "run cancelled" line — and reads as ended, not failed.
 #[test]
 fn a_stopped_run_says_run_stopped_not_run_cancelled() {

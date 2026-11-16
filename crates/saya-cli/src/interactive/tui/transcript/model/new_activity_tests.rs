@@ -1,15 +1,15 @@
-//! Phase 8 packet 2: the unseen-rows count raised by the append path.
+//! The unseen-rows count raised by the append path.
 //!
-//! Packet 1 froze a scrolled reader's window; these pin the other half — that
+//! A scrolled reader's window stays frozen; these pin the other half — that
 //! arrivals below the fold are counted (and only below the fold), and that
 //! counting them never moves the window. Beside `push.rs`, which owns the one
-//! append hook, per the testing standard.
+//! append hook.
 
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
 
 /// Fills a transcript past one window and scrolls the reader up, then warms
-/// the wrap cache so the next append sees a stored view — packet 1's
-/// `scrolled_baseline` only compensates (and only counts) with a baseline.
+/// the wrap cache so the next append sees a stored view — `scrolled_baseline`
+/// only compensates (and only counts) with a baseline.
 fn scrolled_transcript() -> Transcript {
     let mut t = Transcript::new();
     for i in 0..8 {

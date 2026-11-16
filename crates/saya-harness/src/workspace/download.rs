@@ -8,7 +8,9 @@
 use std::{fs, os::unix::fs::MetadataExt, path::PathBuf};
 
 use super::anchored::final_stat;
+use super::commit_gate::hold;
 use super::contain::Workspace;
+use super::download_guard::{DESTINATION_DIGEST_MAX_BYTES, digest_matches};
 use crate::HarnessError;
 use crate::io_error;
 use std::io;
@@ -52,13 +54,32 @@ pub(crate) fn open_download_part(
     Ok((anchor.path().to_path_buf(), file))
 }
 
-/// Promotes a completed download part over `dest_rel` atomically: both part
-/// and destination are anchored, and the rename acts on those anchors, so it
-/// replaces whatever the destination names *there* — never wherever the
-/// paths resolve now. The destination is re-verified afterwards (regular
-/// file, 0600, never executable, still the inode that was renamed) so a
-/// completed download is never pretended onto a swapped path.
-pub(crate) fn promote(ws: &Workspace, part_rel: &str, dest_rel: &str) -> Result<(), HarnessError> {
+/// Promotes a completed download part over `dest_rel` atomically, under the
+/// destination guard (`download_guard`): both part and destination are
+/// anchored, and the rename acts on those anchors, so it names the
+/// destination *there* — never wherever the paths resolve now. No expected
+/// digest is create-only: an existing destination — file or directory —
+/// refuses [`HarnessError::AlreadyExists`], destination and part untouched.
+/// A digest replaces only a regular file whose current bytes hash to it —
+/// streamed, bounded by the download file limit — refusing
+/// [`HarnessError::NotFound`] on a missing destination (a digest grants no
+/// authority to create), [`HarnessError::NotRegularFile`],
+/// [`HarnessError::BoundsExceeded`], or [`HarnessError::ContentChanged`];
+/// every refusal leaves the part in place. The destination is re-verified
+/// afterwards (regular file, never executable, still the inode that was
+/// renamed) so a completed download is never pretended onto a swapped path.
+pub(crate) fn promote(
+    ws: &Workspace,
+    part_rel: &str,
+    dest_rel: &str,
+    expected_destination_sha256: Option<&str>,
+) -> Result<(), HarnessError> {
+    // The gate is held from before the part and destination walks to after
+    // the rename, so two Saya writers serialize their guard-then-publish
+    // window — the same optimistic stale-version guard the guarded write
+    // and patch hold, not an OS-level compare-and-swap against external
+    // programs.
+    let _gate = hold();
     let part = ws.anchor(part_rel, false)?;
     let part_stat = final_stat(&part, "stat download part", part_rel)?;
     if !part_stat.is_file() {
@@ -67,6 +88,43 @@ pub(crate) fn promote(ws: &Workspace, part_rel: &str, dest_rel: &str) -> Result<
         });
     }
     let dest = ws.anchor(dest_rel, true)?;
+    match (expected_destination_sha256, dest.stat()) {
+        // Create-only: an existing destination — file or directory —
+        // refuses, destination and part untouched.
+        (None, Some(_)) => {
+            return Err(HarnessError::AlreadyExists {
+                path: dest_rel.to_string(),
+            });
+        }
+        // A digest grants no authority to create: a missing destination is
+        // a refusal, and it discloses no digest to invent one from.
+        (Some(_), None) => {
+            return Err(HarnessError::NotFound {
+                path: dest_rel.to_string(),
+            });
+        }
+        // Replace only when the destination's current bytes hash to the
+        // caller's observed digest: a regular file within the download file
+        // limit, streamed — never loaded whole.
+        (Some(expected), Some(stat)) => {
+            if !stat.is_file() {
+                return Err(HarnessError::NotRegularFile {
+                    path: dest_rel.to_string(),
+                });
+            }
+            if stat.len() > DESTINATION_DIGEST_MAX_BYTES {
+                return Err(HarnessError::BoundsExceeded {
+                    path: dest_rel.to_string(),
+                    found: stat.len(),
+                    max: DESTINATION_DIGEST_MAX_BYTES,
+                });
+            }
+            let file = dest.open_verified(stat.identity(), dest_rel)?;
+            digest_matches(dest_rel, dest.path(), &file, expected)?;
+        }
+        // Nothing names the destination: the rename is a create.
+        (None, None) => {}
+    }
     dest.rename_from(&part)?;
     let final_stat = dest
         .stat_final()

@@ -1,17 +1,17 @@
-//! `--budget KEY=VALUE` parsing: the CLI layer over the resolved `[jobs]`
-//! defaults.
+//! `--budget KEY=VALUE` parsing: the CLI layer over the resolved
+//! `[limits.run]` ceilings.
 //!
-//! The layering is RunSpec over `[jobs]` per dimension: every unset key
+//! The layering is RunSpec over `[limits.run]` per dimension: every unset key
 //! falls back to the config's resolved value, every declared key overrides
 //! it. The environment is never read — a run must be reproducible from its
-//! spec and config alone (plan G3). A zero ceiling is a typo, refused the
+//! spec and config alone. A zero ceiling is a typo, refused the
 //! same way config resolution refuses one, never clamped.
 
 use saya_config::ORCHESTRATOR_ROLE;
 use saya_types::{Budgets, is_name_shaped};
 use std::time::Duration;
 
-/// Parses the `--budget` tokens over the `[jobs]`-resolved base. Every key
+/// Parses the `--budget` tokens over the `[limits.run]`-resolved base. Every key
 /// is typed; an unknown key or a zero value is a usage error, and a token
 /// ceiling naming a role other than the orchestrator is refused like the
 /// unwired scopes (`scopes.rs`).
@@ -46,7 +46,7 @@ pub(super) fn parse(tokens: &[String], base: &Budgets) -> Result<Budgets, String
     // the tightest declared ceiling and binds it to the one endpoint every
     // episode calls, so `tokens.analyst=100` would silently cap the whole
     // run at 100. The check runs over the merged map, so a leftover
-    // `[jobs] tokens_per_endpoint` entry for an unwired role is refused at
+    // `[limits.run] tokens_per_endpoint` entry for an unwired role is refused at
     // start too, not quietly tightened onto the orchestrator.
     if let Some(role) = budgets
         .tokens_per_endpoint
@@ -114,7 +114,7 @@ mod tests {
         assert!(error.contains("orchestrator"), "got: {error}");
     }
 
-    /// The refusal reaches the `[jobs]`-resolved base too: a leftover
+    /// The refusal reaches the `[limits.run]`-resolved base too: a leftover
     /// `tokens_per_endpoint` entry for an unwired role is refused at start
     /// rather than silently tightened onto the orchestrator.
     #[test]
@@ -126,8 +126,8 @@ mod tests {
         assert!(error.contains("tokens.analyst"), "got: {error}");
     }
 
-    /// The orchestrator's own ceiling parses and overrides the `[jobs]`
-    /// base, per the layering rule every dimension follows.
+    /// The orchestrator's own ceiling parses and overrides the
+    /// `[limits.run]` base, per the layering rule every dimension follows.
     #[test]
     fn the_orchestrator_ceiling_parses_and_overrides_the_base() {
         let mut base = Budgets::default();

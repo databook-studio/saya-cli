@@ -1,11 +1,11 @@
 //! The Linux confinement builder: Landlock filesystem rules plus an
-//! unprivileged user+network namespace, written to the draft plan
+//! unprivileged user+network namespace, written to the profile document
 //! (`docs/sandbox-profile-linux.md.draft`), over the raw syscall layer in
 //! `linux_sys` — no `landlock` dependency (see the dependency note below).
 //!
-//! **UNVERIFIED ON ANY LINUX HOST.** The M5-3 spike ran on macOS 26.6.2 and
-//! observed no Linux behaviour; every factual claim marked [UNVERIFIED]
-//! cites the kernel's own documentation (landlock(7), user_namespaces(7),
+//! **UNVERIFIED ON ANY LINUX HOST.** No Linux host has measured this code;
+//! every factual claim marked [UNVERIFIED] cites the kernel's own
+//! documentation (landlock(7), user_namespaces(7),
 //! unshare(2)), never observation. This file is written so the startup
 //! probe — not these assumptions — decides whether it may be used: on a
 //! Linux host the probe runs the enforcement canaries through exactly this
@@ -13,8 +13,7 @@
 //! which fails the verdict, which leaves the runner unregistered. Nothing
 //! here can enable the runner by itself.
 //!
-//! Deliberate shape choices, each a reviewer decision point the draft left
-//! open (draft §4):
+//! Deliberate shape choices:
 //! - `net_allow` must be empty on Linux — a fresh netns has no network at
 //!   all, so no `net_allow` entry can be honoured inside it [UNVERIFIED], and
 //!   Landlock's port rules have no host dimension. Enforcing egress
@@ -24,14 +23,14 @@
 //!   commonly disabled [UNVERIFIED].
 //! - The handled set is every filesystem right the measured ABI supports,
 //!   and this design refuses ABI < 3 (TRUNCATE): handling fewer rights than
-//!   the kernel supports silently unrestricts (draft §2.1).
+//!   the kernel supports silently unrestricts.
 //! - Order: no-new-privs → Landlock restrict → unshare user → uid/gid maps
 //!   → unshare net [UNVERIFIED order; landlock-before-unshare chosen so the
 //!   ruleset does not depend on the new user namespace].
 //! - The `landlock` crate is deliberately not a dependency: it is new and
 //!   its `cargo audit` gate should run when a Linux host has measured this
-//!   design, not before (spike §7). If it is ever adopted, this file's
-//!   marshalling is what it replaces.
+//!   design, not before. If it is ever adopted, this file's marshalling is
+//!   what it would take the place of.
 
 use std::{
     io,
@@ -47,8 +46,8 @@ use super::{RunSandbox, SandboxError};
 /// silently under-restricting.
 pub(super) const MIN_LANDLOCK_ABI: u32 = 3;
 
-/// The read/write universe of an `fs_roots` root [UNVERIFIED access set —
-/// draft §2.3: everything except EXECUTE and REFER].
+/// The read/write universe of an `fs_roots` root [UNVERIFIED access set:
+/// everything except EXECUTE and REFER].
 const ROOT_ALLOWED: u64 = sys::LANDLOCK_ACCESS_FS_WRITE_FILE
     | sys::LANDLOCK_ACCESS_FS_READ_FILE
     | sys::LANDLOCK_ACCESS_FS_READ_DIR
@@ -98,6 +97,16 @@ impl Confinement {
     /// Builds the confinement the draft describes, refusing the shapes this
     /// design cannot honour (ABI too old, paths that cannot be marshalled).
     pub(super) fn new(sb: &RunSandbox, program_dirs: &[PathBuf]) -> Result<Self, SandboxError> {
+        // Landlock is allow-only: a PATH_BENEATH rule can only add access, so
+        // a denial inside an allowed root has no expression here. Refused
+        // (fail closed) rather than dropped — a silently wider sandbox than
+        // the caller asked for is exactly what this module forbids.
+        if !sb.write_denied().is_empty() {
+            return Err(SandboxError::WriteDenialNotExpressible {
+                platform: "linux",
+                reason: "Landlock is allow-only",
+            });
+        }
         let abi = sys::landlock_abi().map_err(|source| SandboxError::Io {
             context: "landlock ABI version query".into(),
             source,
@@ -113,23 +122,25 @@ impl Confinement {
         }
         // handled = every fs right the ABI supports [UNVERIFIED ABI→rights
         // table; the enforcement canary proves whatever is claimed].
-        let handled_access_fs = ROOT_ALLOWED | sys::LANDLOCK_ACCESS_FS_REFER;
+        let handled_access_fs = ROOT_ALLOWED | EXEC_ALLOWED | sys::LANDLOCK_ACCESS_FS_REFER;
         let mut rules = Vec::new();
-        for path in sb
-            .fs_roots()
+        // The workspace roots are read+write; program directories, loader
+        // directories, and the host's toolchain roots are read+execute only.
+        for root in sb.fs_roots() {
+            rules.push((marshal(root)?, ROOT_ALLOWED));
+        }
+        for path in program_dirs
             .iter()
             .map(|p| p.as_path())
-            .chain(program_dirs.iter().map(|p| p.as_path()))
-            .chain(LOADER_DIRS.iter().map(Path::new))
+            .chain(sb.read_only_roots().iter().map(|p| p.as_path()))
+            .chain(
+                LOADER_DIRS
+                    .iter()
+                    .map(Path::new)
+                    .filter(|path| path.exists()),
+            )
         {
-            let allowed = if program_dirs.iter().any(|d| d.as_path() == path)
-                || LOADER_DIRS.iter().any(|d| Path::new(d) == path)
-            {
-                EXEC_ALLOWED
-            } else {
-                ROOT_ALLOWED
-            };
-            rules.push((marshal(path)?, allowed));
+            rules.push((marshal(path)?, EXEC_ALLOWED));
         }
         Ok(Self {
             handled_access_fs,
@@ -145,15 +156,19 @@ impl Confinement {
     }
 
     /// Applies the whole confinement to the calling (forked) child: no-new-
-    /// privs, the Landlock ruleset, then the user+network namespace per the
-    /// draft's order [UNVERIFIED — the probe measures each step's failure
-    /// surface; nothing falls back].
+    /// privs, the user+network namespace, then the Landlock ruleset.
+    /// Measured on a real kernel (Linux 7.1, Landlock ABI 9): Landlock must
+    /// come last because once it is enforced, opening /proc/self/uid_map for
+    /// write is denied; the handled rights must include EXECUTE because a
+    /// rule may only allow rights the ruleset handles (an unhandled EXECUTE
+    /// in a program-directory rule is EINVAL); and a loader directory the host
+    /// does not have (no /lib64 on aarch64 Debian) is skipped, not an error —
+    /// the exec canary still proves the loader is reachable. Nothing falls back.
     pub(super) fn apply(&self) -> io::Result<()> {
         sys::no_new_privs()?;
-        let ruleset_fd = sys::create_ruleset(self.handled_access_fs)?;
-        let restricted = self.restrict_under(ruleset_fd);
-        unsafe { libc::close(ruleset_fd) };
-        restricted?;
+        // The user and network namespaces come first: once Landlock is
+        // enforced, opening /proc/self/{setgroups,uid_map,gid_map} for write is
+        // itself denied, so the namespace setup cannot follow it.
         sys::unshare_user()?;
         sys::write_proc(&self.proc_setgroups, "deny")?;
         sys::write_proc(
@@ -165,7 +180,10 @@ impl Confinement {
             self.gid_map_content.to_str().unwrap_or_default(),
         )?;
         sys::unshare_net()?;
-        Ok(())
+        let ruleset_fd = sys::create_ruleset(self.handled_access_fs)?;
+        let restricted = self.restrict_under(ruleset_fd);
+        unsafe { libc::close(ruleset_fd) };
+        restricted
     }
 
     fn restrict_under(&self, ruleset_fd: libc::c_int) -> io::Result<()> {

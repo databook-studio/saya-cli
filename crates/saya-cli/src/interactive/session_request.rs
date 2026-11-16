@@ -1,27 +1,50 @@
 use crate::{
     agent::{
         self,
+        question_scope::QuestionScope,
         runtime::{AgentRuntimeError, PromptOverrides},
     },
+    budget_wording::{budget_dimension, emit_partial_diagnostic},
     config::runtime::RuntimeConfig,
+    metrics_sink::MetricsSink,
     render::RenderFormat,
     stream_render::TerminalSink,
 };
 use saya_agent::{
-    AgentMode, AgentOutput, ApprovalDecider, ApprovalPolicy, CancellationToken, ChatMessage,
-    SessionPolicy,
+    AgentMode, AgentOutput, ApprovalDecider, ApprovalPolicy, ChatMessage, SessionPolicy, TokenUsage,
 };
 use saya_store::SqliteStateStore;
 use std::sync::Arc;
 
-use super::session_universe::SessionUniverse;
+use super::{
+    session::universe::SessionUniverse,
+    turn_summary::{TallyHandle, ToolTally, tally_handle},
+};
 
 pub(crate) enum PromptResult {
-    /// Boxed because the variant dwarfs `Cancelled`, which carries nothing;
+    /// Boxed because the variant dwarfs `Cancelled`, which carries only usage;
     /// an unboxed `AgentOutput` makes every `PromptResult` as large as a
     /// completed turn.
     Completed(Box<AgentOutput>),
-    Cancelled,
+    Failed(AgentRuntimeError, Option<TokenUsage>),
+    Cancelled {
+        answering_usage: Option<TokenUsage>,
+        learning_usage: Option<TokenUsage>,
+    },
+}
+
+/// What one settled turn hands the loop: the prompt result and the live
+/// sink's tool tally, so the scripted run's one terminal result can report
+/// the tally honestly.
+pub(crate) struct PromptOutcome {
+    pub(crate) result: PromptResult,
+    pub(crate) tally: ToolTally,
+}
+
+/// The settled tally snapshot: no more agent events flow once the turn has
+/// settled, so this is the run's final count.
+fn tally_snapshot(tally: &TallyHandle) -> ToolTally {
+    tally.lock().expect("tool tally").clone()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -53,9 +76,26 @@ pub(crate) async fn run(
     // The agent's task posture, threaded like `approval`: the session's
     // `/mode` state at the composition root.
     agent_mode: AgentMode,
-) -> Result<PromptResult, AgentRuntimeError> {
-    let cancellation = CancellationToken::new();
-    let sink = TerminalSink::new(format);
+    prior_tool_outcomes: Option<crate::interactive::session::continuation::PriorToolOutcomes>,
+    // The session's saved continuation record, carried like the live
+    // outcome bundle: `Some` only where a session state exists.
+    continuation: Option<saya_store::StoredContinuation>,
+    compaction_summary: Option<String>,
+    scope: QuestionScope,
+) -> Result<PromptOutcome, AgentRuntimeError> {
+    let cancellation = scope.cancellation();
+    // A stop-owner clone: the scope moves into the turn, but the Ctrl-C
+    // branch must still capture the application-side stop instant.
+    let stop_scope = scope.clone();
+    // The collector arc is taken before the scope moves into the run: the
+    // settled boundary below prints the snapshot the run just finished
+    // filling — the same collector the clarification reply turn reuses.
+    let metrics = scope.metrics();
+    // The shared tally the live sink records tool events into: handed to the
+    // loop beside the result so the scripted terminal result can report it.
+    let tally = tally_handle();
+    let terminal = TerminalSink::new(format).with_tally(Arc::clone(&tally));
+    let sink = MetricsSink::new(&terminal, scope.metrics());
     // The decider is the terminal ask over the session's policy: the mode
     // resolves there, and a session grant recorded by an answer lands in the
     // one store every turn shares. It holds the session universe's primary
@@ -64,11 +104,28 @@ pub(crate) async fn run(
     // session composition's prompt facts, which its prompts may state.
     let primary = session.primary.clone();
     let facts = session.approval_facts(runtime);
-    let decider: Arc<dyn ApprovalDecider> =
-        Arc::new(crate::prompt_approval::TerminalApproval::from_session(
-            policy, can_prompt, primary, facts, journal,
-        ));
-    let work = agent::runtime::run_prompt_with_sink(
+    // The turn's grant view rides the universe: the definitions gate reads
+    // the live store this turn's decider shares, so a launch `--allow` seed
+    // or an answer's `[s]` grant makes the granted family advertise under a
+    // headless ask. Per-turn, mirroring `primary`'s bind — a mid-session
+    // `/allow` takes effect next turn, and a recomposed universe binds
+    // fresh from the policy.
+    session.bind_grants(policy.grants());
+    let decider: Arc<dyn ApprovalDecider> = Arc::new(
+        crate::prompt_approval::TerminalApproval::from_session_with_cancellation(
+            policy,
+            can_prompt,
+            primary,
+            facts,
+            journal,
+            cancellation.clone(),
+        )
+        .with_metrics(scope.metrics()),
+    );
+    let prior_tool_outcomes = (!history.is_empty())
+        .then_some(prior_tool_outcomes)
+        .flatten();
+    let work = agent::runtime::run_prompt_with_sink_and_outcomes(agent::runtime::SinkPrompt {
         runtime,
         prompt,
         approval,
@@ -76,20 +133,52 @@ pub(crate) async fn run(
         can_obtain_approval,
         overrides,
         history,
-        &sink,
-        cancellation.clone(),
-        Some(state_db.clone()),
-        Some(decider),
-        None,
-        Some(session),
+        sink: &sink,
+        cancellation: cancellation.clone(),
+        question_scope: Some(scope),
+        state_db: Some(state_db.clone()),
+        decider: Some(decider),
+        last_sql: None,
+        session: Some(session),
         agent_mode,
-    );
+        capture: None,
+        prior_tool_outcomes,
+        continuation,
+        compaction_summary,
+    });
     tokio::pin!(work);
     tokio::select! {
-        result = &mut work => result.map(|output| PromptResult::Completed(Box::new(output))),
+        result = &mut work => {
+            let budget = budget_dimension(cancellation.reason());
+            let settled = match result {
+                Ok(output) => PromptResult::Completed(Box::new(output)),
+                Err(error) => PromptResult::Failed(error, terminal.take_answering_usage()),
+            };
+            crate::local_metrics_format::print_metrics_section(&metrics);
+            if matches!(settled, PromptResult::Completed(_)) {
+                emit_partial_diagnostic(budget, format);
+            }
+            Ok(PromptOutcome {
+                result: settled,
+                tally: tally_snapshot(&tally),
+            })
+        }
         _ = tokio::signal::ctrl_c() => {
-            cancellation.cancel();
-            Ok(PromptResult::Cancelled)
+            stop_scope.request_stop();
+            let learning_usage = match work.await {
+                Ok(output) => output.learning_usage,
+                Err(_) => None,
+            };
+            stop_scope.record_stop_settlement();
+            let settled = PromptResult::Cancelled {
+                answering_usage: terminal.take_answering_usage(),
+                learning_usage,
+            };
+            crate::local_metrics_format::print_metrics_section(&metrics);
+            Ok(PromptOutcome {
+                result: settled,
+                tally: tally_snapshot(&tally),
+            })
         }
     }
 }

@@ -144,7 +144,7 @@ pub(super) fn verify_resume(
 
 /// Reopens a verified partial for appending: a no-follow append at 0600,
 /// truncated back to the recorded length so the unaccounted tail beyond it
-/// (a crash between a chunk write and the sidecar update) is discarded —
+/// (a crash between a block write and the sidecar update) is discarded —
 /// never re-fetched on top of.
 pub(super) fn reopen(
     workspace: &Workspace,

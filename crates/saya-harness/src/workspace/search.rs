@@ -3,9 +3,11 @@
 //! regex, so the model cannot confuse a pattern with an execution. Both run
 //! over the contained walk (`walk`), so every candidate they see is a path
 //! the containment layer itself resolved and re-validated; the search never
-//! builds a path it then trusts. Bounds fail as typed errors rather than
-//! truncating quietly, because a capped "no matches" reads as proof of
-//! absence.
+//! builds a path it then trusts. A match list past the match bound is served
+//! short with the rest counted, never refused: a silently truncated list
+//! would read as the whole result, but so would a failed call the model
+//! answers by narrowing at random. The visited bound still refuses — a walk
+//! cut short cannot even count what it never reached.
 
 use std::str;
 
@@ -18,6 +20,19 @@ use super::pattern::Pattern;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobMatch {
     pub path: String,
+}
+
+/// What one [`Workspace::glob`] matched. `omitted` counts the matches the
+/// match bound left out — exact, because the walk that found them ran to
+/// completion; a walk the visited bound cut short refuses instead of
+/// reporting a count it never reached.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GlobOutcome {
+    pub matches: Vec<GlobMatch>,
+    /// Whether the match bound left matches out.
+    pub truncated: bool,
+    /// Matches the match bound left out.
+    pub omitted: u64,
 }
 
 /// One literal-substring hit in one file, as [`Workspace::grep`] reports it.
@@ -36,25 +51,33 @@ pub struct GrepMatch {
 /// What one [`Workspace::grep`] covered. `files_skipped` counts candidate
 /// files the search never read — larger than the per-file read bound, or not
 /// valid UTF-8 — so a miss is never confused with proof of absence, and
-/// binary content is never served as mojibake.
+/// binary content is never served as mojibake. `omitted` counts the hits the
+/// match bound left out — exact, because the walk that found them ran to
+/// completion.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GrepOutcome {
     pub matches: Vec<GrepMatch>,
     pub files_scanned: usize,
     pub files_skipped: usize,
+    /// Whether the match bound left hits out.
+    pub truncated: bool,
+    /// Hits the match bound left out.
+    pub omitted: u64,
 }
 
 impl Workspace {
     /// Matches every real path under the workspace — files and directories
-    /// alike, never a symlink — against `pattern`. Both bounds are typed
-    /// errors: past `max_visited` the walk refuses, and a match list that
-    /// would exceed `max_matches` refuses rather than truncating.
+    /// alike, never a symlink — against `pattern`. Past `max_visited` the
+    /// walk refuses: it cannot count what it never reached. A match list past
+    /// `max_matches` is served short with the rest counted in `omitted` —
+    /// the model gets the first `max_matches` paths and the size of what it
+    /// did not see, never a failed call.
     pub fn glob(
         &self,
         pattern: &str,
         max_visited: usize,
         max_matches: usize,
-    ) -> Result<Vec<GlobMatch>, HarnessError> {
+    ) -> Result<GlobOutcome, HarnessError> {
         if max_visited > MAX_LIST_ENTRIES {
             return Err(HarnessError::BoundsExceeded {
                 path: pattern.to_string(),
@@ -71,23 +94,28 @@ impl Workspace {
         }
         let matcher = Pattern::new(pattern);
         let mut matches = Vec::new();
+        let mut omitted = 0u64;
         self.walk(max_visited, &mut |rel, _kind, _size| {
             if matcher.matches(rel) {
-                matches.push(GlobMatch {
-                    path: rel.to_string(),
-                });
-                if matches.len() > max_matches {
-                    return Err(HarnessError::BoundsExceeded {
-                        path: pattern.to_string(),
-                        found: matches.len() as u64,
-                        max: max_matches as u64,
+                if matches.len() < max_matches {
+                    matches.push(GlobMatch {
+                        path: rel.to_string(),
                     });
+                } else {
+                    // Past the match bound the walk keeps going so the count
+                    // is exact: "500 of 700" is a narrower question, while a
+                    // refusal is the same call again with a guess.
+                    omitted += 1;
                 }
             }
             Ok(())
         })?;
         matches.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(matches)
+        Ok(GlobOutcome {
+            matches,
+            truncated: omitted > 0,
+            omitted,
+        })
     }
 
     /// Reports every line of every scannable file under the workspace that
@@ -98,6 +126,9 @@ impl Workspace {
     /// over a prefix would read as full coverage. A file that is not valid
     /// UTF-8 is skipped rather than served as mojibake. Both land in
     /// `files_skipped`, keeping a miss distinguishable from proof of absence.
+    /// A hit list past `max_matches` is served short with the rest counted in
+    /// `omitted`, never refused. The visited bound still refuses: a walk cut
+    /// short cannot count the hits it never reached.
     pub fn grep(
         &self,
         needle: &str,
@@ -164,23 +195,24 @@ impl Workspace {
                     None => line.contains(needle),
                 };
                 if hit {
-                    outcome.matches.push(GrepMatch {
-                        path: rel.to_string(),
-                        line: index + 1,
-                        text: bound_line(line, max_line_bytes),
-                        truncated: line.len() > max_line_bytes,
-                    });
-                    if outcome.matches.len() > max_matches {
-                        return Err(HarnessError::BoundsExceeded {
-                            path: needle.to_string(),
-                            found: outcome.matches.len() as u64,
-                            max: max_matches as u64,
+                    if outcome.matches.len() < max_matches {
+                        outcome.matches.push(GrepMatch {
+                            path: rel.to_string(),
+                            line: index + 1,
+                            text: bound_line(line, max_line_bytes),
+                            truncated: line.len() > max_line_bytes,
                         });
+                    } else {
+                        // Past the match bound the walk keeps going so the
+                        // count is exact: "500 of 700" is a narrower question,
+                        // while a refusal is the same call again with a guess.
+                        outcome.omitted += 1;
                     }
                 }
             }
             Ok(())
         })?;
+        outcome.truncated = outcome.omitted > 0;
         outcome
             .matches
             .sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
@@ -190,7 +222,7 @@ impl Workspace {
 
 /// Caps one reported line at `max_bytes`, cutting on a character boundary so
 /// the bound never splits a multi-byte character into mojibake.
-fn bound_line(line: &str, max_bytes: usize) -> String {
+pub(super) fn bound_line(line: &str, max_bytes: usize) -> String {
     if line.len() <= max_bytes {
         return line.to_string();
     }

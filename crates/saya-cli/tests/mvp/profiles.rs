@@ -27,25 +27,32 @@ fn environment_only_named_profiles_are_available_to_connection_commands() {
 
 #[test]
 fn connection_subcommands_accept_environment_only_named_profiles() {
-    let root = std::env::temp_dir().join(format!("saya-cli-env-command-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = super::common::test_root("env-command");
+    let home = root.join("home");
     for command in [
         ["connection", "test", "env-only"],
         ["connection", "schema", "env-only"],
     ] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
-            .args(["--non-interactive", "--format", "json"])
-            .args(command)
-            .env("SAYA_CONFIG_HOME", &root)
-            .env("SAYA_PROFILE", "env-only")
-            .env("SAYA_DB_TYPE", "postgresql")
-            .env("SAYA_DB_HOST", "127.0.0.1")
-            .env("SAYA_DB_PORT", "1")
-            .env("SAYA_DB_NAME", "app")
-            .env("SAYA_DB_USER", "reader")
-            .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
-            .output()
-            .unwrap();
+        let output = super::common::saya_command(
+            &root,
+            &[
+                "--non-interactive",
+                "--format",
+                "json",
+                command[0],
+                command[1],
+                command[2],
+            ],
+        )
+        .env("SAYA_PROFILE", "env-only")
+        .env("SAYA_DB_TYPE", "postgresql")
+        .env("SAYA_DB_HOST", "127.0.0.1")
+        .env("SAYA_DB_PORT", "1")
+        .env("SAYA_DB_NAME", "app")
+        .env("SAYA_DB_USER", "reader")
+        .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
+        .output()
+        .unwrap();
         assert_eq!(output.status.code(), Some(3));
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -54,6 +61,12 @@ fn connection_subcommands_accept_environment_only_named_profiles() {
         );
         assert!(!stderr.contains("profile \"env-only\" was not found"));
     }
+    let expected_state = root.join("state.sqlite3");
+    let fallback_state = saya_cli::resolve_state_db_path(None, None, None, home.to_str());
+    assert!(
+        expected_state.exists() && !fallback_state.exists(),
+        "state must use {expected_state:?}, not HOME fallback {fallback_state:?}"
+    );
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -61,26 +74,27 @@ fn connection_subcommands_accept_environment_only_named_profiles() {
 fn mysql_environment_profile_reaches_generic_connector_path() {
     let root = std::env::temp_dir().join(format!("saya-cli-mysql-command-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
-        .args([
+    let output = super::common::saya_command(
+        &root,
+        &[
             "--non-interactive",
             "--format",
             "json",
             "connection",
             "test",
             "env-only",
-        ])
-        .env("SAYA_CONFIG_HOME", &root)
-        .env("SAYA_PROFILE", "env-only")
-        .env("SAYA_DB_TYPE", "mysql")
-        .env("SAYA_DB_HOST", "127.0.0.1")
-        .env("SAYA_DB_PORT", "1")
-        .env("SAYA_DB_NAME", "app")
-        .env("SAYA_DB_USER", "reader")
-        .env("SAYA_DB_SSLMODE", "disable")
-        .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
-        .output()
-        .unwrap();
+        ],
+    )
+    .env("SAYA_PROFILE", "env-only")
+    .env("SAYA_DB_TYPE", "mysql")
+    .env("SAYA_DB_HOST", "127.0.0.1")
+    .env("SAYA_DB_PORT", "1")
+    .env("SAYA_DB_NAME", "app")
+    .env("SAYA_DB_USER", "reader")
+    .env("SAYA_DB_SSLMODE", "disable")
+    .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
+    .output()
+    .unwrap();
     assert_eq!(output.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("\"event\":\"error\""));
@@ -98,25 +112,26 @@ fn snowflake_environment_profiles_reach_connector_and_externalbrowser_fails_befo
         ("keypair", "SAYA_DB_PRIVATE_KEY", "invalid-key-sentinel"),
         ("userpass", "SAYA_DB_PASSWORD", "password-sentinel"),
     ] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
-            .args([
+        let output = super::common::saya_command(
+            &root,
+            &[
                 "--non-interactive",
                 "--format",
                 "json",
                 "connection",
                 "test",
                 "env-only",
-            ])
-            .env("SAYA_CONFIG_HOME", &root)
-            .env("SAYA_PROFILE", "env-only")
-            .env("SAYA_DB_TYPE", "snowflake")
-            .env("SAYA_DB_ACCOUNT", "bad/account")
-            .env("SAYA_DB_USER", "reader")
-            .env("SAYA_DB_AUTH_TYPE", auth)
-            .env(secret_name, secret_value)
-            .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
-            .output()
-            .unwrap();
+            ],
+        )
+        .env("SAYA_PROFILE", "env-only")
+        .env("SAYA_DB_TYPE", "snowflake")
+        .env("SAYA_DB_ACCOUNT", "bad/account")
+        .env("SAYA_DB_USER", "reader")
+        .env("SAYA_DB_AUTH_TYPE", auth)
+        .env(secret_name, secret_value)
+        .env("SAYA_QUERY_TIMEOUT_SECONDS", "1")
+        .output()
+        .unwrap();
         assert_eq!(output.status.code(), Some(3), "{auth}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("\"event\":\"error\""));
@@ -124,41 +139,43 @@ fn snowflake_environment_profiles_reach_connector_and_externalbrowser_fails_befo
         assert!(output.stdout.is_empty());
     }
 
-    let browser = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
-        .args([
+    let browser = super::common::saya_command(
+        &root,
+        &[
             "--non-interactive",
             "--format",
             "json",
             "connection",
             "test",
             "env-only",
-        ])
-        .env("SAYA_CONFIG_HOME", &root)
-        .env("SAYA_PROFILE", "env-only")
-        .env("SAYA_DB_TYPE", "snowflake")
-        .env("SAYA_DB_ACCOUNT", "acct")
-        .env("SAYA_DB_USER", "reader")
-        .env("SAYA_DB_AUTH_TYPE", "externalbrowser")
-        .output()
-        .unwrap();
+        ],
+    )
+    .env("SAYA_PROFILE", "env-only")
+    .env("SAYA_DB_TYPE", "snowflake")
+    .env("SAYA_DB_ACCOUNT", "acct")
+    .env("SAYA_DB_USER", "reader")
+    .env("SAYA_DB_AUTH_TYPE", "externalbrowser")
+    .output()
+    .unwrap();
     assert_eq!(browser.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&browser.stderr);
     assert!(stderr.contains("interactive mode"));
     assert!(browser.stdout.is_empty());
 
-    let piped = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
-        .args(["--format", "json", "connection", "test", "env-only"])
-        .env("SAYA_CONFIG_HOME", &root)
-        .env("SAYA_PROFILE", "env-only")
-        .env("SAYA_DB_TYPE", "snowflake")
-        .env("SAYA_DB_ACCOUNT", "acct")
-        .env("SAYA_DB_USER", "reader")
-        .env("SAYA_DB_AUTH_TYPE", "externalbrowser")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
+    let piped = super::common::saya_command(
+        &root,
+        &["--format", "json", "connection", "test", "env-only"],
+    )
+    .env("SAYA_PROFILE", "env-only")
+    .env("SAYA_DB_TYPE", "snowflake")
+    .env("SAYA_DB_ACCOUNT", "acct")
+    .env("SAYA_DB_USER", "reader")
+    .env("SAYA_DB_AUTH_TYPE", "externalbrowser")
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .unwrap();
     let piped_output = piped.wait_with_output().unwrap();
     assert_eq!(piped_output.status.code(), Some(3));
     let piped_text = format!(

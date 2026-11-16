@@ -61,7 +61,7 @@ async fn host_lane_refuses_oversized_argv_before_spawn_and_journal() {
     let _ = std::fs::remove_dir_all(&journal_dir);
     std::fs::create_dir_all(&journal_dir).expect("journal dir must create");
     let journal = std::sync::Arc::new(saya_store::SessionJournal::open(&journal_dir));
-    let tools = super::run_tools::RunTools::compose(database, None, None, None)
+    let tools = super::run_tools::RunTools::compose(database, None)
         .with_session_journal(journal.clone())
         .with_host(config, &saya_agent::CancellationToken::new());
 

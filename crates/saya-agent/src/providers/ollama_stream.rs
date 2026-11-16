@@ -1,4 +1,6 @@
-use super::{framing::whitespace, ollama_chunks::Chunk, tool_assembly::ToolAssembly};
+use super::{
+    framing::whitespace, ollama_chunks::Chunk, stall::ProgressClock, tool_assembly::ToolAssembly,
+};
 use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
@@ -8,23 +10,44 @@ pub(super) fn parse(
     response: Response,
     cancellation: CancellationToken,
     idle: Duration,
+    request_timeout: Duration,
+    stall: Duration,
 ) -> ProviderStream {
     Box::pin(stream::unfold(
         (
             response.bytes_stream(),
-            State::default(),
+            State {
+                progress: ProgressClock::new(stall),
+                ..State::default()
+            },
             cancellation,
             idle,
+            std::time::Instant::now(),
+            request_timeout,
         ),
         next,
     ))
 }
 
 async fn next<S>(
-    mut value: (S, State, CancellationToken, Duration),
+    mut value: (
+        S,
+        State,
+        CancellationToken,
+        Duration,
+        std::time::Instant,
+        Duration,
+    ),
 ) -> Option<(
     Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken, Duration),
+    (
+        S,
+        State,
+        CancellationToken,
+        Duration,
+        std::time::Instant,
+        Duration,
+    ),
 )>
 where
     S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -37,12 +60,30 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
+        if let Some(error) = value.1.deferred.take() {
+            value.1.done = true;
+            return Some((Err(error), value));
+        }
         if value.1.done {
             return None;
         }
-        // Per-chunk idle budget instead of a total cap (see anthropic_stream).
+        // Per-chunk idle budget, content-progress budget, and the total
+        // request deadline (see anthropic_stream).
+        let stall_at = tokio::time::Instant::from_std(value.1.progress.deadline(value.4));
         let item = tokio::select! {
             _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(value.4 + value.5)) => {
+                value.1.done = true;
+                let visible = value.1.text.len().saturating_add(value.1.tools.bytes());
+                return Some((
+                    Err(super::framing::request_cut(value.5, visible)),
+                    value,
+                ));
+            }
+            _ = tokio::time::sleep_until(stall_at) => {
+                value.1.done = true;
+                return Some((Err(ProviderError::StreamStalled), value));
+            }
             item = tokio::time::timeout(value.3, value.0.next()) => match item {
                 Ok(item) => item,
                 Err(_) => {
@@ -80,8 +121,12 @@ where
 #[derive(Default)]
 struct State {
     bytes: Vec<u8>,
+    frames: super::framing::FrameCount,
     usage: TokenUsage,
+    usage_reported: bool,
     pending: VecDeque<ProviderEvent>,
+    /// Truncation error held back until the driver has drained `pending`.
+    deferred: Option<ProviderError>,
     tools: ToolAssembly,
     content: bool,
     done: bool,
@@ -89,6 +134,9 @@ struct State {
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
     text: String,
+    /// Last content-bearing delta, so keep-alives cannot hold a silent stream
+    /// open.
+    progress: ProgressClock,
 }
 impl State {
     fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
@@ -112,11 +160,11 @@ impl State {
                 Err(ProviderError::InvalidResponse)
             };
         }
-        let line = std::str::from_utf8(&self.bytes)
-            .map_err(|_| ProviderError::InvalidResponse)?
-            .to_owned();
-        self.bytes.clear();
-        self.push_line(line.trim_end_matches('\r'))?;
+        let bytes = std::mem::take(&mut self.bytes);
+        self.frames
+            .admit(self.usage_reported.then_some(self.usage))?;
+        let line = std::str::from_utf8(&bytes).map_err(|_| ProviderError::InvalidResponse)?;
+        self.push_line(line.trim_end_matches('\r'), &[])?;
         if self.done {
             Ok(())
         } else {
@@ -130,36 +178,63 @@ impl State {
             ));
         }
         self.bytes.extend_from_slice(chunk);
-        while let Some(end) = self.bytes.iter().position(|byte| *byte == b'\n') {
-            let line = String::from_utf8(self.bytes[..end].to_vec())
+        let bytes = std::mem::take(&mut self.bytes);
+        let mut consumed = 0;
+        while let Some(relative_end) = bytes[consumed..].iter().position(|byte| *byte == b'\n') {
+            let end = consumed + relative_end;
+            self.frames
+                .admit(self.usage_reported.then_some(self.usage))?;
+            let line = std::str::from_utf8(&bytes[consumed..end])
                 .map_err(|_| ProviderError::InvalidResponse)?;
-            self.bytes.drain(..=end);
-            self.push_line(line.trim_end_matches('\r'))?;
+            consumed = end + 1;
+            self.push_line(line.trim_end_matches('\r'), &bytes[consumed..])?;
             if self.done {
                 break;
             }
         }
+        if !self.done {
+            self.bytes.extend_from_slice(&bytes[consumed..]);
+        }
         Ok(())
     }
-    fn push_line(&mut self, line: &str) -> Result<(), ProviderError> {
+    fn push_line(&mut self, line: &str, trailing: &[u8]) -> Result<(), ProviderError> {
         if line.trim().is_empty() {
             return Ok(());
         }
         let chunk: Chunk =
             serde_json::from_str(line).map_err(|_| ProviderError::InvalidResponse)?;
+        let mut usage = self.usage;
+        let mut usage_reported = self.usage_reported;
+        if chunk.done {
+            if let Some(input) = chunk.prompt_eval_count {
+                usage.input_tokens = input;
+                usage_reported = true;
+            }
+            if let Some(output) = chunk.eval_count {
+                usage.output_tokens = output;
+                usage_reported = true;
+            }
+            if let Some(cached) = chunk.prompt_eval_cached_count {
+                usage.cached_input_tokens = Some(cached);
+                usage_reported = true;
+            }
+        }
         if let Some(message) = chunk.message {
             if !message.content.is_empty() {
                 self.reserve(message.content.len())?;
                 self.content = true;
                 self.text.push_str(&message.content);
+                self.progress.observe();
                 self.pending
                     .push_back(ProviderEvent::TextDelta(message.content));
             }
             if !message.thinking.is_empty() {
                 self.reserve(message.thinking.len())?;
+                self.progress.observe();
                 self.pending
                     .push_back(ProviderEvent::ReasoningDelta(message.thinking));
             }
+            let tool_delta = !message.tool_calls.is_empty();
             for (index, call) in message.tool_calls.into_iter().enumerate() {
                 let arguments = match call.function.arguments {
                     serde_json::Value::String(value) => value,
@@ -176,37 +251,36 @@ impl State {
                     return Err(size_error());
                 }
             }
+            if tool_delta {
+                self.progress.observe();
+            }
         }
         if chunk.done {
             self.done = true;
+            self.usage = usage;
+            self.usage_reported = usage_reported;
+            if self.usage_reported {
+                self.pending.push_back(ProviderEvent::Usage(self.usage));
+            }
             if chunk.done_reason.as_deref() == Some("length") {
-                return Err(ProviderError::output_truncated(
+                self.deferred = Some(ProviderError::output_truncated(
                     std::mem::take(&mut self.text),
                     self.tools.partial_json(),
                 ));
+                return Ok(());
             }
-            if let Some(input) = chunk.prompt_eval_count {
-                self.usage.input_tokens = input;
-            }
-            if let Some(output) = chunk.eval_count {
-                self.usage.output_tokens = output;
-            }
-            if self.usage != TokenUsage::default() {
-                self.pending.push_back(ProviderEvent::Usage(self.usage));
-            }
-            self.complete()?;
+            self.complete(trailing)?;
         }
         Ok(())
     }
-    fn complete(&mut self) -> Result<(), ProviderError> {
-        if !whitespace(&self.bytes) || (!self.content && self.tools.is_empty()) {
+    fn complete(&mut self, trailing: &[u8]) -> Result<(), ProviderError> {
+        if !whitespace(trailing) || (!self.content && self.tools.is_empty()) {
             return Err(ProviderError::InvalidResponse);
         }
         let calls = std::mem::take(&mut self.tools).finish()?;
         if !calls.is_empty() {
             self.pending.push_back(ProviderEvent::ToolCalls(calls));
         }
-        self.bytes.clear();
         self.pending.push_back(ProviderEvent::Done);
         Ok(())
     }

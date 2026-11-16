@@ -1,7 +1,7 @@
 //! `run.candidates` — the number of independent agent attempts per question.
 //!
-//! Mirrors `run.max_iterations` end to end: file model, layering, resolution,
-//! diagnostics, and the CLI override. The default is `1` (today's single-run
+//! Mirrors `run.candidates` end to end: file model, layering, resolution,
+//! diagnostics, and the CLI override. The default is `1` (the single-run
 //! behaviour), so a user who sets nothing changes nothing. Each extra candidate
 //! is another full agent run, so the value is bounded to `1..=16`. Nothing
 //! reads it yet — the selection logic is a separate task.
@@ -18,7 +18,7 @@ fn resolve_with_user(toml: &str) -> saya_config::ResolvedConfig {
     .expect("resolution succeeds")
 }
 
-/// Absent from the config, the resolved value is `1` — exactly today's
+/// Absent from the config, the resolved value is `1` — exactly the
 /// single-run behaviour. A user who sets nothing must see no change.
 #[test]
 fn candidates_default_to_one_when_absent() {
@@ -114,7 +114,7 @@ fn candidates_bounds_are_inclusive() {
     assert_eq!(resolve_with_user("[run]\ncandidates = 16\n").candidates, 16);
 }
 
-/// `SAYA_CANDIDATES` mirrors `SAYA_MAX_ITERATIONS`: the process environment
+/// `SAYA_CANDIDATES` is read from the process environment:
 /// overrides a file value, so a script can raise candidates per-invocation.
 #[test]
 fn candidates_env_var_overrides_the_file_value() {
@@ -127,7 +127,7 @@ fn candidates_env_var_overrides_the_file_value() {
     assert_eq!(resolved.candidates, 5);
 }
 
-/// `run.max_iterations` is not on the protected list, so neither is
+/// `run.candidates` is not on the protected list, so neither is
 /// `candidates`: it is a cost control, not an exfiltration or read-only
 /// control, and a project layer may set it without `--trust-project-config`.
 /// This pins the layering rule found for this setting.
@@ -149,7 +149,7 @@ fn project_layer_candidates_applies_because_it_is_not_protected() {
     );
 }
 
-/// Diagnostics report `candidates` next to `max_iterations`: the file view
+/// Diagnostics report `candidates` beside the run's other settings: the file view
 /// shows what was declared (`None` when unset), the resolved view shows the
 /// effective value (`1` when unset). `saya config show` prints the latter.
 #[test]

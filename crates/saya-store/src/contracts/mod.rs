@@ -1,18 +1,17 @@
 //! Persisted preference and admission helpers.
 //!
-//! The legacy `contract_*` claim store lived here until Spec G, Chunk 5
-//! retired it: every read and write moved to `knowledge_items`, the four
-//! `contract_*` tables were dropped (migration step 6), and the claim/evidence/
-//! event modules were deleted. Two citizens survived the excision because they
-//! are not claims and never were:
+//! The `contract_*` claim store is absent here: every read and write is in
+//! `knowledge_items`, the four `contract_*` tables are dropped by migration
+//! step 6, and the claim/evidence/event modules are absent. Two modules remain
+//! because they are not claims and never were:
 //!
 //! - [`preferences`] — the `user_preferences` table (a setting, not a fact:
 //!   no object, no fingerprint, no drift).
 //! - [`admission`] — the structural payload gate the knowledge-items write
 //!   path and the preference store both reuse.
 //!
-//! [`ForgetReason`] stays too: the live `forget` operation and the CLI layer
-//! carry it, even though the legacy audit events that consumed it are gone.
+//! [`ForgetReason`] remains too: the live `forget` operation and the CLI layer
+//! carry it; the audit events that once consumed it are absent.
 
 pub(crate) mod admission;
 mod preferences;
@@ -20,8 +19,8 @@ mod preferences;
 pub use preferences::{MAX_PREFERENCE_VALUE_BYTES, PreferenceStore};
 
 /// A closed enum for *why* a claim was forgotten. The live `forget` operation
-/// and the CLI `ForgetReasonArg` mapping consume it; the legacy audit trail
-/// that once persisted it is gone, but the type remains the typed boundary the
+/// and the CLI `ForgetReasonArg` mapping consume it; no audit trail persists
+/// it, but the type remains the typed boundary the
 /// command layer hands the operations layer. Add variants here instead of
 /// accepting a free-text reason — a user's reason must never become a stored
 /// string.

@@ -10,7 +10,7 @@
 //!   Seatbelt host position accepts only `*` or `localhost`, so any other
 //!   `net_allow` host is refused at construction — never silently narrowed.
 //!   On macOS the *host* allowlist is therefore enforced in-process by the
-//!   M3-1 fetch policy, never by this sandbox, and the generated profile says
+//!   fetch policy, never by this sandbox, and the generated profile says
 //!   so. On Linux every non-empty `net_allow` is refused (the netns denies
 //!   all egress; Landlock's port rules have no host dimension) [UNVERIFIED].
 //! - **The startup probe decides, never an assumption.** `prepare` runs a
@@ -22,15 +22,14 @@
 //!   registered-with-a-warning and no degraded mode: a host that cannot be
 //!   proven yields [`SandboxProvision::Refused`].
 //! - **The registration consequence is structural.** [`RunnerSpawn`] is the
-//!   only handle a runner tool can spawn through, and
-//!   [`SandboxProvision::plan_capabilities`] strips the runner scope from the
-//!   capabilities plan validation sees when nothing was proven — so a plan
-//!   requesting the runner scope is refused exactly like any other
-//!   unapproved capability. Windows fails closed by construction (U9): the
+//!   only handle a confined tool can spawn through, and a host that cannot be
+//!   proven yields [`SandboxProvision::Refused`] — no spawn configuration
+//!   exists, so the confined tool never joins the universe. Windows fails
+//!   closed by construction: the
 //!   probe records the absence, the spawn configuration does not exist.
 //!
-//! This module owns the confinement; the `run_program` tool that consumes
-//! [`RunnerSpawn`] is M5-4 and is deliberately not wired here.
+//! This module owns the confinement; the shell is the tool that consumes
+//! [`RunnerSpawn`].
 
 mod report;
 mod validate;
@@ -73,12 +72,12 @@ mod spawn;
 /// `(host, port)` pairs).
 ///
 /// Construction is the fail-closed gate for what the OS sandbox can express:
-/// every root is canonicalised (Seatbelt matches the resolved path — spike
-/// §4.2) and checked against the profile-injection text class; every
+/// every root is canonicalised (Seatbelt matches the resolved path) and
+/// checked against the profile-injection text class; every
 /// `net_allow` host must be expressible on this platform or the policy is
 /// refused. On macOS the host component of a `net_allow` entry is **not**
 /// enforced by the sandbox — Seatbelt cannot name a remote host — so the
-/// host allowlist must be enforced in-process (M3-1 fetch policy) or the
+/// host allowlist must be enforced in-process by the fetch policy or the
 /// entry must not exist. Nothing here narrows silently.
 #[derive(Debug, Clone)]
 pub struct RunSandbox {
@@ -86,17 +85,23 @@ pub struct RunSandbox {
     net_allow: Vec<(String, u16)>,
     /// The measured reason `(allow process-fork)` was granted, when it was.
     /// Deny by default means a child that forks is refused with
-    /// `fork: Operation not permitted` (measured, spike §4.5), so any
+    /// `fork: Operation not permitted` (measured), so any
     /// allowlisted program that forks needs this opt-in — and the reason
     /// with which it was granted is the measured evidence, carried verbatim
     /// into the generated profile as the comment a reviewer reads.
     process_fork: Option<String>,
+    /// Paths denied writes inside an allowing root, resolved at construction.
+    write_denied: Vec<PathBuf>,
+    /// Roots a child may read and execute but never write: the host's
+    /// toolchain directories, so a sandboxed `cargo test` can reach the
+    /// compiler without widening the checkout. Canonicalised at construction.
+    read_only_roots: Vec<PathBuf>,
 }
 
 impl RunSandbox {
     /// Builds the policy, refusing every shape the platform's sandbox cannot
-    /// express. Roots are canonicalised before anything is stored (measured
-    /// §4.2); `net_allow` hosts are validated per platform at construction.
+    /// express. Roots are canonicalised before anything is stored;
+    /// `net_allow` hosts are validated per platform at construction.
     pub fn new(
         fs_roots: impl IntoIterator<Item = PathBuf>,
         net_allow: impl IntoIterator<Item = (String, u16)>,
@@ -117,11 +122,51 @@ impl RunSandbox {
             fs_roots: roots,
             net_allow: net,
             process_fork: None,
+            write_denied: Vec::new(),
+            read_only_roots: Vec::new(),
         })
     }
 
+    /// Adds roots a child may read and execute but never write. The shell
+    /// uses this for the host's toolchain directories: a sandboxed
+    /// `cargo test` needs the compiler and its libraries, and none of that
+    /// may become writable. Every root is canonicalised and profile-checked
+    /// like an `fs_roots` entry; a root that cannot be resolved refuses the
+    /// policy rather than degrading.
+    pub fn with_read_only_roots(
+        mut self,
+        roots: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Self, SandboxError> {
+        for root in roots {
+            let resolved = validate::canonical_root(&root)?;
+            if !self.read_only_roots.contains(&resolved) {
+                self.read_only_roots.push(resolved);
+            }
+        }
+        Ok(self)
+    }
+
+    /// The canonicalised read-only roots, in the order given.
+    pub fn read_only_roots(&self) -> &[PathBuf] {
+        &self.read_only_roots
+    }
+
+    /// Deny writes to `path` and everything under it, even inside a write
+    /// root; `path` must be inside one of `fs_roots` and need not exist yet.
+    /// Its parent is canonicalised and the last component re-joined.
+    pub fn with_write_denied(mut self, path: impl Into<PathBuf>) -> Result<Self, SandboxError> {
+        let resolved = validate::write_denial(&path.into(), &self.fs_roots)?;
+        self.write_denied.push(resolved);
+        Ok(self)
+    }
+
+    /// The write-denied paths, resolved against a canonical root, in order.
+    pub fn write_denied(&self) -> &[PathBuf] {
+        &self.write_denied
+    }
+
     /// Grants `(allow process-fork)` to the generated profile, with the
-    /// measured reason this slice grants it for. The reason becomes the
+    /// measured reason it is granted for. The reason becomes the
     /// profile's own comment — it must carry the same conservative text
     /// class every other profile substitution carries, so a reason shaped
     /// like profile language is refused here. On Linux this is a deliberate
@@ -160,12 +205,34 @@ impl RunSandbox {
     /// proven probe yields the runner's spawn configuration.
     ///
     /// `program_dir` is the directory holding the one allowlisted runner
-    /// program (M5-4's parameter); it is canonicalised and profile-checked
+    /// program; it is canonicalised and profile-checked
     /// like any root before it is allowlisted for exec. The probe measures
     /// this host at this moment — a hardening environment that passed a
-    /// previous run's probe does not carry forward (spike §9.3).
+    /// previous run's probe does not carry forward.
     pub fn prepare(&self, program_dir: &Path) -> Result<SandboxProvision, SandboxError> {
-        let program_dir = validate::canonical_root(program_dir)?;
+        self.prepare_with_program_dirs(std::slice::from_ref(&program_dir.to_path_buf()))
+    }
+
+    /// As [`RunSandbox::prepare`], for a child that execs from more than one
+    /// directory. The workspace shell is the caller: `/bin/sh` lives in
+    /// `/bin` while the programs its `PATH` names live in `/usr/bin`,
+    /// `/usr/sbin` and `/sbin`, and no single directory holds both. Every
+    /// directory is canonicalised and profile-checked exactly like
+    /// `prepare`'s one, and the probe still measures the profile the runner
+    /// would actually generate — a host that cannot be proven refuses here
+    /// too. The first directory is the spawn's `program_dir`, the one
+    /// `run_program` resolves names in.
+    pub fn prepare_with_program_dirs(
+        &self,
+        program_dirs: &[PathBuf],
+    ) -> Result<SandboxProvision, SandboxError> {
+        if program_dirs.is_empty() {
+            return Err(SandboxError::NoProgramDirs);
+        }
+        let dirs: Vec<PathBuf> = program_dirs
+            .iter()
+            .map(|dir| validate::canonical_root(dir))
+            .collect::<Result<_, _>>()?;
         let report = probe::run(self);
         if !report.proves_runner() {
             return Ok(SandboxProvision::Refused(report));
@@ -174,27 +241,25 @@ impl RunSandbox {
             spawn: RunnerSpawn::new(
                 self.fs_roots.clone(),
                 self.net_allow.clone(),
-                program_dir.clone(),
-                self.spawn_platform(&program_dir)?,
+                dirs[0].clone(),
+                self.spawn_platform(&dirs)?,
             ),
             report,
         })
     }
 
-    fn spawn_platform(&self, program_dir: &Path) -> Result<SpawnPlatform, SandboxError> {
+    fn spawn_platform(&self, program_dirs: &[PathBuf]) -> Result<SpawnPlatform, SandboxError> {
         #[cfg(target_os = "macos")]
         let platform = SpawnPlatform::Seatbelt {
-            profile: macos::seatbelt_profile(self, &[program_dir.to_path_buf()])?,
+            profile: macos::seatbelt_profile(self, program_dirs)?,
         };
         #[cfg(target_os = "linux")]
-        let platform = SpawnPlatform::Landlock(Arc::new(linux::Confinement::new(
-            self,
-            &[program_dir.to_path_buf()],
-        )?));
+        let platform =
+            SpawnPlatform::Landlock(Arc::new(linux::Confinement::new(self, program_dirs)?));
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let platform = SpawnPlatform::Absent;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let _ = program_dir;
+        let _ = program_dirs;
         Ok(platform)
     }
 }
@@ -240,6 +305,19 @@ pub enum SandboxError {
     /// No allowlisted program directory was given for the profile.
     #[error("no runner program directory was allowlisted")]
     NoProgramDirs,
+
+    /// A write-denial path is not inside any filesystem root: a policy bug,
+    /// refused at construction rather than emitted as a rule matching nothing.
+    #[error("write denial `{path}` is not inside any sandbox filesystem root")]
+    WriteDenialOutsideRoots { path: String },
+
+    /// This platform's sandbox cannot carve a denied path out of an allowed
+    /// tree (Landlock is allow-only); refused at prepare time, fail closed.
+    #[error("a write denial is not expressible on {platform}: {reason}")]
+    WriteDenialNotExpressible {
+        platform: &'static str,
+        reason: &'static str,
+    },
 
     /// The generated profile still carries a placeholder. A quoted leftover
     /// is silently accepted and matches nothing (measured), so this fails

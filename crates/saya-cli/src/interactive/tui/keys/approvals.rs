@@ -23,7 +23,8 @@ pub(crate) enum ApprovalKey {
 /// scroll of the fact body, or nothing. Scroll keys (`Up`, `Down`, `PageUp`,
 /// `PageDown`) are bare navigation keys today; they are matched before the
 /// answer keys and can never fall through into one. A held Ctrl/Alt/Super is
-/// neither an answer nor a scroll (slice A's contract, extended): the modal
+/// neither an answer nor a scroll (the scroll/answer split, extended): the
+/// modal
 /// can appear mid-typing, and an editing chord must not consent or drag the
 /// facts. Shift is not held in this sense — `Y`/`N` are the answers their
 /// bare forms are, and Shift+arrow scrolls like its bare form.

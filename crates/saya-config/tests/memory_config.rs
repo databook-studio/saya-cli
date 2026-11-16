@@ -87,7 +87,7 @@ fn an_unknown_mode_string_names_the_accepted_values() {
     );
 }
 
-/// Legacy configurations naming the old independent axes (`recall`, `learning`)
+/// Configurations naming the retired independent axes (`recall`, `learning`)
 /// fail loudly at parse time instead of being silently ignored or reinterpreted.
 #[test]
 fn legacy_two_axis_configuration_fails_loudly_at_parse_time() {

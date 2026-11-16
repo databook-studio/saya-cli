@@ -1,5 +1,4 @@
-//! Tests for the KnowledgeSupplied receipt line, driven through `super::apply_event` (moved verbatim
-//! from the inline `tests` module in `stream_events/apply.rs`).
+//! Tests for the KnowledgeSupplied receipt line, driven through `super::apply_event`.
 
 use super::{BlockKind, Transcript, apply_event};
 use saya_agent::AgentEvent;

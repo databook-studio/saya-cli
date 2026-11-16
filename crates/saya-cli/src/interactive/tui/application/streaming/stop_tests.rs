@@ -7,7 +7,7 @@
 use super::guard_tests::{app_with_model, cancelled_stream_with, stream_with};
 use super::*;
 
-/// Phase 5 packet 1: the worker's stop confirmation reads as a stop, not a
+/// The worker's stop confirmation reads as a stop, not a
 /// failure — "Stopped." with kept work — and is not an error block.
 #[test]
 fn the_worker_confirmation_says_stopped() {
@@ -28,7 +28,7 @@ fn the_worker_confirmation_says_stopped() {
     );
 }
 
-/// Phase 5 packet 1: a user stop is not rendered as an error — the
+/// A user stop is not rendered as an error — the
 /// confirmation is a System block, without the failure mark.
 #[test]
 fn a_user_stop_is_not_rendered_as_an_error() {
@@ -46,8 +46,8 @@ fn a_user_stop_is_not_rendered_as_an_error() {
     );
 }
 
-/// Phase 5 packet 1: a genuine failure is still an error — the fix must not
-/// swallow real failures into the stop wording.
+/// A genuine failure is still an error — the stop wording must not swallow
+/// real failures.
 #[test]
 fn a_genuine_failure_is_still_an_error() {
     let (mut app, mut state) = app_with_model("gpt-4o");
@@ -67,7 +67,7 @@ fn a_genuine_failure_is_still_an_error() {
     );
 }
 
-/// Phase 5 packet 1: stopping never claims work was undone — no rollback
+/// Stopping never claims work was undone — no rollback
 /// language on either the request or the confirmation.
 #[test]
 fn stopping_never_claims_work_was_undone() {
@@ -88,10 +88,10 @@ fn stopping_never_claims_work_was_undone() {
     }
 }
 
-/// Phase 5 packet 4: the held revision is still in `pending` after the
-/// worker's stop confirmation lands — the loop's drain releases it next,
-/// and the confirmation itself stays a `System` "Stopped." line.
-/// RED: pins the settle-then-drain order on the seam this packet owns.
+/// The held revision is still in `pending` after the worker's stop
+/// confirmation lands — the loop's drain releases it next, and the
+/// confirmation itself stays a `System` "Stopped." line. Pins the
+/// settle-then-drain order.
 #[test]
 fn the_revision_runs_once_the_stop_is_confirmed() {
     let (mut app, mut state) = app_with_model("gpt-4o");

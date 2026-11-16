@@ -5,9 +5,7 @@ use sqlx::{
     postgres::{PgConnectOptions, PgSslMode},
 };
 
-use crate::{
-    DatabaseConnector, DuckDbConnector, MySqlConnector, PostgresConnector, SqliteConnector,
-};
+use crate::{DatabaseConnector, MySqlConnector, PostgresConnector, SqliteConnector};
 
 mod bigquery_factory;
 mod clickhouse_factory;
@@ -96,16 +94,6 @@ pub async fn build_connector_with_prompt(
             Ok(Box::new(MySqlConnector::from_options(
                 options, database, settings,
             )))
-        }
-        DatabaseProfile::DuckDb { path, read_only } => {
-            if path != ":memory:" && read_only.is_none() {
-                return Err(ConnectionError::invalid_configuration(
-                    "DuckDB file profiles must set read_only explicitly",
-                ));
-            }
-            DuckDbConnector::open(path, read_only.unwrap_or(false), settings)
-                .await
-                .map(|item| Box::new(item) as _)
         }
         DatabaseProfile::Sqlite { path, read_only } => {
             SqliteConnector::open(std::path::Path::new(path), *read_only, settings)

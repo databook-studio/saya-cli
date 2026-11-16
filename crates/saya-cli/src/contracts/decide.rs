@@ -1,4 +1,4 @@
-//! Spec D — resolve a short on-screen reference to exactly one knowledge item.
+//! Resolve a short on-screen reference to exactly one knowledge item.
 //!
 //! The short reference is a leading prefix of a stored item id — the `ki-xxxx`
 //! form the receipt/list/show stanzas abbreviate to
@@ -22,8 +22,8 @@
 //! through their typed continuation cursor, stopping as soon as two matches
 //! prove ambiguity. The store never materialises the profile in one query.
 //!
-//! Chunk 3 moved the decision ops onto `knowledge_items`; the ids the receipt
-//! prints are now `ki-…`, so a resolver that only matched the legacy `c-…` ids
+//! The decision ops read `knowledge_items`; the ids the receipt
+//! prints are `ki-…`, so a resolver that only matched the legacy `c-…` ids
 //! would silently fail to resolve anything a user can see — the defect this
 //! module exists to close.
 

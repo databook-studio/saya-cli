@@ -8,8 +8,8 @@ fn last_block_text(transcript: &Transcript) -> Option<&str> {
     transcript.blocks().last().map(|b| b.text.as_str())
 }
 
-/// KnowledgeLearningDisabled pushes a System block carrying the spec line,
-/// naming the model and the miss count — the TUI half of red test 7.
+/// KnowledgeLearningDisabled pushes a System block carrying the stated line,
+/// naming the model and the miss count.
 #[test]
 fn knowledge_learning_disabled_pushes_a_system_block_with_the_spec_line() {
     let mut t = Transcript::new();

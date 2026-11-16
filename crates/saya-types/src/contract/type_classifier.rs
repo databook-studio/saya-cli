@@ -11,7 +11,7 @@
 /// matching because database dialects express temporal representations with
 /// varied spellings, precision parameters, and timezone suffixes (e.g. Postgres
 /// `timestamp with time zone` and `timestamptz`, MySQL `datetime`, Snowflake
-/// `TIMESTAMP_NTZ`/`LTZ`/`TZ`, DuckDB `time`). Substring matching also allows
+/// `TIMESTAMP_NTZ`/`LTZ`/`TZ`, SQLite `time`). Substring matching also allows
 /// harmless schema evolution (such as widening `TIMESTAMP` to `TIMESTAMPTZ`)
 /// without falsely invalidating user-taught temporal knowledge like default time.
 pub fn is_temporal_type(data_type: &str) -> bool {
@@ -28,7 +28,7 @@ pub fn is_temporal_type(data_type: &str) -> bool {
 /// We classify types by semantic substring matching because database engines
 /// use dialect-specific naming and parameterized widths (e.g. Postgres
 /// `bigserial` / `double precision`, MySQL `int(11)` / `decimal(10,2)`,
-/// Snowflake `NUMBER(38,0)`, DuckDB `HUGEINT`, SQLite `real`). Facts with
+/// Snowflake `NUMBER(38,0)`, SQLite `real`). Facts with
 /// numeric requirements (such as measure roles) remain valid when schemas evolve
 /// across numeric precision widenings (e.g. `int` to `bigint`).
 pub fn is_numeric_type(data_type: &str) -> bool {

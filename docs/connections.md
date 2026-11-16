@@ -29,8 +29,8 @@ password = { env = "SAYA_ANALYTICS_PASSWORD" }
 sslmode = "require"
 ```
 
-SAYA supports `postgresql`, `mysql`, `sqlite`, `duckdb`, and `snowflake`.
-PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
+SAYA supports `postgresql`, `mysql`, `sqlite`, `snowflake`,
+`clickhouse`, and `bigquery`. PostgreSQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-full`; MySQL supports `disable`, `prefer`, `require`, `verify-ca`,
 and `verify-identity`.
 
@@ -75,22 +75,8 @@ sslmode = "verify-identity"
 ssl_ca = { file = "/etc/ssl/certs/mysql-ca.pem" }
 ```
 
-DuckDB needs no network credential. File-backed profiles must declare
-`read_only`; `:memory:` profiles may omit it. External access, extension
-autoloading, community extensions, and persistent secrets are disabled and
-locked by the connector. Treat the database path as a filesystem capability:
-grant SAYA access only to the intended file and its parent directory.
-
-```toml
-[profiles.local]
-type = "duckdb"
-path = "./warehouse.duckdb"
-read_only = true
-```
-
 SQLite needs no network credential. Connect to SQLite database files using
-`type = "sqlite"` with `path` and optional `read_only` (which defaults to `true`,
-unlike DuckDB which requires it explicitly). `:memory:` is unsupported; use a
+`type = "sqlite"` with `path` and optional `read_only` (which defaults to `true`). `:memory:` is unsupported; use a
 file path. SAYA enforces read-only SQL regardless of the flag. For
 environment-only configurations, set `SAYA_DB_TYPE=sqlite` and `SAYA_DB_PATH=...`,
 with optional `SAYA_DB_READ_ONLY`.
@@ -102,10 +88,15 @@ path = "./data/warehouse.sqlite3"
 read_only = true
 ```
 
+### Snowflake profiles
+
 Snowflake profiles require `account`, `user`, and `auth_type`. Account values
 are identifiers such as `xy12345` or `org-account.us-east-1.aws`, not URLs.
 The auth-specific secret is required for `keypair` and `userpass`; browser SSO
-requires no secret:
+requires no secret. `saya setup` offers all three paths — keypair (a private
+key file path plus an optional passphrase env name, recommended), browser
+SSO, or a password taken only as an environment-variable name — and its
+browser-SSO probe opens the browser only after explicit consent:
 
 ```toml
 [profiles.snowflake_keypair]
@@ -194,6 +185,57 @@ truncating silently, and enforces a hard cap on total columns; a schema larger
 than the cap fails with an explicit "too large to enumerate" error asking you to
 narrow the database/schema, instead of returning a partial schema.
 
+### ClickHouse profiles
+
+ClickHouse profiles can be configured by `saya setup` (it asks for host,
+TLS, port, database, user, and a password as an environment-variable name)
+or by hand in `connections.toml`. `host` is
+required; `port` defaults to 8123 over plain HTTP or 8443 over TLS, and
+`secure = true` selects TLS:
+
+```toml
+[profiles.click]
+type = "clickhouse"
+host = "clickhouse.internal.example"
+secure = true
+database = "warehouse"
+user = "saya_readonly"
+password = { env = "SAYA_CLICKHOUSE_PASSWORD" }
+```
+
+A password over plain HTTP to any host other than the loopback interface is
+refused: a remote profile must set `secure = true`; a local (loopback)
+server may stay plain HTTP. SQL crosses the same read-only safety gate as
+every other engine; grant ClickHouse a read-only user.
+
+### BigQuery profiles
+
+BigQuery profiles can be configured by `saya setup` (it asks for the GCP
+project, optional dataset/location/max-bytes-billed, and the service-account
+JSON key as a **file path** — never its value) or by hand in
+`connections.toml`. `project`
+(the GCP project whose datasets the connector reads) and
+`service_account_key` — a secret reference to the service-account JSON,
+never a literal — are required:
+
+```toml
+[profiles.bq]
+type = "bigquery"
+project = "my-gcp-project"
+dataset = "warehouse"
+service_account_key = { file = "/absolute/path/to/service-account.json" }
+```
+
+`dataset` is the default dataset for discovery and unqualified names,
+`location` pins the job location, and `max_bytes_billed` caps the bytes any
+one query may scan (default 1 TiB — BigQuery bills by bytes scanned).
+Read-only is enforced by the SQL safety layer and by the service account's
+IAM role, not by narrowing the token: run queries with a role scoped to
+`bigquery.readonly`. Schema discovery reads a dataset's `INFORMATION_SCHEMA`
+from the project that owns it — a dataset may be written as
+`project.dataset`, which is how a public dataset the paying project does not
+own is browsed.
+
 A primary execution profile is selected for a command with `--profile`.
 `--include-profile` (and interactive `/include`) connect additional read-only
 databases, and the agent navigates between all connected databases by passing an
@@ -201,12 +243,12 @@ optional `connection` argument to its schema and query tools; the primary is the
 default. Fully offline agent use is unavailable even when the database connector
 is local.
 
-All five live engines use the same command surface. `query` permits one parsed
+All six engines use the same command surface. `query` permits one parsed
 read-only statement, caps returned rows, and reports truncation. Read-only is
 enforced in two layers: the AST safety parser, and — governed by `[run].read_only`
 / `SAYA_READ_ONLY` — the database session itself (PostgreSQL
 `default_transaction_read_only`, MySQL `SESSION transaction_read_only = 1`,
-SQLite `PRAGMA query_only = ON`, DuckDB read-only open). Results are additionally
+SQLite `PRAGMA query_only = ON`). Results are additionally
 bounded by byte budgets — a 1 MiB per-cell cap and a 16 MiB total-result cap —
 and marked `truncated` when a row or byte limit is reached. Never put
 a raw password, private key, API key, or connection URL with embedded

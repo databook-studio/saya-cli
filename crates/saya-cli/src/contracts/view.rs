@@ -1,4 +1,4 @@
-//! Typed results every adapter renders. Mirrors plan §6.4. No formatting lives
+//! Typed results every adapter renders. No formatting lives
 //! here — these structs carry data and IDs only.
 
 use saya_types::{
@@ -114,7 +114,7 @@ pub(crate) struct ContractConflict {
 }
 
 /// The full result of a recall: the selected contracts plus diagnostics that
-/// answer plan §16's "why these and not others" without carrying any claim text.
+/// answer "why these and not others" without carrying any claim text.
 pub(crate) struct RecallOutcome {
     pub contracts: Vec<RetrievedContract>,
     pub diagnostics: RecallDiagnostics,
@@ -137,7 +137,7 @@ pub(crate) struct RecallDiagnostics {
     /// Claims dropped by a count bound — objects beyond `max_objects` (all
     /// their claims) and claims beyond `max_claims_per_object` within a kept
     /// contract. A bound, not a policy decision, so it lives apart from
-    /// [`Self::excluded_by_schema`]. The P1a recall receipt reads this to make
+    /// [`Self::excluded_by_schema`]. The recall receipt reads this to make
     /// truncation visible (`dropped_by_bounds`).
     pub excluded_by_count_bounds: usize,
     /// A bounded repository page had another deterministic page available.

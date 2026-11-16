@@ -1,5 +1,5 @@
-//! The plan-approval modal: the M1-10 gate, shown once by the run panel's
-//! worker and answered here. The view text is the drive's own rendering —
+//! The plan-approval modal: the gate, shown once by the run panel's worker
+//! and answered here. The view text is the drive's own rendering —
 //! the same body the terminal driver prints for `saya run` — so the modal
 //! shapes nothing of its own.
 

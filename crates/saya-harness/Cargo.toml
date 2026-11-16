@@ -1,21 +1,27 @@
 [package]
 name = "saya-harness"
-version = "0.4.1"
+version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Run engine for SAYA: run directories, paths, and the single-writer lock."
 
+[lints]
+workspace = true
+
 [dependencies]
-saya-agent = { path = "../saya-agent", version = "0.4.1" }
-saya-store = { path = "../saya-store", version = "0.4.1" }
-saya-types = { path = "../saya-types", version = "0.4.1" }
+saya-agent = { path = "../saya-agent", version = "0.5.0" }
+saya-store = { path = "../saya-store", version = "0.5.0" }
+saya-types = { path = "../saya-types", version = "0.5.0" }
 async-trait.workspace = true
+base64.workspace = true
 bytes.workspace = true
 chrono.workspace = true
-duckdb.workspace = true
 futures-util.workspace = true
+gix-ignore.workspace = true
+globset.workspace = true
+regex.workspace = true
 # The production FetchTransport. The workspace entry carries
 # `default-features = false` with rustls-tls, so no second TLS stack arrives.
 reqwest.workspace = true
@@ -24,7 +30,8 @@ serde_json.workspace = true
 sha2.workspace = true
 sqlparser.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
+unicode-normalization.workspace = true
 url.workspace = true
 
 [target.'cfg(unix)'.dependencies]
@@ -32,4 +39,5 @@ libc = "0.2"
 
 [dev-dependencies]
 proptest.workspace = true
-saya-connectors = { path = "../saya-connectors", version = "0.4.1" }
+sqlx.workspace = true
+saya-connectors = { path = "../saya-connectors", version = "0.5.0" }

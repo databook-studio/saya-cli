@@ -11,8 +11,7 @@
 //!
 //! The lane is **not contained**: the child runs as the user's uid with the
 //! whole filesystem and network, resolved on the user's PATH. Nothing here
-//! claims a bound the code does not apply — H0's module header is the
-//! register this module matches.
+//! claims a bound the code does not apply.
 
 /// What the launch stated about the lane: the `--deny` refusals and the
 /// user-layer config — read together, once, at composition. Nothing here
@@ -82,15 +81,8 @@ use crate::config::runtime::RuntimeConfig;
 /// one the lane composes nothing — and the session continues without it.
 /// The register matches the unbound-workspace notice: the fact, why the
 /// tool is absent, and the remedy.
-#[cfg(not(windows))]
 pub(crate) const NO_PATH_NOTICE: &str = "No PATH is set, so the host-command lane is not composed: \
     run_command is unavailable; set PATH to reach host programs.";
-
-/// The Windows host runner remains deliberately unavailable until its
-/// process-group termination guarantee is implemented and verified there.
-#[cfg(windows)]
-pub(crate) const WINDOWS_HOST_UNAVAILABLE_NOTICE: &str = "Host commands are unavailable on Windows, so the host-command lane is not composed: \
-    run_command is unavailable; host execution remains refused until the runner supports Windows.";
 
 /// Composes the lane from an explicit PATH value: `None` — no PATH in the
 /// environment — composes the lane away with the no-PATH notice, never an
@@ -105,17 +97,25 @@ pub(crate) fn compose_host_lane(
     let Some(root) = workspace_root else {
         return Ok((None, None));
     };
+    let Some(path_value) = effective_path(path) else {
+        return Ok((None, Some(NO_PATH_NOTICE.to_owned())));
+    };
+    Ok((compose_host(launch, Some(root), path_value)?, None))
+}
+
+/// The PATH the lane searches. Unix uses the variable as given, and its
+/// absence is the no-PATH notice. Windows always has a system-defined search
+/// path — the process and system directories — even when the variable is
+/// missing, so the lane composes over that rather than reporting a lane
+/// Windows cannot actually be missing.
+fn effective_path(path: Option<String>) -> Option<String> {
     #[cfg(windows)]
     {
-        let _ = (launch, root, path);
-        Ok((None, Some(WINDOWS_HOST_UNAVAILABLE_NOTICE.to_owned())))
+        Some(path.unwrap_or_else(saya_harness::proc::default_search_path))
     }
     #[cfg(not(windows))]
     {
-        let Some(path_value) = path else {
-            return Ok((None, Some(NO_PATH_NOTICE.to_owned())));
-        };
-        Ok((compose_host(launch, Some(root), path_value)?, None))
+        path
     }
 }
 
@@ -132,9 +132,9 @@ pub(crate) struct SessionHost {
 
 /// Composes the lane once: wherever a workspace root binds — no root, no
 /// lane, structural, because the child's cwd is pinned to the root.
-/// `path_value` is the exact PATH the child receives; under Windows the
-/// lane fails closed (the group-kill core is unix-verified, the runner's
-/// posture).
+/// `path_value` is the exact PATH the child receives. The lane is
+/// unsandboxed on every platform: on Windows the process-tree kill is the
+/// Job-object/`taskkill` path, and nothing there claims an OS confinement.
 pub(crate) fn compose_host(
     launch: &HostLaunch,
     workspace_root: Option<&std::path::Path>,
@@ -143,13 +143,6 @@ pub(crate) fn compose_host(
     let Some(root) = workspace_root else {
         return Ok(None);
     };
-    if cfg!(windows) {
-        return Err(
-            "host commands are unavailable on Windows: the process-group kill is \
-                    unix-verified (the runner's posture), so the lane fails closed"
-                .to_owned(),
-        );
-    }
     let timeout = std::time::Duration::from_secs(launch.config.timeout_seconds);
     let mut config =
         saya_harness::host::HostConfig::new(path_value, root.to_path_buf(), timeout)

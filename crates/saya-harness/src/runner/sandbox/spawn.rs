@@ -1,6 +1,6 @@
 //! The spawn configuration handed out by a proven sandbox: what the runner
-//! tool (M5-4) consumes to confine a child, and the provision type that
-//! carries the fail-closed verdict.
+//! tool consumes to confine a child, and the provision type that carries the
+//! fail-closed verdict.
 
 use std::{
     path::{Path, PathBuf},
@@ -9,8 +9,6 @@ use std::{
 
 #[cfg(target_os = "linux")]
 use std::{os::unix::process::CommandExt, sync::Arc};
-
-use saya_types::Capabilities;
 
 use super::ProbeReport;
 
@@ -34,12 +32,12 @@ pub(super) enum SpawnPlatform {
     #[cfg(target_os = "linux")]
     Landlock(Arc<linux::Confinement>),
     /// Never constructed: no platform outside macOS and Linux has a sandbox
-    /// primitive this design targets (U9), and no probe proves one.
+    /// primitive this design targets, and no probe proves one.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     Absent,
 }
 
-/// The spawn configuration the runner tool (M5-4) needs, handed out only
+/// The spawn configuration the runner tool needs, handed out only
 /// where the startup probe proved the sandbox on this host. There is no way
 /// to construct one otherwise: [`SandboxProvision::Proven`] is the only
 /// source. `Clone` because the configuration is immutable — cloning grants
@@ -73,7 +71,7 @@ impl RunnerSpawn {
     /// `sandbox-exec -p <profile> <program> ...` prefix, on Linux the child
     /// binary with the confinement installed pre-exec. The child's cwd is
     /// pinned to the first root (measured: a cwd outside the roots is
-    /// refused at startup and noisy — spike §4.2); M5-4 owns the final argv,
+    /// refused at startup and noisy); the runner tool owns the final argv,
     /// environment, and cwd choice on top of this.
     pub fn command(&self, program: &Path) -> Command {
         #[cfg(target_os = "macos")]
@@ -99,15 +97,17 @@ impl RunnerSpawn {
         };
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         // Never reached: no spawn configuration exists on platforms without a
-        // sandbox primitive this design targets (U9) — RunnerSpawn is
+        // sandbox primitive this design targets — RunnerSpawn is
         // constructible only in the proven arm of `prepare`.
         let mut command = Command::new(program);
         command.current_dir(&self.fs_roots[0]);
         command
     }
 
-    /// The directory the one allowlisted runner program lives in (M5-4's
-    /// parameter, canonicalised at prepare time).
+    /// The **primary** allowlisted program directory (canonicalised at
+    /// prepare time): the directory program names resolve in. A spawn
+    /// prepared for the workspace shell allowlists several directories for
+    /// exec; this is the first of them.
     pub fn program_dir(&self) -> &Path {
         &self.program_dir
     }
@@ -174,20 +174,5 @@ impl SandboxProvision {
             Self::Proven { report, .. } => report,
             Self::Refused(report) => report,
         }
-    }
-
-    /// The approved capabilities as plan validation must see them: the runner
-    /// scope survives only where the sandbox was proven, and the interpreter
-    /// scope with it — an interpreter child spawns through the same proven
-    /// arm, so an unproven host strips both. A plan step requesting either
-    /// scope against the refused form is rejected with the ordinary
-    /// needs-approval outcome — the capability is absent, not degraded.
-    pub fn plan_capabilities(&self, approved: &Capabilities) -> Capabilities {
-        let mut caps = approved.clone();
-        if matches!(self, Self::Refused(_)) {
-            caps.runner = None;
-            caps.interpreter = None;
-        }
-        caps
     }
 }

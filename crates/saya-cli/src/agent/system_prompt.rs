@@ -49,7 +49,7 @@ pub(crate) fn memory_section(mode: MemoryMode) -> Option<&'static str> {
 /// So each engine is told the fullest name it actually accepts — and no more.
 ///
 /// The same section states the engine plainly and warns that the declared
-/// column types may come from another engine. Benchmark evidence: one SQLite
+/// column types may come from another engine. Observed evidence: one SQLite
 /// database was a PostgreSQL dump, so its DDL still declared `jsonb`, `point`
 /// and `timestamp with time zone`; schema discovery reported those declared
 /// types, the model wrote Postgres syntax (`city->>'en'`, `coordinates[0]`),
@@ -100,14 +100,16 @@ fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
 /// the database case of that rule.
 const WORKING_GUIDANCE: &str = "Multi-step work is expected. Do not repeat an attempt that already \
     failed — change your approach instead. When working with a database, discover the schema before \
-    you query it. When the question cannot be answered from what is available in this session, stop \
+    you query it. If a material definition (grain, time column, metric, filter) is ambiguous and no \
+    confirmed context resolves it, call request_clarification instead of assuming. When the question \
+    cannot be answered from what is available in this session, stop \
     and say so, explaining what you tried and what is missing: a missing table or column, data that \
     is not present, or a question the schema cannot express. Giving up with a reason is a correct \
     outcome; looping is not.";
 
 /// The shape an answer must take. [`WORKING_GUIDANCE`] tells the model how to
 /// proceed; this tells it how to present the result. Each clause fixes a
-/// measured class of benchmark failure where the numbers were right and the
+/// observed class of failure where the numbers were right and the
 /// presentation was wrong: extra working columns, rounding the question never
 /// asked for, non-ISO dates, the operands of a computation handed back instead
 /// of the computation the question named, a superlative answered with the
@@ -237,6 +239,32 @@ pub(crate) fn assemble_system_prompt_for_mode(
         AgentMode::Build => Some(prompt),
         AgentMode::Plan => Some(format!("{prompt}\n\n{PLAN_SYSTEM_PROMPT}")),
     }
+}
+
+/// The interactive session's prompt: [`assemble_system_prompt_for_mode`] plus
+/// the local-data shell route, appended at the very end so the prefix stays
+/// cacheable. The caller passes the session's own detection, which is
+/// [`FileSources::NoData`](crate::agent::file_sources::FileSources::NoData)
+/// where the session advertises no `shell` tool.
+pub(crate) fn assemble_system_prompt_for_mode_with_file_sources(
+    registry: &ConnectionRegistry,
+    memory_mode: MemoryMode,
+    memory_reachable: bool,
+    session: &SessionFacts<'_>,
+    agent_mode: AgentMode,
+    file_sources: crate::agent::file_sources::FileSources,
+) -> Option<String> {
+    let prompt = assemble_system_prompt_for_mode(
+        registry,
+        memory_mode,
+        memory_reachable,
+        session,
+        agent_mode,
+    )?;
+    let Some(guidance) = crate::agent::file_sources::guidance(file_sources) else {
+        return Some(prompt);
+    };
+    Some(format!("{prompt}\n\n{guidance}"))
 }
 
 #[cfg(test)]

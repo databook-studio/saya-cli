@@ -5,9 +5,12 @@
 //! [`decide`]: super::super::decide::decide
 
 use super::super::decide::{CandidateExecutor, decide};
+use super::super::question_scope::QuestionScope;
 use super::super::runtime::AgentRuntimeError;
 use super::AttemptRunner;
-use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken};
+use super::stop::{apply_stop_reason, ended_on_settled_clarification};
+use crate::answering_receipts::AnsweringReceiptSink;
+use saya_agent::{AgentEvent, AgentEventSink, AgentOutput, CancellationToken, TokenUsage};
 use saya_types::SqlDialect;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,8 +34,9 @@ pub(crate) async fn orchestrate(
     runner: &dyn AttemptRunner,
     executor: &dyn CandidateExecutor,
     dialect: SqlDialect,
-    sink: &dyn AgentEventSink,
+    receipts: &AnsweringReceiptSink<'_>,
     cancellation: &CancellationToken,
+    scope: &QuestionScope,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     if candidates <= 1 {
         return runner.run().await;
@@ -44,14 +48,22 @@ pub(crate) async fn orchestrate(
     let mut nominations: Vec<Option<String>> = Vec::with_capacity(candidates);
     let mut outputs: Vec<Option<AgentOutput>> = Vec::with_capacity(candidates);
     let mut last_error: Option<AgentRuntimeError> = None;
+    // Set when an attempt's returned output ended on a settled clarification:
+    // the pause IS the question's outcome, so nothing after it may launch.
+    let mut settled_clarification = false;
     for _ in 0..candidates {
         if cancellation.is_cancelled() {
             break;
         }
         match runner.run().await {
             Ok(out) => {
+                let paused = ended_on_settled_clarification(&out);
                 nominations.push(out.answer_sql.clone());
                 outputs.push(Some(out));
+                if paused {
+                    settled_clarification = true;
+                    break;
+                }
             }
             // A failed attempt contributes no nomination and does not abort the
             // rest; it is recorded so the alignment holds and the error is
@@ -64,6 +76,7 @@ pub(crate) async fn orchestrate(
         }
     }
 
+    let paid_usage = receipts.take().unwrap_or_default();
     let last_success = outputs.iter().rev().flatten().next().cloned();
     let Some(last_success) = last_success else {
         // Nothing succeeded. Surface the last error, or — when the loop was
@@ -74,38 +87,86 @@ pub(crate) async fn orchestrate(
         );
     };
 
+    // A settled clarification is the answer: no further attempts, no
+    // verification, no vote — the paused output returns as-is with the earlier
+    // paid usage summed truthfully, and no consensus may be fabricated over a
+    // turn that never answered.
+    if settled_clarification {
+        return Ok(with_paid_usage(last_success, paid_usage));
+    }
+
+    // A stopped question keeps its last settled answer, but it must not begin
+    // consensus/vote work after the stop source fired.
+    if cancellation.is_cancelled() {
+        let mut retained = last_success;
+        apply_stop_reason(&mut retained, cancellation.reason());
+        return Ok(with_paid_usage(retained, paid_usage));
+    }
+
     // The event is emitted once whenever more than one attempt ran — including
     // when there is no winner, because "the attempts disagreed" is the most
     // interesting thing a reader can learn here.
     if nominations.len() > 1 {
         let nominated: HashSet<String> = nominations.iter().flatten().cloned().collect();
         let counter = VoteCounter::new(executor, &nominated);
-        let decision = decide(&nominations, &counter, dialect, cancellation).await;
+        let deadline = scope.begin_segment();
+        if cancellation.is_cancelled() {
+            scope.finish_segment();
+            let mut retained = last_success;
+            apply_stop_reason(&mut retained, cancellation.reason());
+            return Ok(with_paid_usage(retained, paid_usage));
+        }
+        let decision = match deadline {
+            Some(duration) => {
+                let work = decide(&nominations, &counter, dialect, cancellation);
+                tokio::pin!(work);
+                tokio::select! {
+                    decision = &mut work => decision,
+                    _ = tokio::time::sleep(duration) => {
+                        cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(saya_agent::BudgetDimension::ElapsedTime));
+                        work.await
+                    }
+                }
+            }
+            None => decide(&nominations, &counter, dialect, cancellation).await,
+        };
+        scope.finish_segment();
+        if cancellation.is_cancelled() {
+            let mut retained = last_success;
+            apply_stop_reason(&mut retained, cancellation.reason());
+            return Ok(with_paid_usage(retained, paid_usage));
+        }
         let winner_sql = decision.winner.and_then(|i| {
             outputs
                 .get(i)
                 .and_then(|o| o.as_ref().and_then(|x| x.answer_sql.clone()))
         });
-        sink.emit(AgentEvent::consensus_decided(
-            winner_sql,
-            nominations.len(),
-            counter.voted(),
-            decision.votes,
-            decision.margin,
-            decision.tied,
-            decision.probe_broke_tie,
-        ))
-        .await;
+        receipts
+            .emit(AgentEvent::consensus_decided(
+                winner_sql,
+                nominations.len(),
+                counter.voted(),
+                decision.votes,
+                decision.margin,
+                decision.tied,
+                decision.probe_broke_tie,
+            ))
+            .await;
         if let Some(i) = decision.winner
             && let Some(Some(out)) = outputs.get(i)
         {
-            return Ok(out.clone());
+            return Ok(with_paid_usage(out.clone(), paid_usage));
         }
     }
 
     // No winner (tie, or a single survivor after cancellation): return the last
     // successful attempt's output so the caller always has an answer to show.
-    Ok(last_success)
+    Ok(with_paid_usage(last_success, paid_usage))
+}
+
+fn with_paid_usage(mut output: AgentOutput, usage: TokenUsage) -> AgentOutput {
+    output.usage = usage;
+    output
 }
 
 /// Wraps a [`CandidateExecutor`] to count how many nominated statements

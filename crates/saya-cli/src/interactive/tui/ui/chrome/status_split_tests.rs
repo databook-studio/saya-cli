@@ -5,8 +5,10 @@
 
 use super::super::context_line::context_words_for_test;
 use super::bar_words_for_test;
+use crate::interactive::session::permissions::mode::name as mode_name;
 use crate::interactive::session_prompt::StatusView;
 use crate::interactive::tui::ui_snapshot_tests::{empty_app, fixed_status, render_buffer};
+use saya_agent::{AgentMode, ApprovalPolicy, PermissionMode};
 
 /// The owner's example session from `TASK.md`'s "Why": `docker_postgres`,
 /// `openai_compatible/glm-5.2`, approval `ask`, mode `build`, a bound
@@ -18,7 +20,8 @@ fn example_view() -> StatusView {
         model: "glm-5.2".into(),
         approval_mode: "ask".into(),
         agent_mode: "build".into(),
-        workspace_root: Some("/Users/subodhsharma/Projects/saya-cli".into()),
+        permission_mode: Some(PermissionMode::Ask),
+        workspace_root: Some("/Users/alice/Projects/saya-cli".into()),
         sharing_on: true,
         host_composed: true,
         denied_programs: Vec::new(),
@@ -42,6 +45,10 @@ fn posture_combos() -> Vec<StatusView> {
                             model: "glm-5.2".into(),
                             approval_mode: approval_mode.to_string(),
                             agent_mode: "build".into(),
+                            permission_mode: PermissionMode::of(
+                                approval_mode.parse().unwrap_or(ApprovalPolicy::Ask),
+                                AgentMode::Build,
+                            ),
                             workspace_root: workspace_root.clone(),
                             sharing_on,
                             host_composed,
@@ -73,8 +80,8 @@ fn the_bar_names_the_database_and_model_only() {
     );
 }
 
-/// Across every posture combination, the bar carries none of the removed
-/// tokens, nor the provider — they stayed on the top line.
+/// Across every posture combination, the bar carries no posture tokens and
+/// no provider — those belong to the top line.
 #[test]
 fn posture_tokens_never_reach_the_bar() {
     for view in posture_combos() {
@@ -145,23 +152,54 @@ fn included_profiles_collapse_to_a_count() {
     );
 }
 
-/// The mode segment paints only away from the default: absent at `build`,
-/// present at `plan`.
+/// The mode segment paints only away from the default: absent at `ask`,
+/// present at every mode Shift+Tab reaches. It names the session's permission
+/// mode — the one word the key moves — so the bar and the switch cannot
+/// disagree about where the session stands.
 #[test]
-fn mode_shows_only_when_not_build() {
+fn the_mode_segment_names_the_permission_mode_away_from_the_default() {
     let mut view = example_view();
+    view.permission_mode = Some(PermissionMode::Ask);
+    let words = bar_words_for_test(&view, "? for help", 200);
+    assert!(
+        !words.contains("mode:") && !words.contains("ask"),
+        "the default mode must show no mode segment at all: {words:?}"
+    );
+
+    for mode in [
+        PermissionMode::AcceptEdits,
+        PermissionMode::Plan,
+        PermissionMode::Bypass,
+    ] {
+        view.permission_mode = Some(mode);
+        let words = bar_words_for_test(&view, "? for help", 200);
+        assert!(
+            words.contains(mode_name(mode)) && !words.contains("mode:"),
+            "{} must show the bare mode word, with no mode: prefix: {words:?}",
+            mode_name(mode)
+        );
+    }
+}
+
+/// A pair with no mode of its own — `read-only`, `never`, set by
+/// `/approvals` — keeps the task-posture word the segment has always shown,
+/// so the bar never loses the one mode word it had.
+#[test]
+fn a_pair_with_no_mode_keeps_the_task_posture_word() {
+    let mut view = example_view();
+    view.permission_mode = None;
     view.agent_mode = "build".into();
     let words = bar_words_for_test(&view, "? for help", 200);
     assert!(
-        !words.contains("mode:") && !words.contains("build"),
-        "the default mode must show no mode segment at all: {words:?}"
+        !words.contains("build"),
+        "the default posture still shows nothing: {words:?}"
     );
 
     view.agent_mode = "plan".into();
     let words = bar_words_for_test(&view, "? for help", 200);
     assert!(
-        words.contains("plan") && !words.contains("mode:"),
-        "plan must show the bare mode word, with no mode: prefix: {words:?}"
+        words.contains("plan"),
+        "the task posture is the one word such a pair has: {words:?}"
     );
 }
 
@@ -200,7 +238,7 @@ fn the_hint_is_right_aligned() {
 #[test]
 fn a_narrow_bar_sheds_from_the_end() {
     let mut view = example_view();
-    view.agent_mode = "plan".into();
+    view.permission_mode = Some(PermissionMode::Plan);
     view.task_summary = Some("tasks: 2/4".into());
 
     // 28 cells fit the 16-cell name, a 1-cell gap, and the 11-cell hint;

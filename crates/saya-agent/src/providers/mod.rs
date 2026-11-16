@@ -1,11 +1,17 @@
 mod anthropic;
+mod anthropic_events;
 mod anthropic_request;
 mod anthropic_stream;
-mod framing;
+mod attribution;
+#[cfg(test)]
+#[path = "attribution_tests.rs"]
+mod attribution_tests;
+pub(crate) mod framing;
 mod gemini;
 mod gemini_request;
 mod gemini_response;
 mod http;
+mod images;
 mod ollama;
 mod ollama_chunks;
 mod ollama_stream;
@@ -14,6 +20,7 @@ mod openai;
 mod openai_chunks;
 mod openai_stream;
 mod settings;
+mod stall;
 mod tool_assembly;
 mod wire;
 
@@ -22,9 +29,9 @@ pub use gemini::GeminiProvider;
 pub use ollama::OllamaProvider;
 pub use openai::OpenAiCompatibleProvider;
 pub use settings::ProviderSettings;
-// The turn-level retry in `loop_runner::receive` shares the one default
-// backoff schedule the HTTP establishment path uses.
-pub(crate) use settings::default_retry_delays;
+// The turn-level retry in `loop_runner::receive` shares the default backoff
+// schedule and the per-delay ceiling the HTTP establishment path uses.
+pub(crate) use settings::{DEFAULT_REQUEST_TIMEOUT, MAX_RETRY_DELAY, default_retry_delays};
 
 #[cfg(test)]
 mod context_block_tests {
@@ -62,6 +69,7 @@ mod context_block_tests {
                 requires_approval: false,
                 local_state: LocalStateEffect::None,
             },
+            concurrency: crate::ToolConcurrency::Serial,
             completion: None,
         }]
     }
@@ -115,7 +123,7 @@ mod context_block_tests {
         &m.role
     }
     fn wire_content(m: &WireMessage) -> &str {
-        &m.content
+        m.content.as_str()
     }
     fn ollama_role(m: &super::ollama_wire::OllamaMessage) -> &str {
         &m.role
@@ -126,7 +134,13 @@ mod context_block_tests {
 
     #[test]
     fn anthropic_request_keeps_context_block_out_of_system_field() {
-        let body = anthropic_request::build_body(request(messages()), 1024, None);
+        let body = anthropic_request::build_body(
+            request(messages()),
+            1024,
+            None,
+            anthropic_request::EffortSource::Stated,
+            false,
+        );
         // Anthropic hoists system-role messages into the top-level `system`
         // array of text blocks; the invariant is that none of those blocks'
         // text carries the context-block body or wrapper.
@@ -161,7 +175,7 @@ mod context_block_tests {
 
     #[test]
     fn gemini_request_keeps_context_block_out_of_system_instruction() {
-        let body = gemini_request::build_body(request(messages()), 4096, None);
+        let body = gemini_request::build_body(request(messages()), Some(4096), None);
         let system_text = body["systemInstruction"]["parts"][0]["text"]
             .as_str()
             .unwrap_or("");
@@ -192,7 +206,7 @@ mod context_block_tests {
 
     #[test]
     fn openai_wire_keeps_context_block_out_of_system_messages() {
-        let wire_messages = wire::messages(messages());
+        let wire_messages = wire::messages(messages(), wire::ReplayShape::None);
         assert_no_block_in_system_messages(&wire_messages, wire_role, wire_content);
         // Tools are shaped independently of messages; the block does not alter them.
         let tools = wire::tools(definitions());

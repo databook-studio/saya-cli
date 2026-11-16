@@ -35,15 +35,37 @@ pub(super) fn kill_process_tree(pid: u32) -> io::Result<()> {
     )))
 }
 
+/// The Windows default program search path: the system directory, the
+/// Windows directory, and the WMI tools directory. Used when a child would
+/// otherwise receive no `PATH` at all, which a normal Windows process never
+/// sees.
+pub fn default_search_path() -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+    let system = format!(r"{root}\System32");
+    format!(r"{system};{root};{system}\Wbem")
+}
+
+/// The Windows command processor the workspace shell execs. It is located
+/// through the system directory, never `PATH`, `ComSpec`, or the current
+/// directory, all of which a caller can influence.
+pub(crate) fn system_shell() -> PathBuf {
+    system_executable("cmd.exe").unwrap_or_else(|| PathBuf::from("cmd.exe"))
+}
+
 /// Locates `taskkill.exe` through the Windows API, never `PATH` or the
-/// current directory, both of which a host-lane caller can influence.
+/// current directory, both of which a host-path caller can influence.
 fn system_taskkill() -> Option<PathBuf> {
+    system_executable("taskkill.exe")
+}
+
+/// One executable in the Windows system directory.
+fn system_executable(name: &str) -> Option<PathBuf> {
     let mut buffer = vec![0u16; 32_768];
     let length = unsafe { GetSystemDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) };
     if length == 0 || length as usize >= buffer.len() {
         return None;
     }
-    Some(PathBuf::from(OsString::from_wide(&buffer[..length as usize])).join("taskkill.exe"))
+    Some(PathBuf::from(OsString::from_wide(&buffer[..length as usize])).join(name))
 }
 
 /// `taskkill` returns nonzero when a concurrently exiting process has already

@@ -1,9 +1,13 @@
 use crate::approval_facts::ApprovalFacts;
 use crate::grant_token::{TurnPrimary, grant_token, session_answers_line};
+use crate::interactive::session::permissions::{deny as session_deny, grants as session_grants};
+use crate::prompt_approval_metrics::wait_and_record;
 use saya_agent::{
-    ApprovalChoice, ApprovalDecision, ApprovalPolicy, SessionGrants, SessionPolicy, ToolDefinition,
+    ApprovalChoice, ApprovalDecision, ApprovalPolicy, CancellationToken, SessionGrants,
+    SessionPolicy, ToolDefinition,
 };
 use saya_store::SessionJournal;
+use std::io::Write;
 use std::sync::Arc;
 
 pub(crate) struct TerminalApproval {
@@ -29,14 +33,20 @@ pub(crate) struct TerminalApproval {
     /// allowed runs. `None` — the one-shot ask and the headless shapes —
     /// records grants with no journal: there is no session to journal for.
     journal: Option<Arc<SessionJournal>>,
+    cancellation: CancellationToken,
+    /// The local metrics handle, when the question scope carries one: the
+    /// real wait records one ApprovalWait sample; automatic decisions
+    /// return before the wait and record nothing.
+    metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
 }
 
 impl TerminalApproval {
-    pub(crate) fn new(
+    pub(crate) fn with_cancellation(
         policy: ApprovalPolicy,
         can_prompt: bool,
         primary: TurnPrimary,
         facts: ApprovalFacts,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             policy: SessionPolicy::new(policy),
@@ -44,16 +54,18 @@ impl TerminalApproval {
             primary,
             facts,
             journal: None,
+            cancellation,
+            metrics: None,
         }
     }
 
-    /// The headless run's decider (U4: the same engine, frozen): built over a
+    /// The headless run's decider (the same engine, frozen): built over a
     /// [`SessionPolicy::frozen`] seeded from the run's `--allow` tokens — the
     /// stated scopes are the approval — so a seed pre-answers the asks it
     /// names and everything else an `ask` mode would raise denies with the
     /// engine's own reason. `facts` is the run's own composition (built in
     /// `commands/run` from the approved scopes and the runner wiring), so a
-    /// seed pre-answers exactly the calls the composition carries (U8): a
+    /// seed pre-answers exactly the calls the composition carries: a
     /// token the composition cannot honour is never suggested, on this
     /// surface either. It prompts nothing and records nothing: a headless
     /// session grant is impossible, not merely unused. The computed grant
@@ -70,6 +82,8 @@ impl TerminalApproval {
             primary: TurnPrimary::default(),
             facts,
             journal: None,
+            cancellation: CancellationToken::new(),
+            metrics: None,
         }
     }
 
@@ -81,20 +95,39 @@ impl TerminalApproval {
     /// facts — what this decider's prompts may state about the session. The
     /// session's journal rides along: a `[s]` answer's new grant is written
     /// there before this call is allowed to run.
-    pub(crate) fn from_session(
+    pub(crate) fn from_session_with_cancellation(
         policy: SessionPolicy,
         can_prompt: bool,
         primary: TurnPrimary,
         facts: ApprovalFacts,
         journal: Option<Arc<SessionJournal>>,
+        cancellation: CancellationToken,
     ) -> Self {
+        // An over-bound command's exact bytes are saved beside the session
+        // journal, so the prompt can show both ends and name the file the
+        // answer is bound to.
+        let facts = facts.with_approval_dir(
+            journal
+                .as_deref()
+                .map(|journal| journal.state_dir().to_path_buf()),
+        );
         Self {
             policy,
             can_prompt,
             primary,
             facts,
             journal,
+            cancellation,
+            metrics: None,
         }
+    }
+
+    pub(crate) fn with_metrics(
+        mut self,
+        metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
+    ) -> Self {
+        self.metrics = metrics;
+        self
     }
 }
 
@@ -146,12 +179,8 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
         // the loop then relays this decider's typed refusal (see
         // `refusal_detail` below), and the executor's own deny check stays
         // as the second door for any caller that executes without approving.
-        if crate::interactive::session_deny::denied_call_program(
-            &tool.name,
-            arguments,
-            &self.facts.denied_programs,
-        )
-        .is_some()
+        if session_deny::denied_call_program(&tool.name, arguments, &self.facts.denied_programs)
+            .is_some()
         {
             return false;
         }
@@ -162,10 +191,6 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
             ApprovalDecision::Deny { .. } => false,
             ApprovalDecision::Ask if !self.can_prompt => false,
             ApprovalDecision::Ask => {
-                use std::io::{self, IsTerminal, Write};
-                if !io::stdin().is_terminal() {
-                    return false;
-                }
                 let primary = primary.as_deref();
                 eprint!(
                     "{}",
@@ -178,12 +203,35 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                         Some(self.policy.grants()),
                     )
                 );
-                let _ = io::stderr().flush();
-                let mut answer = String::new();
-                if !(io::stdin().read_line(&mut answer).is_ok()) {
+                let _ = std::io::stderr().flush();
+                let answer = wait_and_record(self.metrics.as_ref(), &self.cancellation).await;
+                let Ok(Some(answer)) = answer else {
+                    // No answer: the pending approval ends, so its saved
+                    // command file does too.
+                    let _ = crate::approval_facts::answer_binding_holds(
+                        &tool.name,
+                        arguments,
+                        &self.facts,
+                    );
+                    return false;
+                };
+                if self.cancellation.is_cancelled() {
+                    let _ = crate::approval_facts::answer_binding_holds(
+                        &tool.name,
+                        arguments,
+                        &self.facts,
+                    );
                     return false;
                 }
                 let choice = terminal_choice(&answer, grant.as_deref());
+                // An over-bound command's saved bytes must still be exactly
+                // the command that will run; the check removes the file, and
+                // a mismatch refuses the call before anything is recorded.
+                let bound =
+                    crate::approval_facts::answer_binding_holds(&tool.name, arguments, &self.facts);
+                if !matches!(choice, ApprovalChoice::Deny) && !bound {
+                    return false;
+                }
                 // Only "allow for this session" records anything; the grant
                 // lands in the session's one policy, so it outlives the turn,
                 // and a *new* grant is journalled there before this call is
@@ -191,7 +239,7 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
                 // failed journal write changes no consent: it is said on
                 // stderr, the prompt's own channel, and the session carries
                 // on.
-                let (_, warning) = crate::interactive::session_grants::record_prompt_answer(
+                let (_, warning) = session_grants::record_prompt_answer(
                     &self.policy,
                     &choice,
                     self.journal.as_deref(),
@@ -204,6 +252,23 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
         }
     }
 
+    fn would_ask(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> Option<bool> {
+        if !self.can_prompt {
+            return Some(false);
+        }
+        if session_deny::denied_call_program(&tool.name, arguments, &self.facts.denied_programs)
+            .is_some()
+        {
+            return Some(false);
+        }
+        let primary = self.primary.get();
+        let grant = grant_token(&tool.name, arguments, primary.as_deref(), &self.facts);
+        Some(matches!(
+            self.policy.resolve(&tool.effect, grant.as_deref()),
+            ApprovalDecision::Ask
+        ))
+    }
+
     fn refusal_detail(
         &self,
         tool: &ToolDefinition,
@@ -213,11 +278,7 @@ impl saya_agent::ApprovalDecider for TerminalApproval {
         // seam answers the wording: the typed refusal for a denied program,
         // `None` for every denial this decider did not word (mode denials,
         // the user's `n`), where the loop's generic denial stands.
-        crate::interactive::session_deny::denied_call_program(
-            &tool.name,
-            arguments,
-            &self.facts.denied_programs,
-        )
-        .map(|program| crate::interactive::session_deny::denied_refusal(&program))
+        session_deny::denied_call_program(&tool.name, arguments, &self.facts.denied_programs)
+            .map(|program| session_deny::denied_refusal(&program))
     }
 }

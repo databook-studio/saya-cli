@@ -1,9 +1,7 @@
 //! The SQL family's fact lines: the read-shaped query tools say *why* they
 //! are low-risk — the target, the statement, and the enforced bounds stated
 //! as facts (one parsed read-only statement, the model-facing row cap, the
-//! timeout, redaction before rows reach the model). `render_chart` shares
-//! the target seam but not the bounds: it writes a file and opens a browser,
-//! which is why it always asks.
+//! timeout, redaction before rows reach the model).
 
 use serde_json::Value;
 
@@ -74,42 +72,4 @@ pub(super) fn sql_facts(
         lines.push(session_line);
     }
     Some(body(format!("{name} — read-only query"), lines))
-}
-
-/// `render_chart`'s fact lines: the statement, and the external side effect
-/// that is why it always asks.
-pub(super) fn chart_facts(arguments: &Value, primary: Option<&str>) -> Option<String> {
-    let sql = arguments.get("sql").and_then(Value::as_str)?;
-    let sql = crate::agent::tools::collapse_whitespace(sql);
-    if sql.is_empty() {
-        return None;
-    }
-    let mut lines = vec![
-        format!(
-            "  target: {}",
-            target_line("render_chart", named_connection(arguments), primary)
-        ),
-        format!("  sql: {sql}"),
-    ];
-    if let Some(path) = arguments.get("save_to").and_then(Value::as_str) {
-        lines.push(format!(
-            "  save_to: {}",
-            crate::agent::tools::collapse_whitespace(path)
-        ));
-        lines.push(
-            "  the same HTML is saved there; the browser opens a private temporary copy"
-                .to_string(),
-        );
-        lines.push("  an existing file at this path may be replaced".to_string());
-    } else {
-        lines.push(
-            "  this is why it always asks: the chart file is written and opened in your \
-             browser"
-                .to_string(),
-        );
-    }
-    Some(body(
-        "render_chart — writes a chart file and opens your browser".to_string(),
-        lines,
-    ))
 }

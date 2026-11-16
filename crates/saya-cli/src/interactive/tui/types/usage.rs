@@ -3,9 +3,9 @@
 use super::super::usage_totals::UsageTotals;
 use saya_agent::TokenUsage;
 
-/// Session-wide token usage accumulator. Sums every field the usage-accounting
-/// slice widened `TokenUsage` with, kept in two labelled totals: the answering
-/// call and the post-turn extraction (learning) call. The `Option` fields are
+/// Session-wide token usage accumulator. Sums every field `TokenUsage`
+/// accounts for, kept in two labelled totals: the answering call and the
+/// post-turn extraction (learning) call. The `Option` fields are
 /// tracked with a "was this ever reported?" flag so a cache hit rate over
 /// unreported data renders as **unknown**, never 0% — absent is not zero.
 ///

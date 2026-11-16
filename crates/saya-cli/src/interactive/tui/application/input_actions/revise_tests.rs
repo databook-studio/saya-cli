@@ -5,8 +5,8 @@ use super::*;
 use crate::interactive::tui::application::tests_support::idle_app;
 
 /// A prompt queued after Esc says *why* it waits: the wording names the
-/// stop confirmation, not just the current request. Phase 5 packet 4.
-/// RED: `submit()` has no stop-aware branch yet.
+/// stop confirmation, not just the current request. `submit()` takes the
+/// stop-aware branch whenever a stop is in flight.
 #[test]
 fn a_revision_after_a_stop_waits_for_the_confirmation() {
     use crate::interactive::tui::agent::Stream;
@@ -19,6 +19,7 @@ fn a_revision_after_a_stop_waits_for_the_confirmation() {
         rx,
         cancel,
         prompt: "the first question".into(),
+        question_scope: None,
     });
     assert!(app.is_busy(), "precondition: the stream is still in flight");
     app.input.set_text("the revised question");
@@ -45,9 +46,8 @@ fn a_revision_after_a_stop_waits_for_the_confirmation() {
     );
 }
 
-/// The stop-aware notice stays a `System` block and adds no `User` block:
-/// Phase 3's rule holds for the revision too. Phase 5 packet 4.
-/// RED: the branch does not exist yet.
+/// The stop-aware notice stays a `System` block and adds no `User` block: the
+/// no-invented-user-turn rule holds for the revision too.
 #[test]
 fn a_held_revision_is_never_a_user_block() {
     use crate::interactive::tui::agent::Stream;
@@ -60,6 +60,7 @@ fn a_held_revision_is_never_a_user_block() {
         rx,
         cancel,
         prompt: "the first question".into(),
+        question_scope: None,
     });
     app.input.set_text("the revised question");
     app.submit();
@@ -83,9 +84,8 @@ fn a_held_revision_is_never_a_user_block() {
     );
 }
 
-/// Packet 2's Ctrl+G still clears a stop-held revision: the same one-slot
-/// queue, not a new mechanism. Phase 5 packet 4.
-/// RED: passes trivially today (nothing to hold), pins the behaviour.
+/// Ctrl+G still clears a stop-held revision: the same one-slot queue, not a
+/// second mechanism.
 #[test]
 fn the_held_revision_is_still_droppable() {
     use crate::interactive::tui::agent::Stream;
@@ -100,6 +100,7 @@ fn the_held_revision_is_still_droppable() {
         rx,
         cancel,
         prompt: "the first question".into(),
+        question_scope: None,
     });
     app.input.set_text("the revised question");
     app.submit();

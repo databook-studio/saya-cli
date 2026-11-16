@@ -1,0 +1,285 @@
+use std::path::{Path, PathBuf};
+
+use saya_agent::CancellationToken;
+use saya_types::GitObjectId;
+use tokio::time::Instant;
+
+use super::{
+    command::{GitConfigRisk, GitError, GitObjectFormat, GitRepository, require_success},
+    request::GitRequest,
+    service::GitService,
+};
+
+const MAX_LOCAL_CONFIG_BYTES: usize = 1024 * 1024;
+
+pub(super) async fn inspect(
+    service: &GitService,
+    path: &Path,
+    allow_managed: bool,
+    cancellation: &CancellationToken,
+) -> Result<GitRepository, GitError> {
+    inspect_until(service, path, allow_managed, cancellation, None).await
+}
+
+async fn inspect_until(
+    service: &GitService,
+    path: &Path,
+    allow_managed: bool,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<GitRepository, GitError> {
+    let input = std::fs::canonicalize(path).map_err(|_| GitError::NotRepository)?;
+    if !std::fs::metadata(&input)
+        .map_err(|_| GitError::NotRepository)?
+        .is_dir()
+    {
+        return Err(GitError::NotRepository);
+    }
+    if !allow_managed && paths_overlap(&input, &service.environment.root) {
+        return Err(GitError::NotRepository);
+    }
+    // Outside a repository `git rev-parse --is-bare-repository` exits nonzero
+    // rather than answering; that is the one failure this predicate reads as
+    // "not a repository", so a caller can fall back to a plain folder. Every
+    // later command runs only inside a repository that already answered.
+    let bare = match run(service, &input, GitRequest::IsBare, cancellation, deadline).await {
+        Ok(output) => output,
+        Err(GitError::CommandFailed { .. }) => return Err(GitError::NotRepository),
+        Err(error) => return Err(error),
+    };
+    match single_line(&bare.stdout)?.as_str() {
+        "true" => return Err(GitError::BareRepository),
+        "false" => {}
+        _ => return Err(GitError::MalformedOutput),
+    }
+    let root = run(
+        service,
+        &input,
+        GitRequest::RepositoryRoot,
+        cancellation,
+        deadline,
+    )
+    .await?;
+    let root = canonical_line_path(&root.stdout)?;
+    if !input.starts_with(&root)
+        || (!allow_managed && paths_overlap(&root, &service.environment.root))
+    {
+        return Err(GitError::NotRepository);
+    }
+    let common_dir = run(
+        service,
+        &root,
+        GitRequest::CommonDir,
+        cancellation,
+        deadline,
+    )
+    .await?;
+    let common_dir = PathBuf::from(single_line(&common_dir.stdout)?);
+    let common_dir = if common_dir.is_absolute() {
+        common_dir
+    } else {
+        root.join(common_dir)
+    };
+    let common_dir = std::fs::canonicalize(common_dir).map_err(|_| GitError::MalformedOutput)?;
+    if !std::fs::metadata(&common_dir)
+        .map_err(|_| GitError::MalformedOutput)?
+        .is_dir()
+        || (!allow_managed && paths_overlap(&common_dir, &service.environment.root))
+    {
+        return Err(GitError::NotRepository);
+    }
+    let object_format = run(
+        service,
+        &root,
+        GitRequest::ObjectFormat,
+        cancellation,
+        deadline,
+    )
+    .await?;
+    let object_format = match single_line(&object_format.stdout)?.as_str() {
+        "sha1" => GitObjectFormat::Sha1,
+        "sha256" => GitObjectFormat::Sha256,
+        _ => return Err(GitError::UnsupportedObjectFormat),
+    };
+    let config = run(
+        service,
+        &root,
+        GitRequest::LocalConfig,
+        cancellation,
+        deadline,
+    )
+    .await?;
+    let worktree_config = validate_local_config(&config.stdout)?;
+    // `extensions.worktreeconfig` is a repository extension a linked worktree
+    // inherits from the common config; its own settings live outside
+    // `--local`, so they are read and validated rather than refusing the
+    // extension outright. Without the extension Git falls back to `--local`
+    // and this is a harmless repeat.
+    if worktree_config {
+        let worktree = run(
+            service,
+            &root,
+            GitRequest::WorktreeConfig,
+            cancellation,
+            deadline,
+        )
+        .await?;
+        validate_worktree_config(&worktree.stdout)?;
+    }
+    Ok(GitRepository {
+        root,
+        common_dir,
+        object_format,
+    })
+}
+
+pub(super) async fn verify(
+    service: &GitService,
+    repository: &GitRepository,
+    cancellation: &CancellationToken,
+) -> Result<(), GitError> {
+    verify_with_deadline(service, repository, cancellation, None).await
+}
+
+pub(super) async fn verify_with_deadline(
+    service: &GitService,
+    repository: &GitRepository,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<(), GitError> {
+    let current = inspect_until(service, repository.root(), false, cancellation, deadline).await?;
+    if &current != repository {
+        return Err(GitError::RepositoryChanged);
+    }
+    Ok(())
+}
+
+async fn run(
+    service: &GitService,
+    current_dir: &Path,
+    request: GitRequest<'_>,
+    cancellation: &CancellationToken,
+    deadline: Option<Instant>,
+) -> Result<super::process::GitOutput, GitError> {
+    let operation = request.operation();
+    let output = match deadline {
+        Some(deadline) => {
+            service
+                .run_request_until(current_dir, request, cancellation, deadline)
+                .await?
+        }
+        None => {
+            service
+                .run_request(current_dir, request, cancellation)
+                .await?
+        }
+    };
+    require_success(output, operation)
+}
+
+fn validate_worktree_config(bytes: &[u8]) -> Result<(), GitError> {
+    validate_config(bytes, false).map(|_| ())
+}
+
+fn validate_local_config(bytes: &[u8]) -> Result<bool, GitError> {
+    validate_config(bytes, true)
+}
+
+/// Returns whether the config enables `extensions.worktreeconfig`, whose own
+/// settings are validated separately. Every other risk is refused here.
+fn validate_config(bytes: &[u8], allow_worktree_config: bool) -> Result<bool, GitError> {
+    let mut worktree_config = false;
+    if let Some(risk) = scan_config(bytes, allow_worktree_config, &mut worktree_config)? {
+        return Err(GitError::UnsupportedConfiguration(risk));
+    }
+    Ok(worktree_config)
+}
+
+/// The first configuration risk in one `git config --null --list` output, or
+/// `None`. The shell-change path reads the same risks without opening the
+/// repository, so the classification lives here once.
+pub(super) fn config_risk(bytes: &[u8]) -> Result<Option<GitConfigRisk>, GitError> {
+    let mut worktree_config = false;
+    scan_config(bytes, true, &mut worktree_config)
+}
+
+fn scan_config(
+    bytes: &[u8],
+    allow_worktree_config: bool,
+    worktree_config: &mut bool,
+) -> Result<Option<GitConfigRisk>, GitError> {
+    if bytes.len() > MAX_LOCAL_CONFIG_BYTES {
+        return Err(GitError::OutputLimitExceeded);
+    }
+    for record in bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let separator = record
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or(GitError::MalformedOutput)?;
+        let key = std::str::from_utf8(&record[..separator])
+            .map_err(|_| GitError::MalformedOutput)?
+            .to_ascii_lowercase();
+        let value = std::str::from_utf8(&record[separator + 1..])
+            .map_err(|_| GitError::MalformedOutput)?
+            .trim()
+            .to_ascii_lowercase();
+        let risk = if key.starts_with("include.") || key.starts_with("includeif.") {
+            Some(GitConfigRisk::Include)
+        } else if key.starts_with("filter.") {
+            Some(GitConfigRisk::Filter)
+        } else if key == "extensions.partialclone" {
+            Some(GitConfigRisk::PartialClone)
+        } else if key.starts_with("remote.") && key.ends_with(".promisor") && truthy(&value) {
+            Some(GitConfigRisk::PromisorRemote)
+        } else if (key == "core.sparsecheckout" || key == "index.sparse") && truthy(&value) {
+            Some(GitConfigRisk::SparseCheckout)
+        } else if key == "extensions.worktreeconfig" && truthy(&value) {
+            if allow_worktree_config {
+                *worktree_config = true;
+            }
+            None
+        } else if key.starts_with("submodule.") && key.ends_with(".recurse") && truthy(&value) {
+            Some(GitConfigRisk::SubmoduleRecursion)
+        } else {
+            None
+        };
+        if risk.is_some() {
+            return Ok(risk);
+        }
+    }
+    Ok(None)
+}
+
+fn truthy(value: &str) -> bool {
+    !matches!(value, "false" | "no" | "off" | "0")
+}
+
+pub(super) fn object_id_matches(format: GitObjectFormat, object: &GitObjectId) -> bool {
+    match format {
+        GitObjectFormat::Sha1 => object.as_str().len() == 40,
+        GitObjectFormat::Sha256 => object.as_str().len() == 64,
+    }
+}
+
+pub(super) fn single_line(bytes: &[u8]) -> Result<String, GitError> {
+    let bytes = bytes.strip_suffix(b"\n").ok_or(GitError::MalformedOutput)?;
+    if bytes.contains(&b'\n') || bytes.contains(&0) {
+        return Err(GitError::MalformedOutput);
+    }
+    String::from_utf8(bytes.to_vec()).map_err(|_| GitError::MalformedOutput)
+}
+
+fn canonical_line_path(bytes: &[u8]) -> Result<PathBuf, GitError> {
+    let path = PathBuf::from(single_line(bytes)?);
+    if !path.is_absolute() {
+        return Err(GitError::MalformedOutput);
+    }
+    std::fs::canonicalize(path).map_err(|_| GitError::MalformedOutput)
+}
+
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    left.starts_with(right) || right.starts_with(left)
+}

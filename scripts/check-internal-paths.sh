@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fails when a ref's history adds internal working material that is not meant
-# to ship in the open-source distribution: agent instructions, editor rules,
-# and the engineering standards module.
+# to ship in the open-source distribution: agent instructions and skills,
+# editor rules, and the engineering standards module.
 #
 # Deleting such a file does not unpublish it. Once a commit that added it is
 # reachable from a public ref, `git show <commit>:<path>` returns the content
@@ -26,7 +26,7 @@
 set -euo pipefail
 
 # Paths that must never enter the published history.
-PATTERN='^(AGENTS\.md|CLAUDE\.md|\.claude/|\.cursor/|docs/standards/)'
+PATTERN='^(AGENTS\.md|CLAUDE\.md|\.claude/|\.agents/|\.cursor/|docs/standards/)'
 
 # Already reachable from `main`; see the header. Exact paths, not a prefix.
 GRANDFATHERED=(

@@ -1,9 +1,9 @@
 use super::super::transcript::BlockKind;
-/// Composed-screen behaviour snapshots (submit-time fold and composer hints), moved byte-identical from the hub.
-/// Plain assertions only — the five `insta` snapshots stay in the hub.
+/// Composed-screen behaviour (submit-time fold and composer hints) as plain
+/// assertions, alongside the `insta` snapshots.
 use super::support::{empty_app, fixed_status, render_buffer};
 
-// --- Fieldnotes phase 3, packet 3: automatic fold at the live edge. ---------
+// --- Automatic fold at the live edge. ---------------------------------------
 //
 // When the user sends a new request, the chapter that just finished folds
 // itself before the new `User` block lands. Pin the observable screen: the
@@ -37,12 +37,12 @@ fn sending_a_new_request_folds_the_finished_chapter_on_screen() {
     );
 }
 
-// --- Fieldnotes phase 2, packet 2C: the composer says what Send will do. ----
+// --- The composer says what Send will do. -----------------------------------
 //
 // The composer placeholder only paints while the input is empty; the moment
 // the user types, nothing on screen says what Enter does. These tests pin the
-// packet's one observable outcome: the composer always states what Enter will
-// do, with a different hint when the draft is multiline.
+// one observable outcome: the composer always states what Enter will do, with
+// a different hint when the draft is multiline.
 const ENTER_SENDS_HINT: &str = "Enter sends";
 const MULTILINE_SENDS_HINT: &str = "Enter sends all";
 const NEWLINE_HINT: &str = "Alt+Enter";

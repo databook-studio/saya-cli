@@ -1,5 +1,4 @@
-//! Phase 8 packet 3: the derived index of results and the step affordance
-//! over it.
+//! The derived index of results and the step affordance over it.
 //!
 //! A result is a [`BlockKind::Table`] block; its honest address is
 //! `(chapter, scope line)`, both already frozen into the block at completion.
