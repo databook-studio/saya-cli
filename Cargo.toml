@@ -41,7 +41,7 @@ toml = "1.1"
 futures-util = "0.3"
 # Bounded workspace search: typed Git rules and explicitly limited regex compilation.
 gix-ignore = "=0.22.1"
-globset = "=0.4.20"
+globset = "=0.4.21"
 regex = "=1.13.1"
 sqlparser = { version = "0.53", features = ["visitor"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "json", "chrono", "uuid", "bigdecimal"] }
