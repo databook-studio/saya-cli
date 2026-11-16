@@ -54,8 +54,8 @@ pub(super) struct LandlockPathBeneathAttr {
     pub(super) parent_fd: libc::c_int,
 }
 
-/// The Landlock ABI version the running kernel reports — the same raw
-/// version query the spike probe recorded (syscall 444, version flag).
+/// The Landlock ABI version the running kernel reports, via the same raw
+/// version query the probe uses (syscall 444, version flag).
 pub(super) fn landlock_abi() -> Result<u32, std::io::Error> {
     let r = unsafe {
         libc::syscall(

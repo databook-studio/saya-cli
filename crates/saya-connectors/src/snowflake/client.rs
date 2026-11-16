@@ -2,10 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
-use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
+use saya_types::{BoundParam, ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 use tokio::sync::Mutex;
 
-use crate::{ConnectorOptions, DatabaseConnector};
+use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
 use super::{auth::Auth, browser, cancellation, errors, legacy, metadata, protocol_v2, sso};
 
@@ -91,6 +91,11 @@ impl DatabaseConnector for SnowflakeConnector {
     fn dialect(&self) -> SqlDialect {
         SqlDialect::Snowflake
     }
+    /// Only keypair auth reaches the SQL API v2, whose `bindings` field binds
+    /// parameters natively; the legacy and browser endpoints have no bindings.
+    fn supports_parameters(&self) -> bool {
+        matches!(self.auth, Auth::Keypair(_))
+    }
     async fn connect(&self) -> Result<(), ConnectionError> {
         match &self.auth {
             Auth::ExternalBrowser(_) => legacy::login(self).await.map(|_| ()),
@@ -105,15 +110,34 @@ impl DatabaseConnector for SnowflakeConnector {
         metadata::schema(self).await
     }
     async fn execute(&self, request: QueryRequest) -> Result<QueryResult, ConnectionError> {
+        // Keypair auth binds natively in protocol_v2; every other auth path
+        // refuses parameters here, before any network activity — the legacy
+        // request carries the SQL text only and has no place for values.
         match &self.auth {
             Auth::Keypair(_) => protocol_v2::execute(self, request).await,
-            Auth::Userpass(_) => legacy::execute(self, request).await,
-            Auth::ExternalBrowser(_) => legacy::execute(self, request).await,
+            Auth::Userpass(_) | Auth::ExternalBrowser(_) => {
+                refuse_without_keypair(&request.params)?;
+                legacy::execute(self, request).await
+            }
         }
     }
     async fn cancel(&self) -> Result<(), ConnectionError> {
         cancellation::cancel(self).await
     }
+
+    async fn request_cancel(&self) -> Result<CancelRequestOutcome, ConnectionError> {
+        cancellation::request_cancel(self).await
+    }
+}
+
+/// Refuses a non-empty parameter list on the legacy/browser auth paths.
+fn refuse_without_keypair(params: &[BoundParam]) -> Result<(), ConnectionError> {
+    if params.is_empty() {
+        return Ok(());
+    }
+    Err(ConnectionError::unsupported(
+        "parameters need keypair auth on Snowflake",
+    ))
 }
 
 #[cfg(test)]

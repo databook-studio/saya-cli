@@ -1,5 +1,5 @@
-use super::{
-    session_commands::SessionAction, session_resume::block_on, session_state::SessionState,
+use crate::interactive::session::{
+    commands::SessionAction, lifecycle::resume::block_on, state::SessionState,
 };
 use crate::render::{RenderFormat, TerminalEvent, render_event};
 use saya_store::{
@@ -22,22 +22,56 @@ pub(crate) fn emit_action(
         // Doctor is intercepted in the session loop (it needs `runtime`) and
         // never reaches here; the arm keeps the match exhaustive.
         SessionAction::Doctor => {}
-        SessionAction::Compact
+        SessionAction::Coding(_)
+        | SessionAction::Compact
         | SessionAction::Agent(_)
         | SessionAction::Schema(_)
         | SessionAction::Sql(_)
         | SessionAction::Contracts(_)
+        // The `/investigation` family is intercepted in the session loop (the
+        // shared `run_investigation` dispatcher, plus the headless
+        // save-without-SQL refusal); the arm keeps the match exhaustive.
+        | SessionAction::Investigation(_)
         | SessionAction::Resume(_)
         // The `/run` family is intercepted in the session loop (it needs the
         // runtime, and the nested run's output never passes through this
         // seam); the arms keep the match exhaustive. `/allow` and `/grants`
         // are intercepted too — they seed and read the session's grant
-        // store, which lives in the runtime.
+        // store, which lives in the runtime. `/context` is intercepted as
+        // well: the view needs the runtime's settings and the session's
+        // workspace root. `/sessions list` and `/sessions delete <id>` are
+        // intercepted too — the shared saved-session operations run in the
+        // loop, which owns the store and the sessions root. `/preferences`
+        // is intercepted likewise: the shared operations run in the loop,
+        // scoped to the session's bound worktree root. `/rotate` is
+        // intercepted too: the rotation runs in the loop through the shared
+        // runner, which owns the store and the runtime. `/recovery` is
+        // intercepted likewise: the shared `run_recovery` runs in the loop,
+        // over the session's own recovery handle. `/mode` is intercepted
+        // too: the switch needs the session's policy, the journal and the
+        // launch's gate.
+        | SessionAction::Mode(_)
         | SessionAction::Allow(_)
         | SessionAction::Grants
+        | SessionAction::Context
+        | SessionAction::SessionsList
+        | SessionAction::SessionsDelete(_)
+        | SessionAction::Preferences(_)
+        | SessionAction::Recovery(_)
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)
+        | SessionAction::Rotate
+        // `/setup` is intercepted in the session loop: the headless refusal
+        // is emitted there as an Error action naming the shell command, and
+        // the TUI routes the action to its own handoff. The arm keeps the
+        // match exhaustive.
+        | SessionAction::Setup
+        // `/reload` is intercepted in the session loop: it re-reads the
+        // configuration with the launch options and swaps the loop's
+        // runtime handle only on success; the arm keeps the match
+        // exhaustive.
+        | SessionAction::Reload
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {
@@ -51,6 +85,12 @@ pub(crate) fn emit_action(
         SessionAction::Export(_) => emit(
             TerminalEvent::Error {
                 message: "export is only available in the interactive TUI".into(),
+            },
+            format,
+        ),
+        SessionAction::Report(_) => emit(
+            TerminalEvent::Error {
+                message: "report is only available in the interactive TUI".into(),
             },
             format,
         ),

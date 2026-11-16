@@ -1,5 +1,5 @@
 /// Deny wording end to end: the refused call reaches the model in the deny list’s own words.
-/// Moved byte-identical from the hub; no snapshots involved.
+/// Plain assertions; no snapshots involved.
 use super::super::ChannelApproval;
 use super::support::composed_facts;
 use crate::approval_facts::ApprovalFacts;
@@ -16,7 +16,8 @@ use tokio::sync::mpsc::unbounded_channel;
 /// denial byte-identical (no decider wording appended).
 #[tokio::test]
 async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
-    use crate::interactive::{session_definitions, session_deny};
+    use crate::interactive::session::permissions::deny as session_deny;
+    use crate::interactive::session_definitions;
     use saya_agent::{AgentLimits, CancellationToken, run_agent_with_sink};
     use std::sync::{Arc, Mutex};
 
@@ -165,12 +166,13 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
     facts.denied_programs = vec!["curl".to_owned()];
     let (tx, rx) = unbounded_channel();
     drop(rx);
-    let channel = ChannelApproval::new(
+    let channel = ChannelApproval::with_cancellation(
         tx,
         SessionPolicy::new(ApprovalPolicy::Ask),
         TurnPrimary::default(),
         facts.clone(),
         None,
+        CancellationToken::new(),
     );
     let (events, text, requests) = drive(&channel).await;
     let denied_reason = events
@@ -225,11 +227,12 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
     );
     // And a mode denial with no decider wording keeps the generic denial
     // byte-identical: the loop appends nothing it was not given.
-    let bare = TerminalApproval::new(
+    let bare = TerminalApproval::with_cancellation(
         ApprovalPolicy::Never,
         false,
         TurnPrimary::default(),
         ApprovalFacts::default(),
+        CancellationToken::new(),
     );
     let bare_tool = session_definitions::run_command();
     let bare_arguments = serde_json::json!({"program": "make"});

@@ -34,7 +34,7 @@ Sleep 2s
 
 # 2) A scope no tool in a run's universe consumes is refused with a usage
 #    error that names why (exit 2) — never accepted and silently ignored.
-Type 'target/release/saya run "weekly revenue report" --allow scratch'
+Type 'target/release/saya run "weekly revenue report" --allow endpoint:role=x'
 Sleep 900ms
 Enter
 Sleep 2.5s

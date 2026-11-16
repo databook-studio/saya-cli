@@ -1,4 +1,4 @@
-//! Prompt term extraction for recall — slice 2b-3b §2.
+//! Prompt term extraction for recall.
 //!
 //! Deterministic and pure: no store, no schema, no clock. The prompt is
 //! untrusted input driving a scan, so the output is bounded (explicit refs and

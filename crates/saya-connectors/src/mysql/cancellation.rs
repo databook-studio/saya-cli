@@ -3,6 +3,7 @@ use sqlx::{ConnectOptions, Connection};
 use tokio::time::timeout;
 
 use super::{MySqlConnector, errors};
+use crate::CancelRequestOutcome;
 
 /// Deadline for the dedicated `KILL QUERY` connection. Bounded independently of
 /// `query_timeout` (which may be tens of seconds): the caller already holds a
@@ -14,18 +15,23 @@ const KILL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 /// `take` (not a peek) makes cancellation single-winner: the first caller to
 /// reach this wins the id, and a concurrent caller — a Ctrl-C from the TUI
 /// racing the in-`query` cleanup — finds `None` and becomes a no-op instead of
-/// issuing a second `KILL QUERY`. This is the seam Defect A hid behind: the old
-/// `query` cleared `active_id` *before* calling `cancel`, so by the time
-/// `cancel` looked, the id was gone and the kill never issued.
+/// issuing a second `KILL QUERY`. The ordering matters: a `query` that cleared
+/// `active_id` *before* calling `cancel` would leave the id gone by the time
+/// `cancel` looked, so the kill would never issue.
 pub(crate) fn next_kill_target(active: &mut Option<u64>) -> Option<u64> {
     active.take()
 }
 
 pub(crate) async fn cancel(connector: &MySqlConnector) -> Result<(), ConnectionError> {
+    request_cancel(connector).await.map(|_| ())
+}
+
+pub(crate) async fn request_cancel(
+    connector: &MySqlConnector,
+) -> Result<CancelRequestOutcome, ConnectionError> {
     let id = next_kill_target(&mut *connector.active_id.lock().await);
     let Some(id) = id else {
-        // Nothing in flight: cancelling is a no-op, not an error.
-        return Ok(());
+        return Ok(CancelRequestOutcome::NoActiveOperation);
     };
     // The id comes from CONNECTION_ID() as an integer and is interpolated
     // only into this KILL statement; KILL does not accept bound parameters.
@@ -49,7 +55,7 @@ pub(crate) async fn cancel(connector: &MySqlConnector) -> Result<(), ConnectionE
         .await
         .map_err(|_| ConnectionError::query_failed("MySQL cancellation timed out"))?
         .map_err(errors::query)?;
-    Ok(())
+    Ok(CancelRequestOutcome::RemoteRequestAccepted)
 }
 
 #[cfg(test)]
@@ -61,19 +67,35 @@ mod tests {
     //! tests prove the ordering invariant Defect A broke, not the wire bytes.
 
     use super::next_kill_target;
+    use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector, MySqlConnector};
+    use sqlx::mysql::MySqlConnectOptions;
 
-    /// Defect A, reproduced: the old `query` cleared `active_id` *before*
-    /// calling `cancel`, so by the time cancellation claimed its target the id
-    /// was already gone and the kill never issued. The fix is an ordering
-    /// change in `execute.rs`, not a change here — this test pins the contract
-    /// `cancel` relies on: claim from a live id yields the kill; claim from an
-    /// already-cleared slot yields nothing.
+    #[tokio::test]
+    async fn cancellation_without_an_active_id_reports_no_operation() {
+        let connector = MySqlConnector::from_options(
+            MySqlConnectOptions::new(),
+            "database",
+            ConnectorOptions::default(),
+        );
+
+        assert_eq!(
+            connector.request_cancel().await.unwrap(),
+            CancelRequestOutcome::NoActiveOperation
+        );
+    }
+
+    /// A pre-cleared slot reproduces the failure the ordering prevents: if
+    /// `query` cleared `active_id` *before* calling `cancel`, the id would be
+    /// gone by the time cancellation claimed its target and the kill would
+    /// never issue. `execute.rs` orders the clear after the claim; this test
+    /// pins the contract `cancel` relies on: claim from a live id yields the
+    /// kill; claim from an already-cleared slot yields nothing.
     #[test]
     fn claim_uses_the_id_the_query_left_in_flight() {
         // The fixed `query` leaves the id in flight for `cancel` to claim.
         let mut live = Some(7_u64);
         assert_eq!(next_kill_target(&mut live), Some(7), "kill is issued");
-        // The old `query` had already cleared the slot, so `cancel` saw this:
+        // A `query` that cleared the slot first would leave `cancel` this:
         let mut already_cleared: Option<u64> = None;
         assert_eq!(
             next_kill_target(&mut already_cleared),
@@ -82,10 +104,9 @@ mod tests {
         );
     }
 
-    /// The fix is single-winner: the first `cancel` to claim consumes the id,
+    /// The claim is single-winner: the first `cancel` to claim consumes the id,
     /// so a concurrent Ctrl-C racing the in-`query` cleanup finds the slot
-    /// empty and becomes a no-op instead of issuing a second `KILL QUERY`
-    /// (the answer to Q2).
+    /// empty and becomes a no-op instead of issuing a second `KILL QUERY`.
     #[test]
     fn claim_is_single_winner_no_double_kill() {
         let mut active = Some(7_u64);

@@ -2,7 +2,7 @@
 //!
 //! These are presentation types only. The `crate::contracts::view` types carry
 //! data and IDs and must not gain `serde` or any presentation concern; the
-//! adapter slice (2b-2c) maps one to the other.
+//! adapter maps one to the other.
 //!
 //! `profile` is the profile *name*, never the opaque identity. The identity is a
 //! hash over host, database, user and scope path; serializing it would leak
@@ -27,8 +27,8 @@ pub struct ContractClaimView {
     pub column: Option<String>,
     /// Why a directive claim holds, when one was stated. `None` for a claim with
     /// no reason and for every non-directive kind (description/alias). Skipped
-    /// from the wire form when `None` so a no-reason claim serializes the same
-    /// as before the field existed.
+    /// from the wire form when `None`, so a no-reason claim serializes without
+    /// a `reason` key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }

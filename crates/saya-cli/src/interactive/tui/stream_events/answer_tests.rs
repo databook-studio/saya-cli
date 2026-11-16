@@ -1,5 +1,4 @@
-//! Tests for the assistant-answer lifecycle (deltas, resets, completion), driven through `super::apply_event` (moved verbatim
-//! from the inline `tests` module in `stream_events/apply.rs`).
+//! Tests for the assistant-answer lifecycle (deltas, resets, completion), driven through `super::apply_event`.
 
 use super::{BlockKind, Transcript, apply_event};
 use saya_agent::AgentEvent;
@@ -168,8 +167,8 @@ fn the_discarded_partial_is_not_resurrected() {
     );
 }
 
-/// A turn with no retry says nothing extra: the packet must not announce
-/// retries that did not happen.
+/// A turn with no retry says nothing extra: no retry is announced that did
+/// not happen.
 #[test]
 fn a_turn_with_no_retry_says_nothing_extra() {
     let mut t = Transcript::new();

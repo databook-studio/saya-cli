@@ -8,7 +8,7 @@ use sqlx::{
 };
 use tokio::{sync::Mutex, time::timeout};
 
-use crate::{ConnectorOptions, DatabaseConnector};
+use crate::{CancelRequestOutcome, ConnectorOptions, DatabaseConnector};
 
 pub struct PostgresConnector {
     pub(crate) pool: PgPool,
@@ -62,8 +62,16 @@ impl DatabaseConnector for PostgresConnector {
         super::execute::query(self, request).await
     }
 
+    fn supports_parameters(&self) -> bool {
+        true
+    }
+
     async fn cancel(&self) -> Result<(), ConnectionError> {
         super::cancellation::cancel(self).await
+    }
+
+    async fn request_cancel(&self) -> Result<CancelRequestOutcome, ConnectionError> {
+        super::cancellation::request_cancel(self).await
     }
 }
 
@@ -71,6 +79,17 @@ impl DatabaseConnector for PostgresConnector {
 mod tests {
     use super::*;
     use sqlx::postgres::PgConnectOptions;
+
+    #[tokio::test]
+    async fn cancellation_without_an_active_backend_reports_no_operation() {
+        let connector =
+            PostgresConnector::from_options(PgConnectOptions::new(), ConnectorOptions::default());
+
+        assert_eq!(
+            connector.request_cancel().await.unwrap(),
+            crate::CancelRequestOutcome::NoActiveOperation
+        );
+    }
 
     #[tokio::test]
     async fn test_in_flight_mutex_serializes() {

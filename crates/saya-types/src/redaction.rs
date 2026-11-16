@@ -17,7 +17,7 @@ pub fn redact(value: &str) -> String {
 const MARKERS: [&str; 2] = ["[redacted]", "[redacted private key]"];
 
 /// Counting variant of [`redact`]: the same redacted text, plus the number of
-/// secret-shaped values replaced. Added for the model-context boundary (D8):
+/// secret-shaped values replaced. The model-context boundary needs this:
 /// a caller that tells the model redaction happened needs a count to say how
 /// many, not just that it happened. `redact` stays the plain entry point for
 /// every other caller — store/audit redaction, error-text scrubbing.
@@ -76,17 +76,38 @@ fn redact_markers(value: &str) -> String {
         };
         output.push_str(&value[cursor..start + marker.len()]);
         let value_start = start + marker.len();
-        let end = value[value_start..]
-            .find(|character: char| {
-                character.is_whitespace() || character == '&' || character == ';'
-            })
-            .map(|offset| value_start + offset)
-            .unwrap_or(value.len());
+        let end = bounded_value_end(value, value_start);
         output.push_str("[redacted]");
         cursor = end;
     }
     output.push_str(&value[cursor..]);
     output
+}
+
+/// End (byte offset) of the secret value that starts at `start`. A value
+/// that starts with a quote ends after its matching closing quote (or at the
+/// end of the input when unterminated: fail closed); an unquoted value ends
+/// at whitespace, `&`, `;` or a closing `"`.
+pub(super) fn bounded_value_end(value: &str, start: usize) -> usize {
+    let rest = &value[start..];
+    match rest.chars().next() {
+        Some(quote @ ('"' | '\'')) => {
+            let after_open = start + quote.len_utf8();
+            value[after_open..]
+                .find(quote)
+                .map(|offset| after_open + offset + quote.len_utf8())
+                .unwrap_or(value.len())
+        }
+        _ => rest
+            .find(|character: char| {
+                character.is_whitespace()
+                    || character == '&'
+                    || character == ';'
+                    || character == '"'
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(value.len()),
+    }
 }
 
 fn redact_urls(value: &str) -> String {
@@ -222,8 +243,8 @@ fn find_earliest_header(line: &str, headers: &[&str]) -> Option<usize> {
 }
 
 /// Case-insensitive substring search for an ASCII needle. Avoids allocating a
-/// lowercase copy of the haystack (the previous code lowercased the whole
-/// buffer and each block).
+/// lowercase copy of the haystack, which would mean lowercasing the whole
+/// buffer and each block.
 fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
     let h = haystack.as_bytes();
     let n = needle.as_bytes();

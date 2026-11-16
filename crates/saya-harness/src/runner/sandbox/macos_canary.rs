@@ -5,16 +5,20 @@
 //!
 //! A deny only counts when the operation failed, the failure carries the
 //! literal `Operation not permitted` in stderr, and — where a filesystem
-//! target is involved — nothing landed on disk. The spike's first round drew
-//! a wrong conclusion from a test listener bound with `listen(1)` that never
-//! accepted, so the listener here always calls `accept()`.
+//! target is involved — nothing landed on disk. A listener bound with
+//! `listen(1)` that never accepts turns a timeout into a false denial, so
+//! the listener here always calls `accept()`.
 
 use std::{
     fs,
     net::TcpListener,
     path::{Path, PathBuf},
     process::Command,
-    sync::mpsc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -29,7 +33,7 @@ pub(super) const EPERM_EVIDENCE: &str = "Operation not permitted";
 pub(super) const CANARY_PROGRAM_DIR: &str = "/bin";
 
 /// How many connects must land on the allowed endpoint for the check to
-/// count. The spike measured 10/10; at startup three all-landing attempts
+/// count. Measurement showed 10/10; at startup three all-landing attempts
 /// keep the probe bounded while still demanding reliability.
 pub(super) const ALLOWED_CONNECT_ATTEMPTS: usize = 3;
 
@@ -66,30 +70,42 @@ impl Drop for TempRoot {
 }
 
 /// A loopback listener whose accept thread hands every received payload to
-/// the battery — a genuinely accepting endpoint, per the spike's rule.
+/// the battery — a genuinely accepting endpoint, per the deny-evidence rule.
 pub(super) struct ProbeListener {
     pub(super) port: u16,
     received: mpsc::Receiver<String>,
-    _thread: std::thread::JoinHandle<()>,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl ProbeListener {
     pub(super) fn bind() -> std::io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
         let port = listener.local_addr()?.port();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(8);
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
         let thread = std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                match stream {
-                    Ok(mut stream) => {
-                        let mut buf = [0u8; 64];
-                        let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
-                        if tx
-                            .send(String::from_utf8_lossy(&buf[..n]).into_owned())
+            while !stopping.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        if stream
+                            .set_read_timeout(Some(Duration::from_millis(100)))
                             .is_err()
                         {
                             break;
                         }
+                        let mut buf = [0u8; 64];
+                        let n = std::io::Read::read(&mut stream, &mut buf).unwrap_or(0);
+                        if let Err(mpsc::TrySendError::Disconnected(_)) =
+                            tx.try_send(String::from_utf8_lossy(&buf[..n]).into_owned())
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10));
                     }
                     Err(_) => break,
                 }
@@ -98,7 +114,8 @@ impl ProbeListener {
         Ok(Self {
             port,
             received: rx,
-            _thread: thread,
+            stop,
+            thread: Some(thread),
         })
     }
 
@@ -106,6 +123,90 @@ impl ProbeListener {
     pub(super) fn receive(&self, timeout: Duration) -> Option<String> {
         self.received.recv_timeout(timeout).ok()
     }
+}
+
+impl Drop for ProbeListener {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Set on the process the test below re-executes. Its value is the file that
+/// process writes once its run has completed, and its presence tells the test
+/// that it is that process.
+#[cfg(test)]
+const CHILD_MARKER: &str = "SAYA_TEST_LISTENER_DROP_MARKER";
+#[cfg(test)]
+const CHILD_TEST: &str =
+    "runner::sandbox::macos_canary::listener_drop_closes_its_port_even_with_a_silent_connection";
+
+/// Dropping a listener closes its port even while a connection to it is silent.
+///
+/// The check runs in a process of its own. macOS cannot create a socket with
+/// close-on-exec set atomically, so a child that a parallel test forks while
+/// this listener's socket is being created inherits it and holds the port open
+/// past the drop. The final connect then succeeds for a reason that is not the
+/// listener's. Nothing forks in the isolated process.
+#[test]
+fn listener_drop_closes_its_port_even_with_a_silent_connection() {
+    use std::{process::Stdio, time::Instant};
+    if let Some(marker) = std::env::var_os(CHILD_MARKER) {
+        listener_drop_closes_its_port();
+        fs::write(marker, b"ok").expect("record the completed child run");
+        return;
+    }
+    let root = TempRoot::new("listener-drop");
+    let marker = root.canonical().join("completed");
+    let mut child = Command::new(std::env::current_exe().expect("test executable resolves"))
+        .args(["--exact", CHILD_TEST, "--nocapture"])
+        .env(CHILD_MARKER, &marker)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("isolated listener test starts");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("poll the isolated listener test") {
+            Some(status) => break status,
+            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("isolated listener test exceeded 30 seconds and was reaped");
+            }
+        }
+    };
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = std::io::Read::read_to_string(&mut pipe, &mut stderr);
+    }
+    assert!(
+        status.success(),
+        "isolated listener test failed: {status}\n{stderr}"
+    );
+    assert_eq!(
+        fs::read(&marker).expect("the exact child test must run to completion"),
+        b"ok"
+    );
+}
+
+#[cfg(test)]
+fn listener_drop_closes_its_port() {
+    use std::{
+        net::{SocketAddr, TcpStream},
+        time::Instant,
+    };
+    let listener = ProbeListener::bind().unwrap();
+    let address: SocketAddr = format!("127.0.0.1:{}", listener.port).parse().unwrap();
+    let _silent = TcpStream::connect_timeout(&address, Duration::from_secs(1)).unwrap();
+    let start = Instant::now();
+    drop(listener);
+    assert!(start.elapsed() < Duration::from_secs(1));
+    assert!(TcpStream::connect_timeout(&address, Duration::from_millis(200)).is_err());
 }
 
 pub(super) fn connect_script(port: u16) -> String {

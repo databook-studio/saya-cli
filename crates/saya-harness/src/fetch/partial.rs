@@ -28,7 +28,7 @@ use super::download_error::DownloadError;
 /// larger is corruption, not metadata.
 const MAX_SIDECAR_BYTES: u64 = 4096;
 
-/// Read chunk for the prefix re-digest.
+/// Read block for the prefix re-digest.
 pub(super) const READ_CHUNK: usize = 64 * 1024;
 
 pub(super) fn sidecar_rel(destination: &str) -> String {
@@ -139,12 +139,26 @@ pub(super) fn start_fresh(
     })
 }
 
-/// Promotes the completed part over the destination and clears the sidecar.
+/// Promotes the completed part over the destination under the caller's
+/// per-call destination precondition — create-if-absent with no digest;
+/// with one, replace only when the destination's current bytes hash to it —
+/// and clears the sidecar only after the promotion succeeds, so a refused
+/// publication leaves the completed part and its sidecar in place for an
+/// explicit retry. The sidecar records only the partial's own URL, bytes,
+/// and digest; it never supplies or infers the destination precondition.
 /// The part and the destination are both re-anchored through the contained
 /// walk, so the promotion acts on the directories the walk validates.
-pub(super) fn promote(workspace: &Workspace, destination: &str) -> Result<(), DownloadError> {
+pub(super) fn promote(
+    workspace: &Workspace,
+    destination: &str,
+    expected_destination_sha256: Option<&str>,
+) -> Result<(), DownloadError> {
     workspace
-        .promote_download(&part_rel(destination), destination)
+        .promote_download(
+            &part_rel(destination),
+            destination,
+            expected_destination_sha256,
+        )
         .map_err(DownloadError::from)?;
     remove_meta(workspace, destination)
 }

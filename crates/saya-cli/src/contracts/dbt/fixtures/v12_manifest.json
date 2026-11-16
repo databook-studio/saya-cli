@@ -1,0 +1,104 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.8.6",
+    "invocation_id": "synthetic-fixture"
+  },
+  "nodes": {
+    "model.jaffle.orders": {
+      "resource_type": "model",
+      "name": "orders",
+      "alias": "public_orders",
+      "database": "analytics",
+      "schema": "core",
+      "description": "One row per confirmed order.",
+      "compiled_code": "select 1 as MARKER_COMPILED",
+      "raw_code": "select 1 as MARKER_RAW",
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "description": "Buyer reference.",
+          "data_type": "integer"
+        },
+        "event_id": {
+          "name": "event_id",
+          "description": "Session event the order came from.",
+          "data_type": "text"
+        }
+      }
+    },
+    "model.jaffle.customers": {
+      "resource_type": "model",
+      "name": "customers",
+      "database": "analytics",
+      "schema": "core",
+      "description": "One row per customer.",
+      "columns": {}
+    },
+    "model.jaffle.hidden": {
+      "resource_type": "model",
+      "name": "hidden",
+      "database": "analytics",
+      "schema": "core"
+    },
+    "test.jaffle.relationships_orders_customer_id": {
+      "resource_type": "test",
+      "attached_node": "model.jaffle.orders",
+      "column_name": "customer_id",
+      "test_metadata": {
+        "name": "relationships",
+        "kwargs": {"to": "ref('customers')", "field": "id"}
+      }
+    },
+    "test.jaffle.relationships_orders_event_id": {
+      "resource_type": "test",
+      "attached_node": "model.jaffle.orders",
+      "column_name": "event_id",
+      "test_metadata": {
+        "name": "relationships",
+        "kwargs": {"to": "source('jaffle', 'events')", "arguments": {"field": "event_key"}}
+      }
+    },
+    "test.jaffle.relationships_hidden": {
+      "resource_type": "test",
+      "attached_node": "model.jaffle.hidden",
+      "column_name": "ref_code",
+      "test_metadata": {
+        "name": "relationships",
+        "kwargs": {"to": "ref('orders')", "field": "order_id"}
+      }
+    },
+    "test.jaffle.not_null_orders_order_id": {
+      "resource_type": "test",
+      "attached_node": "model.jaffle.orders",
+      "column_name": "order_id",
+      "test_metadata": {
+        "name": "not_null",
+        "kwargs": {"column_name": "order_id"}
+      }
+    }
+  },
+  "sources": {
+    "source.jaffle.jaffle.events": {
+      "resource_type": "source",
+      "name": "events",
+      "identifier": "raw_events",
+      "database": "raw",
+      "schema": "jaffle",
+      "description": "Raw clickstream events.",
+      "columns": {
+        "event_key": {
+          "name": "event_key",
+          "description": "Event primary key.",
+          "data_type": "text"
+        }
+      }
+    }
+  },
+  "macros": {
+    "macro.jaffle.secret_macro": {
+      "name": "secret_macro",
+      "sql": "select '{{ MARKER_MACRO_SQL }}'"
+    }
+  }
+}

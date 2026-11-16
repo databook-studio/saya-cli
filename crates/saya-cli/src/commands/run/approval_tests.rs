@@ -64,7 +64,7 @@ fn the_view_shows_plan_scopes_budgets_and_digests() {
     let mut approved = Capabilities::default();
     approved.workspace_write = true;
     let mut requested = Capabilities::default();
-    requested.scratch = true;
+    requested.workspace_write = true;
     let plan = one_step_plan("survey the data quality", requested);
     let mut budgets = Budgets::default();
     budgets.turns = Some(40);
@@ -87,7 +87,7 @@ fn the_view_shows_plan_scopes_budgets_and_digests() {
     );
     assert!(text.contains("survey the data quality"), "the step: {text}");
     assert!(
-        text.contains("scopes: scratch"),
+        text.contains("scopes: workspace-write"),
         "the step's requested scopes in the --allow grammar: {text}"
     );
     assert!(text.contains("turns=40"), "the declared budget: {text}");

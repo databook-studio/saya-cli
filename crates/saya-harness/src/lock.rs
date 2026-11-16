@@ -24,6 +24,9 @@ use std::{
 
 use crate::{HarnessError, io_error};
 
+#[cfg(windows)]
+mod windows;
+
 /// A held run lock. Dropping it is best-effort release; [`RunLock::release`]
 /// reports a failed release instead.
 #[derive(Debug)]
@@ -128,10 +131,18 @@ fn process_alive(pid: u32) -> bool {
     sent == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-/// No std primitive answers this off unix. Every existing file is treated as
-/// a live holder — fail closed: a stale lock there needs manual removal
-/// rather than a silent reclaim by a second writer.
-#[cfg(not(unix))]
+/// Windows asks the process handle the same question; a process that cannot
+/// be opened is treated as live, so the fail-closed rule is unchanged.
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    windows::process_alive(pid)
+}
+
+/// No process-liveness primitive exists on a non-unix, non-Windows target.
+/// Every existing file is treated as a live holder — fail closed: a stale
+/// lock there needs manual removal rather than a silent reclaim by a second
+/// writer.
+#[cfg(not(any(unix, windows)))]
 fn process_alive(_pid: u32) -> bool {
     true
 }

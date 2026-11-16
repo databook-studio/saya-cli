@@ -1,5 +1,4 @@
-//! Warn-threshold crossing: one notice on the upward crossing, silence while above, re-arm below (moved verbatim from `streaming_tests.rs`, via
-//! `streaming/footer_tests.rs`).
+//! Warn-threshold crossing: one notice on the upward crossing, silence while above, re-arm below.
 
 use super::*;
 
@@ -20,6 +19,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

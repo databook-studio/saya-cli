@@ -45,9 +45,6 @@ pub fn profile_identity(name: &str, profile: &DatabaseProfile, scope: &Path) -> 
                 &format!("{}", ssl_ca.is_some()),
             ],
         ),
-        DatabaseProfile::DuckDb { path, read_only } => {
-            fields(&mut hash, ["duckdb", path, &format!("{read_only:?}")]);
-        }
         DatabaseProfile::Sqlite { path, read_only } => {
             fields(&mut hash, ["sqlite", path, &format!("{read_only:?}")]);
         }
@@ -141,7 +138,7 @@ mod tests {
     fn identity_is_stable_and_opaque() {
         let value = super::profile_identity(
             "quoted profile / password",
-            &profile("one.duckdb"),
+            &profile("one.sqlite"),
             Path::new("/project-one/connections.toml"),
         );
         assert_eq!(value.as_str().len(), 66);
@@ -152,7 +149,7 @@ mod tests {
     fn derived_identity_parses_as_a_profile_identity() {
         let value = super::profile_identity(
             "parses",
-            &profile("parses.duckdb"),
+            &profile("parses.sqlite"),
             Path::new("/project-parses/connections.toml"),
         );
         assert_eq!(
@@ -163,7 +160,7 @@ mod tests {
 
     #[tokio::test]
     async fn same_relative_profile_in_different_scopes_cannot_share_a_schema_fallback() {
-        let profile = profile("./data.duckdb");
+        let profile = profile("./data.sqlite");
         let first = super::profile_identity(
             "analytics",
             &profile,
@@ -187,9 +184,9 @@ mod tests {
     }
 
     fn profile(path: &str) -> DatabaseProfile {
-        DatabaseProfile::DuckDb {
+        DatabaseProfile::Sqlite {
             path: path.into(),
-            read_only: Some(true),
+            read_only: true,
         }
     }
 }

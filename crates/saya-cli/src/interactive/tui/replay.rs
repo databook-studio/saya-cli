@@ -1,8 +1,8 @@
 //! Replays saved session turns into the transcript on resume.
 
-use super::super::session_state::SessionState;
 use super::table;
 use super::transcript::BlockKind;
+use crate::interactive::session::state::SessionState;
 
 /// Builds the transcript blocks that represent a resumed session's turns: each
 /// turn becomes a user block, a compact line per tool it ran, then the assistant
@@ -101,7 +101,7 @@ pub(crate) fn relative_time(delta_ms: u128) -> String {
 mod tests {
     use super::super::transcript::BlockKind;
     use super::history_blocks;
-    use crate::interactive::session_state::SessionState;
+    use crate::interactive::session::state::SessionState;
     use saya_agent::{ToolMetadata, ToolResultShape};
 
     #[test]
@@ -162,12 +162,11 @@ mod tests {
 
     /// Property 5: `journal_and_replay_unchanged` — replay renders through
     /// this module, never the grouper, so grouping cannot touch it. There is
-    /// no "grouping off" toggle to compare against (the slice constraint
-    /// forbids inventing one); the equivalent pin is structural: replay reads
+    /// no "grouping off" toggle to compare against, and none is invented; the
+    /// equivalent pin is structural: replay reads
     /// only the persisted `SessionState` (role + content + per-call
-    /// `ToolMetadata`), which the grouping slices never write — `git diff`
-    /// C0–C3 touches no journal or replay path — and its output carries no
-    /// group marker, before or after a grouped live session.
+    /// `ToolMetadata`), which the grouping code never writes, and its output
+    /// carries no group marker, before or after a grouped live session.
     #[test]
     fn journal_and_replay_unchanged() {
         use saya_agent::{ToolMetadata, ToolResultShape};
@@ -179,7 +178,7 @@ mod tests {
             false,
             vec![
                 ToolMetadata {
-                    name: "workspace_write".into(),
+                    name: "write".into(),
                     status: "completed".into(),
                     arguments: r#"{"path":"notes.md"}"#.into(),
                     result_shape: None,
@@ -206,9 +205,7 @@ mod tests {
             "replay carries no group marker: {first:?}"
         );
         assert!(
-            first
-                .iter()
-                .any(|(_, text)| text.contains("workspace_write"))
+            first.iter().any(|(_, text)| text.contains("write"))
                 && first.iter().any(|(_, text)| text.contains("run_command")),
             "every recorded call replays per-call, never collapsed: {first:?}"
         );

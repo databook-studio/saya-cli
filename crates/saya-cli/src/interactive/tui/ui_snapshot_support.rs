@@ -5,15 +5,15 @@ use std::sync::Arc;
 use saya_agent::{LocalStateEffect, ToolEffect};
 use saya_config::{
     AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedFetchJobs, ResolvedHostCommands, ResolvedInterpreterJobs, ResolvedJobs, ResolvedMemory,
-    ResolvedRunnerJobs, ThemeChoice,
+    ResolvedHostCommands, ResolvedJobs, ResolvedMemory, ThemeChoice,
 };
 use saya_store::SqliteStateStore;
 
 use super::super::history::History;
 use super::super::input::InputBuffer;
+use super::super::startup_readiness::StartupReadiness;
 use super::super::transcript::Transcript;
-use super::super::types::{App, OverlayState, RequestState};
+use super::super::types::{AgentCaptures, App, OverlayState, RequestState};
 use crate::interactive::session_prompt::StatusView;
 /// `bounded_sql_query`'s declared effect, carried on the fabricated request
 /// events so they match what the loop emits.
@@ -32,9 +32,19 @@ pub(crate) fn bounded_sql_query_effect() -> ToolEffect {
 pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
     Arc::new(crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
+            hooks: Default::default(),
+            web_search: Default::default(),
+            mcp_servers: Default::default(),
+            permissions: Default::default(),
+            tools: Default::default(),
+            coding: Default::default(),
+            agents: Default::default(),
+            instructions: Default::default(),
             profile_name: None,
             profile: None,
+            limits: Default::default(),
             ai: ResolvedAi {
+                app_attribution: true,
                 provider: AiProvider::Ollama,
                 model: "test-model".into(),
                 base_url: None,
@@ -43,27 +53,20 @@ pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
                 temperature: 0.0,
                 timeout_seconds: 60,
                 idle_timeout_seconds: 90,
-                max_output_tokens: 4096,
-                max_output_tokens_is_default: true,
+                request_timeout_seconds: 180,
+                max_output_tokens: None,
+                reasoning_effort: None,
                 context_byte_budget: 256 * 1024,
                 context_window_tokens: None,
                 show_thinking: false,
                 compaction: saya_config::CompactionMode::Auto,
+                compaction_trigger_percent: 50,
                 retry_delays_ms: vec![250, 500, 1000],
             },
             max_rows: 100,
             read_only: true,
-            max_iterations: 4,
             candidates: 1,
-            jobs: ResolvedJobs {
-                wall_clock_seconds: None,
-                tokens_per_endpoint: BTreeMap::new(),
-                turns: Some(4),
-                tool_calls: None,
-                fetch: ResolvedFetchJobs::default(),
-                interpreter: ResolvedInterpreterJobs::default(),
-                runner: ResolvedRunnerJobs::default(),
-            },
+            jobs: ResolvedJobs::default(),
             query_timeout_seconds: 5,
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
@@ -77,12 +80,14 @@ pub(crate) fn unused_runtime() -> Arc<crate::config::runtime::RuntimeConfig> {
             host_commands: ResolvedHostCommands::default(),
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
+            provenance: Default::default(),
             endpoints: BTreeMap::new(),
         },
         connections: ConnectionsFile::default(),
         config_path: None,
         connections_path: None,
         cache_scope: PathBuf::new(),
+        investigations_root: crate::config::runtime::temp_investigations_root(),
         secret_values: BTreeMap::new(),
     })
 }
@@ -97,12 +102,19 @@ pub(crate) fn unused_store() -> SqliteStateStore {
 /// An idle `App` with an empty transcript and a fixed profile list. Built
 /// directly so no history file is read (`App::new` calls `History::load`).
 pub(crate) fn empty_app() -> App {
+    // The startup fact set derives from the fixture's own runtime, so the
+    // baseline cannot drift from it: Ollama with `test-model` needs no
+    // key, so the fixture's AI line reads ready — "ollama, model test-model".
+    let runtime = unused_runtime();
     App {
         sql_task: None,
         compact_task: None,
+        session_metrics: None,
+        replay_task: None,
         input: InputBuffer::new(),
         transcript: Transcript::new(),
         profiles: vec!["analytics".into(), "billing".into()],
+        startup: StartupReadiness::from_runtime(&runtime),
         pending: None,
         request: RequestState::default(),
         overlays: OverlayState::default(),
@@ -111,17 +123,24 @@ pub(crate) fn empty_app() -> App {
         viewport: std::cell::Cell::new((0, 0)),
         ctrl_c_armed: false,
         at_refs: Vec::new(),
+        starter_questions: Vec::new(),
         pending_clipboard: None,
+        pending_permission_cycle: false,
         clipboard_copy: None,
         session_save: None,
         pending_session_save: None,
         last_query: None,
+        captured: None,
+        pending_queries: std::collections::VecDeque::new(),
+        pending_queries_desync: false,
+        agent_captures: AgentCaptures::new(),
         wide_table: Default::default(),
         run_panel: None,
-        runtime: unused_runtime(),
+        coding_panel: None,
+        runtime,
         state_db: unused_store(),
         session: std::sync::Arc::new(
-            crate::interactive::session_universe::SessionUniverse::empty(),
+            crate::interactive::session::universe::SessionUniverse::empty(),
         ),
         should_quit: false,
         pending_trust_answer: None,
@@ -136,6 +155,15 @@ pub(crate) fn empty_app_with_text(text: &str) -> App {
     app
 }
 
+/// An `empty_app` whose startup fact set is overridden — for tests that
+/// need a first screen whose AI line reads a different verdict, e.g. a
+/// provider that is not set up.
+pub(crate) fn empty_app_with_startup(startup: StartupReadiness) -> App {
+    let mut app = empty_app();
+    app.startup = startup;
+    app
+}
+
 /// A stable status bar: profile `analytics`, `ollama/qwen`, `read-only`
 /// approval, `build` mode, sharing on. The spinner/elapsed fields are not read when the app
 /// is idle, so this is the whole status strip.
@@ -146,6 +174,7 @@ pub(crate) fn fixed_status() -> StatusView {
         model: "qwen".into(),
         approval_mode: "read-only".into(),
         agent_mode: "build".into(),
+        permission_mode: None,
         workspace_root: Some("/home/user/proj".into()),
         sharing_on: true,
         host_composed: false,
@@ -189,5 +218,6 @@ pub(crate) fn busy_stream() -> super::super::agent::Stream {
         rx,
         cancel: saya_agent::CancellationToken::new(),
         prompt: String::new(),
+        question_scope: None,
     }
 }

@@ -1,6 +1,7 @@
 # Querying databases with SAYA CLI
 
-SAYA CLI connects to PostgreSQL, MySQL, SQLite, DuckDB, and Snowflake and runs bounded,
+SAYA CLI connects to PostgreSQL, MySQL, SQLite, Snowflake,
+ClickHouse, and BigQuery and runs bounded,
 read-only queries. Each command has one primary execution profile, with support
 for connecting additional read-only databases using `--include-profile` or
 interactive slash commands.
@@ -44,11 +45,6 @@ password = { env = "SAYA_MYSQL_PASSWORD" }
 sslmode = "verify-identity"
 ssl_ca = { file = "/etc/ssl/certs/company-mysql-ca.pem" }
 
-[profiles.local]
-type = "duckdb"
-path = "./data/analytics.duckdb"
-read_only = true
-
 [profiles.snowflake_prod]
 type = "snowflake"
 account = "org-account.us-east-1.aws"
@@ -64,8 +60,7 @@ role = "SAYA_READONLY"
 Use a database role that is read-only. SAYA rejects writes, DDL, transactions,
 and multiple statements at the AST layer, and also enforces read-only at the
 database session level (PostgreSQL `default_transaction_read_only`, MySQL
-`SESSION transaction_read_only`, SQLite `PRAGMA query_only`, DuckDB read-only
-open) — but cannot prove every database function is harmless.
+`SESSION transaction_read_only`, SQLite `PRAGMA query_only`) — but cannot prove every database function is harmless.
 Prefer PostgreSQL `verify-full` and MySQL `verify-identity`; use `disable` only
 for a deliberately local development server.
 ## 3. Provide secrets explicitly
@@ -93,8 +88,7 @@ connection template. `externalbrowser` requires an interactive TTY, so it
 cannot run with `--non-interactive`.
 For a one-off or CI-only connection, omit `connections.toml` and set the
 `SAYA_DB_*` fields in [`examples/.env.example`](../examples/.env.example), or
-use [`examples/.env.duckdb.example`](../examples/.env.duckdb.example) or
-[`examples/.env.sqlite.example`](../examples/.env.sqlite.example). Set
+use [`examples/.env.sqlite.example`](../examples/.env.sqlite.example). Set
 `SAYA_PROFILE=env-only` so commands can name that environment-only profile.
 
 ## 4. Validate and query
@@ -138,6 +132,14 @@ SAYA supports multi-database navigation by connecting additional read-only datab
 - **Default connection**: The primary database is the default target when no `connection` argument is specified.
 - **Connection failure handling**: If a secondary database fails to connect, it is skipped while the primary run continues. The primary database connection must succeed or the entire run fails.
 - **Not single-query SQL federation**: Multi-database support enables AI agent navigation across distinct live connections. It does **not** execute a single federated SQL query that JOINs across engines in a single statement.
+- **Database tools follow the connection and the data-sharing setting**:
+  `schema_discovery` is advertised whenever a connection or profile is selected;
+  the bounded SQL family, the query fan-out, and the contract tools also need
+  data sharing on, so they stay hidden with a connection selected when sharing
+  is off. None of them is governed by `[tools] allow` / `--tools` (see
+  `docs/configuration.md`). Naming one in that list is refused with that reason
+  rather than silently ignored, because the list narrows capabilities and cannot
+  select a connection or turn sharing on.
 
 ### Examples
 
@@ -180,10 +182,98 @@ saya --approval-mode read-only --profile snowflake_prod query --sql \
   'SELECT * FROM PROD.PUBLIC.ORDERS o JOIN CRM.PUBLIC.CUSTOMERS c USING (CUSTOMER_ID) LIMIT 100'
 ```
 
+## 6. Provenance: the evidence line, snapshot and refresh
+
+In an interactive session, a direct `/sql` result carries a provenance line
+beneath the table:
+
+```text
+direct sql: analytics · 20 rows (truncated at 20) · exec xm3zza1-2 · full result
+```
+
+It names the source (`direct sql` for a `/sql` result, `agent` for a query
+the AI agent ran, or `saved investigation` after
+`/investigation run`), the connection profile the query ran on, how many
+rows returned (and whether the row cap truncated them), a short execution
+id, and the scope. A parameterised replay's line lists the bound parameters'
+**names** (`params: region, min_date`) — never a value. The statement itself
+is identified by its SHA-256 hash in
+reports — the hash covers the SQL saya **submitted** to the connector, not
+any internal rewrite the safety layer may perform.
+
+The result is captured in memory for the session only: it is never written
+to the session file, and it does not survive a restart. A result above the
+32 MiB budget renders as usual but is not captured, with a message saying
+so. Capture covers three paths:
+
+- a direct `/sql` result — full, up to the row cap;
+- an agent `bounded_sql_query` result — **model-limited**: exactly the at
+  most 50 rows the agent saw, labelled `model-limited (first N rows)` on the
+  provenance line, with the full result possibly larger (`/export --refresh`
+  re-runs it in full);
+- a saved replay run in the TUI — full.
+
+Fan-out agent queries (`bounded_sql_query_all`) are never captured. A
+refused or absent capture never falls back to an older result: the snapshot
+says the rows were not captured and offers `/export --refresh`.
+
+### Snapshot vs refresh
+
+```text
+> /export --snapshot last-week.csv     # write the captured result; no query runs
+> /export --refresh last-week.csv      # re-run the last query, export the fresh read
+> /export last-week.csv                # legacy form: same as --refresh
+```
+
+- `--snapshot` exports the result you already inspected — the latest
+  capture (a direct `/sql` result, the rows an agent query saw, or a saved
+  replay) — with no query at all. The success line names the execution id
+  and capture time (UTC) so you know exactly which run the file is of, and
+  a model-limited capture says the full result may be larger
+  (`--refresh` re-runs it in full).
+- The default form and `--refresh` re-run the query on its original
+  connection and export that fresh read; the file reflects the fresh
+  result, not the displayed table (column filters, scroll, and folds do not
+  apply). The stored source label is resolved again first, and if it now
+  resolves to a different source than the one the capture ran on, the
+  re-run is refused before anything runs — `/sql` again captures a fresh
+  result from the current source.
+- Both refuse an existing destination unless `--overwrite` (legacy `/export`
+  used to overwrite silently), refuse directory and symlink destinations,
+  write atomically via a private temp file, and cap encoded output at
+  32 MiB.
+
+`/report [--rows N] [--overwrite] <path>` writes a Markdown report of the
+captured result — exact SQL and provenance by default, rows only with
+`--rows N` (at most 100), cells neutralised, capped at 2 MiB; a
+model-limited capture says so in its provenance. It never
+queries a database and never opens a browser or uploads anything. See
+[commands](commands.md) for the full reference.
+
+## Files (CSV, Parquet)
+
+SAYA does not treat a data file as a database connection. When a job's
+checkout holds data files and the `duckdb` CLI is on `PATH`, saya can analyse
+them with the DuckDB CLI through its `shell` tool:
+
+```bash
+duckdb -readonly -json -c "SELECT * FROM read_csv_auto('sales.csv') LIMIT 20"
+duckdb -readonly -json -c "SELECT * FROM read_parquet('events/*.parquet') LIMIT 20"
+```
+
+The route covers `.csv`, `.tsv`, `.parquet`, `.json`, `.ndjson`, and `.duckdb`
+files that the checkout's own ignore policy reaches. The model is told to
+always add a `LIMIT`, read files with `read_csv_auto` or `read_parquet`, and
+never write files or install extensions. Without `duckdb` installed, saya
+reports that it is missing and names the install command
+(`brew install duckdb`, or the
+[DuckDB installation guide](https://duckdb.org/docs/installation/)) instead of
+guessing at the file's contents.
+
 ## Safety and troubleshooting
 
 - `saya config show` confirms precedence without secrets.
 - Connection/schema failures exit `3`; rejected or failed queries exit `4`.
 - Use a Snowflake keypair file reference for automation; browser SSO is interactive only.
-- Protect CA, private-key, and DuckDB files with least-privilege permissions.
+- Protect CA, private-key, and SQLite files with least-privilege permissions.
 - Never place credentials or credential-bearing URLs in SQL, prompts, TOML, or committed env files.

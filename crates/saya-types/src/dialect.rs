@@ -8,7 +8,6 @@ pub enum SqlDialect {
     #[serde(rename = "postgresql")]
     Postgres,
     Mysql,
-    DuckDb,
     Snowflake,
     Sqlite,
     #[serde(rename = "clickhouse")]
@@ -26,7 +25,7 @@ impl SqlDialect {
     /// what a durable fact should be recorded against.
     pub const fn qualified_name_form(self) -> &'static str {
         match self {
-            Self::Postgres | Self::DuckDb | Self::Snowflake => "catalog.schema.object",
+            Self::Postgres | Self::Snowflake => "catalog.schema.object",
             Self::Mysql | Self::ClickHouse => "database.object",
             Self::BigQuery => "project.dataset.table",
             Self::Sqlite => "object",
@@ -39,7 +38,7 @@ impl SqlDialect {
     /// the form is what the model is told, the depth is what it is shown.
     pub const fn sql_name_parts(self) -> usize {
         match self {
-            Self::Postgres | Self::DuckDb | Self::Snowflake | Self::BigQuery => 3,
+            Self::Postgres | Self::Snowflake | Self::BigQuery => 3,
             Self::Mysql | Self::ClickHouse => 2,
             Self::Sqlite => 1,
         }
@@ -49,7 +48,6 @@ impl SqlDialect {
         match self {
             Self::Postgres => "postgresql",
             Self::Mysql => "mysql",
-            Self::DuckDb => "duckdb",
             Self::Snowflake => "snowflake",
             Self::Sqlite => "sqlite",
             Self::ClickHouse => "clickhouse",

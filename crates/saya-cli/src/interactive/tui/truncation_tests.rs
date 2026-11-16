@@ -1,5 +1,5 @@
-//! Phase 6 packet 1 red tests: every surface that renders a capped result
-//! says it is capped, in the existing words, and none claims a total.
+//! Every surface that renders a capped result says it is capped, in the
+//! existing words, and none claims a total.
 
 use super::sql_task::{Followup, SqlTask, complete};
 use super::table::{clip_table_block, format_markdown_tables, format_plan, format_table};
@@ -32,14 +32,14 @@ fn chart_note_for(result: &saya_types::QueryResult) -> String {
             .as_nanos()
     ));
     std::fs::write(&path, "<html></html>").expect("stub chart file");
-    let task = SqlTask {
-        profile: None,
-        sql: "SELECT id FROM t".to_string(),
-        followup: Followup::Chart {
+    let task = SqlTask::new(
+        None,
+        "SELECT id FROM t".to_string(),
+        Followup::Chart {
             kind: None,
             path: Some(path.to_string_lossy().into_owned()),
         },
-    };
+    );
     // One numeric column charts as a bar; `suggest_spec` picks it up.
     let chartable = saya_types::QueryResult {
         columns: vec!["id".to_string()],
@@ -53,6 +53,7 @@ fn chart_note_for(result: &saya_types::QueryResult) -> String {
         &task,
         crate::render::TerminalEvent::QueryResult { result: chartable },
         &mut transcript,
+        &mut None,
         &mut None,
     );
     let _ = std::fs::remove_file(&path);

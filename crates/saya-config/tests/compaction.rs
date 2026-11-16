@@ -42,6 +42,42 @@ fn compaction_follows_the_existing_config_layering() {
 }
 
 #[test]
+fn compaction_trigger_percent_defaults_to_fifty_and_resolves() {
+    let defaults = resolve(ResolutionInput::new(ConnectionsFile::default())).unwrap();
+    assert_eq!(defaults.ai.compaction_trigger_percent, 50);
+
+    let config = ConfigFile::from_toml("[ai]\ncompaction_trigger_percent = 25\n").unwrap();
+    let resolved =
+        resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config)).unwrap();
+    assert_eq!(resolved.ai.compaction_trigger_percent, 25);
+}
+
+#[test]
+fn compaction_trigger_percent_outside_one_to_one_hundred_is_refused() {
+    for value in ["0", "101", "255"] {
+        let config =
+            ConfigFile::from_toml(&format!("[ai]\ncompaction_trigger_percent = {value}\n"))
+                .unwrap();
+        assert!(
+            resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config)).is_err(),
+            "{value} must be refused"
+        );
+    }
+}
+
+#[test]
+fn compaction_trigger_percent_is_visible_in_config_show() {
+    let config = ConfigFile::from_toml("[ai]\ncompaction_trigger_percent = 40\n").unwrap();
+    let resolved =
+        resolve(ResolutionInput::new(ConnectionsFile::default()).with_user(config)).unwrap();
+    let rendered = serde_json::to_string(&resolved.redacted_diagnostics()).unwrap();
+    assert!(
+        rendered.contains("\"compaction_trigger_percent\":40"),
+        "config show must carry the setting: {rendered}"
+    );
+}
+
+#[test]
 fn compaction_spelling_round_trips_and_rejects_unknown_words() {
     for mode in [
         CompactionMode::Auto,

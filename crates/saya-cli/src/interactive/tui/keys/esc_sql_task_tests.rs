@@ -1,35 +1,57 @@
 use super::*;
 use crate::interactive::tui::application::tests_support::idle_app_with_sql_task;
-use crate::interactive::tui::sql_task::{Followup, SqlTask};
-use crate::render::TerminalEvent;
 
-/// Esc while a direct-SQL command is running detaches it: the UI stops
-/// tracking the query and posts an honest "still running, result discarded"
-/// message — never "cancelled".
+/// Esc signals the task's cancellation token before detaching its receiver.
 #[test]
 fn esc_detaches_a_running_sql_command() {
     let mut app = idle_app_with_sql_task();
+    let cancellation = app
+        .sql_task
+        .as_ref()
+        .expect("precondition: a task is running")
+        .3
+        .clone();
     assert!(app.sql_task.is_some(), "precondition: a task is running");
     handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(app.sql_task.is_none(), "Esc detached the running task");
+    assert!(cancellation.is_cancelled(), "Esc signals the worker token");
     let last = app
         .transcript
         .blocks()
         .last()
         .expect("detach posts a message");
-    let text = last.text.to_lowercase();
+    let text = &last.text;
     assert!(
-        text.contains("running"),
-        "honest about still running: {text}"
+        text.contains("Cancellation requested; query detached and may still be running."),
+        "the wording reports only the request: {text}"
     );
     assert!(
-        !text.contains("cancel"),
-        "must not claim cancellation: {text}"
+        !text.contains("SELECT") && !text.contains("analytics"),
+        "the cancellation message contains no query or profile data: {text}"
     );
 }
 
-/// Phase 5 packet 1: the SQL path is unchanged — detaching says the query
-/// may still be running, never that it was cancelled or stopped.
+#[test]
+fn ctrl_c_signals_the_running_sql_task_before_detaching() {
+    let mut app = idle_app_with_sql_task();
+    let cancellation = app
+        .sql_task
+        .as_ref()
+        .expect("precondition: a task is running")
+        .3
+        .clone();
+
+    handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+
+    assert!(
+        cancellation.is_cancelled(),
+        "Ctrl+C signals the worker token"
+    );
+    assert!(app.sql_task.is_none(), "Ctrl+C drops the old receiver");
+    assert!(!app.ctrl_c_armed, "detaching does not arm quit");
+}
+
+/// Cancellation remains a request; the UI never claims physical settlement.
 #[test]
 fn a_detached_sql_query_still_says_it_may_still_be_running() {
     let mut app = idle_app_with_sql_task();
@@ -51,10 +73,9 @@ fn a_detached_sql_query_still_says_it_may_still_be_running() {
     );
 }
 
-/// Phase 5 packet 4: after a detach there is nothing to wait for — the app
-/// is idle, so the next revision stages for dispatch instead of queueing.
-/// RED: passes today (detach clears the task); pins the contrast with the
-/// agent-stream hold.
+/// After a detach there is nothing to wait for — the app is idle, so the next
+/// revision stages for dispatch instead of queueing. Pins the contrast with
+/// the agent-stream hold.
 #[test]
 fn a_revision_after_a_sql_detach_runs_immediately() {
     let mut app = idle_app_with_sql_task();
@@ -69,7 +90,7 @@ fn a_revision_after_a_sql_detach_runs_immediately() {
     );
 }
 
-/// Phase 5 packet 4: the anti-lying test. After a detach plus a revision,
+/// The anti-lying test: after a detach plus a revision,
 /// the transcript still says the old query may still be running, and
 /// nowhere claims it stopped, ended, or was cancelled.
 #[test]
@@ -111,23 +132,4 @@ fn esc_does_not_detach_when_no_task_is_running() {
     assert!(app.sql_task.is_none());
     // No detach message posted (the app starts with an empty transcript).
     assert!(app.transcript.blocks().is_empty());
-}
-
-#[test]
-fn in_flight_task_shape_matches_app_state() {
-    // Guards the tuple arity (receiver, task, instant) the dispatch loop
-    // and detach path destructure.
-    let (_tx, rx) = std::sync::mpsc::channel::<TerminalEvent>();
-    let task = SqlTask {
-        profile: Some("analytics".into()),
-        sql: "SELECT 1".into(),
-        followup: Followup::Sql {
-            connection: Some("analytics".into()),
-        },
-    };
-    let _: (
-        std::sync::mpsc::Receiver<TerminalEvent>,
-        SqlTask,
-        std::time::Instant,
-    ) = (rx, task, std::time::Instant::now());
 }

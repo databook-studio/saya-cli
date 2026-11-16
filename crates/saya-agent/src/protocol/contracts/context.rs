@@ -3,19 +3,19 @@
 //! The project owner set two percentages over the known context window: warn
 //! the user at 70%, compact the conversation at 95%. They live here — on the
 //! agent contracts — rather than in `saya-cli` or `saya-config` so both the
-//! TUI warning (this slice) and a future agent-side compaction trigger read
-//! the same numbers without a dependency inversion: `saya-cli` already
-//! depends on `saya-agent`, while `saya-agent` depends on neither `saya-cli`
-//! nor `saya-config`. A later slice reads the compact threshold; the warning
-//! is the only consumer today.
+//! TUI warning and a future agent-side compaction trigger read the same
+//! numbers without a dependency inversion: `saya-cli` already depends on
+//! `saya-agent`, while `saya-agent` depends on neither `saya-cli` nor
+//! `saya-config`. The warning is the only consumer; the compact threshold is
+//! declared for the trigger that will read it.
 
 /// Warn the user when context utilisation crosses this percentage of the
 /// known window (project-owner decision).
 pub const CONTEXT_WARN_PERCENT: u64 = 70;
 
 /// Compact the conversation at this percentage of the known window
-/// (project-owner decision). Read by a later slice; declared here so the two
-/// thresholds can never drift apart.
+/// (project-owner decision). Declared here so the two thresholds can never
+/// drift apart.
 pub const CONTEXT_COMPACT_PERCENT: u64 = 95;
 
 /// Context utilisation as a rounded percentage: the last answering call's

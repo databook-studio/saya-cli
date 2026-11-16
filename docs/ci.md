@@ -6,25 +6,17 @@ and strict Clippy. Live PostgreSQL/MySQL contract jobs run on every push and
 pull request with ephemeral services; live Snowflake validation remains opt-in
 and outside CI.
 
-Every workspace crate inherits an MSRV of Rust 1.88, and the edition 2024
+Every workspace crate inherits an MSRV of Rust 1.89, and the edition 2024
 workspace uses Cargo resolver 3. A separate serialized Ubuntu job installs
-Rust 1.88.0 exactly and runs `cargo check --workspace --locked`. This catches
+Rust 1.89.0 exactly and runs `cargo check --workspace --locked`. This catches
 dependency or source MSRV drift without duplicating the stable test matrix.
 
-The workspace pins `duckdb` and its bundled `libduckdb-sys` implementation to
-`1.10505.0`. This release vendors fmt without the obsolete MSVC
-`stdext::checked_array_iterator` branch. Its published
-[`libduckdb-sys` build script](https://docs.rs/crate/libduckdb-sys/1.10505.0/source/build_bundled_cc.rs)
-enables `/EHsc` behind an MSVC target gate, so CI does not override dependency
-C++ flags.
-
-Builds compile in parallel. The earlier `CARGO_BUILD_JOBS=1` throttle was
-removed — it serialized the ~1,800-file bundled DuckDB C++ compile and was the
-dominant cost. Incremental compilation and test-profile debug info are disabled
-to keep the cached `target/` small, and `Swatinem/rust-cache` caches the cargo
-registry and `target/` (including the compiled DuckDB objects) between runs. The
-cache is written only from `main`, so pull requests restore it without evicting
-it. `ci.yml` runs on pull requests and pushes to `main`.
+Builds are serialized: `CARGO_BUILD_JOBS: "1"` in the verify, MSRV, and release
+build jobs, because parallel codegen has exhausted a runner's memory before.
+Incremental compilation and test-profile debug info are disabled to keep the
+cached `target/` small, and `Swatinem/rust-cache` caches the cargo registry and
+`target/` between runs. The cache is written only from `main`, so pull requests
+restore it without evicting it. `ci.yml` runs on pull requests and pushes to `main`.
 
 Releases use `.github/workflows/release-candidate.yml`, triggered by pushing a
 `vX.Y.Z` tag (or manually with `publish: false` to validate without releasing).
@@ -51,8 +43,7 @@ credentials and a release plan; no signing step or fake signature is included.
 Local parity is available with `scripts/package.sh`, which writes the archive
 and `.sha256` file under `dist/` unless `SAYA_PACKAGE_DIR` is set.
 Run `scripts/check-release-workflow.sh` to validate release and CI action
-pins, MSRV inheritance and its exact CI gate, resource limits, the matched
-bundled DuckDB pin, workflow YAML, publish permissions/gate, the Windows
+pins, MSRV inheritance and its exact CI gate, resource limits, workflow YAML, publish permissions/gate, the Windows
 UTF-8/LF checksum sidecar contract, and the Homebrew tap-check contract
 (its fixture cases run the check script offline).
 

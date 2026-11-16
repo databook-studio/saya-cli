@@ -1,10 +1,10 @@
 //! Salvaging an agent run that hit a turn or tool-call ceiling: answer from
 //! work already done instead of discarding it.
 
-use super::{emit, receive, sum_reported, tools};
+use super::{add_usage, admission::Admission, emit, receive, tool_diagnostics, tools};
 use crate::{
-    AgentError, AgentEvent, AgentEventSink, AgentOutput, CancellationToken, ChatProvider,
-    ProviderError, TokenUsage,
+    ActorCorrelationDigest, AgentError, AgentEvent, AgentEventSink, AgentOutput, CancellationToken,
+    ChatProvider, CorrelationId, ProviderError, TokenUsage,
 };
 
 /// Appended to the conversation before the salvage call so the model knows its
@@ -34,17 +34,29 @@ pub(super) async fn salvage(
     provider: &dyn ChatProvider,
     model: &str,
     messages: &mut Vec<crate::ChatMessage>,
+    ordinary_history_pairs: &mut usize,
+    protected_prefix_len: &mut usize,
     pending: &[crate::ToolCall],
+    checkpoint: &super::coding_checkpoint::CodingCheckpoint,
     context_byte_budget: usize,
+    request_preflight: Option<super::preflight::RequestPreflightConfig>,
     sink: &dyn AgentEventSink,
     cancellation: &CancellationToken,
     events: &mut Vec<AgentEvent>,
     usage: &mut TokenUsage,
+    admission: &mut Admission,
     used_bounded_sql_query: bool,
     tool_metadata: Vec<crate::ToolMetadata>,
     // The SQL to carry on the output: the run's designation when the model
     // made one, else the last statement that completed successfully.
     designated_or_best_sql: Option<String>,
+    effect_admission: Option<&dyn crate::EffectAdmission>,
+    require_physical_effect_admission: bool,
+    conversation_correlation: CorrelationId,
+    invocation_correlation: CorrelationId,
+    actor_correlation: Option<ActorCorrelationDigest>,
+    request_ordinal: u64,
+    first_request: bool,
 ) -> Result<AgentOutput, AgentError> {
     for call in pending {
         let (message, _) = tools::tool_message(
@@ -55,20 +67,63 @@ pub(super) async fn salvage(
         messages.push(message);
     }
     messages.push(crate::ChatMessage::text("user", SALVAGE_INSTRUCTION));
-    let salvage_call =
-        receive::receive(provider, model, messages, &[], sink, cancellation, events).await;
+    let reasoning_effort = super::reasoning_policy::decide(
+        messages,
+        first_request,
+        false,
+        provider.configured_reasoning_effort(),
+    )
+    .effort;
+    let salvage_call = receive::receive(receive::ReceiveContext {
+        provider,
+        model,
+        messages,
+        checkpoint,
+        ordinary_history_pairs,
+        protected_prefix_len,
+        definitions: &[],
+        context_byte_budget,
+        request_preflight,
+        continuation: None,
+        reasoning_effort,
+        remaining_wall: None,
+        sink,
+        cancellation,
+        events,
+        admission,
+        effect_admission,
+        require_physical_effect_admission,
+        call_kind: crate::EffectCallKind::Salvage,
+        conversation_correlation,
+        invocation_correlation,
+        actor_correlation,
+        request_ordinal,
+    })
+    .await;
     let (assistant, turn_usage) = match salvage_call {
         Ok((assistant, turn_usage, _)) => (assistant, turn_usage),
         // A cancellation surfacing from the salvage call is the user stopping
         // the run, not a salvage failure to route around — it must propagate.
-        Err(error @ (AgentError::Cancelled | AgentError::Provider(ProviderError::Cancelled))) => {
-            return Err(error);
+        Err(
+            failure @ super::attempt::ReceiveFailure {
+                error: AgentError::Cancelled | AgentError::Provider(ProviderError::Cancelled),
+                ..
+            },
+        ) => {
+            add_usage(usage, failure.usage);
+            return Err(failure.error);
         }
         // The final call failing must not discard the work already done: tools
         // executed, events gathered, usage billed. Degrade to the structured
         // truncated result, keeping everything accumulated — and invent
         // nothing: the failed call produced no prose, so the answer is empty.
-        Err(AgentError::Provider(_)) => {
+        Err(
+            failure @ super::attempt::ReceiveFailure {
+                error: AgentError::Provider(_) | AgentError::InvalidToolCall,
+                ..
+            },
+        ) => {
+            add_usage(usage, failure.usage);
             emit(events, sink, AgentEvent::Complete).await;
             return Ok(AgentOutput {
                 answer: String::new(),
@@ -81,19 +136,54 @@ pub(super) async fn salvage(
                 answer_sql: designated_or_best_sql,
             });
         }
-        Err(error) => return Err(error),
+        Err(super::attempt::ReceiveFailure {
+            error,
+            usage: settled,
+        }) if admission.stopped_dimension(&error, cancellation).is_some() => {
+            let dimension = admission
+                .stopped_dimension(&error, cancellation)
+                .expect("guarded budget reason");
+            add_usage(usage, settled);
+            return Ok(super::budget_output(
+                dimension,
+                events,
+                sink,
+                super::PartialOutput {
+                    usage: *usage,
+                    used_bounded_sql_query,
+                    tool_metadata,
+                    answer_sql: designated_or_best_sql,
+                    answer: String::new(),
+                },
+            )
+            .await);
+        }
+        Err(failure) => return Err(failure.error),
     };
-    usage.input_tokens += turn_usage.input_tokens;
-    usage.output_tokens += turn_usage.output_tokens;
-    sum_reported(
-        &mut usage.cached_input_tokens,
-        turn_usage.cached_input_tokens,
-    );
-    sum_reported(
-        &mut usage.cache_creation_input_tokens,
-        turn_usage.cache_creation_input_tokens,
-    );
-    sum_reported(&mut usage.reasoning_tokens, turn_usage.reasoning_tokens);
+    add_usage(usage, turn_usage);
+    // The salvage provider has no tool definitions; any new proposed calls
+    // are refused regardless of whether the answering ceiling was crossed.
+    tool_diagnostics::refused(&assistant.tool_calls, &[], sink).await;
+    if !assistant.tool_calls.is_empty()
+        && let Err(error) = admission.enforce_tools(cancellation)
+    {
+        if let Some(dimension) = admission.stopped_dimension(&error, cancellation) {
+            return Ok(super::budget_output(
+                dimension,
+                events,
+                sink,
+                super::PartialOutput {
+                    usage: *usage,
+                    used_bounded_sql_query,
+                    tool_metadata,
+                    answer_sql: designated_or_best_sql,
+                    answer: String::new(),
+                },
+            )
+            .await);
+        }
+        return Err(error);
+    }
     emit(events, sink, AgentEvent::Complete).await;
     // When the run ended because a budget ran out rather than by the model
     // finishing, surface the best available answer if the model never nominated

@@ -46,6 +46,12 @@ pub struct Budgets {
     pub turns: Option<u64>,
     /// Tool calls across the run's episodes.
     pub tool_calls: Option<u64>,
+    /// Consecutive model turns without progress before a step stops. `None`
+    /// leaves the dimension unset; `Some(0)` disables the guard.
+    pub no_progress_turns: Option<u64>,
+    /// Identical results from one call, in a row, before a step stops.
+    /// `None` leaves the dimension unset; `Some(0)` disables the guard.
+    pub repeat_limit: Option<u64>,
 }
 
 impl Budgets {
@@ -75,6 +81,13 @@ impl Budgets {
             (Some(asked), Some(cap)) => asked <= cap,
             _ => true,
         };
+        // A zero guard is the disabled guard, so it is the most permissive
+        // value and never within a finite ceiling.
+        let guard_within = |asked: Option<u64>, cap: Option<u64>| match (asked, cap) {
+            (Some(0), Some(_)) => false,
+            (Some(asked), Some(cap)) => asked <= cap,
+            _ => true,
+        };
         time_within(self.wall_clock, ceiling.wall_clock)
             && count_within(self.downloaded_bytes, ceiling.downloaded_bytes)
             && count_within(self.workspace_bytes, ceiling.workspace_bytes)
@@ -83,6 +96,8 @@ impl Budgets {
             && time_within(self.process_time, ceiling.process_time)
             && count_within(self.turns, ceiling.turns)
             && count_within(self.tool_calls, ceiling.tool_calls)
+            && guard_within(self.no_progress_turns, ceiling.no_progress_turns)
+            && guard_within(self.repeat_limit, ceiling.repeat_limit)
             && self.tokens_per_endpoint.iter().all(|(endpoint, asked)| {
                 ceiling
                     .tokens_per_endpoint

@@ -1,0 +1,28 @@
+---
+source: crates/saya-cli/src/interactive/tui/ui/surface/empty_state_tests/readiness.rs
+expression: buffer
+---
+"saya · Database read-only · Workspace /home/user/proj · Data sharing on         "
+"╭ saya v0.5.0 ─────────────────────────────────────────────────────────────────╮"
+"│                               │                                              │"
+"│        Welcome to saya        │  Getting started                             │"
+"│                               │  /model or /provider — change AI             │"
+"│              ██ ██            │  /connect or `saya demo` — add a database    │"
+"│            ███ ███▐           │  Shift+Tab — change mode; `saya start` runs  │"
+"│           ███████             │  a job                                       │"
+"│          ▄▄█████▀             │                                              │"
+"│                               │  ──────────────────────────────────────────  │"
+"│   qwen · ollama · read-only   │                                              │"
+"│                               │  Status                                      │"
+"│                               │  AI        ready — ollama, model test-model  │"
+"│                               │  Project   ready — file tools are available  │"
+"│                               │  Database  none yet — optional; /connect or  │"
+"│                               │  `saya demo`                                 │"
+"╰──────────────────────────────────────────────────────────────────────────────╯"
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"analytics · qwen                                                      ? for help"
+"╭ saya ────────────────────────────────────────────────────────────────────────╮"
+"│Ask about your data, or type / for commands                                   │"
+"╰ Enter sends ─────────────────────────────────────────────────────────────────╯"

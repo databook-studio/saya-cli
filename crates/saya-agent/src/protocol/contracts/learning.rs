@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 #[non_exhaustive]
 pub enum LearningSkipReason {
     /// Extraction exceeded the post-turn timeout. Kept for the serialized
-    /// contract (a session resumed from before this change may carry it in
-    /// its history) and for a future caller that reintroduces a timeout; the
-    /// `saya-cli` runtime no longer produces it — post-turn extraction has no
-    /// wall-clock ceiling (an explicit owner decision), and a transport
-    /// stall or an output-limit truncation now counts as a miss toward the
-    /// per-session circuit breaker instead.
+    /// contract (a session resumed from an earlier build may carry it in its
+    /// history) and for a future caller that reintroduces a timeout; the
+    /// `saya-cli` runtime does not produce it — post-turn extraction has no
+    /// wall-clock ceiling (an explicit owner decision), and a transport stall
+    /// or an output-limit truncation counts as a miss toward the per-session
+    /// circuit breaker instead.
     TimedOut,
     /// The provider, parse, or ingest step errored. Distinct from a timeout so a
     /// render can name the right thing without re-deriving the outcome.

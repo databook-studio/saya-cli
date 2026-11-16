@@ -1,5 +1,4 @@
-//! Tests for the KnowledgeOverridden / KnowledgeLearningSkipped receipt lines, driven through `super::apply_event` (moved verbatim
-//! from the inline `tests` module in `stream_events/apply.rs`).
+//! Tests for the KnowledgeOverridden / KnowledgeLearningSkipped receipt lines, driven through `super::apply_event`.
 
 use super::{BlockKind, Transcript, apply_event};
 use saya_agent::AgentEvent;
@@ -60,8 +59,8 @@ fn an_empty_knowledge_overridden_event_pushes_nothing() {
 }
 
 /// KnowledgeLearningSkipped pushes a System block whose text names the skip
-/// reason (packet-54 decision 4 — the TUI renders it, it does not fall
-/// through to the catch-all that would drop it). Trails the answer.
+/// reason — the TUI renders it rather than falling through to the catch-all
+/// that would drop it. Trails the answer.
 #[test]
 fn knowledge_learning_skipped_pushes_a_system_block_naming_the_reason() {
     let mut t = Transcript::new();

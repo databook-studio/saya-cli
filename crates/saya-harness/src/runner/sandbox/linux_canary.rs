@@ -3,7 +3,7 @@
 //! [`Confinement`](super::linux::Confinement) code the runner will use, with
 //! the errno as the deny evidence.
 //!
-//! Required for the verdict (draft §5): `landlock_enforcement`; plus
+//! Required for the verdict: `landlock_enforcement`; plus
 //! `namespace_egress_denied` (the egress mechanism itself proven, not
 //! assumed) and `confinement_exec_allowed` (the canary child can exec inside
 //! its program dir). Deny evidence on Linux is the errno — EACCES or EPERM

@@ -14,7 +14,7 @@ use ratatui::{
 /// The answers line wraps like any other line, so a long offered token
 /// claims its rows instead of clipping. The per-call fact bodies
 /// (`approval_facts`) run longer than the old SQL-only detail, so the cap
-/// follows them: an interpreter `run_program` prompt carries the no-euphemism
+/// follows them: an interpreter `run_command` prompt carries the no-euphemism
 /// warning, and clipping a containment fact is worse than a taller panel.
 pub(in crate::interactive::tui) fn approval_height(
     detail: Option<&str>,
@@ -36,8 +36,7 @@ pub(in crate::interactive::tui) fn approval_height(
 /// and the scroll end-stop with this count and then paints exactly those
 /// rows without ratatui's own wrap, so the count and the paint are the same
 /// thing by construction: a wide body cannot be counted short of what it
-/// draws, and the end-stop cannot strand a row it never knew about
-/// (re-audit R01).
+/// draws, and the end-stop cannot strand a row it never knew about.
 fn body_row_count(body: &str, inner: usize) -> usize {
     body.lines().map(|line| wrap_cells(line, inner).len()).sum()
 }

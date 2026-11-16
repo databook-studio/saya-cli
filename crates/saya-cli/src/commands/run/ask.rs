@@ -1,16 +1,16 @@
 //! The terminal side of the plan-approval channel: when a `saya run` can
 //! interact (a terminal, not `--non-interactive`), the bound plan is shown
 //! once and answered once. The channel shape is the `tui/agent.rs` pattern —
-//! the request travels with a oneshot reply — so the TUI's modal (a later
-//! slice) swaps this driver without touching the seam. stdin carries the
-//! answer; stdout stays the run's output surface.
+//! the request travels with a oneshot reply — so the TUI's modal swaps this
+//! driver without touching the seam. stdin carries the answer; stdout stays
+//! the run's output surface.
 
 use super::approval::{PlanApproval, PlanApprovalRequest};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 /// The approval surface for a run that can ask: the channel with this
 /// terminal driver answering. The surface outlives the first ask — a
-/// mid-run capability re-ask (DESIGN §5.3) rides the same channel rather
+/// mid-run capability re-ask rides the same channel rather
 /// than inheriting anything.
 pub(super) fn terminal() -> PlanApproval {
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();

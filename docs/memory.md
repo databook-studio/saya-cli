@@ -146,8 +146,46 @@ session. Recall and `/remember` keep working regardless — only the automatic p
 stops.
 
 If you want to see the boundary itself, `--verbose` (or `SAYA_EXTRACTION_TRACE=1`) reports the gate
-decision, how many objects the turn involved, the outcome, and how many facts were recorded. It is
-off by default and never prints the model's raw response, which can carry your data.
+decision, how many objects the turn involved, the outcome, and how many facts were recorded. The
+same flag also prints the full diagnostics section — per-phase timings and counters, the learning
+gate among them — for `ask`, the REPL, and the TUI. In `ask` it lands on stderr after the answer;
+in an interactive session it prints after the loop ends, once the terminal is restored. It is
+stderr only: nothing is persisted and the exit code is unchanged. Off by default, it never prints
+the model's raw response, which can carry your data.
+
+## Shared context: export and import
+
+Confirmed context travels as a file, so a colleague starts from what you already confirmed:
+
+```bash
+saya contracts export context.json            # this profile's Active claims
+saya contracts import context.json            # lands Pending for review
+saya contracts import-dbt manifest.json --select 'stg_orders*'
+```
+
+`--profile` is optional on all three (and on `export`'s `--profile` too): it
+defaults to the active profile; pass it to target another one.
+
+- **Export** writes the profile's Active claims as one portable `saya.context`
+  document — descriptions, aliases, grains, time columns, roles, join rules,
+  metrics — with no profile identity, review state, evidence, or credentials.
+  An existing file needs `--overwrite`.
+- **Import validates everything, then files every mapped item as Pending** for
+  your review (`saya contracts queue` shows the queue; `/confirm` and
+  `/reject` — or `contracts decide` — decide items). A file's approval claims
+  are never authority: an imported claim is never active just because the
+  document said so. Conflicts with a different local value are reported, not
+  written; an identical re-import is a no-op; credential-shaped items are
+  skipped and counted.
+- **dbt manifests feed the same import path.** `contracts import-dbt` reads
+  manifest schema versions v10–v12 (≤ 32 MiB, ≤ 5,000 selected nodes,
+  `--select` globs to narrow) and maps exactly three things: model and source
+  descriptions, column descriptions, and the `relationships` generic test —
+  stored as a join rule. Nothing is executed: no dbt process, no compiled SQL,
+  no Jinja.
+- **Objects map case-insensitively**, and a name matching several objects is
+  reported rather than guessed. Relationships file as keyed join rules — the
+  cardinality a document carries is dropped, nothing in the store keeps it.
 
 ## What SAYA stores, and what it never stores
 

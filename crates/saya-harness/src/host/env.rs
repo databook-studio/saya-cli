@@ -1,7 +1,9 @@
-//! The host child's environment: built, not inherited. The child
-//! receives PATH, HOME, TMPDIR — the parent's values, read once when the
-//! config applies — plus whatever the caller explicitly passes. Nothing
-//! else reaches the child.
+//! The host child's environment: built, not inherited. The child receives
+//! PATH plus a fixed base list the parent's values supply — HOME and TMPDIR on
+//! unix; the Windows variables `cmd.exe` and ordinary programs need to start
+//! (`SystemRoot`, `ComSpec`, `PATHEXT`, `TEMP`, `TMP`, the user profile
+//! directories) — read once when the config applies. Nothing else reaches the
+//! child.
 
 use super::resolve::HostError;
 
@@ -34,18 +36,19 @@ impl HostEnv {
 }
 
 /// Builds the child's full environment: PATH (the value resolution
-/// searched), HOME and TMPDIR (the parent's values, when set), then the
-/// caller's explicitly passed variables, which win on collision. The order
-/// is fixed so a caller-passed PATH overrides the searched one only by
-/// saying so.
+/// searched), the platform's fixed base variables (the parent's values, when
+/// set), then the caller's explicitly passed variables, which win on
+/// collision. The order is fixed so a caller-passed PATH overrides the
+/// searched one only by saying so.
 pub fn build_env(path: &str, extra: &HostEnv) -> Vec<(String, String)> {
-    let mut built: Vec<(String, String)> = Vec::with_capacity(3 + extra.vars.len());
+    let base = base_var_names();
+    let mut built: Vec<(String, String)> = Vec::with_capacity(1 + base.len() + extra.vars.len());
     built.push(("PATH".to_owned(), path.to_owned()));
-    // HOME and TMPDIR carry the parent's values, read here once at apply
+    // The base variables carry the parent's values, read here once at apply
     // time; when unset they are simply absent from the child.
-    for name in ["HOME", "TMPDIR"] {
+    for name in base {
         if let Ok(value) = std::env::var(name) {
-            built.push((name.to_owned(), value));
+            built.push(((*name).to_owned(), value));
         }
     }
     for (name, value) in extra.iter() {
@@ -56,6 +59,32 @@ pub fn build_env(path: &str, extra: &HostEnv) -> Vec<(String, String)> {
         }
     }
     built
+}
+
+/// The fixed base list, in the order it is added to the child. Unix keeps the
+/// original two; Windows adds only what a process needs to load and what
+/// `cmd.exe` reads to find its own components and run a bare program name.
+#[cfg(not(windows))]
+fn base_var_names() -> &'static [&'static str] {
+    &["HOME", "TMPDIR"]
+}
+
+#[cfg(windows)]
+fn base_var_names() -> &'static [&'static str] {
+    &[
+        "SystemRoot",
+        "SystemDrive",
+        "ComSpec",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "NUMBER_OF_PROCESSORS",
+        "PROCESSOR_ARCHITECTURE",
+        "OS",
+    ]
 }
 
 /// True when `name` can appear on the left of `NAME=value`: non-empty,

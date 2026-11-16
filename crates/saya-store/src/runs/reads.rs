@@ -16,9 +16,9 @@ use crate::runs::records::{
 use crate::runs::status::{RunStatus, RunStepStatus, parse_failure_code};
 use crate::{SqliteStateStore, StoreError};
 
-/// The `runs` row, in select order. Twenty-two columns — above `query_as`'s
+/// The `runs` row, in select order. Twenty-one columns — above `query_as`'s
 /// tuple support, so the row is decoded by column name.
-const RUN_COLUMNS: &str = "id, status, failure_code, cap_workspace_write, cap_fetch, cap_runner, cap_scratch, budget_wall_clock_ms, budget_tokens_json, budget_turns, budget_tool_calls, budget_downloaded_bytes, budget_workspace_bytes, budget_workspace_files, budget_process_count, budget_process_time_ms, usage_wall_clock_ms, usage_tokens_json, usage_turns, usage_tool_calls, created_unix_ms, updated_unix_ms";
+const RUN_COLUMNS: &str = "id, status, failure_code, cap_workspace_write, cap_fetch, cap_runner, budget_wall_clock_ms, budget_tokens_json, budget_turns, budget_tool_calls, budget_downloaded_bytes, budget_workspace_bytes, budget_workspace_files, budget_process_count, budget_process_time_ms, usage_wall_clock_ms, usage_tokens_json, usage_turns, usage_tool_calls, created_unix_ms, updated_unix_ms";
 
 /// One column of the row, by name. The bounds are `try_get`'s own.
 fn name<'r, T>(row: &'r SqliteRow, column: &str) -> Result<T, StoreError>
@@ -42,7 +42,6 @@ fn decode_run(row: &SqliteRow) -> Result<RunRecord, StoreError> {
             workspace_write: name::<i64>(row, "cap_workspace_write")? != 0,
             fetch: name::<i64>(row, "cap_fetch")? != 0,
             runner: name::<i64>(row, "cap_runner")? != 0,
-            scratch: name::<i64>(row, "cap_scratch")? != 0,
         },
         budgets: RunBudgets {
             wall_clock_ms: u64_of(name(row, "budget_wall_clock_ms")?)?,

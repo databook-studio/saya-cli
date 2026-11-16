@@ -38,13 +38,23 @@ fn test_non_slash_line() {
 fn test_slash_only() {
     let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
     assert_eq!((start, end), (0, 1));
-    assert_eq!(candidates.len(), 40); // registry size: every known command with a description
-    assert_eq!(candidates[0].value, "/connect");
+    assert_eq!(candidates.len(), 59); // registry size: every known command with a description
+    // An empty query scores every command equally, so the stable sort keeps
+    // registry order and the registry's first entry leads.
+    assert_eq!(candidates[0].value, "/start");
+    assert_eq!(
+        candidates[0].description.as_deref(),
+        Some("Start a bounded job in this session")
+    );
     // The description is the single-source one from slash::help, sharpened
     // to carry the /connect vs /include contrast (one replaces the
     // active profile, one adds a secondary).
+    let connect = candidates
+        .iter()
+        .find(|candidate| candidate.value == "/connect")
+        .expect("connect is registered");
     assert_eq!(
-        candidates[0].description.as_deref(),
+        connect.description.as_deref(),
         Some("Replace the active database profile")
     );
 }
@@ -54,12 +64,13 @@ fn test_command_prefix() {
     let (start, end, candidates) = slash_candidates("/co", &profiles()).unwrap();
     assert_eq!((start, end), (0, 3));
     let values: Vec<_> = candidates.iter().map(|c| c.value.as_str()).collect();
-    // "co" prefixes connect, connections, compact, columns, contracts,
-    // contract, confirm; all tie on score, so the stable sort keeps
-    // registry order.
+    // "co" prefixes continue, connect, connections, compact, columns,
+    // contracts, contract, confirm, context; all tie on score, so the
+    // stable sort keeps registry order.
     assert_eq!(
         values,
         vec![
+            "/continue",
             "/connect",
             "/connections",
             "/compact",
@@ -67,6 +78,8 @@ fn test_command_prefix() {
             "/contracts",
             "/contract",
             "/confirm",
+            "/context",
+            "/recovery",
             "/doctor"
         ]
     );
@@ -80,6 +93,7 @@ fn test_command_prefix_case_insensitive() {
     assert_eq!(
         values,
         vec![
+            "/continue",
             "/connect",
             "/connections",
             "/compact",
@@ -87,6 +101,8 @@ fn test_command_prefix_case_insensitive() {
             "/contracts",
             "/contract",
             "/confirm",
+            "/context",
+            "/recovery",
             "/doctor"
         ]
     );

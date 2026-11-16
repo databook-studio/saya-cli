@@ -3,8 +3,8 @@
 //! One wrapper, many consumers: the transcript flattens its blocks through
 //! [`wrap_cells`], and the approval panel measures **and** paints its fact
 //! body with the same rows — so what a panel counts is what it draws, and a
-//! wide body can never be counted short of its paint (re-audit R01: three
-//! wrappers is how that defect happened). The budgets that truncate instead
+//! wide body can never be counted short of its paint. The budgets that
+//! truncate instead
 //! of wrap — the busy bar's action and its detail head, the folded chapter
 //! summary — cut through [`truncate_cells`] and measure through
 //! [`cell_width`], so no site rediscovers the units.

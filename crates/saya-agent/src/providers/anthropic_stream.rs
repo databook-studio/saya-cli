@@ -1,35 +1,51 @@
-use super::framing::whitespace;
-use crate::{
-    CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage, ToolCall,
-};
+use super::stall::ProgressClock;
+use crate::{CancellationToken, ProviderError, ProviderEvent, ProviderStream, TokenUsage};
 use futures_util::{StreamExt, stream};
 use reqwest::Response;
-use std::{
-    collections::{BTreeMap, VecDeque},
-    time::Duration,
-};
+use std::{collections::VecDeque, time::Duration};
 
 pub(super) fn parse(
     response: Response,
     cancellation: CancellationToken,
     idle: Duration,
+    request_timeout: Duration,
+    stall: Duration,
 ) -> ProviderStream {
     Box::pin(stream::unfold(
         (
             response.bytes_stream(),
-            State::default(),
+            State {
+                progress: ProgressClock::new(stall),
+                ..State::default()
+            },
             cancellation,
             idle,
+            std::time::Instant::now(),
+            request_timeout,
         ),
         next,
     ))
 }
 
 async fn next<S>(
-    mut value: (S, State, CancellationToken, Duration),
+    mut value: (
+        S,
+        State,
+        CancellationToken,
+        Duration,
+        std::time::Instant,
+        Duration,
+    ),
 ) -> Option<(
     Result<ProviderEvent, ProviderError>,
-    (S, State, CancellationToken, Duration),
+    (
+        S,
+        State,
+        CancellationToken,
+        Duration,
+        std::time::Instant,
+        Duration,
+    ),
 )>
 where
     S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin,
@@ -42,13 +58,32 @@ where
         if let Some(event) = value.1.pending.pop_front() {
             return Some((Ok(event), value));
         }
+        if let Some(error) = value.1.deferred.take() {
+            value.1.done = true;
+            return Some((Err(error), value));
+        }
         if value.1.done {
             return None;
         }
-        // Streams are bounded per chunk gap, not by a total cap: a healthy
-        // long generation never times out, a stalled one fails fast.
+        // Three independent bounds: the gap between chunks catches a silent
+        // stream, the gap between content deltas catches one held open by
+        // keep-alives, and the total request deadline catches one that keeps
+        // flowing forever.
+        let stall_at = tokio::time::Instant::from_std(value.1.progress.deadline(value.4));
         let item = tokio::select! {
             _ = value.2.cancelled() => return Some((Err(ProviderError::Cancelled), value)),
+            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(value.4 + value.5)) => {
+                value.1.done = true;
+                let visible = value.1.text.len().saturating_add(value.1.tools.bytes());
+                return Some((
+                    Err(super::framing::request_cut(value.5, visible)),
+                    value,
+                ));
+            }
+            _ = tokio::time::sleep_until(stall_at) => {
+                value.1.done = true;
+                return Some((Err(ProviderError::StreamStalled), value));
+            }
             item = tokio::time::timeout(value.3, value.0.next()) => match item {
                 Ok(item) => item,
                 Err(_) => {
@@ -75,42 +110,58 @@ where
             }
         };
         if let Err(error) = value.1.push(&chunk) {
-            value.1.done = true;
-            return Some((Err(error), value));
+            // Events a frame queued before a later frame in the same read
+            // failed (usage ahead of a truncation error) are delivered first.
+            if value.1.pending.is_empty() {
+                value.1.done = true;
+                return Some((Err(error), value));
+            }
+            value.1.deferred = Some(error);
         }
     }
 }
 
 #[derive(Default)]
-struct ToolUseBlock {
-    id: String,
-    name: String,
-    json: String,
-}
-
-#[derive(Default)]
-struct State {
-    bytes: Vec<u8>,
-    pending: VecDeque<ProviderEvent>,
-    tools: BTreeMap<usize, ToolUseBlock>,
-    usage: TokenUsage,
-    done: bool,
-    assembled_bytes: usize,
+pub(super) struct State {
+    pub(super) bytes: Vec<u8>,
+    pub(super) frames: super::framing::FrameCount,
+    pub(super) pending: VecDeque<ProviderEvent>,
+    pub(super) tools: super::tool_assembly::ToolAssembly,
+    pub(super) usage: TokenUsage,
+    pub(super) raw_input_tokens: Option<u64>,
+    pub(super) usage_reported: bool,
+    pub(super) done: bool,
+    /// An error held back until the driver has drained `pending` (a capped
+    /// response's usage is queued by the frame before the stop frame errors).
+    pub(super) deferred: Option<ProviderError>,
+    pub(super) assembled_bytes: usize,
     /// Text the wire emitted before any truncation signal, kept so the typed
     /// error can carry the partial answer without re-walking emitted events.
-    text: String,
+    pub(super) text: String,
     /// The `stop_reason` the final `message_delta` reported, checked at
     /// `message_stop`. A capped response reports `"max_tokens"`.
-    stop_reason: Option<String>,
+    pub(super) stop_reason: Option<String>,
+    /// The signature over this response's one thinking block. Replayed only
+    /// when exactly one block carried it.
+    pub(super) signature: Option<String>,
+    /// How many thinking blocks this response opened. Anthropic allows one;
+    /// a second makes the signature ambiguous.
+    pub(super) thinking_blocks: u8,
+    /// Last content-bearing delta, so keep-alives cannot hold a silent stream
+    /// open.
+    pub(super) progress: ProgressClock,
 }
 
 impl State {
-    fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
+    pub(super) fn reserve(&mut self, bytes: usize) -> Result<(), ProviderError> {
         let next = self
             .assembled_bytes
             .checked_add(bytes)
             .ok_or_else(size_error)?;
-        if next > crate::MAX_STREAM_BYTES {
+        if next
+            .checked_add(self.tools.bytes())
+            .is_none_or(|total| total > crate::MAX_STREAM_BYTES)
+        {
             return Err(size_error());
         }
         self.assembled_bytes = next;
@@ -118,203 +169,24 @@ impl State {
     }
 
     fn push(&mut self, chunk: &[u8]) -> Result<(), ProviderError> {
-        if self.bytes.len().saturating_add(chunk.len()) > crate::MAX_STREAM_BYTES {
-            return Err(ProviderError::Request(
-                "provider stream exceeded size limit".into(),
-            ));
-        }
-        self.bytes.extend_from_slice(chunk);
-        while let Some((end, skip)) = boundary(&self.bytes) {
-            let frame = String::from_utf8(self.bytes[..end].to_vec())
-                .map_err(|_| ProviderError::InvalidResponse)?;
-            self.bytes.drain(..end + skip);
-            let data = frame
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:").map(str::trim_start))
-                .collect::<Vec<_>>()
-                .join("\n");
-            if data.is_empty() {
-                continue;
-            }
-            let json: serde_json::Value =
-                serde_json::from_str(&data).map_err(|_| ProviderError::InvalidResponse)?;
-
-            let event_type = json["type"]
-                .as_str()
-                .ok_or(ProviderError::InvalidResponse)?;
-            match event_type {
-                "content_block_start" => {
-                    let index = json["index"]
-                        .as_u64()
-                        .ok_or(ProviderError::InvalidResponse)?
-                        as usize;
-                    let cb_type = json["content_block"]["type"]
-                        .as_str()
-                        .ok_or(ProviderError::InvalidResponse)?;
-                    if cb_type == "tool_use" {
-                        let id = json["content_block"]["id"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        let name = json["content_block"]["name"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        self.reserve(id.len().saturating_add(name.len()))?;
-                        self.tools.insert(
-                            index,
-                            ToolUseBlock {
-                                id,
-                                name,
-                                json: String::new(),
-                            },
-                        );
-                    } else if cb_type == "thinking" {
-                        // A `thinking` content block can carry its initial text
-                        // inline on `content_block_start` (the model-I/O design "whole"
-                        // spelling). Emit it as reasoning; the subsequent
-                        // `thinking_delta`s append to it.
-                        if let Some(thinking) = json["content_block"]["thinking"]
-                            .as_str()
-                            .filter(|text| !text.is_empty())
-                        {
-                            self.reserve(thinking.len())?;
-                            self.pending
-                                .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
-                        }
-                    }
-                }
-                "content_block_delta" => {
-                    let index = json["index"]
-                        .as_u64()
-                        .ok_or(ProviderError::InvalidResponse)?
-                        as usize;
-                    let delta_type = json["delta"]["type"]
-                        .as_str()
-                        .ok_or(ProviderError::InvalidResponse)?;
-                    if delta_type == "text_delta" {
-                        let text = json["delta"]["text"]
-                            .as_str()
-                            .ok_or(ProviderError::InvalidResponse)?;
-                        self.reserve(text.len())?;
-                        self.text.push_str(text);
-                        self.pending
-                            .push_back(ProviderEvent::TextDelta(text.to_string()));
-                    } else if delta_type == "thinking_delta" {
-                        // The streamed reasoning increment. Forwarded as a
-                        // `ReasoningDelta` for `collect()` to accumulate.
-                        let thinking = json["delta"]["thinking"]
-                            .as_str()
-                            .ok_or(ProviderError::InvalidResponse)?;
-                        self.reserve(thinking.len())?;
-                        if !thinking.is_empty() {
-                            self.pending
-                                .push_back(ProviderEvent::ReasoningDelta(thinking.to_string()));
-                        }
-                    } else if delta_type == "input_json_delta" {
-                        let partial = json["delta"]["partial_json"]
-                            .as_str()
-                            .ok_or(ProviderError::InvalidResponse)?;
-                        self.reserve(partial.len())?;
-                        if let Some(block) = self.tools.get_mut(&index) {
-                            block.json.push_str(partial);
-                        } else {
-                            return Err(ProviderError::InvalidResponse);
-                        }
-                    }
-                }
-                "message_stop" => {
-                    if self.stop_reason.as_deref() == Some("max_tokens") {
-                        return Err(ProviderError::output_truncated(
-                            std::mem::take(&mut self.text),
-                            self.tools
-                                .values()
-                                .map(|block| block.json.clone())
-                                .collect(),
-                        ));
-                    }
-                    let mut calls = Vec::new();
-                    for (_index, block) in std::mem::take(&mut self.tools) {
-                        let arguments = if block.json.trim().is_empty() {
-                            serde_json::json!({})
-                        } else {
-                            serde_json::from_str(&block.json)
-                                .map_err(|_| ProviderError::InvalidResponse)?
-                        };
-                        calls.push(ToolCall {
-                            id: block.id,
-                            name: block.name,
-                            arguments,
-                        });
-                    }
-                    if !calls.is_empty() {
-                        self.pending.push_back(ProviderEvent::ToolCalls(calls));
-                    }
-                    self.pending.push_back(ProviderEvent::Done);
-                    self.done = true;
-                    break;
-                }
-                "message_start" => {
-                    let usage = &json["message"]["usage"];
-                    if apply_usage(&mut self.usage, usage) {
-                        self.pending.push_back(ProviderEvent::Usage(self.usage));
-                    }
-                }
-                "message_delta" => {
-                    let usage = &json["usage"];
-                    if apply_usage(&mut self.usage, usage) {
-                        self.pending.push_back(ProviderEvent::Usage(self.usage));
-                    }
-                    if let Some(reason) = json["delta"]["stop_reason"].as_str() {
-                        self.stop_reason = Some(reason.to_string());
-                    }
-                }
-                "error" => {
-                    return Err(ProviderError::InvalidResponse);
-                }
-                "ping" | "content_block_stop" => {}
-                _ => {}
-            }
-        }
-        if self.done {
-            if !whitespace(&self.bytes) {
-                return Err(ProviderError::InvalidResponse);
-            }
-            self.bytes.clear();
-        }
-        Ok(())
+        super::anthropic_events::push(self, chunk)
     }
 }
 
-fn size_error() -> ProviderError {
+pub(super) fn size_error() -> ProviderError {
     ProviderError::Request("provider stream exceeded size limit".into())
 }
 
-fn boundary(value: &[u8]) -> Option<(usize, usize)> {
-    value
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .map(|i| (i, 4))
-        .or_else(|| {
-            value
-                .windows(2)
-                .position(|part| part == b"\n\n")
-                .map(|i| (i, 2))
-        })
-}
-
-/// Folds an Anthropic `usage` object (from `message_start` or `message_delta`)
-/// into the running totals for one response. Anthropic reports two cache
-/// numbers that bill differently and are kept distinct: reads
-/// (`cache_read_input_tokens`, inclusive of `input_tokens`) and creation
-/// (`cache_creation_input_tokens`, also inclusive of `input_tokens`). Returns
-/// whether anything was reported, so the caller only emits a `Usage` event when
-/// the object actually carried counts. A reported `0` stays `Some(0)`; an
-/// omitted field stays `None` (absent is not zero).
-fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Value) -> bool {
+/// Folds an Anthropic usage snapshot. Its raw input count excludes cache
+/// reads and writes, so `TokenUsage` carries their saturating total.
+pub(super) fn apply_usage(
+    accumulated: &mut TokenUsage,
+    raw_input_tokens: &mut Option<u64>,
+    usage: &serde_json::Value,
+) -> bool {
     let mut changed = false;
     if let Some(input) = usage["input_tokens"].as_u64() {
-        accumulated.input_tokens = input;
+        *raw_input_tokens = Some(input);
         changed = true;
     }
     if let Some(output) = usage["output_tokens"].as_u64() {
@@ -329,6 +201,11 @@ fn apply_usage(accumulated: &mut TokenUsage, usage: &serde_json::Value) -> bool 
         accumulated.cache_creation_input_tokens = Some(created);
         changed = true;
     }
+    if changed && let Some(input) = raw_input_tokens {
+        accumulated.input_tokens = input
+            .saturating_add(accumulated.cached_input_tokens.unwrap_or(0))
+            .saturating_add(accumulated.cache_creation_input_tokens.unwrap_or(0));
+    }
     changed
 }
 
@@ -337,50 +214,54 @@ mod tests {
     use super::{TokenUsage, apply_usage};
     use serde_json::json;
 
-    /// Deliverable 4 (Anthropic, with): a `message_start` usage object
+    /// A `message_start` usage object
     /// carrying both cache numbers populates the two cache fields (distinct,
     /// because reads and creation bill differently).
     #[test]
     fn message_start_with_cache_fields_populates_both() {
         let mut accumulated = TokenUsage::default();
+        let mut raw_input = None;
         let usage = json!({
             "input_tokens": 100,
             "cache_read_input_tokens": 90,
             "cache_creation_input_tokens": 10
         });
-        assert!(apply_usage(&mut accumulated, &usage));
-        assert_eq!(accumulated.input_tokens, 100);
+        assert!(apply_usage(&mut accumulated, &mut raw_input, &usage));
+        assert_eq!(accumulated.input_tokens, 200);
         assert_eq!(accumulated.cached_input_tokens, Some(90));
         assert_eq!(accumulated.cache_creation_input_tokens, Some(10));
         assert_eq!(accumulated.reasoning_tokens, None);
     }
 
-    /// Deliverable 4 (Anthropic, without): a usage object with only the
+    /// A usage object with only the
     /// existing counters leaves the cache fields `None`. The cache numbers
     /// appear only on `message_start`; a `message_delta` carrying only
     /// `output_tokens` must not zero out a previously reported cache read.
     #[test]
     fn usage_without_cache_fields_leaves_them_none() {
         let mut accumulated = TokenUsage {
-            input_tokens: 100,
+            input_tokens: 190,
             cached_input_tokens: Some(90),
             ..Default::default()
         };
+        let mut raw_input = Some(100);
         let usage = json!({"output_tokens": 34});
-        assert!(apply_usage(&mut accumulated, &usage));
+        assert!(apply_usage(&mut accumulated, &mut raw_input, &usage));
         assert_eq!(accumulated.output_tokens, 34);
+        assert_eq!(accumulated.input_tokens, 190);
         // The earlier cache read survives; `message_delta` did not report it.
         assert_eq!(accumulated.cached_input_tokens, Some(90));
         assert_eq!(accumulated.cache_creation_input_tokens, None);
     }
 
-    /// Deliverable 5 (Anthropic): a reported `cache_read_input_tokens: 0` (a
+    /// A reported `cache_read_input_tokens: 0` (a
     /// cache that was created but read nothing) stays `Some(0)`, not `None`.
     #[test]
     fn reported_zero_cache_read_is_some_zero() {
         let mut accumulated = TokenUsage::default();
+        let mut raw_input = None;
         let usage = json!({"input_tokens": 10, "cache_read_input_tokens": 0});
-        apply_usage(&mut accumulated, &usage);
+        apply_usage(&mut accumulated, &mut raw_input, &usage);
         assert_eq!(accumulated.cached_input_tokens, Some(0));
     }
 
@@ -392,7 +273,8 @@ mod tests {
             input_tokens: 7,
             ..Default::default()
         };
-        assert!(!apply_usage(&mut accumulated, &json!({})));
+        let mut raw_input = Some(7);
+        assert!(!apply_usage(&mut accumulated, &mut raw_input, &json!({})));
         assert_eq!(accumulated.input_tokens, 7);
     }
 }

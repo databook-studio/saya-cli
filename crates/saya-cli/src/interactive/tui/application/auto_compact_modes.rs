@@ -1,11 +1,11 @@
 /// Suppression modes: manual and off never fire, a usage-less turn never fires, failures never retry.
-/// Moved byte-identical from the hub; no snapshots involved.
+/// Plain assertions; no snapshots involved.
 use super::super::super::super::agent::StreamMsg;
 use super::super::super::tests_support::unused_runtime;
 use super::support::{
     answering_report, app_with_model, five_turns, output, run_turn_maybe_compacting, stream_with,
 };
-use crate::interactive::session_compact::plan;
+use crate::interactive::session::continuation::compaction::manual::plan;
 use saya_agent::TokenUsage;
 use std::sync::Arc;
 

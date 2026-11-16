@@ -1,10 +1,10 @@
 //! The run boundary's entry-point property: every entry point into a run
-//! refuses the bypass mode (DESIGN §6, test 16's twin). A run's approval is
+//! refuses the bypass mode. A run's approval is
 //! its `--allow` scopes — typed, per-capability, journaled — and bypass is a
 //! session mode's blanket per-call consent, which a run has no per-call ask
-//! to replace. The start guard taught the rule; the resume entry never
-//! consulted it (U6 defect 1: a resumed run composed a frozen policy in
-//! bypass mode and auto-allowed every ask-shaped call on it). The property
+//! to replace. Every entry consults the same start guard, so a resumed run
+//! cannot compose a frozen policy in bypass mode and auto-allow every
+//! ask-shaped call on it. The property
 //! is stated once over
 //! the enumerated entry set — the headless fresh run, the host panel's fresh
 //! run, and the resume — and every entry must return the run boundary's one
@@ -99,6 +99,7 @@ async fn every_entry_point_into_a_run_refuses_bypass() {
         RenderFormat::Text,
         ApprovalPolicy::Bypass,
         &store,
+        false,
     )
     .await
     .expect_err("the resume refuses bypass");
@@ -108,16 +109,14 @@ async fn every_entry_point_into_a_run_refuses_bypass() {
 }
 
 /// A run's admission refuses the bypass mode, naming what a run's approval
-/// actually is (DESIGN §6, test 16): a run's approval is its `--allow`
+/// actually is: a run's approval is its `--allow`
 /// scopes — typed, per-capability, journaled — and bypass is a session
 /// mode's blanket per-call consent, which a run has no per-call ask to
 /// replace. Every other mode admits.
 ///
-/// Moved from `start_tests` with its test: the guard's home changed — it was
-/// a free function the fresh-run entries shared, and the resume entry never
-/// consulted it (U6 defect 1), so the guard became the admission
-/// constructor every entry must pass. The property over the entry points is
-/// the test above; this pins the admission type's own behavior.
+/// The guard is the admission constructor every entry must pass, not a free
+/// function the fresh-run entries share. The property over the entry points
+/// is the test above; this pins the admission type's own behavior.
 #[test]
 fn a_run_refuses_the_bypass_mode_naming_allow() {
     for admitted in [

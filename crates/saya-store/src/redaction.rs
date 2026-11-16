@@ -1,6 +1,5 @@
-//! Re-export shim: `redact` moved to `saya-types` (G4 — two mid-layer crates,
-//! `saya-agent` and `saya-store`, share it, so the shared thing is a contract
-//! in the leaf crate). The code and its tests moved verbatim; every
-//! `saya_store::redact` and `crate::redaction::redact` call site compiles
-//! unchanged.
+//! Re-export shim: `redact` lives in `saya-types` because two mid-layer
+//! crates, `saya-agent` and `saya-store`, share it — a shared thing is a
+//! contract in the leaf crate. Every `saya_store::redact` and
+//! `crate::redaction::redact` call site resolves here.
 pub use saya_types::redact;

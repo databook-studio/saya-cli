@@ -50,7 +50,9 @@ impl<W: Write> BoundedWriter<W> {
         self.peak
     }
 
-    #[cfg(test)]
+    /// Bytes accepted so far. The save publishes what was written; the
+    /// session capacity report reads the count off a sink-backed writer —
+    /// its one non-test consumer — without materializing the record.
     pub(crate) fn written(&self) -> usize {
         self.written
     }

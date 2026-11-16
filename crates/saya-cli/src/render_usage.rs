@@ -1,7 +1,7 @@
 //! The per-endpoint usage view `saya run show` renders: the figures a run's
 //! journal recorded, folded per endpoint and shaped as one stanza section.
 //!
-//! The honesty rule is the run contracts' own (U4): a figure no call
+//! The honesty rule is the run contracts' own: a figure no call
 //! reported is `None`, never `Some(0)`, and a reported zero stays a reported
 //! zero — the fold here works the engine sink's `UsageTotals` fold, over the
 //! journal's `RunEvent::Usage` events instead of provider calls. A display
@@ -94,7 +94,7 @@ mod tests {
         usage_by_endpoint(events)
     }
 
-    /// The one that matters (U4): a cache figure no call reported renders
+    /// The one that matters: a cache figure no call reported renders
     /// `unknown`, and a reported zero renders `0` — different answers the
     /// display must not conflate. Both cases ride the chain a real run does:
     /// the journal's usage events folded per endpoint, rendered in the

@@ -1,18 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="saya mark">
-  <title>saya</title>
-  <defs><clipPath id="body-mark"><path d="M100 26 C146 26 172 62 172 106 C172 152 141 182 100 182 C59 182 28 152 28 106 C28 62 54 26 100 26 Z"/></clipPath><clipPath id="eye-mark-0"><circle cx="68" cy="94" r="27"/></clipPath><clipPath id="eye-mark-1"><circle cx="132" cy="94" r="27"/></clipPath></defs>
-  <path d="M44 60 L58 14 L88 44 Z" fill="#8171e6"/>
-  <path d="M156 60 L142 14 L112 44 Z" fill="#8171e6"/>
-  <path d="M67 186 q13 -9 26 0" fill="none" stroke="#17151f" stroke-width="7" stroke-linecap="round"/>
-  <path d="M107 186 q13 -9 26 0" fill="none" stroke="#17151f" stroke-width="7" stroke-linecap="round"/>
-  <!-- Shade first, then a large offset circle of the body colour clipped to the
-       silhouette: what the circle misses is a crescent rim that follows the
-       curve. A straight-edged band reads as a crease on a round form. -->
-  <path d="M100 26 C146 26 172 62 172 106 C172 152 141 182 100 182 C59 182 28 152 28 106 C28 62 54 26 100 26 Z" fill="#8171e6"/>
-  <circle cx="70" cy="80" r="104" fill="#9d8bf5" clip-path="url(#body-mark)"/>
-  <circle cx="68" cy="94" r="27" fill="#17151f"/>
-  <circle cx="132" cy="94" r="27" fill="#17151f"/>
-  <rect x="63.5" y="83" width="9" height="22" rx="2" fill="#9d8bf5"/>
-  <rect x="127.5" y="83" width="9" height="22" rx="2" fill="#9d8bf5"/>
-  <path d="M100 126 L109 145 L91 145 Z" fill="#17151f"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="saya mark — kangaroo head in profile facing right"><title>saya</title><g transform="translate(-193.7 -27) scale(2.486)"><path d="M102 61C96 51 92 36 94 26C95 21 100 21 102 27C107 40 111 52 112 57Z" fill="#9d8bf5"/><path d="M103 59C99 50 96 38 98 29C99 25 102 26 103 30C107 41 109 51 110 56Z" fill="#8171e6"/><path d="M110 58C106 46 104 28 107 18C109 13 114 14 116 21C119 34 121 48 121 55Z" fill="#9d8bf5"/><path d="M112 56C109 46 108 31 110 22C111 18 114 19 115 24C117 36 119 47 119 53Z" fill="#8171e6"/><path d="M99 61C104 56 113 56 118 61C122 64 125 68 129 71C135 73 139 76 142 80C144 83 142 86 138 87C134 88 130 86 126 84C122 82 118 82 114 83C107 85 101 82 98 77C95 71 96 65 99 61Z" fill="#9d8bf5"/><ellipse cx="140.5" cy="82.5" rx="3.2" ry="2.4" transform="rotate(-20 140.5 82.5)" fill="#17151f"/><path d="M138 86Q133 88 128 86" fill="none" stroke="#17151f" stroke-width="1.8" stroke-linecap="round"/><ellipse cx="116.5" cy="69.5" rx="4.8" ry="6.2" fill="#17151f"/><circle cx="114.5" cy="66.5" r="1.8" fill="#9d8bf5"/></g></svg>

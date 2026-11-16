@@ -1,7 +1,8 @@
+use saya_types::CodingBudgetMode;
 use serde::Serialize;
 
 use crate::{
-    ColorChoice, CompactionMode, ConfigFile, MemoryMode, OutputFormat, ResolvedConfig, ThemeChoice,
+    ColorChoice, CompactionMode, ConfigFile, JobRootMode, MemoryMode, OutputFormat, ThemeChoice,
 };
 use std::collections::BTreeMap;
 
@@ -41,23 +42,91 @@ pub struct RedactedDiagnostics {
     pub base_url: Option<String>,
     pub api_key_reference: Option<String>,
     pub allow_data_sharing: Option<bool>,
+    /// The declared `[ai] app_attribution`, or `None` when the file did not
+    /// state it — which is the effective `true`.
+    pub app_attribution: Option<bool>,
     pub temperature: Option<f32>,
     pub read_only: Option<bool>,
     pub max_rows: Option<usize>,
-    pub max_iterations: Option<usize>,
     pub candidates: Option<usize>,
-    pub jobs_wall_clock_seconds: Option<u64>,
-    pub jobs_tokens_per_endpoint: Option<BTreeMap<String, u64>>,
-    pub jobs_turns: Option<u64>,
-    pub jobs_tool_calls: Option<u64>,
-    pub jobs_runner_allow: Option<Vec<String>>,
-    pub jobs_runner_program_dir: Option<String>,
-    pub jobs_runner_timeout_seconds: Option<u64>,
+    /// The declared `[limits.session]` and `[limits.ask]` answering ceilings,
+    /// verbatim: a dimension is an integer or the literal `"unlimited"`, and
+    /// `None` means the file did not state it. Kept raw for the same reason as
+    /// `[limits.run]`.
+    pub limits_session_requests: Option<toml::Value>,
+    pub limits_session_tool_calls: Option<toml::Value>,
+    pub limits_session_elapsed_seconds: Option<toml::Value>,
+    pub limits_session_known_tokens: Option<toml::Value>,
+    pub limits_ask_requests: Option<toml::Value>,
+    pub limits_ask_tool_calls: Option<toml::Value>,
+    pub limits_ask_elapsed_seconds: Option<toml::Value>,
+    pub limits_ask_known_tokens: Option<toml::Value>,
+    /// The declared `[limits.job]` budget mode and ceilings, verbatim: a
+    /// dimension is an integer, and `None` means the file did not state it.
+    /// Kept raw rather than resolved for the same reason as `[limits.run]`.
+    pub limits_job_budget_mode: Option<CodingBudgetMode>,
+    pub limits_job_logical_requests: Option<toml::Value>,
+    pub limits_job_transport_attempts: Option<toml::Value>,
+    pub limits_job_tool_calls: Option<toml::Value>,
+    pub limits_job_known_tokens: Option<toml::Value>,
+    pub limits_job_job_tokens: Option<toml::Value>,
+    pub limits_job_elapsed_seconds: Option<toml::Value>,
+    pub limits_job_no_progress_turns: Option<toml::Value>,
+    pub limits_job_repeat_limit: Option<toml::Value>,
+    pub limits_job_wall_clock_seconds: Option<toml::Value>,
+    pub limits_job_max_cost_usd: Option<toml::Value>,
+    /// The two `[agents]` bounds and the registry, beside the coding settings:
+    /// they are the helper lane a coding job opens, and a top-level section in
+    /// their own right.
+    pub agents_max_children: Option<usize>,
+    pub agents_max_concurrent_model_requests: Option<usize>,
+    pub job_program_dir: Option<String>,
+    /// The declared `[job] root_mode`; `None` means the file left the default
+    /// `in_place`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_root_mode: Option<JobRootMode>,
+    /// Trusted optional selector only; profile arguments remain redacted in
+    /// `job_extensions`.
+    pub job_automatic_lsp_profile: Option<String>,
+    /// Safe profile summaries; argv bodies are never included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_extensions: Option<BTreeMap<String, serde_json::Value>>,
+    /// The declared `[agents]` entries, each carrying only the fields that
+    /// entry stated — a type name, a role, a write flag, a model. `None` means
+    /// the file declared no type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agents: Option<BTreeMap<String, serde_json::Value>>,
+    /// The declared `[limits.run]` ceilings, verbatim: a dimension is an
+    /// integer or the literal `"unlimited"`, and `None` means the file did not
+    /// state it. Kept raw rather than resolved because "declared unlimited"
+    /// and "not declared" are different answers to the question this view
+    /// asks, and both would otherwise read as `None`.
+    pub limits_run_wall_clock_seconds: Option<toml::Value>,
+    pub limits_run_tokens_per_endpoint: Option<BTreeMap<String, u64>>,
+    pub limits_run_turns: Option<toml::Value>,
+    pub limits_run_tool_calls: Option<toml::Value>,
+    pub limits_run_no_progress_turns: Option<toml::Value>,
+    pub limits_run_repeat_limit: Option<toml::Value>,
     pub query_timeout_seconds: Option<u64>,
+    /// The declared `[tools] allow` list, verbatim: `None` means the file did
+    /// not state it. Validation happens at resolve, so a declared list that
+    /// does not name governed tools is reported there, not here.
+    pub tools_allow: Option<Vec<String>>,
+    /// The declared `[permissions] allow_bypass`, or `None` when the file did
+    /// not state it. `None` is not `false`: the resolved default withholds
+    /// the mode, but "nobody said" and "someone said no" are different
+    /// answers to the question this view asks.
+    pub permissions_allow_bypass: Option<bool>,
     pub output_format: Option<OutputFormat>,
     pub output_color: Option<ColorChoice>,
     pub ui_theme: Option<ThemeChoice>,
     pub compaction: Option<CompactionMode>,
+    /// The declared `[ai] compaction_trigger_percent`, or `None` when the file
+    /// did not state it — which is the effective 50.
+    pub compaction_trigger_percent: Option<u8>,
+    /// The declared `[ai] reasoning_effort`, or `None` when the file did not
+    /// state it — which is not the same as any value: unset sends nothing.
+    pub reasoning_effort: Option<crate::ReasoningEffort>,
     pub memory_mode: Option<MemoryMode>,
     pub memory_max_contracts: Option<u32>,
     pub memory_max_claims_per_contract: Option<u32>,
@@ -65,68 +134,6 @@ pub struct RedactedDiagnostics {
     /// Declared `[[ai.endpoints]]`, keyed by name. `None` means the file did
     /// not declare that field. Secrets stay references.
     pub endpoints: BTreeMap<String, EndpointDiagnostics>,
-}
-
-/// A display-safe view of the *effective* runtime settings, with no resolved
-/// secrets. This is what `saya config show` prints.
-///
-/// Fields are concrete rather than optional: every one has a value once the
-/// layers and defaults have been applied. Use [`RedactedDiagnostics`] instead
-/// when the question is which of them a config file actually declared.
-#[derive(Debug, Clone, Serialize)]
-pub struct ResolvedDiagnostics {
-    pub profile_name: Option<String>,
-    pub profile_dialect: Option<String>,
-    pub provider: String,
-    pub model: String,
-    pub base_url: Option<String>,
-    pub api_key_reference: Option<String>,
-    pub allow_data_sharing: bool,
-    pub temperature: f32,
-    pub timeout_seconds: u64,
-    pub idle_timeout_seconds: u64,
-    pub max_output_tokens: u32,
-    pub retry_delays_ms: Vec<u64>,
-    pub context_byte_budget: usize,
-    pub context_window_tokens: Option<u64>,
-    pub show_thinking: bool,
-    pub max_rows: usize,
-    pub read_only: bool,
-    pub max_iterations: usize,
-    pub candidates: usize,
-    pub jobs_wall_clock_seconds: Option<u64>,
-    pub jobs_tokens_per_endpoint: BTreeMap<String, u64>,
-    pub jobs_turns: Option<u64>,
-    pub jobs_tool_calls: Option<u64>,
-    pub jobs_runner_allow: Vec<String>,
-    pub jobs_runner_program_dir: Option<String>,
-    pub jobs_runner_timeout_seconds: u64,
-    pub query_timeout_seconds: u64,
-    pub output_format: OutputFormat,
-    pub output_color: ColorChoice,
-    pub ui_theme: ThemeChoice,
-    pub compaction: CompactionMode,
-    pub memory_mode: MemoryMode,
-    pub memory_max_contracts: u32,
-    pub memory_max_claims_per_contract: u32,
-    pub memory_max_context_bytes: u32,
-    /// The resolved endpoint pool, keyed by name — always contains
-    /// `orchestrator`, the plain `[ai]` block fallback. Secrets stay
-    /// references: `api_key_reference` is the redacted label, never a value.
-    pub endpoints: BTreeMap<String, EndpointDiagnostics>,
-}
-
-/// One AI endpoint mirrored for display. `Option` means "not declared" in
-/// the file view and "resolved to none" in the resolved view; either way a
-/// secret appears only as its redacted reference label, never as a value —
-/// the same discipline as `api_key_reference` on the parent views.
-#[derive(Debug, Clone, Serialize)]
-pub struct EndpointDiagnostics {
-    pub name: String,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub base_url: Option<String>,
-    pub api_key_reference: Option<String>,
 }
 
 impl RedactedDiagnostics {
@@ -138,28 +145,67 @@ impl RedactedDiagnostics {
             base_url: file.ai.base_url.as_deref().map(redact_endpoint),
             api_key_reference: file.ai.api_key.as_ref().map(|value| value.redacted_label()),
             allow_data_sharing: file.ai.allow_data_sharing,
+            app_attribution: file.ai.app_attribution,
             temperature: file.ai.temperature,
             read_only: file.run.read_only,
             max_rows: file.run.max_rows,
-            max_iterations: file.run.max_iterations,
             candidates: file.run.candidates,
-            jobs_wall_clock_seconds: file.jobs.wall_clock_seconds,
-            jobs_tokens_per_endpoint: file.jobs.tokens_per_endpoint.clone(),
-            jobs_turns: file.jobs.turns,
-            jobs_tool_calls: file.jobs.tool_calls,
-            jobs_runner_allow: file.jobs.runner.as_ref().and_then(|r| r.allow.clone()),
-            jobs_runner_program_dir: file
-                .jobs
-                .runner
+            limits_session_requests: file.limits.session.requests.clone(),
+            limits_session_tool_calls: file.limits.session.tool_calls.clone(),
+            limits_session_elapsed_seconds: file.limits.session.elapsed_seconds.clone(),
+            limits_session_known_tokens: file.limits.session.known_tokens.clone(),
+            limits_ask_requests: file.limits.ask.requests.clone(),
+            limits_ask_tool_calls: file.limits.ask.tool_calls.clone(),
+            limits_ask_elapsed_seconds: file.limits.ask.elapsed_seconds.clone(),
+            limits_ask_known_tokens: file.limits.ask.known_tokens.clone(),
+            limits_job_budget_mode: file.limits.job.budget_mode,
+            limits_job_logical_requests: file.limits.job.logical_requests.clone(),
+            limits_job_transport_attempts: file.limits.job.transport_attempts.clone(),
+            limits_job_tool_calls: file.limits.job.tool_calls.clone(),
+            limits_job_known_tokens: file.limits.job.known_tokens.clone(),
+            limits_job_job_tokens: file.limits.job.job_tokens.clone(),
+            limits_job_elapsed_seconds: file.limits.job.elapsed_seconds.clone(),
+            limits_job_no_progress_turns: file.limits.job.no_progress_turns.clone(),
+            limits_job_repeat_limit: file.limits.job.repeat_limit.clone(),
+            limits_job_wall_clock_seconds: file.limits.job.wall_clock_seconds.clone(),
+            limits_job_max_cost_usd: file.limits.job.max_cost_usd.clone(),
+            agents_max_children: file.agents.max_children,
+            agents_max_concurrent_model_requests: file.agents.max_concurrent_model_requests,
+            job_program_dir: file
+                .job
+                .program_dir
                 .as_ref()
-                .and_then(|r| r.program_dir.as_ref())
                 .map(|path| path.display().to_string()),
-            jobs_runner_timeout_seconds: file.jobs.runner.as_ref().and_then(|r| r.timeout_seconds),
+            job_root_mode: file.job.root_mode,
+            job_automatic_lsp_profile: file.job.automatic_lsp_profile.clone(),
+            job_extensions: file.job.extensions.as_ref().map(|profiles| {
+                profiles
+                    .iter()
+                    .map(|(name, profile)| (name.clone(), profile.redacted_diagnostics()))
+                    .collect()
+            }),
+            agents: (!file.agents.types.is_empty()).then(|| {
+                file.agents
+                    .types
+                    .iter()
+                    .map(|(name, entry)| (name.clone(), declared_agent(entry)))
+                    .collect()
+            }),
+            limits_run_wall_clock_seconds: file.limits.run.wall_clock_seconds.clone(),
+            limits_run_tokens_per_endpoint: file.limits.run.tokens_per_endpoint.clone(),
+            limits_run_turns: file.limits.run.turns.clone(),
+            limits_run_tool_calls: file.limits.run.tool_calls.clone(),
+            limits_run_no_progress_turns: file.limits.run.no_progress_turns.clone(),
+            limits_run_repeat_limit: file.limits.run.repeat_limit.clone(),
             query_timeout_seconds: file.run.query_timeout_seconds,
+            tools_allow: file.tools.allow.clone(),
+            permissions_allow_bypass: file.permissions.allow_bypass,
             output_format: file.output.format,
             output_color: file.output.color,
             ui_theme: file.ui.theme,
             compaction: file.ai.compaction,
+            compaction_trigger_percent: file.ai.compaction_trigger_percent,
+            reasoning_effort: file.ai.reasoning_effort,
             memory_mode: file.memory.mode,
             memory_max_contracts: file.memory.max_contracts,
             memory_max_claims_per_contract: file.memory.max_claims_per_contract,
@@ -188,73 +234,21 @@ impl RedactedDiagnostics {
     }
 }
 
-impl ResolvedConfig {
-    pub fn redacted_diagnostics(&self) -> ResolvedDiagnostics {
-        ResolvedDiagnostics {
-            profile_name: self.profile_name.clone(),
-            profile_dialect: self
-                .profile
-                .as_ref()
-                .map(|value| value.dialect().as_str().into()),
-            provider: self.ai.provider.as_str().into(),
-            model: self.ai.model.clone(),
-            base_url: self.ai.base_url.as_deref().map(redact_endpoint),
-            api_key_reference: self.ai.api_key.as_ref().map(|value| value.redacted_label()),
-            allow_data_sharing: self.ai.allow_data_sharing,
-            temperature: self.ai.temperature,
-            timeout_seconds: self.ai.timeout_seconds,
-            idle_timeout_seconds: self.ai.idle_timeout_seconds,
-            max_output_tokens: self.ai.max_output_tokens,
-            retry_delays_ms: self.ai.retry_delays_ms.clone(),
-            context_byte_budget: self.ai.context_byte_budget,
-            context_window_tokens: self.ai.context_window_tokens,
-            show_thinking: self.ai.show_thinking,
-            max_rows: self.max_rows,
-            read_only: self.read_only,
-            max_iterations: self.max_iterations,
-            candidates: self.candidates,
-            jobs_wall_clock_seconds: self.jobs.wall_clock_seconds,
-            jobs_tokens_per_endpoint: self.jobs.tokens_per_endpoint.clone(),
-            jobs_turns: self.jobs.turns,
-            jobs_tool_calls: self.jobs.tool_calls,
-            jobs_runner_allow: self.jobs.runner.allow.clone(),
-            jobs_runner_program_dir: self
-                .jobs
-                .runner
-                .program_dir
-                .as_ref()
-                .map(|path| path.display().to_string()),
-            jobs_runner_timeout_seconds: self.jobs.runner.timeout_seconds,
-            query_timeout_seconds: self.query_timeout_seconds,
-            output_format: self.output_format,
-            output_color: self.output_color,
-            ui_theme: self.ui_theme,
-            compaction: self.ai.compaction,
-            memory_mode: self.memory.mode,
-            memory_max_contracts: self.memory.max_contracts,
-            memory_max_claims_per_contract: self.memory.max_claims_per_contract,
-            memory_max_context_bytes: self.memory.max_context_bytes,
-            endpoints: self
-                .endpoints
-                .iter()
-                .map(|(name, endpoint)| {
-                    (
-                        name.clone(),
-                        EndpointDiagnostics {
-                            name: endpoint.name.clone(),
-                            provider: Some(endpoint.provider.as_str().into()),
-                            model: Some(endpoint.model.clone()),
-                            base_url: endpoint.base_url.as_deref().map(redact_endpoint),
-                            api_key_reference: endpoint
-                                .api_key
-                                .as_ref()
-                                .map(|value| value.redacted_label()),
-                        },
-                    )
-                })
-                .collect(),
-        }
+/// What one declared `[agents]` entry states, field by field: an absent
+/// field is left out rather than shown as `null`, because "the entry did not
+/// state it" is the question this view answers.
+fn declared_agent(entry: &crate::AgentFile) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    if let Some(role) = entry.role {
+        object.insert("role".to_owned(), role.as_str().into());
     }
+    if let Some(allow_write) = entry.allow_write {
+        object.insert("allow_write".to_owned(), allow_write.into());
+    }
+    if let Some(model) = entry.model.as_deref() {
+        object.insert("model".to_owned(), model.into());
+    }
+    serde_json::Value::Object(object)
 }
 
 fn redact_endpoint(value: &str) -> String {
@@ -290,3 +284,9 @@ fn redact_userinfo(value: &str) -> String {
     output.push_str(&value[cursor..]);
     output
 }
+
+mod endpoint;
+mod resolved;
+
+pub use endpoint::EndpointDiagnostics;
+pub use resolved::ResolvedDiagnostics;

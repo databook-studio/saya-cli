@@ -1,14 +1,13 @@
 //! The Linux startup canary battery: measures the Landlock ABI, the
 //! unprivileged user+network namespace, and — through the real
 //! [`Confinement`](super::linux::Confinement) code — whether the confinement
-//! actually denies. The spike's Linux half recorded `landlock_enforcement`
-//! as failed *by design* (the spike could not add the enforcement probe);
-//! this is the implementation slice's canary. It runs on a Linux host
-//! through exactly the code [`RunnerSpawn`](super::spawn::RunnerSpawn) will
-//! use, and the verdict reads its result — never the assumptions in
-//! `linux.rs`.
+//! actually denies. `landlock_enforcement` fails *by design* when the
+//! enforcement probe cannot run; this module is the canary. It runs on a
+//! Linux host through exactly the code
+//! [`RunnerSpawn`](super::spawn::RunnerSpawn) uses, and the verdict reads
+//! its result — never the assumptions in `linux.rs`.
 //!
-//! Required checks (draft §5): `landlock_abi`,
+//! Required checks: `landlock_abi`,
 //! `user_network_namespace_unprivileged`, `landlock_enforcement`; plus
 //! `namespace_egress_denied` and `confinement_exec_allowed` (see
 //! `linux_canary`). Deny evidence on Linux is the errno — EACCES or EPERM
@@ -23,7 +22,7 @@ use super::{
     linux::{Confinement, MIN_LANDLOCK_ABI},
     linux_canary::{confinement_exec_allowed, landlock_enforcement_check, namespace_egress_check},
     linux_fork::{collect_canary, fork_with_pipe, raw_io, write_words},
-    probe_support::uname_line,
+    probe_support::{OwnedProbeDirectory, uname_line},
     report::{Check, ProbeReport},
 };
 
@@ -35,13 +34,22 @@ pub(super) fn canary_program_dir() -> PathBuf {
     PathBuf::from(CANARY_PROGRAM_DIR)
 }
 
+/// A process-unique suffix for every path the probe creates: concurrent
+/// probes in one process must never share a target, or one run's cleanup
+/// deletes another run's evidence.
+fn unique(tag: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{tag}-{}-{n}", std::process::id())
+}
+
 /// A temp directory for the canaries' outside-root targets; removed on drop.
 struct TempRoot(PathBuf);
 
 impl TempRoot {
     fn new(tag: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("saya-sbx-probe-{tag}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(unique(&format!("saya-sbx-probe-{tag}")));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("probe temp root must be creatable");
         Self(path)
@@ -67,8 +75,8 @@ fn read_record(path: &str) -> String {
 }
 
 /// The `unshare(CLONE_NEWUSER)` + `unshare(CLONE_NEWNET)` availability
-/// check, promoted in shape from the spike: the first failure's errno is the
-/// recorded evidence. Slots: [user, net].
+/// check: the first failure's errno is the recorded evidence.
+/// Slots: [user, net].
 fn unprivileged_user_net_ns() -> Result<(), String> {
     let (pid, fd) = fork_with_pipe(|fds| {
         let mut w = [0_i32; 4];
@@ -166,7 +174,23 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
 
     let outside = TempRoot::new("outside");
     let outside_path = outside.canonical();
-    let inside = sb.fs_roots()[0].clone();
+    // Fresh, uniquely named targets: the canary creates `inside` (a directory
+    // under the root) and must fail to create `outside` (a file outside it);
+    // an existing path would answer EEXIST before the sandbox decided anything.
+    let mut owned_entry =
+        match OwnedProbeDirectory::create(&sb.fs_roots()[0], &unique("canary-inside")) {
+            Ok(entry) => entry,
+            Err(_) => {
+                checks.push(Check::fail(
+                    "landlock_enforcement",
+                    true,
+                    "could not create a fresh owned canary namespace",
+                ));
+                return ProbeReport::new("linux", uname, checks);
+            }
+        };
+    let inside = owned_entry.target().to_owned();
+    let denied = outside_path.join(unique("canary-denied"));
 
     match Confinement::new(sb, &[canary_program_dir()]) {
         Err(e) => checks.push(Check::fail(
@@ -176,11 +200,33 @@ pub(super) fn run(sb: &RunSandbox) -> ProbeReport {
         )),
         Ok(conf) => {
             let conf = std::sync::Arc::new(conf);
-            checks.push(landlock_enforcement_check(&conf, &inside, &outside_path));
-            checks.push(namespace_egress_check(&conf, &inside, &outside_path));
+            let filesystem = landlock_enforcement_check(&conf, &inside, &denied);
+            if filesystem.passed() && !owned_entry.record_created_target() {
+                checks.push(Check::fail(
+                    "probe_owned_target_recorded",
+                    true,
+                    "the created canary target identity could not be confirmed",
+                ));
+            }
+            checks.push(filesystem);
+            checks.push(namespace_egress_check(&conf, &inside, &denied));
             checks.push(confinement_exec_allowed(&conf));
         }
     }
+
+    checks.push(if owned_entry.cleanup() {
+        Check::pass(
+            "probe_owned_entries_removed",
+            true,
+            "removed the exact empty owned canary entries",
+        )
+    } else {
+        Check::fail(
+            "probe_owned_entries_removed",
+            true,
+            "could not remove the exact empty owned canary entries",
+        )
+    });
 
     ProbeReport::new("linux", uname, checks)
 }

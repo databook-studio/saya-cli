@@ -28,17 +28,25 @@ impl TerminalGuard {
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
         Ok(Self { terminal })
     }
-}
 
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(
+    /// The one restore sequence: raw mode off, mouse capture, bracketed
+    /// paste, and the alternate screen undone, cursor shown. `Drop` and the
+    /// handoff's `release` share it so the two teardown paths cannot drift.
+    pub(crate) fn restore_modes(&mut self) -> io::Result<()> {
+        let raw = disable_raw_mode();
+        let screen = execute!(
             self.terminal.backend_mut(),
             DisableMouseCapture,
             DisableBracketedPaste,
             LeaveAlternateScreen
         );
-        let _ = self.terminal.show_cursor();
+        let cursor = self.terminal.show_cursor();
+        raw.and(screen).and(cursor)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = self.restore_modes();
     }
 }

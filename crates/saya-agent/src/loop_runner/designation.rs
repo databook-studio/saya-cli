@@ -5,7 +5,8 @@
 use super::{check_cancelled, emit, tools};
 use crate::{
     AgentError, AgentEvent, AgentEventSink, AgentOutput, CancellationToken, ChatMessage,
-    DESIGNATE_ANSWER_TOOL, TokenUsage, ToolMetadata,
+    DESIGNATE_ANSWER_TOOL, TokenUsage, ToolDefinition, ToolDiagnostic, ToolDiagnosticStatus,
+    ToolMetadata,
 };
 
 /// How many follow-up turns an empty designation may spend recovering its
@@ -18,17 +19,21 @@ const MAX_RECOVERIES: usize = 1;
 /// contains a `designate_answer` call whose `sql` argument is a string. `None`
 /// for a turn without the call (or a malformed argument) so the protocol stays
 /// optional.
-fn designation_from(assistant: &ChatMessage) -> Option<String> {
-    assistant.tool_calls.iter().find_map(|call| {
-        if call.name == DESIGNATE_ANSWER_TOOL {
-            call.arguments
-                .get("sql")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        } else {
-            None
-        }
-    })
+fn designation_from(assistant: &ChatMessage) -> Option<(usize, String)> {
+    assistant
+        .tool_calls
+        .iter()
+        .enumerate()
+        .find_map(|(index, call)| {
+            if call.name == DESIGNATE_ANSWER_TOOL {
+                call.arguments
+                    .get("sql")
+                    .and_then(serde_json::Value::as_str)
+                    .map(|sql| (index, sql.to_owned()))
+            } else {
+                None
+            }
+        })
 }
 
 /// What the designation arm decided for the turn.
@@ -63,7 +68,6 @@ type Totals<'a> = (TokenUsage, bool, &'a mut Vec<ToolMetadata>);
 /// emitted, how many follow-up turns recovery has spent, and whether the next
 /// turn owes the recovered prose.
 pub(super) struct State {
-    context_byte_budget: usize,
     pub(super) sql: Option<String>,
     emitted: bool,
     recoveries: usize,
@@ -71,9 +75,8 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn new(context_byte_budget: usize) -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            context_byte_budget,
             sql: None,
             emitted: false,
             recoveries: 0,
@@ -104,17 +107,36 @@ impl State {
 pub(super) async fn handle(
     state: &mut State,
     assistant: &ChatMessage,
+    result_caps: &[usize],
+    definitions: &[ToolDefinition],
     (events, sink, cancellation): Emit<'_>,
     messages: &mut Vec<ChatMessage>,
     totals: Totals<'_>,
 ) -> Result<Outcome, AgentError> {
     state.prose_due = false;
-    let Some(sql) = designation_from(assistant) else {
+    let Some((designated_index, sql)) = designation_from(assistant) else {
         return Ok(Outcome::NotDesignated);
     };
-    if state.sql.is_none() {
-        state.sql = Some(sql);
+    check_cancelled(cancellation)?;
+    let first_designation = state.sql.is_none();
+    for (index, call) in assistant.tool_calls.iter().enumerate() {
+        sink.observe_tool(ToolDiagnostic::special(
+            &call.name,
+            definitions,
+            ToolDiagnosticStatus::Requested,
+        ))
+        .await;
+        check_cancelled(cancellation)?;
+        let status = if index == designated_index && first_designation {
+            state.sql = Some(sql.clone());
+            ToolDiagnosticStatus::Completed
+        } else {
+            ToolDiagnosticStatus::Refused
+        };
+        sink.observe_tool(ToolDiagnostic::special(&call.name, definitions, status))
+            .await;
     }
+    check_cancelled(cancellation)?;
     if !assistant.content.trim().is_empty() {
         emit_event(state, (events, sink, cancellation)).await;
         check_cancelled(cancellation)?;
@@ -127,7 +149,7 @@ pub(super) async fn handle(
         state.recoveries += 1;
         state.prose_due = true;
         emit_event(state, (events, sink, cancellation)).await;
-        answer_calls_without_executing(state, assistant, messages);
+        answer_calls_without_executing(state, assistant, result_caps, messages);
         return Ok(Outcome::Recovering);
     }
     // The recovery is spent and the follow-up still produced no prose:
@@ -210,16 +232,17 @@ async fn emit_event(state: &mut State, (events, sink, _): Emit<'_>) {
 fn answer_calls_without_executing(
     state: &State,
     assistant: &ChatMessage,
+    result_caps: &[usize],
     messages: &mut Vec<ChatMessage>,
 ) {
     let designated = state.sql.clone().unwrap_or_default();
-    for call in &assistant.tool_calls {
+    for (call, cap) in assistant.tool_calls.iter().zip(result_caps.iter().copied()) {
         let result = if call.name == DESIGNATE_ANSWER_TOOL {
             recovery_result(&designated)
         } else {
             sibling_result()
         };
-        let (message, _) = tools::tool_message(call.id.clone(), result, state.context_byte_budget);
+        let (message, _) = tools::tool_message(call.id.clone(), result, cap);
         messages.push(message);
     }
 }

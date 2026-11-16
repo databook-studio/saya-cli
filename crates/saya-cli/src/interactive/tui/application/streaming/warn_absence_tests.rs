@@ -1,5 +1,4 @@
-//! Warn-threshold absence: unknown windows and silent providers never warn and leave the flag untouched (moved verbatim from `streaming_tests.rs`, via
-//! `streaming/footer_tests.rs`).
+//! Warn-threshold absence: unknown windows and silent providers never warn and leave the flag untouched.
 
 use super::*;
 
@@ -20,6 +19,7 @@ fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

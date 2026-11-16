@@ -20,10 +20,10 @@ use std::net::IpAddr;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::{StreamExt, stream::BoxStream};
-use reqwest::header::{CONTENT_RANGE, LOCATION, RANGE};
+use reqwest::header::{CONTENT_RANGE, CONTENT_TYPE, LOCATION, RANGE};
 
 use super::transport::{
-    FetchBody, FetchRequest, FetchTransport, FetchTransportError, WireResponse,
+    FetchBody, FetchHeaders, FetchRequest, FetchTransport, FetchTransportError, WireResponse,
 };
 
 /// The production transport over one shared reqwest client.
@@ -103,7 +103,11 @@ impl FetchTransport for ReqwestTransport {
     /// and `Location` for the tool to judge; it is never followed here.
     async fn get(&self, request: FetchRequest) -> Result<WireResponse, FetchTransportError> {
         let url = request.url.as_str().to_owned();
-        let builder = build_request(self.client.get(url.as_str()), request.range_start);
+        let builder = build_request(
+            self.client.get(url.as_str()),
+            request.range_start,
+            &request.headers,
+        );
         let response = builder
             .send()
             .await
@@ -118,8 +122,9 @@ impl FetchTransport for ReqwestTransport {
         };
         let location = header(LOCATION);
         let content_range = header(CONTENT_RANGE);
+        let content_type = header(CONTENT_TYPE);
         let body = Box::new(ReqwestBody {
-            // `bytes_stream` — never `bytes`: the body stays chunk-wise so
+            // `bytes_stream` — never `bytes`: the body stays block-wise so
             // the caller's bound bounds what is read, not what is buffered.
             stream: response.bytes_stream().boxed(),
         });
@@ -127,25 +132,36 @@ impl FetchTransport for ReqwestTransport {
             status,
             location,
             content_range,
+            content_type,
             body,
         })
     }
 }
 
-/// Builds one request, ranged when a resume offset is set. Split from `get`
-/// so the header wiring is testable without the wire.
+/// Builds one request, ranged when a resume offset is set and carrying the
+/// caller's own headers when it states any. Split from `get` so the header
+/// wiring is testable without the wire.
+///
+/// [`FetchHeaders`] has already validated every name and value — a lowercase
+/// HTTP token and visible ASCII — so the builder's own panicking conversions
+/// cannot fire here.
 fn build_request(
     builder: reqwest::RequestBuilder,
     range_start: Option<u64>,
+    headers: &FetchHeaders,
 ) -> reqwest::RequestBuilder {
-    match range_start {
+    let mut builder = match range_start {
         Some(start) => builder.header(RANGE, format!("bytes={start}-")),
         None => builder,
+    };
+    for (name, value) in headers.iter() {
+        builder = builder.header(name, value);
     }
+    builder
 }
 
-/// The close- or length-delimited body of one response, pulled chunk by
-/// chunk from the streaming response.
+/// The close- or length-delimited body of one response, pulled block by
+/// block from the streaming response.
 struct ReqwestBody {
     stream: BoxStream<'static, reqwest::Result<Bytes>>,
 }
@@ -226,9 +242,13 @@ mod tests {
         }
 
         let client = reqwest::Client::new();
-        let ranged = build_request(client.get("http://127.0.0.1/x"), Some(16))
-            .build()
-            .expect("request builds");
+        let ranged = build_request(
+            client.get("http://127.0.0.1/x"),
+            Some(16),
+            &FetchHeaders::default(),
+        )
+        .build()
+        .expect("request builds");
         assert_eq!(
             ranged
                 .headers()
@@ -236,9 +256,28 @@ mod tests {
                 .map(|value| value.to_str().expect("ascii")),
             Some("bytes=16-")
         );
-        let plain = build_request(client.get("http://127.0.0.1/x"), None)
+        let mut headers = FetchHeaders::new();
+        headers
+            .push("x-subscription-token", "fake-key")
+            .expect("valid");
+        let stated = build_request(client.get("http://127.0.0.1/x"), None, &headers)
             .build()
             .expect("request builds");
+        assert_eq!(
+            stated
+                .headers()
+                .get("x-subscription-token")
+                .map(|value| value.to_str().expect("ascii")),
+            Some("fake-key"),
+            "the caller's own headers reach the built request"
+        );
+        let plain = build_request(
+            client.get("http://127.0.0.1/x"),
+            None,
+            &FetchHeaders::default(),
+        )
+        .build()
+        .expect("request builds");
         assert!(plain.headers().get(RANGE).is_none());
     }
 }

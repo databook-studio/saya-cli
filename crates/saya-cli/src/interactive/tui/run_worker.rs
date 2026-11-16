@@ -28,8 +28,8 @@ pub(crate) enum RunMsg {
     Event(saya_types::RunEvent),
     /// An episode agent event; the panel's own transcript renders it.
     Episode(AgentEvent),
-    /// The bound plan's approval ask (the M1-10 channel). The modal answers
-    /// through `respond`; a dropped reply is a refusal, never an approval.
+    /// The bound plan's approval ask. The modal answers through `respond`; a
+    /// dropped reply is a refusal, never an approval.
     PlanApproval {
         view_text: String,
         /// The plan's step goals, in plan order — the panel's step list.
@@ -79,7 +79,7 @@ fn panel_wire(tx: mpsc::Sender<RunMsg>) -> saya_harness::journal::JournalWire {
 
 /// Relays the plan-approval asks to the panel. A panel that went away takes
 /// the reply's sender with it, and the drive's `decide` reads a dropped
-/// reply as a refusal — deny by default, the M1-10 rule.
+/// reply as a refusal — deny by default.
 async fn forward_plan_approvals(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<PlanApprovalRequest>,
     tx: mpsc::Sender<RunMsg>,

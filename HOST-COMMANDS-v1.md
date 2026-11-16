@@ -33,7 +33,7 @@ rejection lives at `crates/saya-cli/src/grant_token_tests.rs:244-250` and
    `--allow command:<x>` (the seed implies composition), or user-layer
    `[host_commands] enable`. A project-layer `[host_commands]` is a typed
    resolve error — the model can write the project's config once
-   `workspace_write` is granted, and a model-writable file must not enable
+   `write` is granted, and a model-writable file must not enable
    unsandboxed execution.
 
 ## 1. Today, verified
@@ -54,7 +54,7 @@ bare-name allowlist from `[jobs.runner] allow`
 `is_bare_name` at `saya-types/src/run/scope.rs:40-46`); operator-staged
 `program_dir` with the placement guard refusing any containment relation to
 the roots (`commands/run/runner.rs:143-192`, `session_runner.rs:185-209`, the
-measured escape `docs/run-program-escape-report.md:89-100`); kernel exec
+measured S3 escape); kernel exec
 confinement to the program directory only — `(deny default)` plus
 `(allow process-exec (subpath <program_dir>))` on macOS
 (`runner/sandbox/macos.rs:50, 54-56`), `EXEC_ALLOWED` for program and loader
@@ -87,8 +87,7 @@ widening rather than merely disliking it.
 contract as the runner: every argument one argv element, no command-line
 string anywhere — `runner/mod.rs:275-316`'s dispatch shape, reused). Kept
 even though nothing else is kept: typed argv is free, and it kills the
-shell-metacharacter class (`;`, `$()`, backticks) at the root — measured
-(`docs/run-program-escape-report.md:132-134`).
+shell-metacharacter class (`;`, `$()`, backticks) at the root — measured.
 
 **"Unsandboxed", precisely:**
 
@@ -112,8 +111,7 @@ shell-metacharacter class (`;`, `$()`, backticks) at the root — measured
   `HOME`, `TMPDIR` (the parent's *values* for those names), plus a
   config-declared `pass_env` list. Nothing else reaches the child. This is
   the runner's own discipline (`spawn.rs:59-63`: "a planted variable in the
-  parent's environment cannot reach the child"; measured,
-  `docs/run-program-escape-report.md:140-142`) kept for the one channel
+  parent's environment cannot reach the child"; measured) kept for the one channel
   where the parent's secrets (the shell's API tokens, resolved DB
   credentials) would otherwise flow into model-chosen execution. The known
   cost: toolchains that want proxy or cert variables need `pass_env`
@@ -142,7 +140,7 @@ existing trust boundary reverts protected keys
 (`saya-config/src/resolve.rs:138-146`, `layers.rs:216-242`, with
 `jobs_interpreter` already protected at `layers.rs:222`), and this section
 goes further: `--trust-project-config` does not unlock it, because the
-project file is model-writable (`workspace_write` reaches it once granted).
+project file is model-writable (`write` reaches it once granted).
 The lane composes **once per session process**, and only when a workspace
 root binds (no-workspace sessions are the database-question shape; the
 cwd needs a root) — the composition rule the probe refusal already
@@ -191,7 +189,7 @@ interpreter-family name (`is_refused_runner_program`, `scope.rs:111-137`)
 adds the interpreter warning with the lane's own clause — "the model writes
 the program the interpreter runs, and there is no sandbox — it runs as you.
 What the interpreter computes is not a reviewed, fixed binary." — the same
-no-euphemism builder the two doors already share (`approval_text.rs:15-23`)
+no-euphemism warning the run door states (`approval_facts/run_command.rs:107-112`)
 with the fork fact replaced by the unsandboxed fact; (5) argv display keeps
 the collapse-whitespace defense (`approval_facts/run_program.rs:13-15`) —
 the *journal* carries verbatim argv (§4), the *prompt* carries the
@@ -231,7 +229,7 @@ scripts — arbitrary code fetched from the network. The prefix bounds the
 *string the model typed*, not the *behaviour approved*; the gap between
 them is the entire risk. And argv-level matching is defeatable by the
 program's own flag grammar (`git -c`, hooks, `--exec-path`, subcommand
-re-routing) — the same argument that rejected opencode's `git *` prefix
+re-routing) — the same argument that rejected broad `git *` prefix
 patterns: "prefix matching over an adversarial space… silent scope creep
 inside a granted pattern" (`UNIFY.md:665-672`). The repo already refuses
 tokens whose words would lie (`scopes.rs:203-229` — "a token that approved
@@ -244,7 +242,7 @@ is exec'd as the child, resolved on the passed PATH, with any argv. It
 bounds nothing about what the program then does — spawns, downloads,
 executes, writes — and the prompt's not-bounded line says so. This is the
 same honesty shape as the interpreter door's warning ("the model writes the
-program the interpreter runs", `approval_text.rs:15-23`): the grant names
+program the interpreter runs", `approval_facts/run_command.rs:107-112`): the grant names
 what is consented; the warning names what is not. Consequences, stated:
 same name, different argv — never re-asked (the grant covers argv-any;
 that is the point of a session grant, `UNIFY.md:648-651`); different name —
@@ -294,16 +292,16 @@ unprompted (the unconditional read surface, `SESSION-WORKSPACE.md:168-176`)
 and can at most drive a staged, sandbox-contained binary — no network
 (`session_runner.rs:116`), fs bounded to the project, no fork, `.git` and
 symlinks refused to tools, output redacted, credential channels pinned shut
-by the isolation battery (`docs/run-program-escape-report.md:132-154`).
+by the isolation battery.
 
 **The new exposure, plainly.** With the lane on, the same hostile file can
 drive `npm install` in a repo whose `package.json` it authored — post-install
 runs arbitrary code as the user's uid, with full network and the whole
 filesystem: exfiltration of the workspace, of `pass_env` variables, and of
 anything the uid can read; **persistence** — shell rc files, PATH shims,
-git config, and *the staged program_dir itself*, so a corrupted `bench`
-validates green in a future session's `run_program` (the S3 escape
-`docs/run-program-escape-report.md:89-100`, reachable now through the lane
+git config, and *the staged program_dir itself*, so a corrupted `cargo`
+validates green in a future session's `run_program` (the S3 escape,
+reachable now through the lane
 that was supposed to be outside it — hence the `run_program` prompt line of
 §3(6)); and **journal softness** — the session journal, scratch, and even
 other runs' journals are uid-writable paths, so a consented child can edit
@@ -327,7 +325,7 @@ this; it makes it visible.
 
 **The job runner survives unchanged**, for three reasons: it is the only
 lane runs get; it is the honest lane for contained work even in sessions
-(`bench`, `ripgrep` — and the ask is cheap because containment holds,
+(`cargo`, `ripgrep` — and the ask is cheap because containment holds,
 `UNIFY.md:673-679`); and the interpreter door remains the *contained* place
 for scripts (staged bytes, empty egress, typed token — `refuse.rs:144-215`,
 `grant_token.rs:140-145`), strictly safer than host `python3`. The two

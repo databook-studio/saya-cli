@@ -1,5 +1,4 @@
-//! Push-guard arms: learning usage stays out of the session segment; zero-input/output turns still push; the footer stays a System block (moved verbatim from `streaming_tests.rs`, via
-//! `streaming/footer_tests.rs`).
+//! Push-guard arms: learning usage stays out of the session segment; zero-input/output turns still push; the footer stays a System block.
 
 use super::*;
 
@@ -20,6 +19,7 @@ pub(super) fn stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel: CancellationToken::new(),
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 
@@ -37,6 +37,7 @@ pub(super) fn cancelled_stream_with(messages: Vec<StreamMsg>) -> Stream {
         rx,
         cancel,
         prompt: "question".into(),
+        question_scope: None,
     }
 }
 

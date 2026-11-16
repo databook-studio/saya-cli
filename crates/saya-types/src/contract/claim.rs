@@ -7,12 +7,12 @@ pub const MAX_REFERENCED_COLUMNS: usize = 32;
 
 /// Serialization version for `ClaimPayload`. Bump when a variant's stored shape changes.
 ///
-/// Version 2 (Phase 5a) does not change a payload's own shape; it is bumped
+/// Version 2 does not change a payload's own shape; it is bumped
 /// because `referenced_columns_json` changed from a bare name list
 /// (`["a","b"]`) to an array of typed snapshots (`[{"name","data_type",
 /// "nullable"}]`). A claim's `payload_version` records which shape the row
 /// was written under, so a future reader knows whether to expect snapshots
-/// or names. Old version-1 rows still decode: the store upgrades a bare
+/// or names. Version-1 rows still decode: the store upgrades a bare
 /// name to a name-only snapshot flagged unknown.
 ///
 /// Version 3 (claim-reasons) adds an optional `reason` to the directive

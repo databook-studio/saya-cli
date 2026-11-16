@@ -175,7 +175,7 @@ async fn opener_waits_and_succeeds_when_the_lock_frees_within_the_ceiling() {
 }
 
 /// An opener that never gets the lock fails with `Unavailable` inside the
-/// ceiling — it does not hang. Today the open relies on migration's internal
+/// ceiling — it does not hang. The open relies on migration's internal
 /// retry and waits without bound, so this test fails (the timeout fires before
 /// any honest error). The bounded loop makes it fail honestly within the
 /// ceiling instead.
@@ -230,9 +230,8 @@ async fn opener_fails_within_the_ceiling_when_the_lock_never_frees() {
     // bound that matters is that the opener gives up at all rather than waiting
     // out a lock held for two minutes.
     // Bound the whole thing generously: what must not happen is waiting out the
-    // lock holder. Pinning a tight number here is what made this test fail when
-    // the cancellation was removed, and the tight number was never the property
-    // worth asserting.
+    // lock holder. A tight number is not the property worth asserting; the
+    // opener must give up rather than wait out the holder.
     assert!(
         elapsed <= OPEN_BUSY_CEILING + Duration::from_secs(10),
         "opener failed at {elapsed:?} — far beyond one attempt plus the ceiling \

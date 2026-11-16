@@ -6,11 +6,6 @@ database = "warehouse"
 user = "saya_readonly"
 password = { env = "SAYA_ANALYTICS_PASSWORD" }
 
-[profiles.local]
-type = "duckdb"
-path = "./data/warehouse.duckdb"
-read_only = true
-
 [profiles.mysql]
 type = "mysql"
 host = "localhost"
@@ -50,4 +45,3 @@ auth_type = "externalbrowser"
 type = "sqlite"
 path = "./data/warehouse.sqlite3"
 read_only = true
-

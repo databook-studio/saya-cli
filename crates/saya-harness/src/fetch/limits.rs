@@ -7,7 +7,7 @@ use saya_agent::{AgentLimits, tool_message_cap};
 
 /// The byte bound: the body's destination is the model's context, and 1 MiB
 /// of text is already far beyond what one useful turn can carry. Anything a
-/// run needs beyond this belongs to the download slice's bounded stream to
+/// run needs beyond this belongs to the download tool's bounded stream to
 /// the workspace, not in context — so the bound trips as a typed error
 /// rather than silently shortening the body.
 pub const MAX_TOTAL_BYTES: usize = 1024 * 1024;
@@ -26,8 +26,8 @@ pub const MAX_REDIRECT_HOPS: usize = 5;
 /// Slack reserved below the loop's tool-message cap for everything a fetch
 /// result carries besides the body: the JSON envelope, the (policy-judged)
 /// final URL, the block's wrapper lines and label, and short-string
-/// escaping growth. The lane's body bound is the cap minus this slack, so
-/// an ordinary fetch success fits the lane with room to spare and the
+/// escaping growth. The fetch body bound is the cap minus this slack, so
+/// an ordinary fetch success fits with room to spare and the
 /// loop's own truncation marker never fires on one.
 pub const ENVELOPE_SLACK: usize = 4_096;
 
@@ -43,7 +43,7 @@ pub struct FetchLimits {
 }
 
 impl FetchLimits {
-    /// The tool-message cap the lane pre-binds under — the same number the
+    /// The tool-message cap the fetch pre-binds under — the same number the
     /// loop's `tool_message` truncates at (`min(byte_budget, 65_536)`;
     /// runs pin the default conversation budget). Exported through this
     /// constructor so the harness's declared fetch bound and the loop's

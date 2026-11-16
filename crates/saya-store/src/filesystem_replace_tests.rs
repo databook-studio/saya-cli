@@ -1,4 +1,4 @@
-//! Regression tests for non-atomic session replacement (A012): a failed
+//! Regression tests for non-atomic session replacement: a failed
 //! publish must preserve the last good session, on every platform. The
 //! tests inject a failing [`Replacer`](super::super::replace::Replacer)
 //! through the [`publish_staged`](super::super::replace::publish_staged)
@@ -85,7 +85,7 @@ fn failed_publish_keeps_the_last_good_session() {
     // to 8 bytes, so the last good session is unrecoverable through this
     // seam. GREEN (post-fix): `save` routes through `publish_staged`, and
     // the real AtomicReplace is a single rename that never partially
-    // overwrites, so the old record survives every publish failure.
+    // overwrites, so the earlier record survives every publish failure.
     let raw = std::fs::read(root.join("s.json")).expect("target still exists");
     let loaded: RedactedSession = serde_json::from_slice(&raw).expect("target still parses");
     assert_eq!(

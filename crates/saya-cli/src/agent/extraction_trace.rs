@@ -55,9 +55,8 @@ fn enabled() -> bool {
 /// debug-knob pattern in this crate (`SAYA_HISTORY`, `SAYA_STATE_DB`,
 /// `SAYA_SESSION_DIR`) and is safe to leave set in a shell while debugging a
 /// "memory didn't record" report. `--verbose` seeds the same gate at startup
-/// via [`enable`], which is what a user reaches for first and what that flag
-/// previously did not do — it was declared and read nowhere. Off by default,
-/// so production logs nothing.
+/// via [`enable`], which is what a user reaches for first. Off by default, so
+/// production logs nothing.
 pub(crate) fn trace_extraction(
     outcome: &'static str,
     object_count: usize,
@@ -90,7 +89,7 @@ fn format_trace_line(
         None => String::new(),
     };
     // Duration is the extraction's real cost on a given gateway and model:
-    // there is no wall-clock cap (owner decision), so this is how a slow
+    // there is no wall-clock cap, so this is how a slow
     // model's post-turn wait — and what the session breaker saw — is read.
     let ms = match elapsed {
         Some(d) => format!(" ms={}", d.as_millis()),
@@ -130,9 +129,8 @@ mod tests {
 
     /// `--verbose` calls [`enable`] before any turn runs; the gate must then
     /// report on regardless of the environment. This is the whole point of the
-    /// seeding design — the flag was previously declared and read nowhere, so
-    /// a test that only exercised the env var would have passed against a dead
-    /// flag.
+    /// seeding design — a test that only exercised the env var would pass
+    /// against a flag that nothing reads.
     #[test]
     fn enable_seeds_the_gate_without_touching_the_environment() {
         enable();

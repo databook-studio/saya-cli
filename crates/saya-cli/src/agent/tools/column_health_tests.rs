@@ -7,7 +7,7 @@
 use super::*;
 use async_trait::async_trait;
 use saya_agent::ToolExecutor;
-use saya_connectors::{DatabaseConnector, prepare_duckdb_sql};
+use saya_connectors::{DatabaseConnector, prepare_sqlite_sql};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 
 /// A connector returning rows with known nulls, zeros, and distinct values so
@@ -17,7 +17,7 @@ struct HealthConnector;
 #[async_trait]
 impl DatabaseConnector for HealthConnector {
     fn dialect(&self) -> SqlDialect {
-        SqlDialect::DuckDb
+        SqlDialect::Sqlite
     }
 
     async fn connect(&self) -> Result<(), ConnectionError> {
@@ -50,7 +50,7 @@ struct SentinelConnector;
 #[async_trait]
 impl DatabaseConnector for SentinelConnector {
     fn dialect(&self) -> SqlDialect {
-        SqlDialect::DuckDb
+        SqlDialect::Sqlite
     }
 
     async fn connect(&self) -> Result<(), ConnectionError> {
@@ -79,7 +79,7 @@ struct SafetyConnector;
 #[async_trait]
 impl DatabaseConnector for SafetyConnector {
     fn dialect(&self) -> SqlDialect {
-        SqlDialect::DuckDb
+        SqlDialect::Sqlite
     }
 
     async fn connect(&self) -> Result<(), ConnectionError> {
@@ -91,7 +91,7 @@ impl DatabaseConnector for SafetyConnector {
     }
 
     async fn execute(&self, req: QueryRequest) -> Result<QueryResult, ConnectionError> {
-        let sql = prepare_duckdb_sql(&req.sql, req.max_rows)?;
+        let sql = prepare_sqlite_sql(&req.sql, req.max_rows)?;
         Ok(QueryResult {
             columns: Vec::new(),
             rows: Vec::new(),
@@ -204,7 +204,7 @@ async fn column_health_refuses_a_write_exactly_as_bounded_sql_query_does() {
 
 #[test]
 fn column_health_is_advertised_with_its_arguments_when_sharing_is_on() {
-    let tools = DatabaseTools::definitions(true, false, false, false, true);
+    let tools = DatabaseTools::definitions(true, false, false, false);
     let tool = tools
         .iter()
         .find(|tool| tool.name == "column_health")
@@ -215,7 +215,7 @@ fn column_health_is_advertised_with_its_arguments_when_sharing_is_on() {
     assert!(tool.parameters["properties"]["connection"].is_object());
     assert!(tool.parameters["properties"]["sql"].is_object());
 
-    let hidden = DatabaseTools::definitions(false, false, false, false, false);
+    let hidden = DatabaseTools::definitions(false, false, false, false);
     assert!(
         !hidden.iter().any(|tool| tool.name == "column_health"),
         "column_health is not advertised when data sharing is off"

@@ -1,10 +1,15 @@
 use super::runtime::RuntimeError;
-use saya_config::{ConfigFile, ConnectionsFile, parse_explicit_env_file};
+use saya_config::{ConfigFile, ConnectionsFile, MAX_CONFIG_FILE_BYTES, parse_explicit_env_file};
 use std::{
     collections::BTreeMap,
     fs,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
+
+#[cfg(test)]
+#[path = "sources_tests.rs"]
+mod tests;
 
 pub(crate) struct Paths {
     pub(crate) user_config: Option<PathBuf>,
@@ -43,7 +48,7 @@ pub(crate) fn read_config(path: &Option<PathBuf>) -> Result<Option<ConfigFile>, 
     if !path.exists() {
         return Ok(None);
     }
-    let value = fs::read_to_string(path).map_err(|source| RuntimeError::Read {
+    let value = read_config_text(path).map_err(|source| RuntimeError::Read {
         path: path.clone(),
         source,
     })?;
@@ -54,7 +59,7 @@ pub(crate) fn read_required_config(path: &Path) -> Result<ConfigFile, RuntimeErr
     if !path.exists() {
         return Err(RuntimeError::Missing(path.into()));
     }
-    let value = fs::read_to_string(path).map_err(|source| RuntimeError::Read {
+    let value = read_config_text(path).map_err(|source| RuntimeError::Read {
         path: path.into(),
         source,
     })?;
@@ -95,4 +100,42 @@ pub(crate) fn read_env_file(path: &Path) -> Result<BTreeMap<String, String>, Run
 
 pub(crate) fn process_env() -> BTreeMap<String, String> {
     std::env::vars().collect()
+}
+
+/// Both config adapters read the same opened regular file under a byte cap.
+/// Config symlinks remain supported; Unix nonblocking open refuses FIFO traps.
+fn read_config_text(path: &Path) -> io::Result<String> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "configuration must be a regular file",
+        ));
+    }
+    if metadata.len() > MAX_CONFIG_FILE_BYTES as u64 {
+        return Err(config_too_large());
+    }
+    let mut bytes = Vec::with_capacity(MAX_CONFIG_FILE_BYTES + 1);
+    file.take((MAX_CONFIG_FILE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_CONFIG_FILE_BYTES {
+        return Err(config_too_large());
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "configuration must be UTF-8"))
+}
+
+fn config_too_large() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("configuration exceeds the {MAX_CONFIG_FILE_BYTES}-byte limit"),
+    )
 }

@@ -5,9 +5,14 @@
 //! shared `run_contracts` dispatcher — no second parsing, privacy decision, or
 //! DTO mapping lives here.
 
+mod decide;
+mod portable;
+
 use super::remember::parse_remember;
 use crate::cli::{ContractsCommand, ForgetReasonArg, ReviewDecisionArg};
 use crate::slash::SlashParseError;
+use decide::parse_decide;
+use portable::parse_portable;
 
 /// Payload-free usage for the merged `/contracts` command. Never echoes the
 /// untrusted tail — a two-token argument is a usage error, not a Show of either
@@ -27,42 +32,10 @@ fn usage_queue() -> String {
     "/queue [limit]".into()
 }
 
-/// Payload-free usage for the spec-D decide commands. One token: a stored
-/// claim-id prefix (the `ki-xxxx` form `contracts list` abbreviates to). Never
-/// echoes the untrusted prefix.
-fn usage_decide() -> String {
-    "/confirm|/reject|/use <claim-id-prefix>".into()
-}
-
 /// Payload-free usage for `/approve-all`. The optional tokens are
 /// `--yes` and a numeric limit; anything else is a usage error.
 fn usage_approve_all() -> String {
     "/approve-all [--yes] [limit]".into()
-}
-
-/// Parses the tail of a `/confirm`, `/reject`, or `/use` command: exactly one
-/// token (the claim-id prefix). The decision is fixed by the command name.
-/// Translates to `ContractsCommand::Decide` with `profile: None` — the TUI
-/// stamps the active profile, the headless path resolves the default, exactly
-/// as `/queue` does. A too-short prefix is not refused here: the resolve step
-/// refuses `c` or empty with a typed message, so parsing stays shape-only.
-fn parse_decide(
-    _name: &str,
-    arg: &str,
-    decision: ReviewDecisionArg,
-) -> Result<Option<ContractsCommand>, SlashParseError> {
-    let tokens: Vec<&str> = arg.split_whitespace().collect();
-    let prefix = tokens
-        .first()
-        .ok_or_else(|| SlashParseError(usage_decide()))?;
-    if tokens.len() != 1 {
-        return Err(SlashParseError(usage_decide()));
-    }
-    Ok(Some(ContractsCommand::Decide {
-        prefix: prefix.to_string(),
-        decision,
-        profile: None,
-    }))
 }
 
 /// Translates a slash command name + its argument tail into the matching
@@ -79,13 +52,22 @@ pub(crate) fn parse_contract_command(
         // argument → list every contract for the active profile; one token →
         // show that object's contract; two tokens → a payload-free usage error
         // (a qualified name is a single token). `/contract` is kept as a silent
-        // alias of this same arm so the two names can no longer disagree on
+        // alias of this same arm so the two names cannot disagree on
         // what they do — see `contract_is_a_silent_alias_of_the_merged_command`
         // and the SPEC REVIEW for why it is an alias rather than removed. Both
         // pass `profile: None`: the TUI stamps the active profile, the
         // headless path resolves the default, exactly as before.
         "contracts" | "contract" => {
+            // The portable operations ride the merged command's first token,
+            // exactly as the headless CLI's subcommand word does. A bare
+            // `/contracts export` is a usage error (the path is required), not
+            // a Show of a table literally named "export" — the operation word
+            // wins, as `saya contracts export` does headlessly.
             let tokens: Vec<&str> = arg.split_whitespace().collect();
+            if let Some(&word @ ("export" | "import" | "import-dbt")) = tokens.first() {
+                let tail = tokens[1..].join(" ");
+                return parse_portable(word, &tail).map(Some);
+            }
             match tokens.len() {
                 0 => Ok(Some(ContractsCommand::List { profile: None })),
                 1 => Ok(Some(ContractsCommand::Show {
@@ -142,10 +124,10 @@ pub(crate) fn parse_contract_command(
                 limit,
             }))
         }
-        // Spec D: act on the claim the last turn showed, by a short stored
+        // Act on the claim the last turn showed, by a short stored
         // claim-id prefix rather than a 64-character id. The decision is fixed
         // by the command name; the prefix is the one positional. See
-        // `parse_decide` and the §4 defence in the report.
+        // `parse_decide` and the payload-free decision grammar.
         "confirm" => parse_decide(name, arg, ReviewDecisionArg::Confirm),
         "reject" => parse_decide(name, arg, ReviewDecisionArg::Reject),
         // the batch approve. `/approve-all` previews the queue and

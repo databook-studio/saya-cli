@@ -1,7 +1,7 @@
 //! Chapter-boundary tests for the answer lifecycle: a reset or re-stream is
 //! scoped to the chapter in flight, so an earlier chapter's delivered answer
-//! is never erased by a retry. The audit sequence (F02) is replayed against
-//! the transcript directly — no provider involved.
+//! is never erased by a retry. The sequence is replayed against the
+//! transcript directly — no provider involved.
 
 use super::answer::RETRY_NOTICE;
 use super::{BlockKind, Transcript, apply_event};
@@ -17,7 +17,7 @@ fn snapshot(transcript: &Transcript) -> Vec<(BlockKind, u32, String)> {
         .collect()
 }
 
-/// The audit's exact four-step sequence: a completed answer from an earlier
+/// The four-step sequence: a completed answer from an earlier
 /// chapter is evidence the user already received, so a retry that begins a
 /// new chapter — even one whose stream died before any text — must leave it
 /// untouched, and the retried text must land in the new chapter.
@@ -72,8 +72,8 @@ fn a_retry_in_a_new_chapter_leaves_the_previous_answer_alone() {
     assert_eq!(old.text, "old answer");
 }
 
-/// The narrow unit behind the audit sequence: a reset with no answer block
-/// in the chapter in flight clears nothing anywhere — the transcript is
+/// The narrow unit behind that sequence: a reset with no answer block in the
+/// chapter in flight clears nothing anywhere — the transcript is
 /// byte-for-byte unchanged, notice included.
 #[test]
 fn a_reset_with_no_answer_in_this_chapter_clears_nothing() {
@@ -91,9 +91,9 @@ fn a_reset_with_no_answer_in_this_chapter_clears_nothing() {
     );
 }
 
-/// Positive control (passes before and after the fix): a retry *within* one
-/// chapter still discards the partial — the chapter bound must not weaken
-/// the discard. Kept as a control, not counted as evidence of the fix.
+/// Positive control: a retry *within* one chapter still discards the partial
+/// — the chapter bound must not weaken the discard. A control, not evidence
+/// of the bound itself.
 #[test]
 fn a_retry_within_one_chapter_still_discards_the_partial() {
     let mut t = Transcript::new();

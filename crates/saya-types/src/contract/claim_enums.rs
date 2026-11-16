@@ -56,9 +56,9 @@ pub enum ClaimStatus {
     Rejected,
     Stale,
     /// Two confirmed claims disagree about a single-valued property. Nothing
-    /// constructs this today, but `saya-store`'s confirm and revise rules accept
+    /// constructs this, but `saya-store`'s confirm and revise rules accept
     /// it as a legal *input* state, so removing it changes which transitions are
-    /// legal. Phase D retires it properly, together with the state collapse.
+    /// legal.
     Contradicted,
     Forgotten,
 }

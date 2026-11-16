@@ -7,8 +7,8 @@
 //! feed it: `Followup::Sql { connection }` (the dispatch-time profile) and
 //! `QueryResult.executed_sql`. No period, units, filters, or timing — none
 //! exists anywhere, and none is invented here. The line claims no total:
-//! it appends to `format_table` output (which already carries packet 1's
-//! floor footer), never rewrites it.
+//! it appends to `format_table` output (which already carries the floor
+//! footer), never rewrites it.
 
 /// Query chars kept on the scope line before an ellipsis marks the cut.
 /// Long SQL stays whole in `executed_sql` and `block.text`; only this

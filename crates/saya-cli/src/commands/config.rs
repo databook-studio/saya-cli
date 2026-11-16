@@ -1,29 +1,75 @@
-use crate::{cli::ConfigCommand, config, render::RenderFormat};
+use crate::cli::{ConfigCommand, DoctorTaskArg};
+use crate::config;
+use crate::config::doctor_task::{DoctorTask, TaskReadiness, readiness};
+use crate::config::runtime::RuntimeConfig;
+use crate::render::{RenderFormat, TerminalEvent};
 
-use super::output::{failure_message, result};
+use super::output::{emit, failure_message, result};
 
 pub(super) fn run(
     command: ConfigCommand,
-    runtime: &config::runtime::RuntimeConfig,
+    runtime: &RuntimeConfig,
     format: RenderFormat,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match command {
         ConfigCommand::Init { project } => run_init(format, project),
-        ConfigCommand::Doctor => {
-            let diagnosis = config::doctor::report(runtime);
-            result(diagnosis.lines.join("\n"), format)?;
-            Ok(diagnosis.exit_code())
-        }
-        ConfigCommand::Show => {
-            let value = runtime.resolved.redacted_diagnostics();
-            let output = match format {
-                RenderFormat::Text => serde_json::to_string_pretty(&value)?,
-                _ => serde_json::to_string(&value)?,
+        ConfigCommand::Doctor { task } => run_doctor(runtime, format, task),
+        ConfigCommand::Show { explain } => {
+            let output = if explain {
+                let explanation = config::explain::explain(runtime);
+                match format {
+                    RenderFormat::Text => config::explain::text(&explanation),
+                    _ => serde_json::to_string(&explanation)?,
+                }
+            } else {
+                let value = runtime.resolved.redacted_diagnostics();
+                match format {
+                    RenderFormat::Text => serde_json::to_string_pretty(&value)?,
+                    _ => serde_json::to_string(&value)?,
+                }
             };
             println!("{output}");
             Ok(0)
         }
     }
+}
+
+impl From<DoctorTaskArg> for DoctorTask {
+    fn from(arg: DoctorTaskArg) -> Self {
+        match arg {
+            DoctorTaskArg::Query => Self::Query,
+            DoctorTaskArg::Ai => Self::Ai,
+            DoctorTaskArg::Coding => Self::Coding,
+        }
+    }
+}
+
+/// Without `--task` the flat report keeps its bytes and exit code; with one,
+/// readiness is one structured `doctor_task` event and exit 0 (ready) / 3
+/// (not ready). `cwd` comes from the process, never `--workspace`, which
+/// subcommands refuse.
+fn run_doctor(
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    task: Option<DoctorTaskArg>,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let Some(arg) = task else {
+        let diagnosis = crate::config::doctor::report(runtime);
+        result(diagnosis.lines.join("\n"), format)?;
+        return Ok(diagnosis.exit_code());
+    };
+    let task = DoctorTask::from(arg);
+    let cwd = std::env::current_dir()?;
+    let readiness: TaskReadiness = readiness(runtime, task, &cwd);
+    emit(
+        TerminalEvent::DoctorTask {
+            task: task.name().to_string(),
+            ready: readiness.ready,
+            checks: readiness.checks,
+        },
+        format,
+    );
+    Ok(if readiness.ready { 0 } else { 3 })
 }
 
 pub(super) fn run_init(

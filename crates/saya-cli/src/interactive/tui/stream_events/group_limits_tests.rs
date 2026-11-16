@@ -1,5 +1,5 @@
-//! Tests for the tool-group collapse limits: failure and persistence (C3), driven through `super::apply_event` (moved verbatim
-//! from the inline `tests` module in `stream_events/apply.rs`).
+//! Tests for the tool-group collapse limits: failure and persistence, driven
+//! through `super::apply_event`.
 
 use super::{Transcript, apply_event};
 use saya_agent::AgentEvent;
@@ -13,32 +13,33 @@ fn write_effect() -> Option<saya_agent::ToolEffect> {
     })
 }
 
-/// Two successful workspace writes: the shared fixture every C3 property
+/// Two successful workspace writes: the shared fixture every collapse
+/// property
 /// builds its group from.
 fn two_write_calls() -> Vec<AgentEvent> {
     vec![
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "notes.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "notes.md written".into(),
         },
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "other.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "other.md written".into(),
         },
     ]
 }
 
-/// C3 property 5: a group with a failure is not collapsible into a count —
+/// Property 5: a group with a failure is not collapsible into a count —
 /// the failure's full pair renders with the shared mark (`✗` for the
 /// failed call, `✓` for the success), never the piped text's `Using tool:`
 /// rendering.
@@ -46,12 +47,12 @@ fn two_write_calls() -> Vec<AgentEvent> {
 fn group_with_a_failure_renders_the_full_pair() {
     let events = vec![
         AgentEvent::tool_requested(
-            "workspace_write",
+            "write",
             serde_json::json!({"path": "notes.md", "content": "hi"}),
             write_effect(),
         ),
         AgentEvent::ToolCompleted {
-            name: "workspace_write".into(),
+            name: "write".into(),
             summary: "notes.md written".into(),
         },
         AgentEvent::tool_requested(
@@ -90,8 +91,8 @@ fn group_with_a_failure_renders_the_full_pair() {
     assert_eq!(
         texts,
         vec![
-            "→ workspace_write: notes.md",
-            "✓ workspace_write: notes.md written",
+            "→ write: notes.md",
+            "✓ write: notes.md written",
             "→ run_command: pytest",
             "✗ run_command: failed pytest",
         ],
@@ -107,7 +108,7 @@ fn group_with_a_failure_renders_the_full_pair() {
     );
 }
 
-/// C3 property 6: expansion state is never written to the session file,
+/// Property 6: expansion state is never written to the session file,
 /// and a resumed session does not carry it — replay renders through
 /// `replay.rs`, unchanged, with no group state. (Why: the transcript is
 /// never serialized — `SessionState` carries role + content only — so the
@@ -115,7 +116,7 @@ fn group_with_a_failure_renders_the_full_pair() {
 /// path both showing no group text.)
 #[test]
 fn expansion_state_is_not_persisted_and_resume_carries_none_of_it() {
-    use crate::interactive::session_state::SessionState;
+    use crate::interactive::session::state::SessionState;
 
     let mut transcript = Transcript::new();
     for event in two_write_calls() {

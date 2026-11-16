@@ -21,14 +21,15 @@ use crate::connection;
 use crate::prompt_approval::TerminalApproval;
 use saya_agent::ChatProvider;
 use saya_harness::fetch::{DownloadBudget, ReqwestTransport};
-use saya_harness::scratch::ScratchSql;
 use saya_types::Budgets;
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::mode::RunApproval;
-use super::runner::{RunRunner, build as build_runner};
-use super::tools::RunFetch;
+use super::tools::{RunFetch, run_shell};
+use crate::agent::tools::coding::shell_secrets::host_policy;
+use crate::agent::tools::consent::{Caller, OwnApproval, OwnedToolApproval};
+use crate::agent::tools::shell_policy::ShellTool;
+use crate::mcp::client::McpTools;
 
 /// How much workspace the episode brief's manifest walks: names, sizes,
 /// digests — never bulk contents. Conservative brief bounds, fixed here so
@@ -66,29 +67,30 @@ pub(super) fn bind_step_budgets(plan: saya_types::RunPlan, run: &Budgets) -> say
 pub(super) struct Pieces {
     pub(super) provider: Box<dyn ChatProvider>,
     pub(super) tools: Arc<DatabaseTools>,
-    /// The run's scratch database (ADR 0003), admitted once per run when the
-    /// run approved `scratch` — one file shared across every step toolset;
-    /// `None` opens nothing and nothing else may open the file.
-    pub(super) scratch: Option<Arc<ScratchSql>>,
     /// The run-level fetch wiring, built once per run when the run approved
     /// a fetch scope: the shared transport and the download wallet whose
     /// clones arm both the fetch-capable steps' members and the sink's
     /// pause check. `None` means the run did not approve fetch, nothing
     /// fetch-shaped exists, and the sink's download check is inert.
     pub(super) fetch: Option<RunFetch>,
-    /// The run's runner wiring, built once per run when the run approved a
-    /// runner scope **and** the startup probe proved the host: the placement
-    /// guard, the probe, and the admission check all ran here. `None` when
-    /// the run did not approve runner or the host did not prove — either way
-    /// the capability is absent from every toolset, never degraded.
-    pub(super) runner: Option<RunRunner>,
-    /// The capabilities plan validation must see: the run's approved scopes
-    /// passed through the provision's own fail-closed rule
-    /// (`provision.plan_capabilities(&scopes)`), so a plan asking for the
-    /// runner on an unproven host refuses as needs-approval — the honest
-    /// refusal — instead of reaching a tool that does not exist.
+    /// The run's `shell`, built once per run over the run's workspace — the
+    /// same tool the coding root advertises, with the same lane decision.
+    /// Every step's toolset carries it. `None` where the run has no shell at
+    /// all: mode `never`, or `read-only` on a host with no proven sandbox.
+    pub(super) shell: Option<Arc<ShellTool>>,
+    /// The run's MCP lane: the configured servers' tools, started once per
+    /// run under the run's admitted mode. `None` where the mode reaches no
+    /// server or the configuration names none.
+    pub(super) mcp: Option<Arc<McpTools>>,
+    /// The capabilities plan validation must see: the run's approved scopes,
+    /// unchanged. A plan asking for a scope `--allow` did not state refuses
+    /// as needs-approval, and the removed runner/interpreter families cannot
+    /// be stated at all (`scopes/parser.rs`), so no plan can carry one.
     pub(super) plan_scopes: saya_types::Capabilities,
-    pub(super) decider: TerminalApproval,
+    /// The run's approval decider: the frozen session policy, with a `shell`
+    /// call routed to the shell's own lane decision so the command door is
+    /// decided exactly as the surface that advertises it decides it.
+    pub(super) decider: OwnedToolApproval,
     pub(super) model: String,
     pub(super) profile_names: Vec<String>,
     pub(super) allow_query_data: bool,
@@ -96,30 +98,32 @@ pub(super) struct Pieces {
 
 /// Assembles the pieces. The model is the `orchestrator` endpoint's — the
 /// role every run has — resolved over the `[ai]` block exactly the way
-/// endpoint resolution layers it. `run_root` is the claimed run directory
-/// (the scratch file's home, ADR 0003) and `scopes` the run's approved
-/// capabilities: the scratch database is admitted here, once per run, when
-/// — and only when — the run approved `scratch`, and the runner wiring is
-/// built once per run the same way — the placement guard, the startup probe,
-/// and the admission check — when the run approved a runner scope, fresh and
-/// resume alike. `approval` is the run boundary's admitted mode (`mode.rs`):
-/// the composition is unreachable in bypass mode, because no entry point can
-/// construct the admitted type around it. `allow_tokens` are the run's
-/// stated scopes as the grammar's words — the frozen decider's seeds and the
-/// journal payload's carried words; a fresh run states them from `--allow`,
-/// a resume from the journal. `profile_override` is the host's active
-/// connection profile (what a nested child's `--profile` forwards); `None`
-/// keeps the resolved default. Errors are configuration, connection, or
-/// admission problems (exit-code class 3), reported as text for the caller
-/// to emit.
+/// endpoint resolution layers it. `scopes` are the run's approved
+/// capabilities: the run's `shell` is built once per run, fresh and resume
+/// alike. `approval` is
+/// the run boundary's admitted mode (`mode.rs`): the composition is
+/// unreachable in bypass mode, because no entry point can construct the
+/// admitted type around it. `allow_tokens` are the run's stated scopes as
+/// the grammar's words — the frozen decider's seeds and the journal
+/// payload's carried words; a fresh run states them from `--allow`, a resume
+/// from the journal. `profile_override` is the host's active connection
+/// profile (what a nested child's `--profile` forwards); `None` keeps the
+/// resolved default. `cancellation` is the run's token: the shell kills its
+/// child's whole process group when the run is stopped. Errors are
+/// configuration, connection, or admission problems (exit-code class 3),
+/// reported as text for the caller to emit.
+// The composition root's inputs are the run's own facts — config, workspace,
+// boundary, stated scopes, cancellation — and none of them is derived from
+// another; bundling them would only move the same eight names one level down.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn assemble(
     runtime: &RuntimeConfig,
     profile_override: Option<&String>,
-    run_root: &std::path::Path,
     scopes: &saya_types::Capabilities,
     workspace: std::sync::Arc<saya_harness::workspace::Workspace>,
     approval: RunApproval,
     allow_tokens: &[String],
+    cancellation: &saya_agent::CancellationToken,
 ) -> Result<Pieces, String> {
     let endpoint = runtime
         .resolved
@@ -138,13 +142,13 @@ pub(super) async fn assemble(
         profile::selected(runtime, profile_override).map_err(|error| error.to_string())?;
     let (registry, _failures) = match profile.as_ref() {
         Some(primary) => connection::build_registry(
-            &runtime.secret_resolver(),
-            &runtime.cache_scope,
+            (&runtime.secret_resolver(), &runtime.cache_scope),
             runtime.resolved.query_timeout_seconds,
             false,
             profile_name.as_deref().unwrap_or(""),
             primary,
             &[],
+            None,
         )
         .await
         .map_err(|error| error.to_string())?,
@@ -172,20 +176,6 @@ pub(super) async fn assemble(
         .with_workspace(Some(Arc::clone(&workspace))),
     );
     // Shared per run, admitted before anything runs (fail closed at start,
-    // never mid-flight): one scratch database when the run approved
-    // `scratch`, its per-statement timeout the run's resolved query
-    // timeout. The per-step toolsets put it behind the composites of the
-    // steps that asked for it; a step that did not ask never sees it.
-    let scratch = ScratchSql::admit(run_root, scopes)
-        .map_err(|error| format!("scratch database could not be opened: {error}"))?
-        .map(|scratch| {
-            Arc::new(
-                scratch
-                    .with_query_timeout(Duration::from_secs(runtime.resolved.query_timeout_seconds))
-                    .with_workspace(Arc::clone(&workspace)),
-            )
-        });
-    // Shared per run, admitted before anything runs (fail closed at start,
     // never mid-flight): one transport and one download wallet when the run
     // approved a fetch scope. The per-step toolsets put them behind the
     // composites of the steps that asked for fetch; a step that did not ask
@@ -202,46 +192,68 @@ pub(super) async fn assemble(
         None => None,
     };
     // Shared per run, built before anything runs (fail closed at start,
-    // never mid-flight): the runner wiring — the sandbox composed over the
-    // run's fs roots, the placement guard, the startup probe, and the
-    // admission check — only when the run approved a runner scope. A run
-    // that did not approve runner never consults the directory, and a host
-    // the probe refused strips the scope from plan validation
-    // (`plan_scopes`), so plans asking for it refuse as needs-approval.
-    let wiring = build_runner(
-        &runtime.resolved.jobs.runner,
-        &runtime.resolved.jobs.interpreter,
-        run_root,
-        scopes,
-    )?;
-    // The run's decider is the frozen session policy (U4), seeded from the
+    // never mid-flight): the run's one `shell`, composed over the run's
+    // workspace with the same secret-stripping host policy the coding root
+    // uses. A run has no shell prompt — a headless run cannot ask anyone —
+    // so a host call under `ask` falls back to the sandbox when one is
+    // proven and is refused with a reason when none is, exactly as the root
+    // decides it.
+    let shell = run_shell(
+        &workspace,
+        approval.policy(),
+        None,
+        host_policy(runtime),
+        cancellation.clone(),
+        runtime.resolved.permissions.rules.clone(),
+    );
+    // The run's MCP lane, built once per run under the run's admitted mode.
+    // A run has no operator: under `ask` the lane is composed and every call
+    // is refused with the reason naming the flag that would reach a server,
+    // and `read-only`/`never` compose no lane at all. The lane's lifetime is
+    // the run's; its servers close when the run's pieces drop.
+    let mcp = McpTools::connect_async(
+        runtime.resolved.mcp_servers.clone(),
+        Arc::new(runtime.secret_resolver()),
+        approval.policy(),
+        None,
+        Caller::Session,
+        cancellation.clone(),
+    )
+    .await;
+    // The run's decider is the frozen session policy, seeded from the
     // run's stated scopes: a `sql:<connection>` token pre-answers
     // the read-shaped SQL calls that name the connection under `ask`
     // mode, and every other ask the seeds do not cover denies with the
     // engine's own reason. The composition facts are the run's own —
-    // built from the approved scopes and the wiring, the same gates the
-    // per-step toolsets build from — so a seed pre-answers exactly the
-    // calls the composition carries (U8). The primary stays unbound —
-    // only a call that names its connection suggests a token — and the
-    // policy cannot accumulate: a headless session grant is impossible.
-    let decider = TerminalApproval::frozen(
-        approval.policy(),
-        allow_tokens,
-        super::decider_facts::for_frozen_decider(
-            scopes,
-            &wiring,
-            fetch.as_ref(),
-            &workspace_root,
-            runtime,
-        ),
+    // built from the approved scopes and the admitted members, the same
+    // gates the per-step toolsets build from — so a seed pre-answers exactly
+    // the calls the composition carries. A `shell` call never reaches
+    // these facts: [`OwnedToolApproval`] routes it to the shell's own lane
+    // decision first. The primary stays unbound — only a call that names its
+    // connection suggests a token — and the policy cannot accumulate: a
+    // headless session grant is impossible.
+    let mut owners: Vec<Arc<dyn OwnApproval>> = shell
+        .iter()
+        .map(|shell| Arc::clone(shell) as Arc<dyn OwnApproval>)
+        .collect();
+    if let Some(mcp) = &mcp {
+        owners.push(Arc::clone(mcp) as Arc<dyn OwnApproval>);
+    }
+    let decider = OwnedToolApproval::new(
+        owners,
+        Arc::new(TerminalApproval::frozen(
+            approval.policy(),
+            allow_tokens,
+            super::decider_facts::for_frozen_decider(scopes, fetch.as_ref(), &workspace_root),
+        )),
     );
     Ok(Pieces {
         provider,
         tools,
-        scratch,
         fetch,
-        runner: wiring.runner,
-        plan_scopes: wiring.plan_scopes,
+        shell,
+        mcp,
+        plan_scopes: scopes.clone(),
         decider,
         model: ai.model,
         profile_names,

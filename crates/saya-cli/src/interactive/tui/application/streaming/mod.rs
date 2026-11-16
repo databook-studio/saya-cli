@@ -5,6 +5,7 @@
 //! `drain`. Sibling test files exercise the drain seam.
 
 mod drain;
+mod question;
 mod settle;
 mod start;
 
@@ -22,7 +23,7 @@ pub(crate) use super::super::types::App;
 #[cfg(test)]
 pub(crate) use super::tests_support::{idle_app, unused_runtime};
 #[allow(unused_imports)]
-pub(crate) use crate::interactive::session_state::SessionState;
+pub(crate) use crate::interactive::session::state::SessionState;
 #[allow(unused_imports)]
 pub(crate) use saya_agent::{AgentEvent, AgentOutput, CancellationToken, TokenUsage, UsageCall};
 #[allow(unused_imports)]
@@ -34,6 +35,15 @@ pub(crate) use tokio::sync::mpsc::unbounded_channel;
 #[path = "../auto_compact_tests.rs"]
 mod auto_compact_tests;
 #[cfg(test)]
+#[path = "clarification_worker_tests.rs"]
+mod clarification_worker_tests;
+#[cfg(test)]
+#[path = "drain_capture_tests.rs"]
+mod drain_capture_tests;
+#[cfg(test)]
+#[path = "drain_selectable_tests.rs"]
+mod drain_selectable_tests;
+#[cfg(test)]
 #[path = "footer_tests.rs"]
 mod footer_tests;
 #[cfg(test)]
@@ -44,11 +54,20 @@ mod guard_tests;
 #[path = "numerator_tests.rs"]
 mod numerator_tests;
 #[cfg(test)]
+#[path = "question_tests.rs"]
+mod question_tests;
+#[cfg(test)]
+#[path = "recovery_usage_tests.rs"]
+mod recovery_usage_tests;
+#[cfg(test)]
 #[path = "reset_tests.rs"]
 mod reset_tests;
 #[cfg(test)]
 #[path = "stop_tests.rs"]
 mod stop_tests;
+#[cfg(test)]
+#[path = "task_sync_tests.rs"]
+mod task_sync_tests;
 #[cfg(test)]
 #[path = "warn_absence_tests.rs"]
 mod warn_absence_tests;

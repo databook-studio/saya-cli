@@ -1,3 +1,4 @@
+mod clarification;
 mod cli;
 mod common;
 mod config;
@@ -6,3 +7,8 @@ mod profiles;
 mod provider;
 mod query;
 mod session;
+mod session_auto_compact;
+mod session_budget_wording;
+mod session_cancel_metrics;
+mod session_question_budget;
+mod session_verbose_metrics;

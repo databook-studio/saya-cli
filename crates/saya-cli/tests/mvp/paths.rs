@@ -54,16 +54,13 @@ fn relative_and_existing_parent_state_paths_do_not_change_parent_permissions() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let database = root.join("data.duckdb");
-    duckdb::Connection::open(&database)
-        .unwrap()
-        .execute_batch("CREATE TABLE events (id INTEGER);")
-        .unwrap();
+    let database = root.join("data.sqlite");
+    crate::common::sqlite_fixture(&database, &["CREATE TABLE events (id INTEGER);"]);
     let connections = root.join("connections.toml");
     std::fs::write(
         &connections,
         format!(
-            "[profiles.analytics]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            "[profiles.analytics]\ntype = 'sqlite'\npath = '{}'\nread_only = true\n",
             database.display()
         ),
     )
@@ -73,7 +70,7 @@ fn relative_and_existing_parent_state_paths_do_not_change_parent_permissions() {
         root.join("shared-state.sqlite3").into_os_string(),
     ];
     for state_path in state_paths {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_saya"))
+        let output = crate::common::saya_binary()
             .current_dir(&root)
             .args([
                 "--non-interactive",

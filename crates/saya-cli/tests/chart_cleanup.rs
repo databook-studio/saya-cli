@@ -1,111 +1,51 @@
-//! M0-5: chart temp-file lifecycle.
+//! The headless chart boundary — what a piped session can and cannot
+//! write.
 //!
-//! `render_chart` writes `saya-chart-*.html` into the temp directory and
-//! nothing removed them. The session teardown must delete every chart temp
-//! file the session wrote: the test drives a chart render through the real
-//! binary on the piped-REPL path (the session-loop funnel), ends the session,
-//! and asserts no `saya-chart-*.html` remains.
+//! The chart renderer (the operator's `/chart`) writes `saya-chart-*.html`
+//! into the temp directory, and the session teardown deletes every chart temp
+//! file the session wrote. That sweep cannot be driven from a piped REPL:
+//! `/chart` is an interactive-TUI command, and the headless loop answers it
+//! with `chart is only available in the interactive TUI` without writing
+//! anything. So this run pins the boundary itself — `/chart` is refused
+//! headlessly, and the retired `render_chart` model tool is refused as an
+//! unknown name (never a denial, never a completion) — and that neither
+//! writes a chart temp file. The teardown sweep is covered directly by the
+//! unit tests in `chart/cleanup.rs`.
+//!
+//! The run is isolated (TA-02): the child gets its own temp directory via
+//! `TMPDIR` (plus the Windows equivalents `TMP`/`TEMP`), and every scan and
+//! clean below is scoped to that private directory — the test never deletes
+//! or counts chart files in the shared temp directory another process may be
+//! using. To pin that, a foreign `saya-chart-*.html` is planted in the
+//! process's real temp directory (what `std::env::temp_dir()` returns here)
+//! before the run and must still exist afterwards.
 
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
-struct ChildGuard(Option<Child>);
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            if child.try_wait().unwrap().is_none() {
-                let _ = child.kill();
-            }
-            let _ = child.wait();
-        }
-    }
-}
-
-fn chart_temp_files() -> Vec<PathBuf> {
-    let temp = std::env::temp_dir();
-    let mut found = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&temp) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if name.starts_with("saya-chart-") && path.extension().is_some_and(|e| e == "html") {
-                found.push(path);
-            }
-        }
-    }
-    found
-}
-
-fn clear_chart_temp_files() {
-    for path in chart_temp_files() {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-/// Waits for the run to finish (the `complete` event) and then asserts the
-/// hidden chart call failed validation — never a denial, never a completion:
-/// an unadvertised name is unknown to the loop, so nothing approves it and
-/// nothing executes it.
-fn wait_for_chart_validation_failure(
-    buffer: &Arc<Mutex<String>>,
-    stderr_text: &Arc<Mutex<String>>,
-    timeout: Duration,
-) {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let seen = buffer.lock().unwrap().clone();
-        if seen
-            .lines()
-            .any(|line| line.contains("\"event\":\"complete\""))
-        {
-            drop(seen);
-            let done = buffer.lock().unwrap().clone();
-            assert!(
-                done.lines()
-                    .any(|line| line.contains("\"name\":\"render_chart\"")
-                        && line.contains("failed validation")),
-                "a hidden render_chart must fail validation, never deny or complete; stdout so far:\n{}\nstderr so far:\n{}",
-                done,
-                stderr_text.lock().unwrap()
-            );
-            assert!(
-                !done
-                    .lines()
-                    .any(|line| line.contains("\"event\":\"tool_denied\"")
-                        && line.contains("render_chart")),
-                "a hidden tool is unknown, not denied; stdout so far:\n{}\nstderr so far:\n{}",
-                done,
-                stderr_text.lock().unwrap()
-            );
-            return;
-        }
-        drop(seen);
-        assert!(
-            Instant::now() < deadline,
-            "the run never completed; stdout so far:\n{}\nstderr so far:\n{}",
-            buffer.lock().unwrap(),
-            stderr_text.lock().unwrap()
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
-}
+#[path = "support/sqlite_fixture.rs"]
+mod sqlite_fixture;
+#[path = "chart_cleanup/test_support.rs"]
+mod test_support;
+use test_support::{
+    ChildGuard, chart_temp_files_in, clear_chart_temp_files_in, plant_foreign_chart,
+    wait_for_chart_validation_failure,
+};
 
 #[test]
-fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
+fn the_retired_render_chart_is_refused_headlessly_and_nothing_is_written() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
 
     // Round 1: one render_chart tool call against the test database — the
-    // canned hallucination the mock always issues, even when the tool is
-    // hidden. An unadvertised name fails validation before approval or
-    // execution, which is exactly the hidden-not-advertised outcome: no
+    // canned hallucination the mock always issues, even for a retired tool.
+    // An unknown name fails validation before approval or execution: no
     // denial, no file, no browser.
     let render_call = serde_json::json!({
         "choices": [{"delta": {"tool_calls": [
@@ -154,23 +94,36 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
     let root = std::env::temp_dir().join(format!("saya-cli-chart-cleanup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let database = root.join("chart.duckdb");
-    duckdb::Connection::open(&database)
-        .unwrap()
-        .execute_batch("CREATE TABLE t (label VARCHAR, value INTEGER);")
-        .unwrap();
+    // The workspace is a child of the test root, never the root itself: the
+    // session's state root (`sessions/`) must sit outside the workspace.
+    let workspace = root.join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    // The child's own temp directory, handed to it via TMPDIR: every chart
+    // file the session could write lands here, so all scans and cleans below
+    // stay inside this test's private directory (TA-02).
+    let child_temp = root.join("tmp");
+    std::fs::create_dir_all(&child_temp).unwrap();
+    let database = root.join("chart.sqlite");
+    sqlite_fixture::create(&database, &["CREATE TABLE t (label TEXT, value INTEGER);"]);
     let connections = root.join("connections.toml");
     std::fs::write(
         &connections,
         format!(
-            "[profiles.local]\ntype = 'duckdb'\npath = '{}'\nread_only = true\n",
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\nread_only = true\n",
             database.display()
         ),
     )
     .unwrap();
 
-    // Stale leftovers from any earlier crashed run must not mask the verdict.
-    clear_chart_temp_files();
+    // A foreign chart planted in the shared temp directory — where another
+    // live saya session would write its own charts — must survive the whole
+    // run: this test cleans only its private directory.
+    let foreign = plant_foreign_chart();
+
+    // Stale leftovers from any earlier crashed run must not mask the verdict;
+    // the sweep is scoped to the private directory and never touches the
+    // shared temp directory (the planted foreign file above proves it).
+    clear_chart_temp_files_in(&child_temp);
 
     // Piped stdin/stdout makes this the headless (non-TTY) session path, which
     // funnels through the interactive session loop and ends at session teardown.
@@ -187,7 +140,7 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
             "--profile",
             "local",
         ])
-        .current_dir(&root)
+        .current_dir(&workspace)
         .env("SAYA_CONFIG_HOME", &root)
         .env("SAYA_SESSION_DIR", root.join("sessions"))
         .env("SAYA_STATE_DB", root.join("state.sqlite3"))
@@ -195,6 +148,11 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
         .env("SAYA_MODEL", "mock-model")
         .env("SAYA_PROVIDER_BASE_URL", format!("{address}/v1"))
         .env("SAYA_API_KEY", "mock-secret")
+        // The child's temp directory is private to this run: `TMPDIR` on
+        // Unix, `TMP`/`TEMP` as the Windows equivalents.
+        .env("TMPDIR", &child_temp)
+        .env("TMP", &child_temp)
+        .env("TEMP", &child_temp)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -243,25 +201,32 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
         .unwrap();
     child.stdin.as_mut().unwrap().flush().unwrap();
 
-    // `render_chart` writes a file and opens a browser, so it declares an
-    // external side effect — and read-only approval denies exactly that, so
-    // the chart stays hidden there, not advertised-and-denied: the request
-    // the mock sends names no advertised tool, so it fails validation before
-    // approval or execution — no denial, no file, no browser. This headless
-    // run therefore cannot produce a chart at all, which is the intended
-    // outcome of the M0-1 gate rather than a regression: a side-effecting
-    // tool must not auto-run without a person saying yes. What this
-    // end-to-end run pins is the validation failure (not a denial) plus no
-    // chart temp file. Cleanup itself is covered directly by the unit tests
-    // in `chart/cleanup.rs`.
+    // `render_chart` is retired: it is advertised on no surface, so the
+    // request the mock sends names no known tool and fails validation before
+    // approval or execution — no denial, no file, no browser. What this
+    // end-to-end run pins is that a call to the retired name is refused as
+    // unknown (never a denial, never a completion) and writes no chart temp
+    // file. Cleanup itself is covered directly by the unit tests in
+    // `chart/cleanup.rs`.
     wait_for_chart_validation_failure(&accumulated, &stderr_accum, Duration::from_secs(30));
-    let written = chart_temp_files();
+    let written = chart_temp_files_in(&child_temp);
     assert!(
         written.is_empty(),
-        "a denied render_chart must not have written anything; stdout:\n{}",
+        "the retired render_chart must not have written anything; stdout:\n{}",
         accumulated.lock().unwrap()
     );
 
+    // `/chart` is an interactive-TUI command, so the headless loop refuses
+    // it: the same refusal, and the same absence of a chart file, that the
+    // module doc names as the reason the teardown sweep cannot be driven
+    // from here. The line is read after the agent turn above settled.
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"/chart bar\n")
+        .unwrap();
+    child.stdin.as_mut().unwrap().flush().unwrap();
     child.stdin.as_mut().unwrap().write_all(b"/exit\n").unwrap();
     child.stdin.as_mut().unwrap().flush().unwrap();
     drop(child.stdin.take());
@@ -284,11 +249,30 @@ fn read_only_hides_render_chart_headlessly_and_nothing_is_written() {
         "session should exit cleanly, stderr: {stderr_text}"
     );
 
-    let remaining = chart_temp_files();
+    // The pinned boundary: a piped session cannot chart at all. This is what
+    // makes the teardown assertions below honest — the sweep has nothing of
+    // this session's to delete on this path. The refusal is an error event,
+    // which the ndjson renderer writes to stderr.
+    assert!(
+        stderr_accum
+            .lock()
+            .unwrap()
+            .contains("\"message\":\"chart is only available in the interactive TUI\""),
+        "the headless loop must refuse /chart rather than chart it; stderr:\n{}",
+        stderr_accum.lock().unwrap()
+    );
+
+    let remaining = chart_temp_files_in(&child_temp);
     assert!(
         remaining.is_empty(),
         "chart temp files remain after session teardown: {remaining:?}"
     );
+    assert!(
+        foreign.path.is_file(),
+        "the foreign chart planted in the shared temp directory must survive the run: {:?}",
+        foreign.path
+    );
 
     let _ = std::fs::remove_dir_all(&root);
+    drop(foreign);
 }

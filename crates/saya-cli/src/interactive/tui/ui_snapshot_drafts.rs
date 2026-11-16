@@ -1,7 +1,7 @@
 use super::super::stream_events::apply_event;
 use super::super::transcript::BlockKind;
 /// Composed-screen behaviour snapshots (draft marking).
-/// Moved byte-identical from the hub; plain assertions only.
+/// Plain assertions only; no `insta` snapshots involved.
 use super::support::{busy_stream, empty_app, fixed_status, render_buffer};
 use saya_agent::AgentEvent;
 

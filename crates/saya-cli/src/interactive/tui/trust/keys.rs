@@ -1,7 +1,7 @@
 //! One trust-modal key press resolved to an answer.
 
 use super::super::types::TrustPrompt;
-use crate::interactive::session_trust;
+use crate::interactive::session::permissions::trust as session_trust;
 use ratatui::crossterm::event::KeyCode;
 
 /// The modal's answer once a key resolves to one: bind this folder, bind

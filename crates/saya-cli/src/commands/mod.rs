@@ -1,12 +1,21 @@
+pub(crate) mod coding;
 mod config;
 pub(crate) mod connection;
 pub(crate) mod connection_schema;
 mod connection_schema_cache;
 mod contracts;
+mod investigation;
 mod output;
+pub(crate) mod preferences;
 mod query;
 pub(crate) mod query_input;
+pub(crate) mod runtime;
+// Recovery operations: the surface-neutral list/diff/restore over
+// recorded edit checkpoints, plus the `/recovery` command layer the
+// REPL, TUI and `--turn-file` all run through one `run_recovery`.
+pub(crate) mod recovery;
 pub(crate) mod run;
+pub(crate) mod saved_sessions;
 mod state;
 
 use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
@@ -14,7 +23,12 @@ use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 
 pub use contracts::run_contracts;
-pub use output::{capture_output_start, capture_output_take};
+pub use investigation::run_investigation;
+// The replay-outcome seam: the TUI's saved-replay adapter consumes
+// the typed outcome instead of re-parsing rendered output.
+pub(crate) use investigation::run_investigation_outcome_cancellable;
+pub use investigation::{Replay, RunOutcome, run_investigation_outcome};
+pub use output::{capture_output_start, capture_output_take, failure_message, result};
 pub use run::run_management;
 // The TUI's run panel adapter surface: the panel drives the same fresh-run
 // path the headless `saya run` takes (`commands/run/host.rs` holds the
@@ -37,8 +51,7 @@ pub(crate) use contracts::contract_view;
 // path (`remember`/`import`) keeps its own `cached_schema` (it resolves a
 // fingerprint, not a classification); the read/classify paths use
 // `cached_schema_availability` so a store error or undiscovered profile is
-// `LiveSchemaUnavailable`, not a collapsed empty tree that would read `Stale`
-// (the P1 bug).
+// `LiveSchemaUnavailable`, not a collapsed empty tree that would read `Stale`.
 pub(crate) use contracts::cached_schema_availability;
 
 pub async fn run(
@@ -51,10 +64,58 @@ pub async fn run(
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let state = SqliteStateStore::new(crate::state_path::state_db_path());
     match command {
+        // The retired `saya coding` spelling is answered in app::dispatch,
+        // before the runtime loads; reaching here is a programming error.
+        Command::Coding { .. } => unreachable!("handled in dispatch"),
+        Command::Job {
+            repository,
+            program_dir,
+            command,
+            ..
+        } => {
+            coding::lane::run(
+                command,
+                repository,
+                program_dir,
+                runtime,
+                format,
+                &state,
+                approval,
+            )
+            .await
+        }
+        Command::Start(start) => {
+            let (command, repository, program_dir) = start.into_parts();
+            coding::cli::run(
+                command,
+                repository,
+                program_dir,
+                runtime,
+                format,
+                &state,
+                approval,
+            )
+            .await
+        }
+        Command::FollowUp(follow_up) => {
+            let (command, repository, program_dir) = follow_up.into_parts();
+            coding::cli::run(
+                command,
+                repository,
+                program_dir,
+                runtime,
+                format,
+                &state,
+                approval,
+            )
+            .await
+        }
         Command::Config { command } => config::run(command, runtime, format),
         Command::Connection { command } => {
             connection::run(command, runtime, format, can_prompt, &state).await
         }
+        Command::Sessions { command } => saved_sessions::run(command, format).await,
+        Command::Preferences { command } => preferences::run(command, format, &state).await,
         Command::Ask { prompt, file } => {
             query::ask(
                 prompt,
@@ -73,6 +134,9 @@ pub async fn run(
         }
         Command::Contracts { command } => {
             contracts::run_contracts(command, runtime, format, &state).await
+        }
+        Command::Investigation { command } => {
+            investigation::run_investigation(command, runtime, format, can_prompt, &state).await
         }
         Command::Run {
             prompt,
@@ -98,6 +162,19 @@ pub async fn run(
         // Completions are handled in app::dispatch before the runtime loads;
         // reaching here is a programming error.
         Command::Completions { .. } => unreachable!("handled in dispatch"),
+        // Demo is likewise handled in app::dispatch before the runtime loads.
+        Command::Demo { .. } => unreachable!("handled in dispatch"),
+        // Setup is likewise handled in app::dispatch before the runtime loads:
+        // the guided flow runs without a resolved runtime and refuses before
+        // reading stdin when there is no terminal.
+        Command::Setup => unreachable!("handled in dispatch"),
+        // MCP serve is likewise handled in app::dispatch before the runtime
+        // loads: the server runs its own stdio loop with its own policy, and
+        // the state store is not part of its surface.
+        Command::Mcp { .. } => unreachable!("handled in dispatch"),
+        // Runtime operators are dispatched before configuration or state is
+        // opened; this match arm keeps the shared command router exhaustive.
+        Command::Runtime { .. } => unreachable!("handled in dispatch"),
     }
 }
 

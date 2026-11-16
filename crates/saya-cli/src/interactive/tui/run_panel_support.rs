@@ -31,7 +31,7 @@ pub(crate) fn panel_app(
 
 /// Panel separation and pause: the episode transcript stays in its own panel,
 /// cancel stops the run and refuses a pending plan, a paused run names its reason.
-/// Moved byte-identical from the hub; no snapshots involved.
+/// Plain assertions; no snapshots involved.
 /// ever reaches the session's conversation, and vice versa.
 #[test]
 fn an_episodes_transcript_stays_in_its_own_panel() {
