@@ -84,18 +84,18 @@ fn status_line_names_model_provider_and_mode() {
     assert_eq!(status_text("   ", "ollama", "ask"), AI_NOT_CONFIGURED);
 }
 
-/// The welcome says plainly that a message is how ordinary work gets done
-/// and that `/start` is the opt-in for long or background work.
+/// The welcome invites a plain message, the default way to work, and names
+/// no slash command: `/start` lives in `/help`'s background-jobs group.
 #[test]
-fn the_welcome_states_the_plain_default_and_the_job_opt_in() {
-    let all = [WELCOME, WELCOME_ASK, WELCOME_START].join(" ");
+fn the_welcome_invites_a_plain_message_only() {
+    let all = [WELCOME, WELCOME_ASK, WELCOME_WORK].join(" ");
     assert!(
-        all.contains("describe work"),
-        "a message describes work: {all}"
+        all.contains("question") || all.contains("describe"),
+        "the welcome invites a message: {all}"
     );
     assert!(
-        all.contains("/start") && all.contains("long or background job"),
-        "the welcome names the job opt-in: {all}"
+        !all.contains("/start"),
+        "the welcome must not mention /start: {all}"
     );
 }
 
@@ -199,7 +199,7 @@ fn unbound_workspace_line_names_the_fact_and_the_remedy() {
 fn first_run_guidance_fits_its_columns() {
     for line in [
         WELCOME_ASK,
-        WELCOME_START,
+        WELCOME_WORK,
         START_SETUP,
         START_AI,
         START_DATABASE,

@@ -5,7 +5,7 @@
 use super::super::super::theme::{accent, foreground, secondary, warning};
 use super::super::splash::{
     GETTING_STARTED, NO_WORKSPACE_LINES, START_AI, START_CODE_BOUND, START_CODE_UNBOUND,
-    START_DATABASE, START_SETUP, START_SQL, STATUS, WELCOME, WELCOME_ASK, WELCOME_START,
+    START_DATABASE, START_SETUP, START_SQL, STATUS, WELCOME, WELCOME_ASK, WELCOME_WORK,
     mascot_lines, status_text,
 };
 use super::state;
@@ -47,9 +47,10 @@ fn welcome() -> Line<'static> {
     ))
 }
 
-/// The two welcome hints: the plain-message default and the job opt-in.
+/// The two welcome hints: both invite a plain message, the default way to
+/// work.
 fn welcome_hints() -> Vec<Line<'static>> {
-    [WELCOME_ASK, WELCOME_START].into_iter().map(hint).collect()
+    [WELCOME_ASK, WELCOME_WORK].into_iter().map(hint).collect()
 }
 
 /// The left column's dim status line: model, provider, permission mode.
