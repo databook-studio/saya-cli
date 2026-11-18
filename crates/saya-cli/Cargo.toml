@@ -75,3 +75,8 @@ proptest.workspace = true
 # byte stream into a grid we can read as text and assert against.
 portable-pty = "0.9"
 vt100 = "0.16"
+# The approval wait's policies are tested on a paused clock
+# (`#[tokio::test(start_paused = true)]` + `tokio::time::advance`), so a test
+# never really waits the panel's 120 s. Dev-only: `test-util` reaches no
+# shipped binary.
+tokio = { workspace = true, features = ["test-util"] }

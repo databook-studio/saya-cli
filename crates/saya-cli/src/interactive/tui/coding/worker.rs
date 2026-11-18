@@ -21,29 +21,17 @@ mod egress_approval;
 #[cfg(test)]
 #[path = "worker/egress_approval_tests.rs"]
 mod egress_approval_tests;
+#[path = "worker/wait_policy.rs"]
+mod wait_policy;
+#[cfg(test)]
+mod wait_policy_tests;
 #[cfg(test)]
 mod worker_tests;
+use self::wait_policy::{WaitPolicy, ask_operator};
 struct PanelApproval {
     sender: mpsc::SyncSender<CodingMessage>,
     token: CancellationToken,
     id: String,
-}
-/// Puts one question to the panel and waits for the operator's answer. A full
-/// or closed queue, a cancelled run, and the 120 s deadline all refuse. No
-/// answer is ever remembered: a run outside the sandbox asks again.
-async fn ask_operator(
-    sender: &mpsc::SyncSender<CodingMessage>,
-    token: &CancellationToken,
-    text: String,
-) -> bool {
-    let (respond, answer) = tokio::sync::oneshot::channel();
-    if sender
-        .try_send(CodingMessage::Approval { text, respond })
-        .is_err()
-    {
-        return false;
-    }
-    tokio::select! { _=token.cancelled()=>false, answer=tokio::time::timeout(std::time::Duration::from_secs(120),answer)=>matches!(answer,Ok(Ok(true))) }
 }
 #[async_trait]
 impl ApprovalDecider for PanelApproval {
@@ -59,7 +47,7 @@ impl ApprovalDecider for PanelApproval {
             "Approve job {} with this exact scope:\n{}\nUse `/approve {}` or `/deny {}`.",
             self.id, arguments, self.id, self.id
         );
-        ask_operator(&self.sender, &self.token, text).await
+        ask_operator(&self.sender, &self.token, text, WaitPolicy::PANEL).await
     }
 }
 /// The root mode a panel launch opens over: the command's flag, its configured
