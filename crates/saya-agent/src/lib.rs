@@ -5,6 +5,7 @@ mod consensus;
 mod history;
 mod history_context;
 mod loop_runner;
+mod plugin;
 mod protocol;
 mod providers;
 
@@ -23,6 +24,10 @@ pub use loop_runner::{
     RequestPreflightConfig, SILENT_POLL_LIMIT, ShapedToolResult, SteeringError, agent_mailbox,
     budgets_from_env, run_agent_with_control, run_agent_with_sink, shape_tool_result,
     tool_message_cap,
+};
+pub use plugin::{
+    ActivePlugins, PluginError, PluginRegistry, RunContext, RunPlugin, RunSurface, TurnOutcome,
+    TurnPolicy,
 };
 pub use protocol::approval::{ApprovalPolicy, ApprovalPolicyParseError};
 pub use protocol::contracts::{
