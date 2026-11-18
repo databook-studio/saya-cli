@@ -7,19 +7,9 @@
 
 use std::sync::Arc;
 
-use super::{RunContext, RunPlugin, RunSurface, TurnOutcome, TurnPolicy};
+use super::{RunContext, RunPlugin, TurnOutcome, TurnPolicy};
 use crate::history_context::escape_block_text;
 use crate::{ContextBlock, ToolDefinition, ToolExecutor};
-
-/// The surfaces a name is checked against. A collision on any surface is
-/// refused, because the name a plugin declares is global to the run — a plugin
-/// that only activates on chat still owns its tool names everywhere.
-const PROBED_SURFACES: [RunSurface; 4] = [
-    RunSurface::Chat,
-    RunSurface::Headless,
-    RunSurface::Background,
-    RunSurface::Helper,
-];
 
 /// Why a registry refused to be built. A tool name is global to a run, so a
 /// plugin may not take one the core already owns, or one another plugin owns.
@@ -62,19 +52,20 @@ impl PluginRegistry {
     /// Refuses the whole registry when a plugin declares a name a core tool
     /// owns or another plugin already declared: an ambiguous name would let two
     /// owners answer one tool call, so it is a construction failure, not a
-    /// runtime surprise.
+    /// runtime surprise. The check reads every name a plugin can ever deliver,
+    /// so a tool offered only once a database profile is configured is held to
+    /// the same rule as one offered on every run.
     pub fn new(
         plugins: Vec<Arc<dyn RunPlugin>>,
         core_tool_names: &[&str],
     ) -> Result<Self, PluginError> {
-        let mut claimed: Vec<String> = Vec::new();
+        let mut claimed: Vec<&'static str> = Vec::new();
         for plugin in &plugins {
-            for tool in declared_tool_names(plugin) {
-                let owned = core_tool_names.contains(&tool.as_str()) || claimed.contains(&tool);
-                if owned {
+            for tool in plugin.declared_tools() {
+                if core_tool_names.contains(tool) || claimed.contains(tool) {
                     return Err(PluginError::NameCollision {
                         plugin: plugin.name(),
-                        tool,
+                        tool: tool.to_string(),
                     });
                 }
                 claimed.push(tool);
@@ -97,23 +88,6 @@ impl PluginRegistry {
     }
 }
 
-/// Every tool name `plugin` declares, across all surfaces, deduplicated.
-fn declared_tool_names(plugin: &Arc<dyn RunPlugin>) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for surface in PROBED_SURFACES {
-        let ctx = RunContext {
-            surface,
-            database_profiles: 0,
-        };
-        for definition in plugin.definitions(&ctx) {
-            if !names.contains(&definition.name) {
-                names.push(definition.name);
-            }
-        }
-    }
-    names
-}
-
 /// The active plugins for one run, plus the context they activated for.
 pub struct ActivePlugins {
     ctx: RunContext,
@@ -122,25 +96,51 @@ pub struct ActivePlugins {
 
 impl ActivePlugins {
     /// The definitions to append after the core tools, in registration order.
+    ///
+    /// A definition whose name the plugin never declared is dropped: the name
+    /// was checked against the core and the other plugins at construction, so a
+    /// definition outside that list is a plugin bug, not something the core may
+    /// append. A debug build asserts against it rather than filtering quietly.
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.plugins
-            .iter()
-            .flat_map(|plugin| plugin.definitions(&self.ctx))
-            .collect()
+        let mut kept = Vec::new();
+        for plugin in &self.plugins {
+            let declared = plugin.declared_tools();
+            for definition in plugin.definitions(&self.ctx) {
+                let in_declared = declared.contains(&definition.name.as_str());
+                debug_assert!(
+                    in_declared,
+                    "plugin `{}` offers tool `{}`, which it never declared",
+                    plugin.name(),
+                    definition.name
+                );
+                if in_declared {
+                    kept.push(definition);
+                }
+            }
+        }
+        kept
     }
 
     /// The executor of the plugin that owns `tool_name`, or `None` when no
-    /// active plugin declares it.
+    /// active plugin declares it or the owner does not offer it in this
+    /// context.
+    ///
+    /// Ownership is decided by `declared_tools`, so the route is the name the
+    /// registry checked at construction; the second check is what keeps a tool
+    /// the plugin only delivers under some other context from being routed here.
     pub fn route(&self, tool_name: &str) -> Option<Arc<dyn ToolExecutor>> {
-        self.plugins
+        let owner = self
+            .plugins
             .iter()
-            .find(|plugin| {
-                plugin
-                    .definitions(&self.ctx)
-                    .iter()
-                    .any(|definition| definition.name == tool_name)
-            })
-            .and_then(|plugin| plugin.executor())
+            .find(|plugin| plugin.declared_tools().contains(&tool_name))?;
+        let offered = owner
+            .definitions(&self.ctx)
+            .iter()
+            .any(|definition| definition.name == tool_name);
+        if !offered {
+            return None;
+        }
+        owner.executor()
     }
 
     /// The active plugins' context blocks, in registration order, bounded by
@@ -150,16 +150,11 @@ impl ActivePlugins {
     /// truncated mid-block, because half a contract reads as a whole one — and
     /// the blocks after it are still offered what is left, so one oversized
     /// block cannot starve a smaller one behind it.
-    pub async fn context(
-        &self,
-        ctx: &RunContext,
-        prompt: &str,
-        budget_bytes: usize,
-    ) -> Vec<ContextBlock> {
+    pub async fn context(&self, prompt: &str, budget_bytes: usize) -> Vec<ContextBlock> {
         let mut remaining = budget_bytes;
         let mut kept = Vec::new();
         for plugin in &self.plugins {
-            for block in plugin.context(ctx, prompt).await {
+            for block in plugin.context(&self.ctx, prompt).await {
                 let cost = block_bytes(&block);
                 if cost > remaining {
                     continue;

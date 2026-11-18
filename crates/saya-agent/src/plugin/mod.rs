@@ -82,6 +82,15 @@ pub trait RunPlugin: Send + Sync {
     /// The plugin's stable name, used in diagnostics and collision errors.
     fn name(&self) -> &'static str;
 
+    /// Every tool name this plugin can ever deliver, on any surface and in any
+    /// context — not only the ones it offers right now.
+    ///
+    /// The registry checks name collisions against this list once, at
+    /// construction, and filters each plugin's definitions by it. A name a
+    /// plugin only offers when a database profile is configured therefore still
+    /// cannot shadow a core tool.
+    fn declared_tools(&self) -> &'static [&'static str];
+
     /// Whether this plugin takes part in a run of `ctx`. An inactive plugin
     /// contributes nothing at all — no definitions, no route, no context, no
     /// policy, no hooks.

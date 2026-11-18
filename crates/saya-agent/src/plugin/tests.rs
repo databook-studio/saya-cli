@@ -4,6 +4,9 @@
 #[path = "tests/support.rs"]
 mod support;
 
+#[path = "tests/declared_tools.rs"]
+mod declared_tools;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -29,7 +32,7 @@ async fn an_inactive_plugin_contributes_nothing() {
 
     assert!(active.definitions().is_empty(), "no definitions");
     assert!(active.route("db_query").is_none(), "no route");
-    let kept = active.context(&CHAT, "prompt", 1024).await;
+    let kept = active.context("prompt", 1024).await;
     assert!(kept.is_empty(), "no context, so the budget stays untouched");
     assert_eq!(active.turn_policy(), None, "no policy");
 
@@ -130,7 +133,7 @@ async fn context_drops_a_block_that_would_exceed_the_budget() {
     let registry = PluginRegistry::new(vec![Arc::new(plugin)], &[]).expect("no collision");
     let active = registry.active(&CHAT);
 
-    let kept = active.context(&CHAT, "prompt", 35).await;
+    let kept = active.context("prompt", 35).await;
     assert_eq!(labels(&kept), vec!["first", "second"]);
     assert_eq!(
         kept.iter().map(|block| block.body.len()).sum::<usize>(),
@@ -146,7 +149,7 @@ async fn context_keeps_nothing_when_the_budget_is_too_small() {
     let registry = PluginRegistry::new(vec![Arc::new(plugin)], &[]).expect("no collision");
     let active = registry.active(&CHAT);
 
-    assert!(active.context(&CHAT, "prompt", 5).await.is_empty());
+    assert!(active.context("prompt", 5).await.is_empty());
 }
 
 /// Case 6a — the policy is the tightest value of each field across the active

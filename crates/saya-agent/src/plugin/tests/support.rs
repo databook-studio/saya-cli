@@ -17,6 +17,12 @@ pub(super) const CHAT: RunContext = RunContext {
     database_profiles: 1,
 };
 
+/// A chat run with no database, so a database plugin offers none of its tools.
+pub(super) const NO_DB: RunContext = RunContext {
+    surface: RunSurface::Chat,
+    database_profiles: 0,
+};
+
 /// An executor that names itself, so a test can tell which plugin served a
 /// routed tool.
 struct FakeExecutor {
@@ -39,7 +45,9 @@ impl ToolExecutor for FakeExecutor {
 pub(super) struct FakePlugin {
     name: &'static str,
     active: bool,
-    tool_names: Vec<&'static str>,
+    declared: &'static [&'static str],
+    offered: &'static [&'static str],
+    profile_offered: &'static [&'static str],
     executor: Option<Arc<dyn ToolExecutor>>,
     blocks: Vec<ContextBlock>,
     policy: Option<TurnPolicy>,
@@ -51,7 +59,9 @@ impl FakePlugin {
         Self {
             name,
             active,
-            tool_names: Vec::new(),
+            declared: &[],
+            offered: &[],
+            profile_offered: &[],
             executor: None,
             blocks: Vec::new(),
             policy: None,
@@ -59,8 +69,32 @@ impl FakePlugin {
         }
     }
 
-    pub(super) fn tools(mut self, names: &[&'static str]) -> Self {
-        self.tool_names = names.to_vec();
+    /// Offers these tools in every context, and declares them.
+    pub(super) fn tools(mut self, names: &'static [&'static str]) -> Self {
+        self.declared = names;
+        self.offered = names;
+        self
+    }
+
+    /// Declares these tools but offers none of them here — the plugin can
+    /// deliver them, just not for this test's context.
+    pub(super) fn declaring(mut self, names: &'static [&'static str]) -> Self {
+        self.declared = names;
+        self
+    }
+
+    /// Offers these tools, declaring whatever was declared before — which lets
+    /// a test show a plugin offering a name it never declared.
+    pub(super) fn offering(mut self, names: &'static [&'static str]) -> Self {
+        self.offered = names;
+        self
+    }
+
+    /// Declares these tools and offers them only when a database profile is
+    /// configured — what a database plugin does.
+    pub(super) fn profile_tools(mut self, names: &'static [&'static str]) -> Self {
+        self.declared = names;
+        self.profile_offered = names;
         self
     }
 
@@ -104,11 +138,16 @@ impl RunPlugin for FakePlugin {
         self.active
     }
 
-    fn definitions(&self, _ctx: &RunContext) -> Vec<ToolDefinition> {
-        self.tool_names
-            .iter()
-            .map(|name| definition(name))
-            .collect()
+    fn declared_tools(&self) -> &'static [&'static str] {
+        self.declared
+    }
+
+    fn definitions(&self, ctx: &RunContext) -> Vec<ToolDefinition> {
+        let mut names: Vec<&'static str> = self.offered.to_vec();
+        if ctx.database_profiles > 0 {
+            names.extend_from_slice(self.profile_offered);
+        }
+        names.into_iter().map(definition).collect()
     }
 
     fn executor(&self) -> Option<Arc<dyn ToolExecutor>> {
@@ -162,6 +201,14 @@ pub(super) fn block(label: &str, bytes: usize) -> ContextBlock {
 
 pub(super) fn labels(blocks: &[ContextBlock]) -> Vec<&str> {
     blocks.iter().map(|block| block.label.as_str()).collect()
+}
+
+/// The names of a `definitions()` result, in order.
+pub(super) fn definition_names(definitions: Vec<ToolDefinition>) -> Vec<String> {
+    definitions
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect()
 }
 
 pub(super) fn answered() -> TurnOutcome {
