@@ -29,6 +29,30 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new(endpoint: &str, budget: usize, window: Option<u64>, model: &str) -> Self {
+        Self::build(endpoint, budget, window, model, None).await
+    }
+
+    /// The same fixture with one project SQLite profile admitted and database
+    /// sharing on, so the job's read-only database tools are advertised.
+    /// Used by the run-core parity test; this binary uses only `new`.
+    #[allow(dead_code)]
+    pub async fn with_sqlite_profile(
+        endpoint: &str,
+        budget: usize,
+        window: Option<u64>,
+        model: &str,
+        profile: &str,
+    ) -> Self {
+        Self::build(endpoint, budget, window, model, Some(profile)).await
+    }
+
+    async fn build(
+        endpoint: &str,
+        budget: usize,
+        window: Option<u64>,
+        model: &str,
+        profile: Option<&str>,
+    ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -67,13 +91,30 @@ impl Fixture {
         }
         git_run(&git, &repository, &["add", "."]);
         git_run(&git, &repository, &["commit", "--quiet", "-m", "baseline"]);
-        let mut runtime = load_with_sources(
-            &GlobalOptions::default(),
-            &repository,
-            &root,
-            BTreeMap::new(),
-        )
-        .unwrap();
+        if let Some(profile) = profile {
+            let database = root.join("parity.sqlite");
+            fs::write(&database, []).unwrap();
+            fs::create_dir(repository.join(".saya")).unwrap();
+            fs::write(
+                repository.join(".saya/connections.toml"),
+                format!(
+                    "[profiles.{profile}]\ntype = 'sqlite'\npath = '{}'\nread_only = true\n",
+                    database.display()
+                ),
+            )
+            .unwrap();
+        }
+        let options = match profile {
+            Some(profile) => GlobalOptions {
+                profile: Some(profile.to_owned()),
+                ..GlobalOptions::default()
+            },
+            None => GlobalOptions::default(),
+        };
+        let mut runtime = load_with_sources(&options, &repository, &root, BTreeMap::new()).unwrap();
+        if profile.is_some() {
+            runtime.resolved.ai.allow_data_sharing = true;
+        }
         runtime.resolved.limits.job.logical_requests = finite(256);
         runtime.resolved.limits.job.tool_calls = finite(4096);
         // This fixture measures compaction across hundreds of deliberately
