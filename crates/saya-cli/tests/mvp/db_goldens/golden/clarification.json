@@ -1,0 +1,75 @@
+{
+  "scenario": "clarification",
+  "requests": [
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 20360,
+      "messages": 2
+    },
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 20443,
+      "messages": 4
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "request_clarification",
+      "outcome": "ok"
+    }
+  ],
+  "states": [
+    {
+      "kind": "clarification",
+      "text": "⏸ question · Which one?\n1. a\n2. b"
+    },
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
+    }
+  ]
+}

@@ -18,21 +18,72 @@ pub(crate) enum ScriptStep {
     DelayedNatural {
         delay: std::time::Duration,
     },
+    /// A tool call the model makes: `name` with `arguments`. The mock assigns
+    /// the id `call-golden-<request index>`; the goldens never record it.
+    ToolCall {
+        name: String,
+        arguments: serde_json::Value,
+    },
     Harmless,
     HoldOpen {
         marker: String,
     },
 }
 
+/// The one scripted clarification: one focused question with two options.
 #[cfg(unix)]
-pub(crate) fn clarification_body() -> String {
-    concat!(
-        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,",
-        "\"id\":\"call-1\",\"function\":{\"name\":\"request_clarification\",",
-        "\"arguments\":\"{\\\"question\\\":\\\"Which one?\\\",\\\"options\\\":[\\\"a\\\",\\\"b\\\"]}\"}}]},",
-        "\"finish_reason\":\"tool_calls\"}]}\n\n"
-    )
-    .to_owned()
+pub(crate) fn clarification_arguments() -> serde_json::Value {
+    serde_json::json!({
+        "question": "Which one?",
+        "options": ["a", "b"]
+    })
+}
+
+#[cfg(unix)]
+pub(crate) fn clarification_body(request_index: usize) -> String {
+    let call = serde_json::json!({
+        "choices": [{
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": tool_call_id(request_index),
+                "function": {
+                    "name": "request_clarification",
+                    "arguments": clarification_arguments().to_string()
+                }
+            }]},
+            "finish_reason": "tool_calls"
+        }]
+    });
+    format!("data: {call}\n\n")
+}
+
+/// The id a scripted tool call gets: unique per request slot, and echoed by
+/// the loop on the tool result message so the golden can pair the two.
+#[cfg(unix)]
+pub(crate) fn tool_call_id(request_index: usize) -> String {
+    format!("call-golden-{request_index}")
+}
+
+/// One assistant turn carrying a single tool call. The finish reason makes
+/// the loop execute the call and continue; the next script slot answers the
+/// request that carries the tool result.
+#[cfg(unix)]
+pub(crate) fn tool_call_body(
+    name: &str,
+    arguments: &serde_json::Value,
+    request_index: usize,
+) -> String {
+    let call = serde_json::json!({
+        "choices": [{
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": tool_call_id(request_index),
+                "function": {"name": name, "arguments": arguments.to_string()}
+            }]},
+            "finish_reason": "tool_calls"
+        }]
+    });
+    format!("data: {call}\n\n")
 }
 
 #[cfg(unix)]
