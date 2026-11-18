@@ -1,0 +1,53 @@
+{
+  "scenario": "recall_injected",
+  "requests": [
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 21279,
+      "messages": 2,
+      "recall": {
+        "present": true,
+        "body_bytes": 247
+      }
+    },
+    {
+      "tools": [],
+      "body_bytes": 5675,
+      "messages": 2
+    }
+  ],
+  "tool_calls": [],
+  "states": [
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
+    }
+  ],
+  "learning": {
+    "extraction_requests": 1,
+    "proposed": 0,
+    "stored": 0
+  }
+}

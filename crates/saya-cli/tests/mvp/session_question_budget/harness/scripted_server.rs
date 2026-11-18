@@ -103,6 +103,9 @@ pub(crate) fn spawn_script_server(
                 }
                 ScriptStep::NaturalNoUsage => reply_finished(&mut stream, &answer_no_usage_body()),
                 ScriptStep::Summary(text) => reply_finished(&mut stream, &summary_body(&text)),
+                ScriptStep::Json(content) => {
+                    reply_finished(&mut stream, &json_content_body(&content))
+                }
                 ScriptStep::DelayedNatural { delay } => {
                     thread::sleep(delay);
                     reply_finished(&mut stream, &answer_body());

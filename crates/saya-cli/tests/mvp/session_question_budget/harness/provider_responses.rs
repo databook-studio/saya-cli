@@ -15,6 +15,9 @@ pub(crate) enum ScriptStep {
     NaturalNoUsage,
     /// A plain text completion (the summariser's reply shape).
     Summary(String),
+    /// A completion whose content is the given JSON text, served verbatim
+    /// (the post-turn extractor's reply shape).
+    Json(String),
     DelayedNatural {
         delay: std::time::Duration,
     },
@@ -128,6 +131,18 @@ pub(crate) fn summary_body(text: &str) -> String {
         ),
         text = text.replace('"', "'")
     )
+}
+
+/// A completion carrying `content` exactly, JSON-escaped into the SSE frame.
+#[cfg(unix)]
+pub(crate) fn json_content_body(content: &str) -> String {
+    let delta = serde_json::json!({
+        "choices": [{
+            "delta": {"content": content},
+            "finish_reason": "stop"
+        }]
+    });
+    format!("data: {delta}\n\n")
 }
 
 #[cfg(unix)]

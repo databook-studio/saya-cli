@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::harness::ServedCall;
 use super::normalise::Normaliser;
+use super::record_b::{is_extraction_request, recall_block};
 
 /// One scenario's committed golden.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +28,13 @@ pub(crate) struct Golden {
     pub(crate) tool_calls: Vec<ToolCallRecord>,
     /// One entry per settled turn, in the order the user saw them.
     pub(crate) states: Vec<StateRecord>,
+    /// Post-turn extraction, present only when the run made one. Absent from
+    /// the part-A goldens (memory is off there), so their bytes do not move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) learning: Option<LearningRecord>,
+    /// A saved-investigation replay, present only for the no-model-loop row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) investigation: Option<InvestigationRecord>,
 }
 
 /// What one provider request advertised and carried.
@@ -37,6 +45,49 @@ pub(crate) struct RequestRecord {
     /// The body's byte length after normalisation.
     pub(crate) body_bytes: usize,
     pub(crate) messages: usize,
+    /// The recall block this request carried, if any. Absent from the part-A
+    /// goldens (memory is off there), so their bytes do not move.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) recall: Option<RecallRecord>,
+}
+
+/// The prompt-recall context block a request carried, measured after
+/// normalisation. The block's text is never recorded — only that it is there
+/// and how many normalised bytes it occupies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecallRecord {
+    /// True when the request carried a `database-contracts` block.
+    pub(crate) present: bool,
+    /// Bytes between the block's `source:` line and its closing sentinel.
+    pub(crate) body_bytes: usize,
+}
+
+/// Post-turn learning as the run performed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LearningRecord {
+    /// Provider requests carrying the extractor's JSON-mode shape.
+    pub(crate) extraction_requests: usize,
+    /// Claims the scripted extractor reply offered.
+    pub(crate) proposed: usize,
+    /// `memory learned` / `memory noted` lines the user saw.
+    pub(crate) stored: usize,
+}
+
+/// A saved-investigation replay: no model loop, so `requests` is empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct InvestigationRecord {
+    /// The statements the replay attempted, in order.
+    pub(crate) statements: Vec<StatementRecord>,
+    /// The user-visible result event of each replay (`query_result`, `error`).
+    pub(crate) results: Vec<String>,
+}
+
+/// One statement a replay attempted and its safety outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct StatementRecord {
+    pub(crate) sql: String,
+    /// `ok`, `refused-by-safety`, or `error`.
+    pub(crate) outcome: String,
 }
 
 /// One tool call the model made and what the executor answered.
@@ -69,6 +120,7 @@ impl Golden {
     ) -> Self {
         let mut requests = Vec::with_capacity(bodies.len());
         let mut results: HashMap<String, String> = HashMap::new();
+        let mut extraction_requests = 0;
 
         for body in bodies {
             let normalised = normaliser.normalise(body);
@@ -78,10 +130,14 @@ impl Golden {
                 .as_array()
                 .map(Vec::as_slice)
                 .unwrap_or_default();
+            if is_extraction_request(&value) {
+                extraction_requests += 1;
+            }
             requests.push(RequestRecord {
                 tools: advertised_tools(&value),
                 body_bytes: normalised.len(),
                 messages: messages.len(),
+                recall: recall_block(&value),
             });
             for message in messages {
                 record_tool_result(message, &mut results);
@@ -112,6 +168,12 @@ impl Golden {
             requests,
             tool_calls,
             states,
+            learning: (extraction_requests > 0).then_some(LearningRecord {
+                extraction_requests,
+                proposed: 0,
+                stored: 0,
+            }),
+            investigation: None,
         }
     }
 }
