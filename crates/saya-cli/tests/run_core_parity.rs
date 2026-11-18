@@ -30,6 +30,8 @@ mod provider;
 #[allow(dead_code)]
 mod script;
 
+#[path = "run_core_parity/baseline.rs"]
+mod baseline;
 #[path = "run_core_parity/capture.rs"]
 mod capture;
 #[path = "run_core_parity/chat.rs"]
@@ -40,6 +42,9 @@ mod job;
 mod known_gaps;
 #[path = "run_core_parity/matrix.rs"]
 mod matrix;
+#[path = "mvp/db_goldens/normalise.rs"]
+#[allow(dead_code)]
+mod normalise;
 
 /// The scripted provider's own lifetime; the shared provider module reads it
 /// from the crate root, exactly as the context-efficiency binary does. It
@@ -67,4 +72,33 @@ fn run_core_surfaces_advertise_the_same_tools_or_recorded_gaps() {
     let matrix = matrix::Matrix::build(&captures);
     matrix.print();
     matrix.assert_known_gaps(known_gaps::KNOWN_GAPS, known_gaps::NOT_CAPTURED);
+}
+
+/// The request-size and prefix baseline: what each surface sends on its first
+/// request, and whether its second request repeats that prefix.
+#[test]
+fn request_baseline_per_surface() {
+    let chat = chat::converse();
+    let job = job::converse();
+    let captures = [
+        baseline::Captured {
+            surface: "chat",
+            bodies: chat.bodies,
+            roots: chat.roots,
+        },
+        baseline::Captured {
+            surface: "job",
+            bodies: job.jobs,
+            roots: job.roots.clone(),
+        },
+        baseline::Captured {
+            surface: "helper",
+            bodies: job.helpers,
+            roots: job.roots,
+        },
+    ];
+    let baseline = baseline::Baseline::measure(&captures);
+    baseline.print();
+    baseline.assert_prefix_posture();
+    baseline.assert_golden();
 }

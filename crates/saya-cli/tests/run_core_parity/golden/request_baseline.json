@@ -1,0 +1,28 @@
+{
+  "surfaces": [
+    {
+      "surface": "chat",
+      "first_request_bytes": 20360,
+      "tool_count": 21,
+      "tools_bytes": 16890,
+      "system_bytes": 2318,
+      "prefix_stable": true
+    },
+    {
+      "surface": "helper",
+      "first_request_bytes": 8625,
+      "tool_count": 10,
+      "tools_bytes": 6743,
+      "system_bytes": 629,
+      "prefix_stable": true
+    },
+    {
+      "surface": "job",
+      "first_request_bytes": 13481,
+      "tool_count": 12,
+      "tools_bytes": 9099,
+      "system_bytes": 2743,
+      "prefix_stable": true
+    }
+  ]
+}
