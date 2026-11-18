@@ -30,6 +30,8 @@ mod local_metrics_index;
 mod local_metrics_tests;
 mod mcp;
 mod metrics_sink;
+#[allow(dead_code)] // the contract's first built-in plugin, not yet loaded by a run
+mod plugins;
 mod render;
 pub mod render_run;
 mod render_usage;

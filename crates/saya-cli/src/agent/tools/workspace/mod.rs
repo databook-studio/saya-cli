@@ -28,7 +28,10 @@ pub(in crate::agent::tools) use dispatch::execute_with_context;
 pub(in crate::agent::tools) use names::{
     canonical_name, canonicalize_tool_names, is_write_tool, prepare_coding_workspace_tools,
 };
-pub(in crate::agent::tools) use validation::{is_tool_name, validate_arguments};
+// `is_tool_name` is crate-wide: a plugin outside `agent::tools` tells its own
+// tools from the core's by it. Argument validation stays where it is used.
+pub(crate) use validation::is_tool_name;
+pub(in crate::agent::tools) use validation::validate_arguments;
 
 #[cfg(test)]
 pub(crate) use edit::WORKSPACE_EDIT_MAX_BYTES;
