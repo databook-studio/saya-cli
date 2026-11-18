@@ -110,30 +110,20 @@ pub(crate) async fn run_prompt_with_continuation_inputs_with_signal(
     );
     let profile_names: Vec<String> = registry.names().into_iter().map(str::to_string).collect();
     let memory = &runtime.resolved.memory;
-    let recall_mode = super::learning::recall_mode_for(memory.mode);
-    let (mut context_blocks, receipt) = match recall_mode {
-        None => (
-            Vec::new(),
-            crate::contracts::RecallReceipt::configured_off(),
-        ),
-        Some(_) if !allow_query_data => (
-            Vec::new(),
-            crate::contracts::RecallReceipt::privacy_gate_closed(),
-        ),
-        Some(mode) => {
-            super::recall_context::recall_context_blocks(
-                prompt,
-                system_prompt.as_deref(),
-                allow_query_data,
-                mode,
-                super::learning::bounds_from(memory),
-                &registry,
-                state_db.as_ref(),
-                runtime.resolved.ai.context_byte_budget,
-            )
-            .await
-        }
-    };
+    // Recall is one function for every surface: this turn's inputs in, its
+    // blocks and the receipt naming what reached them out.
+    let (mut context_blocks, receipt) = super::recall_turn::recall_for_turn(
+        super::recall_turn::RecallTurnInputs {
+            prompt,
+            system_prompt: system_prompt.as_deref(),
+            allow_query_data,
+            memory,
+            registry: &registry,
+            state_db: state_db.as_ref(),
+            byte_budget: runtime.resolved.ai.context_byte_budget,
+        },
+    )
+    .await;
     // The last-SQL hint rides the user turn beside the recall context block —
     // never the system prompt, where it would change on every follow-up that
     // ran SQL and forfeit the provider's prefix cache. Placed after the recall
