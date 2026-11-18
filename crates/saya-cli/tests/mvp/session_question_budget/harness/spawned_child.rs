@@ -108,6 +108,16 @@ pub(crate) fn spawn_child_with_config(
     spawn_child_with_config_extra(base_url, config_toml, tag, &[])
 }
 
+/// The per-run config root `tag` gets. Exposed so a scenario can seed the
+/// child's state store before it starts, without duplicating the path rule.
+#[cfg(unix)]
+pub(crate) fn config_root_for(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "saya-cli-question-{tag}-{}",
+        std::process::id()
+    ))
+}
+
 /// Spawns the REPL against `base_url` with the caller's full config TOML and
 /// any extra CLI arguments (e.g. `--verbose` for the metrics-section rows).
 #[cfg(unix)]
@@ -123,9 +133,11 @@ pub(crate) fn spawn_child_with_config_extra(
         thread,
     };
 
-    let pid = std::process::id();
-    let config_root = std::env::temp_dir().join(format!("saya-cli-question-{tag}-{pid}"));
-    let session_root = std::env::temp_dir().join(format!("saya-cli-question-sess-{tag}-{pid}"));
+    let config_root = config_root_for(tag);
+    let session_root = std::env::temp_dir().join(format!(
+        "saya-cli-question-sess-{tag}-{}",
+        std::process::id()
+    ));
     let home_root = config_root.join("home");
     let working_dir = config_root.join("cwd");
     std::fs::create_dir_all(config_root.join("saya")).unwrap();

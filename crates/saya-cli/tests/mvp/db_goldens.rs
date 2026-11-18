@@ -29,5 +29,8 @@ use crate::session_question_budget::harness;
 
 mod normalise;
 mod record;
+mod record_b;
 mod scenarios;
+mod scenarios_b;
 mod setup;
+mod setup_b;
