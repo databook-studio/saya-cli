@@ -46,6 +46,14 @@ impl Drop for CodingPanel {
         self.cancellation.cancel();
     }
 }
+/// The receipt a start shows so the user can name the job later with
+/// `/job show <id>`. A non-start control names no new job.
+fn started_line(command: &CodingCommand) -> Option<String> {
+    match command {
+        CodingCommand::Start { id, .. } => Some(format!("Started job {id}")),
+        _ => None,
+    }
+}
 impl App {
     pub(crate) fn coding_command(
         &mut self,
@@ -86,6 +94,9 @@ impl App {
             );
             return;
         };
+        if let Some(line) = started_line(&command) {
+            self.transcript.push(BlockKind::System, line);
+        }
         self.coding_panel = Some(worker::spawn(
             command,
             self.runtime.as_ref().clone(),

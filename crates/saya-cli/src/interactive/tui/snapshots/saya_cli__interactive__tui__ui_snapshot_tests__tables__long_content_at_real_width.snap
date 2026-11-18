@@ -1,5 +1,5 @@
 ---
-source: crates/saya-cli/src/interactive/tui/ui_snapshot_tests.rs
+source: crates/saya-cli/src/interactive/tui/ui_snapshot_tables.rs
 expression: buffer
 ---
 "saya · Database read-only · Workspace /home/user/proj · Data sharing on                             "
@@ -30,5 +30,5 @@ expression: buffer
 "                                                                                                    "
 "analytics · qwen                                                                          ? for help"
 "╭ saya ────────────────────────────────────────────────────────────────────────────────────────────╮"
-"│Ask about your data, or type / for commands                                                       │"
+"│Ask a question or describe a change                                                               │"
 "╰ Enter sends ─────────────────────────────────────────────────────────────────────────────────────╯"

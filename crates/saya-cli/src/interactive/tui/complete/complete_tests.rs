@@ -44,7 +44,7 @@ fn test_slash_only() {
     assert_eq!(candidates[0].value, "/start");
     assert_eq!(
         candidates[0].description.as_deref(),
-        Some("Start a bounded job in this session")
+        Some("Start a job for long or background work; ordinary work is just a message")
     );
     // The description is the single-source one from slash::help, sharpened
     // to carry the /connect vs /include contrast (one replaces the

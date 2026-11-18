@@ -21,6 +21,9 @@ use ratatui::{
 const SEND_HINT: &str = " Enter sends ";
 /// Hint for a multiline draft: Enter sends every line, Alt+Enter adds one.
 const SEND_ALL_HINT: &str = " Enter sends all lines · Alt+Enter new line ";
+/// The empty box's dim placeholder: it invites a plain message, which is how
+/// ordinary work starts.
+const INPUT_PLACEHOLDER: &str = "Ask a question or describe a change";
 
 pub(in crate::interactive::tui) fn draw_input(frame: &mut Frame<'_>, app: &App, area: Rect) {
     // The hint rides the bottom border (a `Block` title), so the box keeps
@@ -46,7 +49,7 @@ pub(in crate::interactive::tui) fn draw_input(frame: &mut Frame<'_>, app: &App, 
     // Empty input: show a dim placeholder and park the cursor at the start.
     if app.input.is_empty() {
         let hint = Paragraph::new(Line::from(Span::styled(
-            "Ask about your data, or type / for commands",
+            INPUT_PLACEHOLDER,
             Style::default().fg(secondary()),
         )))
         .block(block);
@@ -128,3 +131,7 @@ fn styled_segment(segment: &str) -> Span<'static> {
         Span::raw(segment.to_string())
     }
 }
+
+#[cfg(test)]
+#[path = "placeholder_tests.rs"]
+mod tests;

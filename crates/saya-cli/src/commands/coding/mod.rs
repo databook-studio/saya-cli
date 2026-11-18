@@ -100,7 +100,7 @@ pub use host::CodingApplication;
 pub(crate) use known_mutation::{KnownWorkspaceMutation, KnownWorkspaceMutationOperation};
 pub use oneshot::{
     LaunchPlan, OneShotMode, OneShotRequest, OneShotResult, consent_implied,
-    finish as oneshot_finish, launch_plan, launch_write_scope, resolve_mode,
+    finish as oneshot_finish, generate_job_id, launch_plan, launch_write_scope, resolve_mode,
     start as oneshot_start,
 };
 pub(crate) use owner_failure::NativeOwnerFailureState;

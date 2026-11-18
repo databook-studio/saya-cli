@@ -309,6 +309,38 @@ pub enum CodingCommand {
 }
 
 impl CodingCommand {
+    /// A session `/start` with no `--write` may edit the whole workspace, the
+    /// way `saya -p` behaves; an explicit `--write` narrows it. The session
+    /// still shows this exact scope for approval. Other verbs, and the
+    /// headless `saya start` (which builds its request in `dispatch`), keep
+    /// the scope they were given.
+    pub(crate) fn with_session_write_scope(self) -> Self {
+        match self {
+            Self::Start {
+                id,
+                task,
+                write_paths,
+                database_profiles,
+                tools,
+                plan,
+                approve,
+                in_place,
+                managed,
+            } if write_paths.is_empty() => Self::Start {
+                id,
+                task,
+                write_paths: vec![".".to_owned()],
+                database_profiles,
+                tools,
+                plan,
+                approve,
+                in_place,
+                managed,
+            },
+            other => other,
+        }
+    }
+
     /// The job id a lifecycle verb names, or `None` for a verb that names
     /// none (a listing, a readiness check).
     pub fn job_id(&self) -> Option<&str> {

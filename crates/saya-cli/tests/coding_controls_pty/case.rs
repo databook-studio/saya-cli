@@ -16,7 +16,7 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     // treating as Enter — so the command would never submit.
     // "helpers" is the request's own evidence: the lean tool set advertises
     // `helpers` only when the task asks for it, and this run drives two.
-    session.send(b"/start pty-job 'controlled task with helpers' --write a.txt --write b.txt --database-profile analytics --database-profile warehouse\r");
+    session.send(b"/start --id pty-job 'controlled task with helpers' --write a.txt --write b.txt --database-profile analytics --database-profile warehouse\r");
     session.wait_for("Approve job pty-job", INTERACTIVE);
     // The overlay renders a bounded window of the proposal; the second
     // profile name is the last part this window shows, so wait for it before

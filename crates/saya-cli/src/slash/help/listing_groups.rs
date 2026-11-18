@@ -10,7 +10,7 @@ const LISTING_GROUPS: &[(&str, &[(&str, &str)])] = &[
         &[
             (
                 "start",
-                "/start <id> <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--approve]",
+                "/start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--approve]",
             ),
             (
                 "follow-up",

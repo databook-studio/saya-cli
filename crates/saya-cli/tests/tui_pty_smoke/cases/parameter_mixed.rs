@@ -42,11 +42,13 @@ fn tui_investigation_run_mixed_param_tokens_survive_and_leak_nothing() {
     // reaching execution would bind `…` and paint no row.
     tui.wait_for("4242", INTERACTIVE)
         .expect("the run bound the original value (the sentinel row paints)");
-    // Wait for the steady state (the draft cleared — the placeholder paints
-    // exactly when the box is empty) before reading the screen, so the
-    // typing-time echo of the draft never pollutes the assertion.
-    tui.wait_for("Ask about your data", INTERACTIVE)
+    // Wait for the steady state before reading the screen: the draft is
+    // cleared, and the redraw has blanked the cells past the shorter
+    // placeholder, so the typing-time echo never pollutes the assertion.
+    tui.wait_for("Ask a question or describe a change", INTERACTIVE)
         .expect("the input draft cleared after the submit");
+    tui.wait_gone("hello", INTERACTIVE)
+        .expect("the input box cleared the submitted line");
 
     let screen = tui.screen();
     assert_in(

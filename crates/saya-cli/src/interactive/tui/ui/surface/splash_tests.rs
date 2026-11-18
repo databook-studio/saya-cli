@@ -84,6 +84,21 @@ fn status_line_names_model_provider_and_mode() {
     assert_eq!(status_text("   ", "ollama", "ask"), AI_NOT_CONFIGURED);
 }
 
+/// The welcome invites a plain message, the default way to work, and names
+/// no slash command: `/start` lives in `/help`'s background-jobs group.
+#[test]
+fn the_welcome_invites_a_plain_message_only() {
+    let all = [WELCOME, WELCOME_ASK, WELCOME_WORK].join(" ");
+    assert!(
+        all.contains("question") || all.contains("describe"),
+        "the welcome invites a message: {all}"
+    );
+    assert!(
+        !all.contains("/start"),
+        "the welcome must not mention /start: {all}"
+    );
+}
+
 /// The state and hint copy names no config path. Init's default moved from
 /// the project layer to the user one and old guidance kept naming `.saya/`,
 /// which nothing asserted — so it stayed wrong through a release.
@@ -183,6 +198,8 @@ fn unbound_workspace_line_names_the_fact_and_the_remedy() {
 #[test]
 fn first_run_guidance_fits_its_columns() {
     for line in [
+        WELCOME_ASK,
+        WELCOME_WORK,
         START_SETUP,
         START_AI,
         START_DATABASE,

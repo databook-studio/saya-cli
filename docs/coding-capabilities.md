@@ -322,6 +322,13 @@ so `/start` reaches the same in-place path; a session in a Git worktree says at
 startup that edits land in the folder and `/job rewind` undoes tool edits. A
 dangerous root still binds nothing.
 
+In a session, ordinary work is just a message; `/start <task>` is the opt-in
+for long or background work. The id is generated (use `--id` to state one),
+and with no `--write` the job may edit the whole workspace, the way `saya -p`
+behaves; an explicit `--write` narrows it. The session still shows that exact
+scope for approval and names the id it chose. The positional
+`/start <id> "<task>"` form is gone: an unquoted first word is task text.
+
 A `--managed` start (or a configured managed default) that cannot use a
 checkout — an unborn or conflicted index, a sparse or partial clone, an
 included config or a filter attribute, a nested repository, an unsupported

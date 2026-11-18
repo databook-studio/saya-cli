@@ -82,9 +82,11 @@ fn start_slash_mirrors_saya_start() {
         "warehouse",
         "--approve",
     ];
+    // The slash spelling names the id with `--id`; the task is the rest of
+    // the line, so both surfaces resolve to the same command.
     assert_eq!(
         slash_command(
-            "/start job-a 'change one file' --write tracked.txt \
+            "/start --id job-a 'change one file' --write tracked.txt \
              --database-profile analytics --database-profile warehouse --approve"
         ),
         start_command(&words)

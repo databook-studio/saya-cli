@@ -138,7 +138,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
     let line = match name {
         "connect" => "/connect demo",
         "job" => "/job export chain-sentinel",
-        "start" => "/start chain-sentinel 'chain task' --approve",
+        "start" => "/start --id chain-sentinel 'chain task' --approve",
         "follow-up" => {
             "/follow-up chain-sentinel child-a --expected-completion-sequence 1 \
              'chain task' --approve"

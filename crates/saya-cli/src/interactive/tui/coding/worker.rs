@@ -166,6 +166,10 @@ async fn work(
         activity: tx,
         receipts,
     } = senders;
+    // A session start with no `--write` edits the whole workspace, like
+    // `saya -p`; an explicit `--write` narrows. The panel still puts this
+    // exact scope to the operator.
+    let command = command.with_session_write_scope();
     // The job id the panel's own approval answers for, when this command runs
     // a root with the panel open.
     let shell_id = match &command {
@@ -233,9 +237,8 @@ async fn work(
             .await
             .map(|value| crate::render::render_coding_result(&shown, &value));
     };
-    // An edit-capable consent answers the approve question and gives an empty
-    // scope the folder; `ask` keeps both as stated.
-    let write_paths = crate::commands::coding::launch_write_scope(approval_policy, &write_paths);
+    // The scope already carries the session default: the workspace root when
+    // no `--write` was stated, the stated paths otherwise.
     let request = CodingJobRequest::new(
         saya_types::JobId::parse(&id).map_err(CodingError::owner)?,
         task,

@@ -1285,7 +1285,15 @@ and arm64 Linux; everywhere else, Windows and x86-64 hosts included, it refuses
 with a clear error.
 
 Inside a session the same grammar is spelled `/start`, `/follow-up`, and
-`/job <verb>`. The session-only controls have one bare spelling each:
+`/job <verb>`. Ordinary work is just a message. `/start [--id <id>] <task>`
+is the opt-in for long or background work: the task is the whole remaining
+text, recognised flags are removed wherever they appear, and the id is
+generated unless `--id` states one (the session names the id it chose). With
+no `--write`, a session start may edit the whole workspace (`.`), exactly like
+`saya -p`; an explicit `--write` narrows it. The old positional
+`/start <id> "<task>"` form is gone — an unquoted first word is ambiguous with
+a task, so it is read as task text, never as an id. Put `--` before task text
+that itself begins with `--`. The session-only controls have one bare spelling each:
 `/approve <id>`, `/deny <id>`, `/message <id> <agent> <text>`,
 `/pause <id> <agent>`, `/continue <id> <agent>`, and
 `/cancel-child <id> <agent>`. A top-level `saya coding …` still parses, but

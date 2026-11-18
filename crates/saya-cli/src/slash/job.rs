@@ -2,9 +2,10 @@
 //! `/start` and `/follow-up` for the two agent launches, and one bare spelling
 //! each for the six session-only controls.
 //!
-//! Every spelling parses through the one `CodingCommand` grammar the CLI
-//! uses — `/job` is `saya job`, `/start` is `saya start`, `/follow-up` is
-//! `saya follow-up` — so the surfaces cannot drift.
+//! Every spelling builds the one `CodingCommand` the CLI carries, so the
+//! surfaces cannot drift: `/job` and `/follow-up` parse through its clap
+//! grammar, while `/start` reads its own line so the task can be the whole
+//! remaining text and the id can be generated.
 
 use super::{SlashCommand, SlashParseError};
 use crate::cli::CodingCommand;
@@ -56,16 +57,155 @@ fn refuse_tools(args: JobArgs) -> Result<CodingCommand, SlashParseError> {
     }
 }
 
-/// `/start <id> <task> …` — `saya start` inside the session, including the
-/// session's own `--tools` narrowing words.
+/// `/start [--id <id>] <task> [flags]` — `saya start` inside the session.
+///
+/// The task is the whole remaining text: quotes group it and every
+/// recognised flag is removed wherever it appears. The id is generated unless
+/// `--id` states one, so starting ordinary work needs no id to type. The old
+/// positional `id task` form is gone — an unquoted first word is ambiguous
+/// with a task, so it is read as task text, never as an id. `--` ends the
+/// flags, for task text that itself begins with `--`.
 pub(super) fn parse_start(tail: &str) -> Result<SlashCommand, SlashParseError> {
-    let mut args = parse_words("start", Some("start"), tail)?;
-    let stated = std::mem::take(&mut args.tools);
-    let CodingCommand::Start { tools, .. } = &mut args.command else {
-        return Err(SlashParseError("start requires a start command".into()));
-    };
-    *tools = stated;
-    Ok(SlashCommand::Coding(args.command))
+    if tail.len() > BYTE_BOUND {
+        return Err(SlashParseError(
+            "start command exceeds its byte bound".into(),
+        ));
+    }
+    let words = crate::interactive::session::run::tokenize_tail(tail).map_err(SlashParseError)?;
+    let mut start = StartWords::default();
+    let mut task = Vec::new();
+    let mut literal = false;
+    let mut index = 0;
+    while let Some(word) = words.get(index) {
+        index += 1;
+        if literal {
+            task.push(word.clone());
+            continue;
+        }
+        if word == "--" {
+            literal = true;
+            continue;
+        }
+        let Some(flag) = word.strip_prefix("--") else {
+            task.push(word.clone());
+            continue;
+        };
+        let (name, inline) = flag
+            .split_once('=')
+            .map_or((flag, None), |(name, value)| (name, Some(value)));
+        match name {
+            "id" => {
+                let value = start.value(&words, &mut index, inline, name)?;
+                saya_types::JobId::parse(&value).map_err(|_| {
+                    SlashParseError(format!(
+                        "`--id` must be 1-128 letters, digits, `-` or `_`: {value}"
+                    ))
+                })?;
+                if start.id.replace(value).is_some() {
+                    return Err(SlashParseError("`--id` is stated more than once".into()));
+                }
+            }
+            "write" => {
+                let value = start.value(&words, &mut index, inline, name)?;
+                start.write_paths.push(value);
+            }
+            "database-profile" => {
+                let value = start.value(&words, &mut index, inline, name)?;
+                start.database_profiles.push(value);
+            }
+            "tools" => {
+                let value = start.value(&words, &mut index, inline, name)?;
+                start.tools.extend(
+                    value
+                        .split(',')
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned),
+                );
+            }
+            "plan" | "in-place" | "managed" | "approve" => {
+                if inline.is_some() {
+                    return Err(SlashParseError(format!("`--{name}` takes no value")));
+                }
+                start.set_flag(name);
+            }
+            other => {
+                return Err(SlashParseError(format!(
+                    "unknown flag `--{other}`: put task text that begins with `--` after `--`"
+                )));
+            }
+        }
+    }
+    if start.in_place && start.managed {
+        return Err(SlashParseError(
+            "`--in-place` and `--managed` cannot be stated together".into(),
+        ));
+    }
+    if task.is_empty() {
+        return Err(SlashParseError(
+            "start requires a task: /start <task>".into(),
+        ));
+    }
+    let id = start
+        .id
+        .unwrap_or_else(|| crate::commands::coding::generate_job_id().to_string());
+    Ok(SlashCommand::Coding(CodingCommand::Start {
+        id,
+        task: task.join(" "),
+        write_paths: start.write_paths,
+        database_profiles: start.database_profiles,
+        tools: start.tools,
+        plan: start.plan,
+        approve: start.approve,
+        in_place: start.in_place,
+        managed: start.managed,
+    }))
+}
+
+/// The words a `/start` line states besides its task, before the command is
+/// built.
+#[derive(Default)]
+struct StartWords {
+    id: Option<String>,
+    write_paths: Vec<String>,
+    database_profiles: Vec<String>,
+    tools: Vec<String>,
+    plan: bool,
+    approve: bool,
+    in_place: bool,
+    managed: bool,
+}
+
+impl StartWords {
+    /// The value of `--flag value` or `--flag=value`, consumed from `index`.
+    fn value(
+        &self,
+        words: &[String],
+        index: &mut usize,
+        inline: Option<&str>,
+        flag: &str,
+    ) -> Result<String, SlashParseError> {
+        if let Some(value) = inline {
+            if value.is_empty() {
+                return Err(SlashParseError(format!("`--{flag}` needs a value")));
+            }
+            return Ok(value.to_owned());
+        }
+        let value = words
+            .get(*index)
+            .ok_or_else(|| SlashParseError(format!("`--{flag}` needs a value")))?;
+        *index += 1;
+        Ok(value.clone())
+    }
+
+    fn set_flag(&mut self, name: &str) {
+        match name {
+            "plan" => self.plan = true,
+            "approve" => self.approve = true,
+            "in-place" => self.in_place = true,
+            "managed" => self.managed = true,
+            _ => {}
+        }
+    }
 }
 
 /// `/follow-up <id> <agent> --expected-completion-sequence <n> <instruction>`
@@ -96,7 +236,7 @@ pub(super) fn parse_job(tail: &str) -> Result<SlashCommand, SlashParseError> {
 /// CLI command's map; the two launches name their session spelling.
 fn session_spelling(command: &CodingCommand) -> Option<&'static str> {
     match command {
-        CodingCommand::Start { .. } => Some("/start <id> <task> …"),
+        CodingCommand::Start { .. } => Some("/start <task>"),
         CodingCommand::FollowUp { .. } => Some("/follow-up <id> <agent> …"),
         other => crate::cli::job_session_spelling(other),
     }

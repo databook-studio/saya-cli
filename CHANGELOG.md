@@ -5,6 +5,22 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ## Unreleased
 
+### Breaking changes
+
+- The positional `/start <id> "<task>"` form is removed: an unquoted first
+  word is task text, never an id.
+
+### Changed
+
+- **A lighter `/start` in a session.** `/start <task>` generates the id (state
+  `--id <id>` to choose one) and, with no `--write`, may edit the whole
+  workspace, like `saya -p`; an explicit `--write` narrows it. The task is the
+  whole remaining text with the flags removed, and the session names the id it
+  chose.
+- **A message is the default.** The TUI placeholder and welcome invite a plain
+  message ("Ask a question or describe a change"); `/start` for long or
+  background work is listed in `/help`.
+
 ### Fixed
 
 - The Linux runner sandbox allows `/dev/null`, so background shell commands
