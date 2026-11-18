@@ -14,6 +14,7 @@ use std::{
 pub(super) struct Provider {
     pub endpoint: String,
     bodies: Arc<Mutex<Vec<Value>>>,
+    raw_bodies: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
@@ -24,6 +25,8 @@ impl Provider {
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
         let bodies = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&bodies);
+        let raw_bodies = Arc::new(Mutex::new(Vec::new()));
+        let captured_raw = Arc::clone(&raw_bodies);
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
         let worker = thread::spawn(move || {
@@ -48,8 +51,9 @@ impl Provider {
                 stream
                     .set_write_timeout(Some(Duration::from_secs(30)))
                     .unwrap();
-                let body = read(&mut stream);
+                let (raw, body) = read(&mut stream);
                 let child = is_child(&body);
+                captured_raw.lock().unwrap().push(raw);
                 captured.lock().unwrap().push(body);
                 let actor = usize::from(child);
                 let response = scenario.response(child, turns[actor]);
@@ -61,12 +65,20 @@ impl Provider {
         Self {
             endpoint,
             bodies,
+            raw_bodies,
             stop,
             worker: Some(worker),
         }
     }
     pub fn bodies(&self) -> Vec<Value> {
         self.bodies.lock().unwrap().clone()
+    }
+    /// The request bodies as they arrived on the wire, before parsing. The
+    /// request baseline measures these bytes; `bodies` stays the parsed view
+    /// every other row reads.
+    #[allow(dead_code)] // read only by the run-core-parity baseline binary
+    pub fn raw_bodies(&self) -> Vec<String> {
+        self.raw_bodies.lock().unwrap().clone()
     }
 }
 pub(super) fn is_child(body: &Value) -> bool {
@@ -76,7 +88,8 @@ pub(super) fn is_child(body: &Value) -> bool {
             .is_some_and(|text| text.contains("UNTRUSTED CHILD TASK ("))
     })
 }
-fn read(stream: &mut TcpStream) -> Value {
+/// One request body: the text as it arrived, and the same text parsed.
+fn read(stream: &mut TcpStream) -> (String, Value) {
     let mut bytes = Vec::new();
     let mut buffer = [0; 8192];
     loop {
@@ -95,7 +108,11 @@ fn read(stream: &mut TcpStream) -> Value {
                 })
                 .unwrap();
             if bytes.len() >= index + 4 + length {
-                return serde_json::from_slice(&bytes[index + 4..index + 4 + length]).unwrap();
+                let payload = &bytes[index + 4..index + 4 + length];
+                return (
+                    String::from_utf8_lossy(payload).into_owned(),
+                    serde_json::from_slice(payload).unwrap(),
+                );
             }
         }
     }

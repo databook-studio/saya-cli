@@ -6,8 +6,11 @@
 //!
 //! The task states a URL and a helper so the evidence-gated web and helper
 //! tools are advertised, matching the surface as a user reaches it.
+//!
+//! The script answers each surface on its second turn, so both surfaces make
+//! two requests and the request baseline can compare the two prefixes.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use saya_agent::{CancellationToken, NoopEventSink};
 use saya_cli::{CodingAuthorization, CodingJobRequest};
@@ -30,7 +33,31 @@ pub(super) struct Captured {
     pub(super) helper: Advertised,
 }
 
+/// The run's request bodies, split by surface, in arrival order; plus the
+/// fixture roots those bodies may name.
+pub(super) struct Conversation {
+    pub(super) jobs: Vec<String>,
+    pub(super) helpers: Vec<String>,
+    pub(super) roots: Vec<PathBuf>,
+}
+
 pub(super) fn capture() -> Captured {
+    let conversation = converse();
+    let first = |bodies: &[String], surface: &str| {
+        let body = bodies
+            .first()
+            .unwrap_or_else(|| panic!("the {surface} surface sent no provider request"));
+        let value: serde_json::Value =
+            serde_json::from_str(body).expect("the provider request body is JSON");
+        Advertised::from_body(&value)
+    };
+    Captured {
+        job: first(&conversation.jobs, "job root"),
+        helper: first(&conversation.helpers, "helper"),
+    }
+}
+
+pub(super) fn converse() -> Conversation {
     let provider = Provider::new(Scenario::Feedback {
         batches: 0,
         width: 0,
@@ -68,17 +95,21 @@ pub(super) fn capture() -> Captured {
             .await
             .expect("the scripted job terminates")
             .unwrap();
-        let bodies = provider.bodies();
-        let job = bodies
-            .first()
-            .expect("the job root made a provider request");
-        let helper = bodies
-            .iter()
-            .find(|body| is_child(body))
-            .expect("the helper made a provider request");
-        Captured {
-            job: Advertised::from_body(job),
-            helper: Advertised::from_body(helper),
+        let mut jobs = Vec::new();
+        let mut helpers = Vec::new();
+        for body in provider.raw_bodies() {
+            let value: serde_json::Value =
+                serde_json::from_str(&body).expect("the provider request body is JSON");
+            if is_child(&value) {
+                helpers.push(body);
+            } else {
+                jobs.push(body);
+            }
+        }
+        Conversation {
+            jobs,
+            helpers,
+            roots: vec![fixture.root.clone()],
         }
     })
 }
