@@ -17,7 +17,7 @@
 //! prompt shows is refused outright — the operator never answers for text it
 //! cannot read in full.
 
-use super::{CodingMessage, ask_operator};
+use super::{CodingMessage, WaitPolicy, ask_operator};
 use async_trait::async_trait;
 use saya_agent::CancellationToken;
 use serde_json::Value;
@@ -94,6 +94,6 @@ impl Operator for PanelEgressApproval {
             "{}\n{}\nUse `/approve {}` or `/deny {}`.",
             subject, target, self.id, self.id
         );
-        ask_operator(&self.sender, &self.token, text).await
+        ask_operator(&self.sender, &self.token, text, WaitPolicy::PANEL).await
     }
 }

@@ -22,19 +22,47 @@ mod egress_approval;
 #[path = "worker/egress_approval_tests.rs"]
 mod egress_approval_tests;
 #[cfg(test)]
+mod wait_policy_tests;
+#[cfg(test)]
 mod worker_tests;
 struct PanelApproval {
     sender: mpsc::SyncSender<CodingMessage>,
     token: CancellationToken,
     id: String,
 }
-/// Puts one question to the panel and waits for the operator's answer. A full
-/// or closed queue, a cancelled run, and the 120 s deadline all refuse. No
+/// How long a question to the operator waits for an answer.
+///
+/// The job panel is `PANEL`: a detached surface, which learns the answer on
+/// its next drain, so a question nobody is watching must not hold the run open.
+/// A surface with a person attached — the chat front end over the job engine —
+/// has no deadline: only the answer or cancellation ends the wait.
+pub(super) enum WaitPolicy {
+    /// A person is present and answers as soon as they decide: the wait lasts
+    /// until they answer, or until the run is cancelled. No shipped surface
+    /// attaches a person yet; the chat front end over the job engine will.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Attached,
+    /// The surface reports the answer on a later drain, so the wait gives up
+    /// after this long and the question is refused.
+    Detached(std::time::Duration),
+}
+
+impl WaitPolicy {
+    /// The job panel's policy: it drains the answer on its next frame, so an
+    /// unanswered question expires after 120 s rather than holding the run.
+    pub(super) const PANEL: WaitPolicy = WaitPolicy::Detached(std::time::Duration::from_secs(120));
+}
+
+/// Puts one question to the panel and waits for the operator's answer as
+/// `policy` allows: a detached wait ends at its deadline, an attached one waits
+/// for the person. A full or closed queue, a cancelled run, an expired
+/// deadline, a closed answer channel, and a `false` answer all refuse. No
 /// answer is ever remembered: a run outside the sandbox asks again.
 async fn ask_operator(
     sender: &mpsc::SyncSender<CodingMessage>,
     token: &CancellationToken,
     text: String,
+    policy: WaitPolicy,
 ) -> bool {
     let (respond, answer) = tokio::sync::oneshot::channel();
     if sender
@@ -43,7 +71,26 @@ async fn ask_operator(
     {
         return false;
     }
-    tokio::select! { _=token.cancelled()=>false, answer=tokio::time::timeout(std::time::Duration::from_secs(120),answer)=>matches!(answer,Ok(Ok(true))) }
+    tokio::select! {
+        _ = token.cancelled() => false,
+        approved = await_answer(answer, policy) => approved == Some(true),
+    }
+}
+
+/// The answer, as far as `policy` allows it to arrive: `Attached` waits for the
+/// person however long they take, `Detached(deadline)` gives up after
+/// `deadline`. A closed answer channel is no answer at all.
+async fn await_answer(
+    answer: tokio::sync::oneshot::Receiver<bool>,
+    policy: WaitPolicy,
+) -> Option<bool> {
+    match policy {
+        WaitPolicy::Attached => answer.await.ok(),
+        WaitPolicy::Detached(deadline) => match tokio::time::timeout(deadline, answer).await {
+            Ok(answer) => answer.ok(),
+            Err(_) => None,
+        },
+    }
 }
 #[async_trait]
 impl ApprovalDecider for PanelApproval {
@@ -59,7 +106,7 @@ impl ApprovalDecider for PanelApproval {
             "Approve job {} with this exact scope:\n{}\nUse `/approve {}` or `/deny {}`.",
             self.id, arguments, self.id, self.id
         );
-        ask_operator(&self.sender, &self.token, text).await
+        ask_operator(&self.sender, &self.token, text, WaitPolicy::PANEL).await
     }
 }
 /// The root mode a panel launch opens over: the command's flag, its configured
