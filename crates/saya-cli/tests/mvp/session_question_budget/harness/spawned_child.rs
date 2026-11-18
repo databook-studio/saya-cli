@@ -58,6 +58,15 @@ impl SpawnedChild {
         self.stdin.write_all(bytes).unwrap();
         self.stdin.flush().unwrap();
     }
+    /// The per-run roots the child was given: goldens redact them before
+    /// comparing, so a test may read them without changing what the child
+    /// sees. `finish` still removes them.
+    pub(crate) fn config_root(&self) -> &std::path::Path {
+        &self.config_root
+    }
+    pub(crate) fn session_root(&self) -> &std::path::Path {
+        &self.session_root
+    }
     pub(crate) fn finish(mut self) {
         use std::time::{Duration, Instant};
         let deadline = Instant::now() + Duration::from_secs(30);

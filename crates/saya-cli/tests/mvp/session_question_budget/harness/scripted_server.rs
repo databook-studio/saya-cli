@@ -11,12 +11,26 @@ fn reply_finished(stream: &mut std::net::TcpStream, body: &str) {
     stream.flush().unwrap();
 }
 
+/// One tool call the mock served, as the model asked for it. The goldens
+/// record these rather than only the calls replayed in a later request:
+/// a clarification call ends its turn and is not replayed, but the model
+/// still made it.
+#[cfg(unix)]
+#[derive(Clone)]
+pub(crate) struct ServedCall {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) arguments: serde_json::Value,
+}
+
 #[cfg(unix)]
 pub(crate) struct MockServer {
     pub(crate) address: String,
     pub(crate) requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// The request bodies the mock received, in arrival order.
     pub(crate) bodies: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// The tool calls the mock served, in arrival order.
+    pub(crate) served: std::sync::Arc<std::sync::Mutex<Vec<ServedCall>>>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -59,6 +73,8 @@ pub(crate) fn spawn_script_server(
     let server_count = requests.clone();
     let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let server_bodies = bodies.clone();
+    let served = std::sync::Arc::new(std::sync::Mutex::new(Vec::<ServedCall>::new()));
+    let server_served = served.clone();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server_stop = stop.clone();
     let handle = thread::spawn(move || {
@@ -74,7 +90,12 @@ pub(crate) fn spawn_script_server(
             match step {
                 ScriptStep::Clarify { delay } => {
                     thread::sleep(delay);
-                    reply_finished(&mut stream, &clarification_body());
+                    server_served.lock().unwrap().push(ServedCall {
+                        id: tool_call_id(index),
+                        name: "request_clarification".to_owned(),
+                        arguments: clarification_arguments(),
+                    });
+                    reply_finished(&mut stream, &clarification_body(index));
                 }
                 ScriptStep::Natural => reply_finished(&mut stream, &answer_body()),
                 ScriptStep::NaturalWithUsage { input_tokens } => {
@@ -85,6 +106,14 @@ pub(crate) fn spawn_script_server(
                 ScriptStep::DelayedNatural { delay } => {
                     thread::sleep(delay);
                     reply_finished(&mut stream, &answer_body());
+                }
+                ScriptStep::ToolCall { name, arguments } => {
+                    server_served.lock().unwrap().push(ServedCall {
+                        id: tool_call_id(index),
+                        name: name.clone(),
+                        arguments: arguments.clone(),
+                    });
+                    reply_finished(&mut stream, &tool_call_body(&name, &arguments, index));
                 }
                 ScriptStep::Harmless => reply_finished(&mut stream, &harmless_body()),
                 ScriptStep::HoldOpen { marker } => {
@@ -150,6 +179,7 @@ pub(crate) fn spawn_script_server(
         address,
         requests,
         bodies,
+        served,
         stop,
         handle: Some(handle),
     }

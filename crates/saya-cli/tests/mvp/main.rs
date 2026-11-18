@@ -2,6 +2,8 @@ mod clarification;
 mod cli;
 mod common;
 mod config;
+#[cfg(unix)]
+mod db_goldens;
 mod paths;
 mod profiles;
 mod provider;
