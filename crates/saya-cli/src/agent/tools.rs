@@ -40,7 +40,7 @@ mod tool_calls;
 /// The one `web_fetch` tool: the harness's own bounded GET, converted to text
 /// and consented per call, shared by the coding root and its helpers.
 pub(crate) mod web;
-mod workspace;
+pub(crate) mod workspace;
 
 pub(crate) use database_tools::DatabaseTools;
 // The write bound the tool enforces, which the approval prompt states.
