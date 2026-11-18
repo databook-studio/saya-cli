@@ -88,7 +88,7 @@ jobs:
         with:
           shared-key: "stable-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         with:
           tool: cargo-nextest
       - run: cargo fmt --check
@@ -118,7 +118,7 @@ jobs:
         with:
           shared-key: "e2e-${{ runner.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         with:
           tool: cargo-nextest
       - run: cargo nextest run -p saya-cli --locked --profile ci --test job_apply_e2e
