@@ -22,6 +22,13 @@ pub trait ChatProvider: Send + Sync {
     fn request_timeout(&self) -> Duration {
         crate::providers::DEFAULT_REQUEST_TIMEOUT
     }
+    /// The window without a content-bearing event before the loop treats the
+    /// stream as stalled and retries the turn. A provider built from
+    /// `ProviderSettings` reports its configured window; the default matches
+    /// the product's two-minute one.
+    fn stall_timeout(&self) -> Duration {
+        crate::providers::DEFAULT_STALL_TIMEOUT
+    }
     /// The per-response output-token ceiling this provider is configured with,
     /// or `None` when it does not report one. The loop reads it for the
     /// first-request fit. A gateway time-cut does not replace it.

@@ -44,10 +44,13 @@ pub(super) async fn read_json<T: DeserializeOwned>(
 
 enum AttemptError {
     /// The send failed below HTTP. Only a reset/aborted connection is worth
-    /// retrying: a refused or otherwise failed connection would fail the same
-    /// way again, and a timeout already spent its establishment budget.
+    /// retrying inside the provider: a refused or otherwise failed connection
+    /// would fail the same way again, and a timeout already spent its
+    /// establishment budget. `connect` says the connection itself never came
+    /// up, which is the one failure the receive loop must not re-send either.
     Network {
         connection_reset: bool,
+        connect: bool,
     },
     Timeout,
 }
@@ -121,6 +124,7 @@ async fn send_stream_inner(
                 Ok(Ok(Ok(response))) => Ok(response),
                 Ok(Ok(Err(error))) => Err(AttemptError::Network {
                     connection_reset: is_connection_reset(&error),
+                    connect: error.is_connect(),
                 }),
                 Ok(Err(error)) => return Err(error),
                 Err(_) => Err(AttemptError::Timeout),
@@ -150,10 +154,17 @@ async fn send_stream_inner(
                         .settle_active(EffectOutcome::Unknown, None, false)
                         .await?;
                 }
+                if retryable(response.status()) {
+                    // A gateway that answered 429/5xx on every scheduled
+                    // attempt is still the gateway's failure, not this
+                    // request's: the receive loop may re-send it.
+                    return Err(ProviderError::Unavailable(describe(response.status())).into());
+                }
                 return Err(ProviderError::Request(describe(response.status())).into());
             }
             Err(AttemptError::Network {
                 connection_reset: true,
+                ..
             }) if attempt < delays.len() => {
                 if let Some(control) = attempts.as_deref_mut() {
                     control
@@ -169,9 +180,20 @@ async fn send_stream_inner(
                         .settle_active(EffectOutcome::Unknown, None, false)
                         .await?;
                 }
+                // The connection came up and the exchange then died, or it
+                // never answered within the establishment budget: a transient
+                // transport failure, so the receive loop may re-send the
+                // identical request. A connection that never came up stays the
+                // request's own problem, exactly as before.
                 if matches!(error, AttemptError::Timeout) {
-                    return Err(ProviderError::Request(format!(
+                    return Err(ProviderError::Unavailable(format!(
                         "provider request timed out while establishing a connection to {endpoint}"
+                    ))
+                    .into());
+                }
+                if matches!(error, AttemptError::Network { connect: false, .. }) {
+                    return Err(ProviderError::Unavailable(format!(
+                        "the connection to the provider at {endpoint} was lost before a response"
                     ))
                     .into());
                 }

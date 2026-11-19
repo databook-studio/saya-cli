@@ -23,6 +23,12 @@ All notable changes to SAYA CLI are recorded here. This project follows
 
 ### Fixed
 
+- **A transient provider failure is retried, not fatal.** A request whose
+  connection dies before a response, or a gateway answer that outlives the
+  provider's own retry schedule, is re-sent under the configured backoff
+  instead of ending the job on its first attempt. A stream that a gateway
+  keeps alive but never feeds is cut after the two-minute content window and
+  retried rather than spending a continuation.
 - The Linux runner sandbox allows `/dev/null`, so background shell commands
   (`cmd &`) and `>/dev/null` redirections no longer fail with a permission
   error.

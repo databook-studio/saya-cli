@@ -23,6 +23,8 @@ include!("agent_loop/external_side_effect_without_approval_tool.rs");
 include!("agent_loop/assert_open_browser_gated.rs");
 include!("agent_loop/reasoning_provider.rs");
 include!("agent_loop/stall_then_answer_provider.rs");
+include!("agent_loop/silent_after_content_provider.rs");
+include!("agent_loop/silent_stream_is_cut_and_retried.rs");
 include!("agent_loop/always_dropping_provider.rs");
 include!("agent_loop/cut_after_content_provider.rs");
 include!("agent_loop/cut_sequence_provider.rs");

@@ -24,8 +24,11 @@ async fn gemini_establishment_timeout_is_not_a_client_total_timeout() {
     .unwrap();
 
     let error = provider.complete(request()).await.unwrap_err();
+    // Its own establishment deadline, not the client's total request deadline:
+    // the message names the timeout, and the class is the transient one the
+    // receive loop may re-send.
     assert!(
-        matches!(&error, ProviderError::Request(message) if message.contains("timed out")),
+        matches!(&error, ProviderError::Unavailable(message) if message.contains("timed out")),
         "unexpected establishment error: {error:?}"
     );
     server.await.unwrap();

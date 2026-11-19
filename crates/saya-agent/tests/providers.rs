@@ -51,6 +51,7 @@ include!("providers/every_streaming_provider_cuts_at_the_request_deadline.rs");
 include!("providers/openai_stream_reports_stall_on_idle_timeout.rs");
 include!("providers/ollama_stream_reports_stall_on_idle_timeout.rs");
 include!("providers/openai_stream_stall_timer_counts_only_content.rs");
+include!("providers/openai_stream_comment_keepalives_stall.rs");
 include!("providers/anthropic_stream_stall_timer_counts_only_content.rs");
 include!("providers/ollama_stream_stall_timer_counts_only_content.rs");
 include!("providers/anthropic_stream_surfaces_cumulative_token_usage.rs");
