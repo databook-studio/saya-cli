@@ -1,10 +1,8 @@
 //! The job's database tools reach a factory-built executor through the
-//! database plugin: one owner for those names, not a second direct door beside
-//! it. The bytes the model reads are the same either way, so the test pins the
-//! door itself — a database surface attached at the old direct field, one that
-//! admits no profile and so can only refuse, must not be what answers.
+//! database plugin: one owner for those names, and one door the call travels.
+//! The bytes the model reads are the plugin's, so the test pins the door — a
+//! built executor answers a call the plugin owns — as well as the answer.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +10,7 @@ use saya_agent::ToolExecutor;
 
 use super::CliChildFactory;
 use super::tests::{Sandbox, checkout, database_view, profile_identity};
-use super::tests_database::{runtime, runtime_with, selected, sqlite_profile, store};
+use super::tests_database::{runtime_with, selected, sqlite_profile, store};
 use crate::commands::coding::database::CodingDatabaseTools;
 
 /// A scratch directory under the workspace's own `target/` — never the system
@@ -30,8 +28,7 @@ fn advertises(definitions: &[saya_agent::ToolDefinition], name: &str) -> bool {
 }
 
 /// A job that selected `main` advertises the standard database tools, and the
-/// executor the factory built serves them — from the plugin, not from a second
-/// direct database field beside it.
+/// executor the factory built serves them — through the plugin that owns them.
 #[tokio::test]
 async fn a_factory_built_executor_serves_its_database_tools_through_the_plugin() {
     let checkout_id = checkout("checkout");
@@ -53,17 +50,8 @@ async fn a_factory_built_executor_serves_its_database_tools_through_the_plugin()
         false,
     ));
 
-    let (definitions, mut tools, _approval) = factory.build_toolset(&view).unwrap();
+    let (definitions, tools, _approval) = factory.build_toolset(&view).unwrap();
     assert!(advertises(&definitions, "bounded_sql_query"));
-
-    // The one door: a database surface with no admitted profile, attached where
-    // the executor used to keep its own copy, cannot answer this call.
-    tools.attach_databases(Arc::new(CodingDatabaseTools::new(
-        runtime(),
-        store(),
-        BTreeMap::new(),
-        false,
-    )));
 
     let served = tools
         .execute(

@@ -16,7 +16,6 @@ use super::super::DatabaseTools;
 use super::super::shell_policy::{self, BackgroundOwner, ShellTool};
 use super::super::workspace;
 use super::{ChildToolsError, TrustedCheckoutPair};
-use crate::commands::coding::database::CodingDatabaseTools;
 use crate::interactive::session::tasks::{SessionTasks, TasksSet};
 
 #[path = "executor/dispatch.rs"]
@@ -27,8 +26,9 @@ mod post_edit;
 /// A tool set bound to one child's verified managed checkout: the workspace
 /// tools for the child root plus the narrowed authority that admits writes.
 /// The helper's `shell` exists only when the composition root attached one
-/// (the job's config and mode allow it), and the standard read-only database
-/// tools only when the job selected a profile the view admits.
+/// (the job's config and mode allow it), and the database tools only through
+/// the plugin the factory activated for this surface — the same definitions,
+/// reached through the plugin's executor.
 pub(crate) struct ChildTools {
     tools: DatabaseTools,
     view: ChildAuthorityView,
@@ -60,7 +60,6 @@ pub(crate) struct ChildTools {
     /// plugin's to serve, so the executor routes it to the plugin's executor
     /// rather than keeping a second door of its own.
     plugins: Option<ActivePlugins>,
-    databases: Option<Arc<CodingDatabaseTools>>,
     coding: Option<Arc<crate::commands::coding::checks::ChildCodingOperations>>,
     /// This child's own working list. The root keeps a separate one.
     tasks: TasksSet,
@@ -124,7 +123,6 @@ pub(crate) fn child_toolset(
         mcp: None,
         coding: None,
         plugins: None,
-        databases: None,
         tasks: TasksSet::new(SessionTasks::default()),
         tools_allow: saya_config::ResolvedTools::default(),
         notebook_edit: true,
@@ -263,16 +261,22 @@ impl ChildTools {
         self
     }
 
-    pub(crate) fn attach_databases(&mut self, databases: Arc<CodingDatabaseTools>) {
-        self.databases = Some(databases);
-    }
-
     /// Attaches the plugins the factory activated for this surface. The
     /// definitions they deliver are appended to the advertised list by the
     /// composer; this is the executor half, so dispatch and advertisement come
     /// from one owner.
     pub(crate) fn attach_plugins(&mut self, plugins: ActivePlugins) {
         self.plugins = Some(plugins);
+    }
+
+    /// The executor that owns `name` among the active plugins, or the
+    /// unknown-tool refusal: a name no active plugin delivers has no route here,
+    /// exactly as a name this surface never advertised has none.
+    fn plugin_route(&self, name: &str) -> Result<Arc<dyn ToolExecutor>, ToolError> {
+        self.plugins
+            .as_ref()
+            .and_then(|plugins| plugins.route(name))
+            .ok_or(ToolError::UnsupportedTool)
     }
 
     pub(crate) fn attach_coding(

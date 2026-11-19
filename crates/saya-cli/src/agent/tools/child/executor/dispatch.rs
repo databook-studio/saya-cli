@@ -8,9 +8,9 @@ use super::*;
 /// checkout id never comes from model arguments; memory tools are
 /// absent: unknown names are unsupported. `shell` routes to the helper's own
 /// shell when the composition root attached one, and is unknown otherwise; the
-/// standard read-only database tools route to the job's profile-admitted
-/// toolset, and are unknown when no profile was selected. `run_command` is
-/// never routed.
+/// standard read-only database tools and the clarification ask route to the
+/// plugin that owns those names, and are unknown when no plugin was activated.
+/// `run_command` is never routed.
 #[async_trait]
 impl ToolExecutor for ChildTools {
     fn turn_context_note(&self) -> Option<String> {
@@ -135,9 +135,9 @@ impl ToolExecutor for ChildTools {
             return workspace::delete_owned(coding, arguments, context).await;
         }
         if crate::commands::coding::database::routes_here(name) {
-            let databases = self.databases.as_ref().ok_or(ToolError::UnsupportedTool)?;
-            return databases
-                .execute(Some(&self.view), name, arguments, context)
+            return self
+                .plugin_route(name)?
+                .execute_with_context(name, arguments, context)
                 .await;
         }
         if workspace::is_tool_name(name) {
@@ -220,10 +220,10 @@ impl ToolExecutor for ChildTools {
         match name {
             "checklist" => self.tasks.execute(name, arguments).await,
             // The ask needs no context, so this door serves it directly,
-            // through the same advertised gate the context door applies.
+            // through the same plugin route and advertised gate the context
+            // door takes.
             name if crate::agent::tools::clarification::is_ask(name) => {
-                let databases = self.databases.as_ref().ok_or(ToolError::UnsupportedTool)?;
-                databases.ask_result().ok_or(ToolError::UnsupportedTool)
+                return self.plugin_route(name)?.execute(name, arguments).await;
             }
             name if shell_policy::operation(name).is_some() => {
                 let cancellation = self

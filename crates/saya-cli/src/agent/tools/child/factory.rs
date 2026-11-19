@@ -233,7 +233,6 @@ impl CliChildFactory {
                 &core_tool_names,
             )?;
             definitions.extend(active.definitions());
-            tools.attach_databases(Arc::clone(databases));
             tools.attach_plugins(active);
         }
         // The helper's shell is advertised only when the composition root
