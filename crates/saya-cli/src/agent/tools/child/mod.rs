@@ -7,6 +7,7 @@ pub(crate) mod decider;
 mod executor;
 mod factory;
 mod no_effect;
+mod plugins;
 mod scope;
 #[cfg(test)]
 mod tests;

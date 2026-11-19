@@ -6,7 +6,7 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolError, ToolExecutor};
+use saya_agent::{ActivePlugins, LocalStateEffect, ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::integration::AssignedPaths;
 use saya_harness::coding::policy::ChildAuthorityView;
 use saya_harness::workspace::Workspace;
@@ -55,6 +55,11 @@ pub(crate) struct ChildTools {
     /// job's configured servers. Its consent rule is the lane's own, not this
     /// executor's; this surface only routes the names the lane owns.
     mcp: Option<Arc<crate::mcp::client::McpTools>>,
+    /// The plugins active for this surface: the database plugin the factory
+    /// registered over the job's own toolset. A name a plugin declares is the
+    /// plugin's to serve, so the executor routes it to the plugin's executor
+    /// rather than keeping a second door of its own.
+    plugins: Option<ActivePlugins>,
     databases: Option<Arc<CodingDatabaseTools>>,
     coding: Option<Arc<crate::commands::coding::checks::ChildCodingOperations>>,
     /// This child's own working list. The root keeps a separate one.
@@ -118,6 +123,7 @@ pub(crate) fn child_toolset(
         web: None,
         mcp: None,
         coding: None,
+        plugins: None,
         databases: None,
         tasks: TasksSet::new(SessionTasks::default()),
         tools_allow: saya_config::ResolvedTools::default(),
@@ -259,6 +265,14 @@ impl ChildTools {
 
     pub(crate) fn attach_databases(&mut self, databases: Arc<CodingDatabaseTools>) {
         self.databases = Some(databases);
+    }
+
+    /// Attaches the plugins the factory activated for this surface. The
+    /// definitions they deliver are appended to the advertised list by the
+    /// composer; this is the executor half, so dispatch and advertisement come
+    /// from one owner.
+    pub(crate) fn attach_plugins(&mut self, plugins: ActivePlugins) {
+        self.plugins = Some(plugins);
     }
 
     pub(crate) fn attach_coding(
