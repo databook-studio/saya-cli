@@ -68,6 +68,7 @@ fn fanout_completed(summary: &str) -> StreamMsg {
 fn denied() -> StreamMsg {
     StreamMsg::Event(AgentEvent::ToolDenied {
         name: "bounded_sql_query".into(),
+        arguments: serde_json::Value::Null,
         reason: "user denied the call".into(),
     })
 }

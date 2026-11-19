@@ -130,7 +130,7 @@ pub(crate) fn apply_tool_edge(transcript: &mut Transcript, event: AgentEvent) ->
             );
             true
         }
-        AgentEvent::ToolDenied { name, reason } => {
+        AgentEvent::ToolDenied { name, reason, .. } => {
             transcript.push(BlockKind::System, format!("✗ {name} denied: {reason}"));
             true
         }

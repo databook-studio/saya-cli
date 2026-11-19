@@ -1,3 +1,4 @@
+use super::shell_command::shell_command_detail;
 use super::sql_format::{collapse_whitespace, format_sql};
 
 /// A short, human-readable detail for a tool call, surfaced in approval prompts
@@ -8,7 +9,10 @@ use super::sql_format::{collapse_whitespace, format_sql};
 /// output does. `path`/`program` name what ran (a relative workspace path, a
 /// bare program name); `content`/argv/stdout/stderr never reach the detail —
 /// the failure tail below is a fixed vocabulary word, never tool output, and
-/// the request detail carries no argument values beyond the key fact.
+/// the request detail carries no argument values beyond the key fact. The one
+/// argument value a detail does carry whole is `shell`'s command — it is the
+/// key fact a headless reader has no approval prompt to see otherwise — and it
+/// arrives stripped and bounded, never raw.
 pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Option<String> {
     match name {
         "write" | "edit" => {
@@ -25,6 +29,17 @@ pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Opt
                 .filter(|value| !value.is_empty())?;
             Some(program.to_owned())
         }
+        // `shell` is the coding root's one command tool: the line names the
+        // command it will run, exactly as `write` names its path, because a
+        // headless reader has no approval prompt to look at instead. The
+        // command is stripped and bounded by `shell_command`, which owns both
+        // rules.
+        "shell" => shell_command_detail(
+            arguments
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        ),
         "bounded_sql_query"
         | "bounded_sql_query_all"
         | "result_shape"
@@ -48,6 +63,7 @@ pub(crate) fn tool_call_detail(name: &str, arguments: &serde_json::Value) -> Opt
         _ => None,
     }
 }
+
 /// A SQL query tool call, ready for readable display: the target database label
 /// (`None` = the primary connection) and the SQL formatted across lines.
 pub(crate) struct SqlCall {
@@ -206,3 +222,8 @@ mod c0_property_tests {
         );
     }
 }
+
+/// The `shell` half of this seam: the command it ran, stripped and bounded.
+#[cfg(test)]
+#[path = "tool_calls_shell_tests.rs"]
+mod shell_tests;

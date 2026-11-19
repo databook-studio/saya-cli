@@ -132,7 +132,9 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
             .events
             .iter()
             .filter_map(|event| match event {
-                saya_agent::AgentEvent::ToolDenied { name, reason } if name == "run_command" => {
+                saya_agent::AgentEvent::ToolDenied { name, reason, .. }
+                    if name == "run_command" =>
+                {
                     Some(reason.clone())
                 }
                 _ => None,
@@ -178,7 +180,7 @@ async fn a_denied_call_reaches_the_model_in_the_deny_list_s_words() {
     let denied_reason = events
         .iter()
         .find_map(|event| match event {
-            saya_agent::AgentEvent::ToolDenied { name, reason } if name == "run_command" => {
+            saya_agent::AgentEvent::ToolDenied { name, reason, .. } if name == "run_command" => {
                 Some(reason.clone())
             }
             _ => None,

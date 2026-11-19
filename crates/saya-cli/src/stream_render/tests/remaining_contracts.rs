@@ -30,6 +30,7 @@ fn approvals_are_untouched() {
         },
         AgentEvent::ToolDenied {
             name: "run_command".into(),
+            arguments: serde_json::Value::Null,
             reason: "denied".into(),
         },
         AgentEvent::complete(),
@@ -41,6 +42,7 @@ fn approvals_are_untouched() {
     );
     let denied = AgentEvent::ToolDenied {
         name: "run_command".into(),
+        arguments: serde_json::Value::Null,
         reason: "denied".into(),
     };
     let mut open = false;

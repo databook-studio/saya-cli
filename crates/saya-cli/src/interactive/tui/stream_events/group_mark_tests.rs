@@ -128,6 +128,7 @@ fn a_denied_tool_still_renders_as_denied() {
         &mut transcript,
         AgentEvent::ToolDenied {
             name: "run_command".into(),
+            arguments: serde_json::Value::Null,
             reason: "needs approval".into(),
         },
         false,

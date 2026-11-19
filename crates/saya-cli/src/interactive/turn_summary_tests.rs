@@ -19,6 +19,7 @@ fn completed(name: &str) -> AgentEvent {
 fn denied(name: &str) -> AgentEvent {
     AgentEvent::ToolDenied {
         name: name.to_owned(),
+        arguments: serde_json::Value::Null,
         reason: "refused".to_owned(),
     }
 }
