@@ -147,6 +147,7 @@ pub(super) async fn run_serial_call(
             sink,
             AgentEvent::ToolDenied {
                 name: call.name.clone(),
+                arguments: call.arguments.clone(),
                 reason: refusal_detail.clone().unwrap_or_else(|| match decision {
                     tool_policy::ExecutionDecision::Deny(reason) => reason.reason().into(),
                     tool_policy::ExecutionDecision::Allow

@@ -166,6 +166,7 @@ pub(super) async fn handle(
                 sink,
                 AgentEvent::ToolDenied {
                     name: REQUEST_CLARIFICATION_TOOL.into(),
+                    arguments: asked_call.arguments.clone(),
                     reason: reason.clone(),
                 },
             )

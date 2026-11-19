@@ -15,7 +15,7 @@ fn assert_open_browser_gated(calls: &[String], events: &[AgentEvent]) {
     let denied = events
         .iter()
         .find_map(|event| match event {
-            AgentEvent::ToolDenied { name, reason } if name == "open_browser" => {
+            AgentEvent::ToolDenied { name, reason, .. } if name == "open_browser" => {
                 Some(reason.clone())
             }
             _ => None,

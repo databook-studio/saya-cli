@@ -39,7 +39,7 @@ async fn workspace_write_tool_is_denied_by_default_and_does_not_end_the_turn() {
         "the tool must not execute when workspace writes are not permitted"
     );
     let denied = events.lock().unwrap().iter().find_map(|event| match event {
-        AgentEvent::ToolDenied { name, reason } => Some((name.clone(), reason.clone())),
+        AgentEvent::ToolDenied { name, reason, .. } => Some((name.clone(), reason.clone())),
         _ => None,
     });
     let (name, reason) = denied.expect("a ToolDenied event must be emitted");

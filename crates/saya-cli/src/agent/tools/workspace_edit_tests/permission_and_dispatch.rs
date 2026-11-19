@@ -103,7 +103,7 @@ async fn workspace_edit_is_denied_by_the_loop_by_default_and_writes_nothing() {
     .await
     .expect("denial is not a turn-ending error");
     let denied = events.lock().unwrap().iter().find_map(|event| match event {
-        AgentEvent::ToolDenied { name, reason } => Some((name.clone(), reason.clone())),
+        AgentEvent::ToolDenied { name, reason, .. } => Some((name.clone(), reason.clone())),
         _ => None,
     });
     let (name, reason) = denied.expect("a ToolDenied event must be emitted");

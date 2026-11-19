@@ -128,6 +128,7 @@ fn approval_request_and_resolution_are_boundaries() {
         completed("write", "a.md written"),
         AgentEvent::ToolDenied {
             name: "run_command".into(),
+            arguments: serde_json::Value::Null,
             reason: "denied".into(),
         },
         requested("write", serde_json::json!({"path": "b.md"}), write_effect()),

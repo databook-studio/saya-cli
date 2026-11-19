@@ -121,6 +121,14 @@ pub enum AgentEvent {
     ToolDenied {
         name: String,
         reason: String,
+        /// The call's own payload, carried for the same reason
+        /// [`Self::ToolRequested`] carries it: the denial line names *what* was
+        /// refused (the command), and only the renderer knows how to project
+        /// and strip that detail from the raw arguments. Absent when the
+        /// emitter has none, and skipped on the wire then, so a stream keeps
+        /// the shape it always had.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        arguments: serde_json::Value,
     },
     /// What recall **supplied** to this turn's context block, emitted once per
     /// turn *before* any provider request (so a reader can see what shaped the

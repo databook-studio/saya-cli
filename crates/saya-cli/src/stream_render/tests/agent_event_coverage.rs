@@ -37,6 +37,7 @@ fn every_agent_event() -> Vec<AgentEvent> {
         },
         AgentEvent::ToolDenied {
             name: "read".to_owned(),
+            arguments: serde_json::Value::Null,
             reason: "refused".to_owned(),
         },
         AgentEvent::knowledge_supplied(KnowledgeOutcome::Off, Vec::new(), 0),

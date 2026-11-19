@@ -31,6 +31,8 @@ pub(crate) mod lean;
 /// The one place a surface applies `[tools] allow` / `--tools`.
 mod narrow;
 mod run_tools;
+/// The one bounded, stripped shape a `shell` call's detail rides.
+mod shell_command;
 /// The one `shell` tool: schema, lane decision, and sandbox composition,
 /// shared by every surface that advertises it (the coding root and a run's
 /// per-step toolsets).

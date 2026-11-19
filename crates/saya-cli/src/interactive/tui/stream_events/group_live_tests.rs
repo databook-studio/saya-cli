@@ -108,6 +108,7 @@ fn approvals_are_untouched() {
         &mut transcript,
         AgentEvent::ToolDenied {
             name: "run_command".into(),
+            arguments: serde_json::Value::Null,
             reason: "denied".into(),
         },
         false,

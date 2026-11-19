@@ -53,7 +53,7 @@ async fn external_side_effect_with_approval_is_denied_when_approval_refused() {
         .unwrap()
         .iter()
         .find_map(|event| match event {
-            AgentEvent::ToolDenied { name, reason } if name == "external_effect_probe" => {
+            AgentEvent::ToolDenied { name, reason, .. } if name == "external_effect_probe" => {
                 Some(reason.clone())
             }
             _ => None,
