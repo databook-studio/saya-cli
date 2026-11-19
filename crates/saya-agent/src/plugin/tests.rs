@@ -7,6 +7,9 @@ mod support;
 #[path = "tests/declared_tools.rs"]
 mod declared_tools;
 
+#[path = "tests/turn_finish.rs"]
+mod turn_finish;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -37,7 +40,9 @@ async fn an_inactive_plugin_contributes_nothing() {
     assert_eq!(active.turn_policy(), None, "no policy");
 
     active.on_turn_start().await;
-    active.on_turn_finish(&answered()).await;
+    active
+        .on_turn_finish(&answered(), &crate::NoopEventSink)
+        .await;
     assert!(
         calls.lock().unwrap().is_empty(),
         "an inactive plugin's hooks never run"
@@ -215,6 +220,8 @@ async fn hooks_run_once_per_active_plugin_in_order() {
     assert_eq!(*calls.lock().unwrap(), vec!["first:start", "third:start"]);
 
     calls.lock().unwrap().clear();
-    active.on_turn_finish(&answered()).await;
+    active
+        .on_turn_finish(&answered(), &crate::NoopEventSink)
+        .await;
     assert_eq!(*calls.lock().unwrap(), vec!["first:finish", "third:finish"]);
 }

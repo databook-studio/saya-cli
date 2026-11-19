@@ -8,6 +8,10 @@
 //! constructors so the core sees one plugin with one name.
 
 #[cfg(test)]
+mod learning_fixture;
+#[cfg(test)]
+mod learning_tests;
+#[cfg(test)]
 mod recall_fixture;
 #[cfg(test)]
 mod recall_tests;
@@ -15,12 +19,16 @@ mod recall_tests;
 mod tests;
 
 mod job_adapter;
+mod learning;
 mod recall;
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use saya_agent::{ContextBlock, RunContext, RunPlugin, ToolDefinition, ToolExecutor};
+use saya_agent::{
+    AgentEventSink, ContextBlock, RunContext, RunPlugin, TokenUsage, ToolDefinition, ToolExecutor,
+    TurnOutcome,
+};
 use saya_harness::coding::policy::ChildAuthorityView;
 
 use crate::agent::tools::DatabaseTools;
@@ -28,6 +36,7 @@ use crate::agent::tools::workspace::is_tool_name;
 use crate::commands::coding::database::CodingDatabaseTools;
 use crate::contracts::RecallReceipt;
 
+pub(crate) use learning::LearningSource;
 pub(crate) use recall::RecallSource;
 
 /// Every database tool name either surface can offer. The registry checks
@@ -82,6 +91,8 @@ pub(crate) struct DatabasePlugin {
     surface: Surface,
     /// What `context()` recalls from, when the run configured memory.
     recall: Option<RecallSource>,
+    /// What `on_turn_finish()` learns from, when the run configured memory.
+    learning: Option<LearningSource>,
     /// The last recall's receipt, for the executor that reports what reached
     /// the model. A mutex because `context()` takes `&self` and the executor
     /// reads it after the hook ran.
@@ -94,6 +105,7 @@ impl DatabasePlugin {
         Self {
             surface: Surface::Chat(ChatSurface { tools, flags }),
             recall: None,
+            learning: None,
             last_receipt: Mutex::new(None),
         }
     }
@@ -106,6 +118,7 @@ impl DatabasePlugin {
         Self {
             surface: Surface::Job(Box::new(JobSurface { tools, view })),
             recall: None,
+            learning: None,
             last_receipt: Mutex::new(None),
         }
     }
@@ -114,6 +127,14 @@ impl DatabasePlugin {
     /// turn's database contracts. Without one, it contributes nothing.
     pub(crate) fn with_recall(mut self, source: RecallSource) -> Self {
         self.recall = Some(source);
+        self
+    }
+
+    /// Attaches the run's learning source: with one, `on_turn_finish()` learns
+    /// from the answered turn. Without one, it contributes nothing and reports
+    /// no usage.
+    pub(crate) fn with_learning(mut self, source: LearningSource) -> Self {
+        self.learning = Some(source);
         self
     }
 
@@ -197,5 +218,26 @@ impl RunPlugin for DatabasePlugin {
                 job.view.clone(),
             ))),
         }
+    }
+
+    /// Learns from the turn through the one function the chat's turn calls, and
+    /// reports what that call spent so the run can fold it into the learning
+    /// total. No source attached means the run configured no memory: nothing is
+    /// learned and nothing is announced. The receipt is the one `context()`
+    /// kept for this turn; when recall never ran — no recall source, or the
+    /// hook not called — it is the empty receipt a recall configured off
+    /// produces, so extraction sees no supplied claims rather than inventing
+    /// some.
+    async fn on_turn_finish(
+        &self,
+        _ctx: &RunContext,
+        outcome: &TurnOutcome<'_>,
+        sink: &dyn AgentEventSink,
+    ) -> Option<TokenUsage> {
+        let source = self.learning.as_ref()?;
+        let receipt = self
+            .last_receipt()
+            .unwrap_or_else(|| Arc::new(RecallReceipt::configured_off()));
+        source.learn(outcome, &receipt, sink).await
     }
 }

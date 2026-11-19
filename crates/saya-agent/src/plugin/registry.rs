@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use super::{RunContext, RunPlugin, TurnOutcome, TurnPolicy};
 use crate::history_context::escape_block_text;
-use crate::{ContextBlock, ToolDefinition, ToolExecutor};
+use crate::loop_runner::add_usage;
+use crate::{AgentEventSink, ContextBlock, TokenUsage, ToolDefinition, ToolExecutor};
 
 /// Why a registry refused to be built. A tool name is global to a run, so a
 /// plugin may not take one the core already owns, or one another plugin owns.
@@ -193,11 +194,25 @@ impl ActivePlugins {
         }
     }
 
-    /// Calls every active plugin's `on_turn_finish` once, in order.
-    pub async fn on_turn_finish(&self, outcome: &TurnOutcome) {
+    /// Calls every active plugin's `on_turn_finish` once, in order, and sums the
+    /// usage each reported. `None` when no plugin reported any — absent is not
+    /// a reported zero.
+    pub async fn on_turn_finish(
+        &self,
+        outcome: &TurnOutcome<'_>,
+        sink: &dyn AgentEventSink,
+    ) -> Option<TokenUsage> {
+        let mut total: Option<TokenUsage> = None;
         for plugin in &self.plugins {
-            plugin.on_turn_finish(&self.ctx, outcome).await;
+            let Some(reported) = plugin.on_turn_finish(&self.ctx, outcome, sink).await else {
+                continue;
+            };
+            match total.as_mut() {
+                Some(sum) => add_usage(sum, reported),
+                None => total = Some(reported),
+            }
         }
+        total
     }
 }
 

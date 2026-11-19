@@ -15,47 +15,31 @@ async fn finish_turn(
     provider: &dyn saya_agent::ChatProvider,
     model: &str,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    let overridden = override_log.drain();
-    if !overridden.is_empty() {
-        sink.emit(AgentEvent::knowledge_overridden(overridden.clone()))
-            .await;
-    }
-    // The breaker: session-scoped so it trips across this session's turns; a
-    // fresh one per call when there is no session (the one-shot `ask` path,
-    // each candidate attempt) — which can never trip within one turn, since
-    // there is no next turn for it to disable.
-    let fresh_breaker;
-    let breaker: &super::learning::LearningBreaker = match session {
-        Some(session) => session.learning_breaker(),
-        None => {
-            fresh_breaker = super::learning::LearningBreaker::new();
-            &fresh_breaker
-        }
-    };
     // The usage the extraction call reported, if any. Stays `None` when
     // learning is disabled, the gate declined, the breaker has already
     // tripped this session, or the call produced no response — absent is
     // not zero.
-    let learning_usage = if cancellation.is_cancelled() {
-        None
-    } else {
-        super::learning::post_turn::run_post_turn_extraction(
-            super::learning::post_turn::PostTurnInputs {
-                permit_candidate_writes,
-                database,
-                output: output.as_ref(),
-                prompt,
-                observations_log,
-                receipt,
-                overridden: &overridden,
-                provider,
-                model,
-                breaker,
-            },
-            sink,
-        )
-        .await
-    };
+    let learning_usage = super::learning::after_turn::learn_after_turn(
+        super::learning::after_turn::LearnAfterTurnInputs {
+            override_log,
+            cancelled: cancellation.is_cancelled(),
+            permit_candidate_writes,
+            database,
+            output: output.as_ref().ok(),
+            prompt,
+            observations_log,
+            receipt,
+            provider,
+            model,
+            // The breaker is session-scoped so it trips across this session's
+            // turns; no session (the one-shot `ask` path, each candidate
+            // attempt) means a fresh one this call, which can never trip
+            // within one turn, since there is no next turn for it to disable.
+            breaker: session.map(|session| session.learning_breaker()),
+        },
+        sink,
+    )
+    .await;
 
     // Attach the extraction usage to the output so both the TUI and headless
     // recorders can fold it into the learning total. A failed answering call
