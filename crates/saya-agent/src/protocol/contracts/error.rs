@@ -12,6 +12,16 @@ pub use super::tool_error::ToolError;
 pub enum ProviderError {
     #[error("provider request failed: {0}")]
     Request(String),
+    /// The provider never answered: the transport failed after the connection
+    /// came up (a lost or reset connection, an exchange that never completed, an
+    /// establishment timeout), or the upstream gateway answered a retryable
+    /// status (429/5xx) on every scheduled attempt. Transient by construction
+    /// — the identical request can answer on the next attempt — so the receive
+    /// loop retries it under the turn's own schedule instead of settling it as
+    /// a refused request. Carries no provider body: the message is the status
+    /// code and the operator-facing hint, exactly as [`Self::Request`] does.
+    #[error("provider transport failed: {0}")]
+    Unavailable(String),
     #[error("provider returned an invalid response")]
     InvalidResponse,
     /// The response stream ended before its terminator: a cut connection or an

@@ -10,6 +10,8 @@ mod fixture;
 mod provider;
 #[path = "coding_context_efficiency/script.rs"]
 mod script;
+#[path = "coding_context_efficiency/transient.rs"]
+mod transient;
 #[path = "coding_context_efficiency/windows.rs"]
 mod windows;
 

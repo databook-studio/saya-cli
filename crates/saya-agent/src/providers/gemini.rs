@@ -55,6 +55,9 @@ impl ChatProvider for GeminiProvider {
     fn request_timeout(&self) -> std::time::Duration {
         self.settings.request_timeout
     }
+    fn stall_timeout(&self) -> std::time::Duration {
+        self.settings.stall_timeout
+    }
 
     async fn complete(&self, request: ChatRequest) -> Result<ChatResponse, ProviderError> {
         let value = self

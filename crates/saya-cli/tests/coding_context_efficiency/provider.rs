@@ -1,4 +1,7 @@
-use super::{PROVIDER_LIFETIME, script::Scenario};
+use super::{
+    PROVIDER_LIFETIME,
+    script::{Fault, Scenario},
+};
 use serde_json::Value;
 use std::{
     io::{Read, Write},
@@ -57,9 +60,26 @@ impl Provider {
                 captured.lock().unwrap().push(body);
                 let actor = usize::from(child);
                 let response = scenario.response(child, turns[actor]);
+                let fault = scenario.fault(child, turns[actor]);
                 turns[actor] += 1;
-                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
-                stream.flush().unwrap();
+                match fault {
+                    Fault::None => {
+                        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                        stream.flush().unwrap();
+                    }
+                    // The socket goes away with no response: from the client's
+                    // view an established connection that never answered.
+                    Fault::Close => {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                    }
+                    // A stream that opens and then dies before any content, the
+                    // way a reset after the first keep-alive chunk looks.
+                    Fault::Truncate => {
+                        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n: OPENROUTER PROCESSING\n\n").unwrap();
+                        stream.flush().unwrap();
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                    }
+                }
             }
         });
         Self {

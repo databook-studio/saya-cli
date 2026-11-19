@@ -29,7 +29,20 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new(endpoint: &str, budget: usize, window: Option<u64>, model: &str) -> Self {
-        Self::build(endpoint, budget, window, model, None).await
+        Self::build(endpoint, budget, window, model, None, &[]).await
+    }
+
+    /// The same fixture with a configured turn-retry schedule: an empty one
+    /// (the default here) means a failed request is never re-sent.
+    #[allow(dead_code)] // read only by the transient-failure job test
+    pub async fn retrying(
+        endpoint: &str,
+        budget: usize,
+        window: Option<u64>,
+        model: &str,
+        retry_ms: &[u64],
+    ) -> Self {
+        Self::build(endpoint, budget, window, model, None, retry_ms).await
     }
 
     /// The same fixture with one project SQLite profile admitted and database
@@ -43,7 +56,7 @@ impl Fixture {
         model: &str,
         profile: &str,
     ) -> Self {
-        Self::build(endpoint, budget, window, model, Some(profile)).await
+        Self::build(endpoint, budget, window, model, Some(profile), &[]).await
     }
 
     async fn build(
@@ -52,6 +65,7 @@ impl Fixture {
         window: Option<u64>,
         model: &str,
         profile: Option<&str>,
+        retry_ms: &[u64],
     ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let nonce = std::time::SystemTime::now()
@@ -126,7 +140,7 @@ impl Fixture {
         runtime.resolved.ai.model = "unknown-root-context-fixture".into();
         runtime.resolved.ai.base_url = Some(endpoint.into());
         runtime.resolved.ai.api_key = None;
-        runtime.resolved.ai.retry_delays_ms.clear();
+        runtime.resolved.ai.retry_delays_ms = retry_ms.to_vec();
         runtime.resolved.ai.timeout_seconds = 10;
         runtime.resolved.ai.idle_timeout_seconds = 10;
         runtime.resolved.ai.context_byte_budget = budget;
