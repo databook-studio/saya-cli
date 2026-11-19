@@ -24,6 +24,25 @@ pub(crate) struct PendingApproval {
     pub(crate) respond: oneshot::Sender<ApprovalChoice>,
 }
 
+impl PendingApproval {
+    /// A fresh question, at the top of its fact body: `tool` says what is
+    /// being asked and `detail` states the facts the answer is bound to.
+    pub(crate) fn new(
+        tool: String,
+        detail: Option<String>,
+        grant: Option<String>,
+        respond: oneshot::Sender<ApprovalChoice>,
+    ) -> Self {
+        Self {
+            tool,
+            detail,
+            grant,
+            scroll: 0,
+            respond,
+        }
+    }
+}
+
 /// State tied to an active agent request.
 #[derive(Default)]
 pub(crate) struct RequestState {

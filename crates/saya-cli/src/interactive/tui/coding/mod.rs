@@ -1,7 +1,7 @@
 mod worker;
 use super::{transcript::BlockKind, types::App};
 use crate::cli::CodingCommand;
-use saya_agent::CancellationToken;
+use saya_agent::{ApprovalChoice, CancellationToken};
 use std::{sync::mpsc, thread::JoinHandle};
 use tokio::sync::oneshot;
 
@@ -16,6 +16,14 @@ pub(super) enum CodingMessage {
     Approval {
         text: String,
         respond: oneshot::Sender<bool>,
+    },
+    /// One egressing call a job started from this TUI puts to the operator:
+    /// the caller's own subject line and the call's target, answered through
+    /// the chat's approval prompt — never the panel's text question.
+    Question {
+        subject: String,
+        target: String,
+        respond: oneshot::Sender<ApprovalChoice>,
     },
 }
 pub(crate) struct CodingPanel {
@@ -106,9 +114,13 @@ impl App {
         ));
     }
     pub(crate) fn poll_coding(&mut self) {
-        let Some(panel) = self.coding_panel.as_mut() else {
+        // The panel is taken out of the app for the drain: a job's question is
+        // posted onto the app (the chat's approval prompt), and the panel is
+        // put back before this returns.
+        let Some(mut panel) = self.coding_panel.take() else {
             return;
         };
+        let mut questions: Vec<(String, String, oneshot::Sender<ApprovalChoice>)> = Vec::new();
         for _ in 0..32 {
             match panel.rx.try_recv() {
                 Ok(CodingMessage::Activity(text)) => {
@@ -118,6 +130,11 @@ impl App {
                     panel.pending = Some(respond);
                     self.transcript.push(BlockKind::System, safe_text(&text));
                 }
+                Ok(CodingMessage::Question {
+                    subject,
+                    target,
+                    respond,
+                }) => questions.push((subject, target, respond)),
                 Err(_) => break,
             }
         }
@@ -133,6 +150,9 @@ impl App {
                     panel.pending = Some(respond);
                     self.transcript.push(BlockKind::System, safe_text(&text));
                 }
+                // A receipt queue carries receipts only: a question never
+                // rides it.
+                Ok(CodingMessage::Question { .. }) => {}
                 Err(_) => break,
             }
         }
@@ -153,6 +173,12 @@ impl App {
                 self.transcript.push(BlockKind::Error,"Job worker ended without a settled result; inspect recovery before continuing.");
             }
             Err(_) => {}
+        }
+        self.coding_panel = Some(panel);
+        // Posted last: the chat's prompt is single-pending, so a question that
+        // arrives mid-drain finds it free rather than replacing an open one.
+        for (subject, target, respond) in questions {
+            self.post_approval(subject, Some(target), None, respond);
         }
     }
 }
