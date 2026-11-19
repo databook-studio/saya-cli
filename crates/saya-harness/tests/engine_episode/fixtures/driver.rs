@@ -26,7 +26,7 @@ impl ApprovalDecider for AllowApproval {
 
 fn driver_and_sink<'a>(
     run: &ApprovedRun,
-    provider: &'a ScriptProvider,
+    provider: &'a dyn ChatProvider,
     approval: &'a AllowApproval,
     toolsets: &'a [StepToolset],
     memory_allows_candidate_writes: bool,

@@ -42,6 +42,7 @@ include!("run_cli/cases/cancellation.rs");
 include!("run_cli/cases/run_listing.rs");
 include!("run_cli/support/json_lines.rs");
 include!("run_cli/cases/ndjson.rs");
+include!("run_cli/cases/provider_dead_bound.rs");
 include!("run_cli/cases/nested_run.rs");
 include!("run_cli/support/interactive.rs");
 include!("run_cli/cases/interactive_approval.rs");

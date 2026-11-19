@@ -104,7 +104,10 @@ persist at a one-second cadence; writes are forced at approval, resume,
 provider turns, tool requests, and lifecycle transitions. Forward clock jumps
 may expire early, and
 backward changes are refused when an observation detects them. Changes
-between observations may not be detectable. This is not CPU time; a separate
+between observations may not be detectable. Each step also runs its own
+episode under that ceiling: the step's elapsed budget bounds the episode's
+control, so a provider that never answers cannot spend its whole retry
+schedule inside every attempt. This is not CPU time; a separate
 timer for stalled operations is planned independently. `tokens_per_endpoint` is
 keyed by run-scoped endpoint name (the same shape `[[ai.endpoints]]` uses);
 more than eight keys, or a key outside the name shape, is a rejected config.
