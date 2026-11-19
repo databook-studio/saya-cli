@@ -151,6 +151,10 @@ fn an_ndjson_run_stream_parses_as_one_json_object_per_line_when_paused() {
 #[test]
 fn an_ndjson_run_stream_stays_line_oriented_when_the_run_fails() {
     let env = test_root("ndjson-fail");
+    // A dropped connection is a retryable transport failure, so the default
+    // nine-attempt schedule would spend ~90 s per episode call. This test is
+    // about the engine's bounded step retry, so it pins that schedule short.
+    fast_retries(&env);
     // The plan binds, then every episode call fails: the mock has spent its
     // script, so each further connection is accepted and dropped — a provider
     // failure, never a hang. The engine retries the step bounded, then pauses.

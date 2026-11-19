@@ -1,6 +1,10 @@
 #[test]
 fn resume_process_emits_typed_uncertainty_without_calling_provider() {
     let env = test_root("resume-uncertain-process");
+    // Every episode call after the script is dropped, a retryable transport
+    // failure: pin the provider schedule short so the engine's own bounded step
+    // retry, not the nine-attempt default, is what this test waits on.
+    fast_retries(&env);
     let goal = "publish token=resume-secret";
     let (setup, _) = mock(vec![Scripted {
         body: plan_body_with_capabilities(&[(goal, serde_json::json!({"write": true}))]),
