@@ -17,11 +17,17 @@ use std::{
 };
 #[path = "worker/active.rs"]
 mod active;
-#[path = "worker/egress_approval.rs"]
-mod egress_approval;
+#[path = "worker/chat_operator.rs"]
+mod chat_operator;
 #[cfg(test)]
-#[path = "worker/egress_approval_tests.rs"]
-mod egress_approval_tests;
+#[path = "worker/chat_operator_refusal_tests.rs"]
+mod chat_operator_refusal_tests;
+#[cfg(test)]
+#[path = "worker/chat_operator_tests.rs"]
+mod chat_operator_tests;
+#[cfg(test)]
+#[path = "worker/chat_prompt_fixture.rs"]
+mod chat_prompt_fixture;
 #[path = "worker/wait_policy.rs"]
 mod wait_policy;
 #[cfg(test)]
@@ -181,16 +187,16 @@ async fn work(
     // operator. The panel is an attached surface, so its mode stays
     // switchable.
     let application = Launch::Attached(approval_policy).compose(application);
-    // A run outside the sandbox is asked of the operator through the same
-    // sender, token and job id the job approval uses. Any other command runs
-    // no root, so it keeps the application without an operator.
-    let application = match shell_id {
-        Some(id) => application.with_operator(Arc::new(egress_approval::PanelEgressApproval {
-            sender: tx.clone(),
-            token: token.clone(),
-            id,
-        })),
-        None => application,
+    // A job started from this panel asks its egressing calls in the chat's
+    // approval prompt, waiting on the job's own token for the person sitting
+    // at the TUI. Any other command runs no root, so it keeps no operator.
+    let application = if shell_id.is_some() {
+        application.with_operator(Arc::new(chat_operator::ChatOperator::new(
+            tx.clone(),
+            token.clone(),
+        )))
+    } else {
+        application
     };
     if matches!(command, CodingCommand::FollowUp { .. }) {
         let (job, request) = resume_follow_up(&application, command, token, tx.clone()).await?;

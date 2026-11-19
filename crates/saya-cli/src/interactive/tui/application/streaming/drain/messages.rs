@@ -209,15 +209,11 @@ impl App {
                     {
                         continue;
                     }
-                    self.request.pending_approval = Some(PendingApproval {
-                        tool,
-                        detail,
-                        grant,
-                        // Every fresh approval opens at the top of its fact
-                        // body: the offset is per-pending-approval state.
-                        scroll: 0,
-                        respond,
-                    });
+                    // The prompt is single-pending: a question that arrives
+                    // while one is open is refused, never shown in its place —
+                    // the decider asks one call at a time, so a second request
+                    // is a broken pairing and its dropped answer refuses it.
+                    self.post_approval(tool, detail, grant, respond);
                 }
                 StreamMsg::Done(result) => {
                     // One stream posts exactly one `Done`; the settle takes
@@ -228,5 +224,25 @@ impl App {
             }
         }
         finished
+    }
+
+    /// One question from a surface that has no turn of its own — a job this
+    /// TUI started — into the chat's approval prompt: the same
+    /// [`PendingApproval`] a turn's decider fills, so the same modal, keys and
+    /// answer path decide it. The prompt is single-pending, so a question that
+    /// arrives while one is open is refused rather than replacing it; a caller
+    /// that must not lose its question waits for the open one first.
+    pub(crate) fn post_approval(
+        &mut self,
+        tool: String,
+        detail: Option<String>,
+        grant: Option<String>,
+        respond: tokio::sync::oneshot::Sender<saya_agent::ApprovalChoice>,
+    ) -> bool {
+        if self.request.pending_approval.is_some() {
+            return false;
+        }
+        self.request.pending_approval = Some(PendingApproval::new(tool, detail, grant, respond));
+        true
     }
 }

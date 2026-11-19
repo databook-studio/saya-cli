@@ -15,13 +15,12 @@ use std::sync::mpsc;
 ///
 /// The job panel is `PANEL`: a detached surface, which learns the answer on
 /// its next drain, so a question nobody is watching must not hold the run open.
-/// A surface with a person attached — the chat front end over the job engine —
-/// has no deadline: only the answer or cancellation ends the wait.
+/// A job this TUI started is `Attached`: the chat front end puts the question
+/// in its own approval prompt, where a person is present, so only the answer or
+/// cancellation ends the wait.
 pub(super) enum WaitPolicy {
     /// A person is present and answers as soon as they decide: the wait lasts
-    /// until they answer, or until the run is cancelled. No shipped surface
-    /// attaches a person yet; the chat front end over the job engine will.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// until they answer, or until the run is cancelled.
     Attached,
     /// The surface reports the answer on a later drain, so the wait gives up
     /// after this long and the question is refused.
@@ -61,10 +60,10 @@ pub(super) async fn ask_operator(
 /// The answer, as far as `policy` allows it to arrive: `Attached` waits for the
 /// person however long they take, `Detached(deadline)` gives up after
 /// `deadline`. A closed answer channel is no answer at all.
-async fn await_answer(
-    answer: tokio::sync::oneshot::Receiver<bool>,
+pub(super) async fn await_answer<T>(
+    answer: tokio::sync::oneshot::Receiver<T>,
     policy: WaitPolicy,
-) -> Option<bool> {
+) -> Option<T> {
     match policy {
         WaitPolicy::Attached => answer.await.ok(),
         WaitPolicy::Detached(deadline) => match tokio::time::timeout(deadline, answer).await {
