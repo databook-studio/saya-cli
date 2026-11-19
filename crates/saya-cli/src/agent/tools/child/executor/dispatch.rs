@@ -4,6 +4,18 @@
 
 use super::*;
 
+impl ChildTools {
+    /// The executor that owns `name` among the active plugins, or the
+    /// unknown-tool refusal: a name no active plugin delivers has no route
+    /// here, exactly as a name this surface never advertised has none.
+    fn plugin_route(&self, name: &str) -> Result<Arc<dyn ToolExecutor>, ToolError> {
+        self.plugins
+            .as_ref()
+            .and_then(|plugins| plugins.route(name))
+            .ok_or(ToolError::UnsupportedTool)
+    }
+}
+
 /// Admission happens immediately before the existing anchored mutation; the
 /// checkout id never comes from model arguments; memory tools are
 /// absent: unknown names are unsupported. `shell` routes to the helper's own

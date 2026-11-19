@@ -269,16 +269,6 @@ impl ChildTools {
         self.plugins = Some(plugins);
     }
 
-    /// The executor that owns `name` among the active plugins, or the
-    /// unknown-tool refusal: a name no active plugin delivers has no route here,
-    /// exactly as a name this surface never advertised has none.
-    fn plugin_route(&self, name: &str) -> Result<Arc<dyn ToolExecutor>, ToolError> {
-        self.plugins
-            .as_ref()
-            .and_then(|plugins| plugins.route(name))
-            .ok_or(ToolError::UnsupportedTool)
-    }
-
     pub(crate) fn attach_coding(
         &mut self,
         coding: Arc<crate::commands::coding::checks::ChildCodingOperations>,
