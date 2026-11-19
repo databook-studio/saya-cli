@@ -17,6 +17,8 @@ mod tests_ask;
 #[cfg(test)]
 mod tests_database;
 #[cfg(test)]
+mod tests_database_plugin;
+#[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
 mod tests_factory;
