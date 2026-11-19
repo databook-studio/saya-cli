@@ -12,10 +12,10 @@ use saya_harness::coding::child::{
 };
 use saya_harness::coding::policy::ChildAuthorityView;
 
-use super::{ChildTools, TrustedCheckoutPair, child_toolset, decider};
+use super::{ChildTools, TrustedCheckoutPair, child_toolset, decider, plugins};
 use crate::agent::provider;
 use crate::agent::tools::consent::OwnedToolApproval;
-use crate::agent::tools::shell_policy::ShellTool;
+use crate::agent::tools::shell_policy::{self, BackgroundOwner, ShellTool};
 use crate::commands::coding::database::CodingDatabaseTools;
 
 /// Composes one verified, confined child's runtime dependencies from pieces
@@ -203,12 +203,37 @@ impl CliChildFactory {
         }
         // Attached when it advertises anything at all: a profile this view
         // admits, or the clarification ask an operator can answer — which
-        // needs no profile and so survives an empty selection.
+        // needs no profile and so survives an empty selection. The registry is
+        // the one door: the definitions come from the active plugin, and the
+        // executor routes the same names back to it.
         if let Some(databases) = &self.databases
             && (!view.database_profiles().is_empty() || databases.advertises_clarification())
         {
-            definitions.extend(databases.definitions(Some(view)));
-            tools.attach_databases(Arc::clone(databases));
+            // Every other name this surface can advertise, so the registry can
+            // refuse a plugin tool that would take one: the names composed so
+            // far, plus the lanes still to be attached below.
+            let background = self.shell.as_ref().map_or_else(Vec::new, |_| {
+                shell_policy::background_definitions(BackgroundOwner::Helper)
+            });
+            let core_tool_names = plugins::core_tool_names(
+                &definitions,
+                background
+                    .into_iter()
+                    .chain(self.web.iter().flat_map(|web| web.definitions()))
+                    .chain(self.mcp.iter().flat_map(|mcp| mcp.definitions())),
+            );
+            // `build_toolset` serves the direct-mode root and a helper alike,
+            // and only the caller knows which; the plugin activates for
+            // `Headless`, the surface every run a job starts shares. The rule
+            // answers `true` for both, so the choice changes no contribution.
+            let active = plugins::database_plugins(
+                databases,
+                view,
+                saya_agent::RunSurface::Headless,
+                &core_tool_names,
+            )?;
+            definitions.extend(active.definitions());
+            tools.attach_plugins(active);
         }
         // The helper's shell is advertised only when the composition root
         // built one: config off, mode `never`, or no proven sandbox under

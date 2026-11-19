@@ -28,7 +28,7 @@ const CHAT: RunContext = RunContext {
     database_profiles: 1,
 };
 
-fn chat_plugin() -> DatabasePlugin {
+pub(super) fn chat_plugin() -> DatabasePlugin {
     DatabasePlugin::for_chat(
         Arc::new(DatabaseTools::new(None, 100, true)),
         ChatDatabaseFlags {

@@ -7,6 +7,7 @@ pub(crate) mod decider;
 mod executor;
 mod factory;
 mod no_effect;
+mod plugins;
 mod scope;
 #[cfg(test)]
 mod tests;
@@ -16,6 +17,8 @@ mod tests_allow;
 mod tests_ask;
 #[cfg(test)]
 mod tests_database;
+#[cfg(test)]
+mod tests_database_plugin;
 #[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
