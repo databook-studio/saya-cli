@@ -22,6 +22,7 @@
 
 mod family;
 mod primary;
+mod shell;
 mod token;
 mod wording;
 
