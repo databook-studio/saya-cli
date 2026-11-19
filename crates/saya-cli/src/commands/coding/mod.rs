@@ -77,6 +77,7 @@ mod provider_binding;
 mod readiness_steps;
 mod reconcile;
 mod request;
+mod resume_refusal;
 mod rewind;
 mod root_checkout;
 mod root_direct;
@@ -197,6 +198,8 @@ pub enum CodingError {
     InPlaceRootBusy,
     #[error("job is not owned by this application or has no active runtime")]
     NotOwned,
+    #[error("job {job} {detail}")]
+    NotResumable { job: String, detail: String },
     #[error(
         "the job is still running, or was interrupted before it finished; rewind it only once the run has ended"
     )]
