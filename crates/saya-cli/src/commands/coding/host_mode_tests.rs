@@ -3,7 +3,7 @@
 //! stated rather than passing silently over it.
 #![cfg(unix)]
 
-use super::CodingApplication;
+use super::{CodingApplication, Launch};
 use crate::{GlobalOptions, load_with_sources};
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_store::SqliteStateStore;
@@ -132,4 +132,101 @@ async fn a_shared_host_answers_with_the_mode_a_setter_stated() {
         "a frozen job refuses rather than pretending"
     );
     assert_eq!(frozen.mode.get(), ApprovalPolicy::Ask);
+}
+
+/// `saya start` runs detached from every operator surface, so its composed
+/// mode is frozen: the mode a later call reads is the one the launch stated.
+#[tokio::test]
+async fn a_detached_start_refuses_a_mode_change() {
+    let fixture = fixture("detached-start");
+    let application = Launch::Detached(ApprovalPolicy::Ask).compose(open(&fixture).await);
+
+    assert!(
+        application
+            .set_approval_policy(ApprovalPolicy::ReadOnly)
+            .is_err(),
+        "a detached start refuses a mode change"
+    );
+    assert_eq!(
+        application.mode.get(),
+        ApprovalPolicy::Ask,
+        "and its mode is the one the launch stated"
+    );
+}
+
+/// `saya follow-up` resumes a job in the background: the same detachment, so
+/// the same refusal.
+#[tokio::test]
+async fn a_detached_follow_up_refuses_a_mode_change() {
+    let fixture = fixture("detached-follow-up");
+    let application = Launch::Detached(ApprovalPolicy::ReadOnly).compose(open(&fixture).await);
+
+    assert!(
+        application
+            .set_approval_policy(ApprovalPolicy::Bypass)
+            .is_err(),
+        "a detached follow-up refuses a mode change"
+    );
+    assert_eq!(
+        application.mode.get(),
+        ApprovalPolicy::ReadOnly,
+        "and its mode is the one the launch stated"
+    );
+}
+
+/// `saya job resume` is composed by the same detached launch as `saya start`
+/// and `saya follow-up`; it freezes there too.
+#[tokio::test]
+async fn a_detached_job_resume_refuses_a_mode_change() {
+    let fixture = fixture("detached-resume");
+    let application = Launch::Detached(ApprovalPolicy::Bypass).compose(open(&fixture).await);
+
+    assert!(
+        application
+            .set_approval_policy(ApprovalPolicy::Ask)
+            .is_err(),
+        "a detached resume refuses a mode change"
+    );
+    assert_eq!(
+        application.mode.get(),
+        ApprovalPolicy::Bypass,
+        "and its mode is the one the launch stated"
+    );
+}
+
+/// A start that falls back to an in-place root reopens a fresh host; the
+/// fallback must not hand back one whose mode a later call could move.
+#[tokio::test]
+async fn a_detached_fallback_stays_frozen() {
+    let fixture = fixture("detached-fallback");
+    let application = Launch::Detached(ApprovalPolicy::ReadOnly).compose(open(&fixture).await);
+    let reopened = application.reopen_mode(open(&fixture).await);
+
+    assert!(
+        reopened
+            .set_approval_policy(ApprovalPolicy::Bypass)
+            .is_err(),
+        "the reopened in-place host is frozen too"
+    );
+    assert_eq!(
+        reopened.mode.get(),
+        ApprovalPolicy::ReadOnly,
+        "and it kept the mode the launch stated"
+    );
+}
+
+/// The interactive session states a mode its operator can still switch, so an
+/// attached composition takes the change.
+#[tokio::test]
+async fn an_attached_session_takes_a_mode_change() {
+    let fixture = fixture("attached");
+    let application = Launch::Attached(ApprovalPolicy::Ask).compose(open(&fixture).await);
+
+    assert!(
+        application
+            .set_approval_policy(ApprovalPolicy::ReadOnly)
+            .is_ok(),
+        "an attached session takes the change"
+    );
+    assert_eq!(application.mode.get(), ApprovalPolicy::ReadOnly);
 }

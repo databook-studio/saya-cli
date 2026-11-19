@@ -8,9 +8,10 @@
 //! accepted as a no-op.
 
 use crate::{cli::CodingCommand, config::runtime::RuntimeConfig, render::RenderFormat};
-use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 use std::path::PathBuf;
+
+use super::Launch;
 
 pub(crate) async fn run(
     command: CodingCommand,
@@ -19,7 +20,7 @@ pub(crate) async fn run(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     store: &SqliteStateStore,
-    approval_policy: ApprovalPolicy,
+    launch: Launch,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     if let Some(refusal) = crate::cli::job_lane_refusal(&command) {
         return crate::commands::output::failure_message(2, refusal, format);
@@ -31,7 +32,7 @@ pub(crate) async fn run(
         runtime,
         format,
         store,
-        approval_policy,
+        launch,
     )
     .await
 }

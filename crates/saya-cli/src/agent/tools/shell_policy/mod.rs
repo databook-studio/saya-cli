@@ -125,6 +125,12 @@ impl ModeCell {
         Ok(())
     }
 
+    /// Whether this cell refuses every change: the composition that opened it
+    /// stated its approval rather than leaving it switchable.
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
     /// States the mode and freezes it in one step: a composition whose approval
     /// is stated, not switched.
     pub(crate) fn freeze_at(&self, mode: ApprovalPolicy) {

@@ -1,7 +1,7 @@
 use super::CodingError;
 use super::host_root::resolve_in_place;
 use crate::agent::tools::consent::Operator;
-use crate::agent::tools::shell_policy::{ModeCell, ModeFrozen};
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::cli::RootMode;
 use crate::config::runtime::RuntimeConfig;
 use saya_agent::{ApprovalPolicy, CancellationToken};
@@ -17,37 +17,9 @@ use std::{
     sync::Arc,
 };
 
-/// The one root a coding application works over: a Git repository's working
-/// tree (today's managed-checkout mode) or a plain folder with a captured
-/// local baseline. The variant decides every Git-only operation; an in-place
-/// root refuses it rather than silently creating a checkout.
-pub(super) enum CodingRoot {
-    Git(GitRepository),
-    InPlace(LocalRoot),
-}
-
-impl CodingRoot {
-    fn path(&self) -> &Path {
-        match self {
-            Self::Git(repository) => repository.root(),
-            Self::InPlace(local) => local.path(),
-        }
-    }
-
-    fn git(&self) -> Option<&GitRepository> {
-        match self {
-            Self::Git(repository) => Some(repository),
-            Self::InPlace(_) => None,
-        }
-    }
-
-    fn local(&self) -> Option<&LocalRoot> {
-        match self {
-            Self::Git(_) => None,
-            Self::InPlace(local) => Some(local),
-        }
-    }
-}
+pub(super) mod mode;
+mod root;
+use root::CodingRoot;
 
 /// Trusted host composition. Program directory and state are selected by the
 /// user/application, never by repository contents or model tool arguments.
@@ -287,28 +259,6 @@ impl CodingApplication {
             application.operator = Some(operator);
         }
         self
-    }
-    /// States the approval mode the root's `shell` reads. The composition-time
-    /// builder: a fresh cell is unfrozen, so the stated mode is what every
-    /// holder reads from its next call; a cell already frozen keeps its own,
-    /// which [`set_approval_policy`](Self::set_approval_policy) reports.
-    pub fn with_approval_policy(self: Arc<Self>, policy: ApprovalPolicy) -> Arc<Self> {
-        let _ = self.mode.set(policy);
-        self
-    }
-    /// States a headless composition's mode and freezes it: `saya -p` has no
-    /// operator a switch could be put to, so nothing moves it after the start.
-    pub(crate) fn with_frozen_approval_policy(
-        self: Arc<Self>,
-        policy: ApprovalPolicy,
-    ) -> Arc<Self> {
-        self.mode.freeze_at(policy);
-        self
-    }
-    /// States the mode the root's `shell` resolves from its next call, and
-    /// reports a frozen job's refusal rather than assuming the change landed.
-    pub fn set_approval_policy(&self, policy: ApprovalPolicy) -> Result<(), ModeFrozen> {
-        self.mode.set(policy)
     }
     pub fn store(&self) -> &SqliteStateStore {
         &self.store

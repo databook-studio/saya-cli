@@ -1,8 +1,9 @@
 use super::{
-    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, host::private_directory,
+    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, Launch,
+    host::private_directory,
 };
 use crate::{cli::CodingCommand, config::runtime::RuntimeConfig, render::RenderFormat};
-use saya_agent::{ApprovalPolicy, CancellationToken, NoopEventSink};
+use saya_agent::{CancellationToken, NoopEventSink};
 use saya_store::SqliteStateStore;
 use saya_types::JobId;
 use serde_json::{Value, json};
@@ -219,7 +220,10 @@ pub async fn dispatch(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Opens the one application a command line verb runs over and dispatches it.
+/// `launch` is the surface's own statement: the detached verbs reach here with
+/// [`Launch::Detached`], so their mode is frozen at composition, and the
+/// interactive session with [`Launch::Attached`], which keeps its switch.
 pub(crate) async fn run(
     command: CodingCommand,
     repository: PathBuf,
@@ -227,7 +231,7 @@ pub(crate) async fn run(
     runtime: &RuntimeConfig,
     format: RenderFormat,
     store: &SqliteStateStore,
-    approval_policy: ApprovalPolicy,
+    launch: Launch,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     // A resume answers with the one-shot result document and the process code
     // it states; every other verb keeps its own result envelope.
@@ -243,7 +247,7 @@ pub(crate) async fn run(
         let git = find_git()?;
         // Only a start may take the fallback: a lifecycle verb opens over the
         // mode its job records.
-        let app = if matches!(command, CodingCommand::Start { .. }) {
+        let app = launch.compose(if matches!(command, CodingCommand::Start { .. }) {
             CodingApplication::open_for_start(
                 runtime.clone(),
                 store.clone(),
@@ -268,8 +272,7 @@ pub(crate) async fn run(
                 &CancellationToken::new(),
             )
             .await?
-        }
-        .with_approval_policy(approval_policy);
+        });
         dispatch(&app, command).await
     }
     .await;

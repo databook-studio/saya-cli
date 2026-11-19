@@ -64,6 +64,7 @@ mod host;
 #[cfg(all(test, unix))]
 #[path = "host_mode_tests.rs"]
 mod host_mode_tests;
+pub(crate) use host::mode::Launch;
 mod host_root;
 mod in_place_lease;
 mod integrate;

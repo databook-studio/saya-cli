@@ -37,7 +37,7 @@ fn handle_coding(
         &runtime,
         format,
         state_db,
-        session.policy().mode(),
+        crate::commands::coding::Launch::Attached(session.policy().mode()),
     ))?;
     Ok(if code == 0 {
         TurnOutcome::Completed
