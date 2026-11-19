@@ -1,5 +1,6 @@
 //! The remaining composed families' per-family grant availability
-//! decisions: fetch and the host-command lane — consumed by
+//! decisions: fetch, the host-command lane, and the job shell's own
+//! `shell:` lane — consumed by
 //! [`crate::interactive::session::universe::SessionUniverse::definitions`] beside the
 //! workspace file family's own decision (`session_grant_surface`).
 //!
@@ -12,12 +13,13 @@
 //! without prompting, so the advertised tools are usable, never the
 //! advertised-but-unusable anti-pattern). The family words come from
 //! [`crate::grant_token::grant_family`] — the grammar's own prefix
-//! grouping, never a re-spelled or re-parsed token: `fetch:`/`command:` are
-//! prefix families.
+//! grouping, never a re-spelled or re-parsed token: `fetch:`, `command:`
+//! and `shell:` are prefix families.
 //!
 //! Availability is not authority. One held token opens one family and no
 //! other: a `fetch:` token for one host opens no other host, a
-//! `command:` token for one program grants no other — the advertised
+//! `command:` token for one program grants no other — and neither opens the
+//! job shell's `shell:` lane — the advertised
 //! generic tool is still judged per call against its actual arguments and
 //! exact grant, and an uncovered call resolves to `Ask`, which a headless
 //! surface denies without prompting. The ungrantable fan-out SQL rides no
@@ -82,6 +84,20 @@ pub(crate) fn command_available(
     grants: Option<&SessionGrants>,
 ) -> bool {
     family_available(agent_mode, mode, can_obtain_approval, grants, "command")
+}
+
+/// The job shell's own lane: a held `shell:<prefix>` token opens `shell`
+/// where the host route composed. It is deliberately not the `command:`
+/// family: one program grant must never admit a shell command, nor the
+/// other way round, so the two words answer for different doors.
+#[cfg_attr(not(test), allow(dead_code))] // the shell's advertisement reads it with the prompt arm, not yet wired
+pub(crate) fn shell_available(
+    agent_mode: AgentMode,
+    mode: ApprovalPolicy,
+    can_obtain_approval: bool,
+    grants: Option<&SessionGrants>,
+) -> bool {
+    family_available(agent_mode, mode, can_obtain_approval, grants, "shell")
 }
 
 #[cfg(test)]
