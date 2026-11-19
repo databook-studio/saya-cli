@@ -40,7 +40,7 @@ pub(crate) async fn run(
         &CancellationToken::new(),
     )
     .await?
-    .with_approval_policy(plan.policy);
+    .with_frozen_approval_policy(plan.policy);
 
     let mode = request.mode;
     let job = oneshot_start(&application, request, &plan, CancellationToken::new()).await?;

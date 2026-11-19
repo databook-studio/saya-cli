@@ -1,6 +1,7 @@
 use super::CodingError;
 use super::host_root::resolve_in_place;
 use crate::agent::tools::consent::Operator;
+use crate::agent::tools::shell_policy::{ModeCell, ModeFrozen};
 use crate::cli::RootMode;
 use crate::config::runtime::RuntimeConfig;
 use saya_agent::{ApprovalPolicy, CancellationToken};
@@ -68,10 +69,11 @@ pub struct CodingApplication {
     /// host runs fall back to the sandbox under `ask` and whose fetches are
     /// refused, rather than either being put to anyone.
     pub(super) operator: Option<Arc<dyn Operator>>,
-    /// The approval mode the root's `shell` and `web_fetch` read when they
-    /// decide whether a call must be put to the operator. `Ask` — the
-    /// fail-safe default — unless the building surface states the live mode.
-    pub(super) approval_policy: ApprovalPolicy,
+    /// The job's one permission-mode cell: the root's `shell` reads it on every
+    /// call, so the mode stated here is the mode the next call resolves. Shared
+    /// by handle, so a host two `Arc`s hold still answers with its current mode.
+    /// `Ask` — the fail-safe default — unless the building surface states one.
+    pub(super) mode: ModeCell,
     /// The current job's lifecycle timeline. It starts at application open so
     /// the proposal and approval phases are measured; `create` takes it into
     /// the job and leaves a fresh one for the next job.
@@ -183,7 +185,7 @@ impl CodingApplication {
             managed_fallback: None,
             personal_instruction_dir: None,
             operator: None,
-            approval_policy: ApprovalPolicy::Ask,
+            mode: ModeCell::new(ApprovalPolicy::Ask),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
         }))
     }
@@ -286,14 +288,27 @@ impl CodingApplication {
         }
         self
     }
-    /// States the approval mode the root's `shell` reads. Like the operator,
-    /// a shared host keeps the fail-safe default rather than mutating under
-    /// another owner.
-    pub fn with_approval_policy(mut self: Arc<Self>, policy: ApprovalPolicy) -> Arc<Self> {
-        if let Some(application) = Arc::get_mut(&mut self) {
-            application.approval_policy = policy;
-        }
+    /// States the approval mode the root's `shell` reads. The composition-time
+    /// builder: a fresh cell is unfrozen, so the stated mode is what every
+    /// holder reads from its next call; a cell already frozen keeps its own,
+    /// which [`set_approval_policy`](Self::set_approval_policy) reports.
+    pub fn with_approval_policy(self: Arc<Self>, policy: ApprovalPolicy) -> Arc<Self> {
+        let _ = self.mode.set(policy);
         self
+    }
+    /// States a headless composition's mode and freezes it: `saya -p` has no
+    /// operator a switch could be put to, so nothing moves it after the start.
+    pub(crate) fn with_frozen_approval_policy(
+        self: Arc<Self>,
+        policy: ApprovalPolicy,
+    ) -> Arc<Self> {
+        self.mode.freeze_at(policy);
+        self
+    }
+    /// States the mode the root's `shell` resolves from its next call, and
+    /// reports a frozen job's refusal rather than assuming the change landed.
+    pub fn set_approval_policy(&self, policy: ApprovalPolicy) -> Result<(), ModeFrozen> {
+        self.mode.set(policy)
     }
     pub fn store(&self) -> &SqliteStateStore {
         &self.store

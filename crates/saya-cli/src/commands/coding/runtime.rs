@@ -1,4 +1,5 @@
 use super::{CodingApplication, CodingJobRequest};
+use crate::agent::tools::shell_policy::ModeCell;
 use saya_agent::CancellationToken;
 use saya_harness::coding::{
     budget::JobBudgetLedger, context::OriginalProjectContext, local::JobBaseline,
@@ -144,10 +145,17 @@ impl NativeCodingJob {
         &self.application.runtime.resolved.agents.types
     }
     /// The approval mode the root's `shell` reads when it decides whether a
-    /// run outside the sandbox must be put to the operator. Carried from the
-    /// application, so the job answers with the mode its surface was built in.
+    /// run outside the sandbox must be put to the operator. Read from the job's
+    /// shared cell, so it is the mode stated most recently — not the one the
+    /// job was built in.
     pub(crate) fn approval_policy(&self) -> saya_agent::ApprovalPolicy {
-        self.application.approval_policy
+        self.application.mode.get()
+    }
+    /// The job's one permission-mode cell, handed to every policy that decides
+    /// a call: the root's shell reads the mode from it on each call, so a mode
+    /// stated between two calls is the mode the second one resolves.
+    pub(crate) fn approval_mode(&self) -> ModeCell {
+        self.application.mode.clone()
     }
     /// The composed runtime the job was built over: the resolved config and
     /// the secret values saya already holds, read where the host policy for a

@@ -209,7 +209,7 @@ impl CodingApplication {
             operator,
             // A resumed job composes its own egress, exactly as a fresh one
             // does: the wire is not carried across a resume.
-            web_egress: crate::agent::tools::web::advertised(self.approval_policy)
+            web_egress: crate::agent::tools::web::advertised(self.mode.get())
                 .then(|| {
                     crate::agent::tools::web::egress(
                         &self.runtime.resolved.web_search,

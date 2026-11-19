@@ -101,7 +101,7 @@ impl CodingApplication {
         .await?;
         let application =
             application.with_personal_instruction_dir(self.personal_instruction_dir.as_deref())?;
-        let application = application.with_approval_policy(self.approval_policy);
+        let application = application.with_approval_policy(self.mode.get());
         Ok(match &self.operator {
             Some(operator) => application.with_operator(Arc::clone(operator)),
             None => application,

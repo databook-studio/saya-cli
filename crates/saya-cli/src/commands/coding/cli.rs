@@ -57,7 +57,7 @@ pub async fn dispatch(
             super::cli_mutations::run(application, command).await
         }
         CodingCommand::Resume { id, approve } => {
-            if !approve && !super::consent_implied(application.approval_policy) {
+            if !approve && !super::consent_implied(application.mode.get()) {
                 return Err(CodingError::ApprovalRequired);
             }
             let id = JobId::parse(&id).map_err(CodingError::owner)?;
@@ -123,12 +123,12 @@ pub async fn dispatch(
             in_place: _,
             managed: _,
         } => {
-            if !approve && !super::consent_implied(application.approval_policy) {
+            if !approve && !super::consent_implied(application.mode.get()) {
                 return Err(CodingError::ApprovalRequired);
             }
             // An edit-capable consent answers the approve question and gives
             // an empty scope the folder; `ask` keeps both as stated.
-            let write_paths = super::launch_write_scope(application.approval_policy, &write_paths);
+            let write_paths = super::launch_write_scope(application.mode.get(), &write_paths);
             let request = CodingJobRequest::new(
                 JobId::parse(&id).map_err(CodingError::owner)?,
                 task,

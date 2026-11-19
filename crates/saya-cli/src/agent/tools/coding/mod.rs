@@ -74,6 +74,10 @@ mod root_shell_exit_tests;
 mod root_shell_silent_read_tests;
 
 #[cfg(test)]
+#[path = "root_shell_mode_tests.rs"]
+mod root_shell_mode_tests;
+
+#[cfg(test)]
 #[path = "plan_gate_tests.rs"]
 mod plan_gate_tests;
 

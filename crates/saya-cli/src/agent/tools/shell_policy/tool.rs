@@ -11,6 +11,7 @@ use saya_harness::runner::{ShellCall, StreamCapture, WorkspaceShell};
 use saya_types::WorkspacePath;
 use serde_json::{Value, json};
 
+use super::ModeCell;
 use super::arguments::validate;
 use super::model_output::{self, OutputSpool};
 use super::policy::{Lane, ShellPolicy};
@@ -92,6 +93,14 @@ impl ShellTool {
     #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
     pub(crate) fn with_silent_waits(mut self, waits: [Duration; 3]) -> Self {
         self.reads = super::poll::ReadBook::new(waits);
+        self
+    }
+
+    /// Follows the caller's shared mode cell: every call resolves the mode the
+    /// cell holds — a mode stated between two calls moves the lane without a
+    /// rebuild — rather than the mode this shell was composed under.
+    pub(crate) fn following_mode(mut self, mode: ModeCell) -> Self {
+        self.policy = self.policy.following(mode);
         self
     }
 

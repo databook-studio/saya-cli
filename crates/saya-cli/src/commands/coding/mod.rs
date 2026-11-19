@@ -61,6 +61,9 @@ mod continuation;
 mod continuation_findings;
 mod convergence;
 mod host;
+#[cfg(all(test, unix))]
+#[path = "host_mode_tests.rs"]
+mod host_mode_tests;
 mod host_root;
 mod in_place_lease;
 mod integrate;
