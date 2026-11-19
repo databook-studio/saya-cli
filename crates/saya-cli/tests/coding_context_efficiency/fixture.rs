@@ -29,7 +29,7 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new(endpoint: &str, budget: usize, window: Option<u64>, model: &str) -> Self {
-        Self::build(endpoint, budget, window, model, None, &[]).await
+        Self::build(endpoint, budget, window, model, None, &[], false).await
     }
 
     /// The same fixture with a configured turn-retry schedule: an empty one
@@ -42,7 +42,20 @@ impl Fixture {
         model: &str,
         retry_ms: &[u64],
     ) -> Self {
-        Self::build(endpoint, budget, window, model, None, retry_ms).await
+        Self::build(endpoint, budget, window, model, None, retry_ms, false).await
+    }
+
+    /// An in-place root over the folder, with a configured retry schedule: the
+    /// job owns no managed checkout and holds the one-live-job lease instead.
+    #[allow(dead_code)] // read only by the resume-after-provider-failure test
+    pub async fn in_place_retrying(
+        endpoint: &str,
+        budget: usize,
+        window: Option<u64>,
+        model: &str,
+        retry_ms: &[u64],
+    ) -> Self {
+        Self::build(endpoint, budget, window, model, None, retry_ms, true).await
     }
 
     /// The same fixture with one project SQLite profile admitted and database
@@ -56,7 +69,7 @@ impl Fixture {
         model: &str,
         profile: &str,
     ) -> Self {
-        Self::build(endpoint, budget, window, model, Some(profile), &[]).await
+        Self::build(endpoint, budget, window, model, Some(profile), &[], false).await
     }
 
     async fn build(
@@ -66,6 +79,7 @@ impl Fixture {
         model: &str,
         profile: Option<&str>,
         retry_ms: &[u64],
+        in_place: bool,
     ) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let nonce = std::time::SystemTime::now()
@@ -156,13 +170,19 @@ impl Fixture {
         effective.base_url = Some(endpoint.into());
         effective.api_key = None;
         let store = SqliteStateStore::new(root.join("state.sqlite3"));
-        let application = CodingApplication::open(
+        let mode = if in_place {
+            saya_cli::RootMode::InPlace
+        } else {
+            saya_cli::RootMode::Managed
+        };
+        let application = CodingApplication::open_with_mode(
             runtime,
             store.clone(),
             &repository,
             &root.join("coding"),
             &git,
             &programs::program_dir_for(&["false"]),
+            mode,
             &CancellationToken::new(),
         )
         .await

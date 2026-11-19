@@ -107,7 +107,7 @@ impl CodingApplication {
             .await
             .map_err(CodingError::owner)?;
         if !status.clear_for_resume() {
-            return Err(CodingError::NotOwned);
+            return Err(CodingError::not_resumable(job, &status));
         }
         let epoch = status
             .authority

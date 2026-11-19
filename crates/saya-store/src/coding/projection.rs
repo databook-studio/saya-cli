@@ -14,7 +14,10 @@ pub(crate) async fn apply_common_projection(
                 || event.invocation_id().is_some()
                 || !matches!(
                     job_state(transaction, event).await?,
-                    JobState::Running | JobState::Paused | JobState::Completed
+                    // A provider-failed run is resumable: only the fresh
+                    // authority CAS appends this kind, and it re-reads the same
+                    // recovery facts in its transaction before it does.
+                    JobState::Running | JobState::Paused | JobState::Completed | JobState::Failed
                 )
             {
                 return Err(StoreError::Conflict);

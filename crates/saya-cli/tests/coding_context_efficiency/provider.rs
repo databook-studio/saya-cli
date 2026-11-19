@@ -19,6 +19,7 @@ pub(super) struct Provider {
     bodies: Arc<Mutex<Vec<Value>>>,
     raw_bodies: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
+    recovered: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
 }
 impl Provider {
@@ -32,6 +33,8 @@ impl Provider {
         let captured_raw = Arc::clone(&raw_bodies);
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = Arc::clone(&stop);
+        let recovered = Arc::new(AtomicBool::new(false));
+        let healing = Arc::clone(&recovered);
         let worker = thread::spawn(move || {
             let mut turns = [0, 0];
             let deadline = Instant::now() + PROVIDER_LIFETIME;
@@ -60,7 +63,11 @@ impl Provider {
                 captured.lock().unwrap().push(body);
                 let actor = usize::from(child);
                 let response = scenario.response(child, turns[actor]);
-                let fault = scenario.fault(child, turns[actor]);
+                let fault = if healing.load(Ordering::Acquire) {
+                    Fault::None
+                } else {
+                    scenario.fault(child, turns[actor])
+                };
                 turns[actor] += 1;
                 match fault {
                     Fault::None => {
@@ -87,8 +94,13 @@ impl Provider {
             bodies,
             raw_bodies,
             stop,
+            recovered,
             worker: Some(worker),
         }
+    }
+    /// The provider comes back: every request from here answers.
+    pub fn recover(&self) {
+        self.recovered.store(true, Ordering::Release);
     }
     pub fn bodies(&self) -> Vec<Value> {
         self.bodies.lock().unwrap().clone()

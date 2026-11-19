@@ -216,7 +216,13 @@ async fn an_open_request_is_not_cancelled_while_another_blocker_remains() {
         .application
         .resume(&job, &consent, CancellationToken::new())
         .await;
-    assert!(matches!(refused, Err(CodingError::NotOwned)));
+    let Err(refusal) = refused else {
+        panic!("another blocker refuses the resume");
+    };
+    assert!(
+        refusal.to_string().contains("cannot be resumed yet"),
+        "the blocker is stated as a recovery fact, not a denial of the job: {refusal}"
+    );
     // The abandoned request stays open: the guard saw another blocker and
     // touched nothing. This resume's own ask was answered, so it is closed.
     assert_eq!(pending(&fixture, &job).await, 1);
