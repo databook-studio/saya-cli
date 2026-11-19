@@ -83,7 +83,7 @@ impl CodingApplication {
     }
 
     /// Reopens the same start inputs in place, preserving the operator, the
-    /// approval policy, and the personal instruction directory.
+    /// approval mode, and the personal instruction directory.
     pub(super) async fn reopen_in_place(
         self: &Arc<Self>,
         token: &CancellationToken,
@@ -101,7 +101,7 @@ impl CodingApplication {
         .await?;
         let application =
             application.with_personal_instruction_dir(self.personal_instruction_dir.as_deref())?;
-        let application = application.with_approval_policy(self.approval_policy);
+        let application = self.reopen_mode(application);
         Ok(match &self.operator {
             Some(operator) => application.with_operator(Arc::clone(operator)),
             None => application,

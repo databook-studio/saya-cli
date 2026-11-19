@@ -279,7 +279,7 @@ impl CodingApplication {
             // the network: `read-only` and `never` compose no wire at all. The
             // search backend rides along when the user configured one, and is
             // absent otherwise — the ordinary case.
-            web_egress: crate::agent::tools::web::advertised(self.approval_policy)
+            web_egress: crate::agent::tools::web::advertised(self.mode.get())
                 .then(|| {
                     crate::agent::tools::web::egress(
                         &self.runtime.resolved.web_search,

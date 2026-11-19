@@ -1,6 +1,7 @@
 use super::CodingError;
 use super::host_root::resolve_in_place;
 use crate::agent::tools::consent::Operator;
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::cli::RootMode;
 use crate::config::runtime::RuntimeConfig;
 use saya_agent::{ApprovalPolicy, CancellationToken};
@@ -16,37 +17,9 @@ use std::{
     sync::Arc,
 };
 
-/// The one root a coding application works over: a Git repository's working
-/// tree (today's managed-checkout mode) or a plain folder with a captured
-/// local baseline. The variant decides every Git-only operation; an in-place
-/// root refuses it rather than silently creating a checkout.
-pub(super) enum CodingRoot {
-    Git(GitRepository),
-    InPlace(LocalRoot),
-}
-
-impl CodingRoot {
-    fn path(&self) -> &Path {
-        match self {
-            Self::Git(repository) => repository.root(),
-            Self::InPlace(local) => local.path(),
-        }
-    }
-
-    fn git(&self) -> Option<&GitRepository> {
-        match self {
-            Self::Git(repository) => Some(repository),
-            Self::InPlace(_) => None,
-        }
-    }
-
-    fn local(&self) -> Option<&LocalRoot> {
-        match self {
-            Self::Git(_) => None,
-            Self::InPlace(local) => Some(local),
-        }
-    }
-}
+pub(super) mod mode;
+mod root;
+use root::CodingRoot;
 
 /// Trusted host composition. Program directory and state are selected by the
 /// user/application, never by repository contents or model tool arguments.
@@ -68,10 +41,11 @@ pub struct CodingApplication {
     /// host runs fall back to the sandbox under `ask` and whose fetches are
     /// refused, rather than either being put to anyone.
     pub(super) operator: Option<Arc<dyn Operator>>,
-    /// The approval mode the root's `shell` and `web_fetch` read when they
-    /// decide whether a call must be put to the operator. `Ask` — the
-    /// fail-safe default — unless the building surface states the live mode.
-    pub(super) approval_policy: ApprovalPolicy,
+    /// The job's one permission-mode cell: the root's `shell` reads it on every
+    /// call, so the mode stated here is the mode the next call resolves. Shared
+    /// by handle, so a host two `Arc`s hold still answers with its current mode.
+    /// `Ask` — the fail-safe default — unless the building surface states one.
+    pub(super) mode: ModeCell,
     /// The current job's lifecycle timeline. It starts at application open so
     /// the proposal and approval phases are measured; `create` takes it into
     /// the job and leaves a fresh one for the next job.
@@ -183,7 +157,7 @@ impl CodingApplication {
             managed_fallback: None,
             personal_instruction_dir: None,
             operator: None,
-            approval_policy: ApprovalPolicy::Ask,
+            mode: ModeCell::new(ApprovalPolicy::Ask),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
         }))
     }
@@ -283,15 +257,6 @@ impl CodingApplication {
     pub(crate) fn with_operator(mut self: Arc<Self>, operator: Arc<dyn Operator>) -> Arc<Self> {
         if let Some(application) = Arc::get_mut(&mut self) {
             application.operator = Some(operator);
-        }
-        self
-    }
-    /// States the approval mode the root's `shell` reads. Like the operator,
-    /// a shared host keeps the fail-safe default rather than mutating under
-    /// another owner.
-    pub fn with_approval_policy(mut self: Arc<Self>, policy: ApprovalPolicy) -> Arc<Self> {
-        if let Some(application) = Arc::get_mut(&mut self) {
-            application.approval_policy = policy;
         }
         self
     }

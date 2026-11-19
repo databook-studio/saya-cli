@@ -10,7 +10,8 @@ use saya_harness::runner::HostPolicy;
 
 use super::RootShell;
 use super::shell_policy::{
-    Background, ShellPlacement, ShellTool, advertised, compose_host_only, compose_sandboxed, prove,
+    Background, ModeCell, ShellPlacement, ShellTool, advertised, compose_host_only,
+    compose_sandboxed, prove,
 };
 use crate::agent::tools::consent::Prompt;
 
@@ -48,6 +49,61 @@ pub(crate) fn build_with_policy(
         Background::Owned,
         saya_config::CommandRules::default(),
     )))
+}
+
+/// Builds over the caller's shared mode cell and command rules, proving the
+/// sandbox the way [`build`](super::build) does: the mode the cell holds when a
+/// call arrives decides its lane, so a mode stated between two calls is the
+/// mode the second one resolves.
+pub(crate) fn build_with_mode_cell(
+    checkout_root: &Path,
+    mode: ModeCell,
+    prompt: Option<Prompt>,
+    cancellation: saya_agent::CancellationToken,
+    rules: saya_config::CommandRules,
+) -> Option<RootShell> {
+    let policy = mode.get();
+    if !advertised(policy) {
+        return None;
+    }
+    let spawn = prove(checkout_root, policy)?;
+    let tool = compose_sandboxed(
+        ShellPlacement::root(checkout_root),
+        policy,
+        spawn,
+        prompt,
+        HostPolicy::default(),
+        cancellation,
+        Background::Owned,
+        rules,
+    );
+    Some(RootShell::new(tool.following_mode(mode)))
+}
+
+/// Builds over the host lane alone, taking the mode from the caller's cell:
+/// the composition a host with no proven sandbox gives, so a mode that moves
+/// between two calls is the only thing deciding them.
+pub(crate) fn build_host_only_with_mode_cell(
+    checkout_root: &Path,
+    mode: ModeCell,
+    prompt: Option<Prompt>,
+    rules: saya_config::CommandRules,
+) -> Option<RootShell> {
+    let policy = mode.get();
+    if !advertised(policy) {
+        return None;
+    }
+    let tool = compose_host_only(
+        checkout_root,
+        policy,
+        prompt,
+        HostPolicy::default(),
+        saya_agent::CancellationToken::new(),
+        Background::Owned,
+        None,
+        rules,
+    )?;
+    Some(RootShell::new(tool.following_mode(mode)))
 }
 
 /// Builds over the host lane alone, as a host with no proven sandbox does,

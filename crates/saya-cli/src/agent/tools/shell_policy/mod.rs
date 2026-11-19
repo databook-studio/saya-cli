@@ -43,6 +43,11 @@
 //! once, so several helpers asking at once queue: one prompt is pending at a
 //! time, and a waiting ask still honours cancellation.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use saya_agent::{ApprovalPolicy, SessionPolicy};
+
 /// The host-lane policy a `sandbox: false` call runs under: the environment
 /// variable names and secret values a host child must not inherit. Built where
 /// the resolved config and the values saya already holds are in hand
@@ -78,6 +83,61 @@ mod schema_tests;
 #[cfg(test)]
 #[path = "spool_read_tests.rs"]
 mod spool_read_tests;
+
+/// The shared permission-mode cell: one per job, handed by handle to every
+/// policy that decides a call, so the mode one surface states is the mode the
+/// next call resolves — no policy keeps a copy that can go stale. It is the
+/// session's own cell shape, and a frozen one refuses every change: a headless
+/// or background run states its approval before it starts.
+#[derive(Debug, Clone)]
+pub(crate) struct ModeCell {
+    mode: SessionPolicy,
+    frozen: Arc<AtomicBool>,
+}
+
+/// The refusal a frozen cell gives, so a caller reports a change that did not
+/// land rather than assuming it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the permission mode is frozen: this run's approval is stated before it starts")]
+pub struct ModeFrozen;
+
+impl ModeCell {
+    /// A cell of its own at `mode`: the mode of a surface that composes it
+    /// once and never states it again.
+    pub(crate) fn new(mode: ApprovalPolicy) -> Self {
+        Self {
+            mode: SessionPolicy::new(mode),
+            frozen: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The mode the next call resolves.
+    pub(crate) fn get(&self) -> ApprovalPolicy {
+        self.mode.mode()
+    }
+
+    /// States the mode, refused on a frozen cell.
+    pub(crate) fn set(&self, mode: ApprovalPolicy) -> Result<(), ModeFrozen> {
+        if self.frozen.load(Ordering::Relaxed) {
+            return Err(ModeFrozen);
+        }
+        self.mode.set_mode(mode);
+        Ok(())
+    }
+
+    /// Whether this cell refuses every change: the composition that opened it
+    /// stated its approval rather than leaving it switchable.
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
+    /// States the mode and freezes it in one step: a composition whose approval
+    /// is stated, not switched.
+    pub(crate) fn freeze_at(&self, mode: ApprovalPolicy) {
+        self.mode.set_mode(mode);
+        self.frozen.store(true, Ordering::Relaxed);
+    }
+}
 
 pub(crate) use compose::{
     Background, advertised, compose, compose_host_only, compose_sandboxed, prove,

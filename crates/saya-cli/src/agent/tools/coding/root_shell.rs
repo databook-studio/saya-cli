@@ -25,7 +25,10 @@ use crate::agent::tools::shell_policy::{self, Background, ShellPlacement, ShellT
 mod hooks;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
-pub(crate) use hooks::{build_host_only_with_spool, build_with_policy};
+pub(crate) use hooks::{
+    build_host_only_with_mode_cell, build_host_only_with_spool, build_with_mode_cell,
+    build_with_policy,
+};
 
 /// The root's shell: the shared tool, or the background composition that is
 /// still preparing it.
@@ -66,6 +69,9 @@ pub(crate) fn build(
     if !shell_policy::advertised(policy) {
         return None;
     }
+    // The mode the shell resolves is the job's, read from its cell at every
+    // call: a mode stated during the run decides the next call, not this build.
+    let mode = job.approval_mode();
     // The operator, when one is present, is told which job is asking.
     let prompt = job.operator().map(|operator| {
         shell_policy::prompt(
@@ -99,6 +105,7 @@ pub(crate) fn build(
             Background::Owned,
             rules,
         )
+        .map(|tool| tool.following_mode(mode))
         .map(|tool| match wall_clock {
             Some(clock) => tool.with_wall_clock(clock),
             None => tool,

@@ -143,12 +143,6 @@ impl NativeCodingJob {
     pub(crate) fn helper_agents(&self) -> &saya_config::HelperAgents {
         &self.application.runtime.resolved.agents.types
     }
-    /// The approval mode the root's `shell` reads when it decides whether a
-    /// run outside the sandbox must be put to the operator. Carried from the
-    /// application, so the job answers with the mode its surface was built in.
-    pub(crate) fn approval_policy(&self) -> saya_agent::ApprovalPolicy {
-        self.application.approval_policy
-    }
     /// The composed runtime the job was built over: the resolved config and
     /// the secret values saya already holds, read where the host policy for a
     /// host shell run is built.

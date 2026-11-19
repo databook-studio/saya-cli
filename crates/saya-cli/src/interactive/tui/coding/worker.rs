@@ -2,7 +2,8 @@ use super::{CodingMessage, CodingPanel};
 use crate::{
     cli::CodingCommand,
     commands::coding::{
-        CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, dispatch_coding,
+        CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, Launch,
+        dispatch_coding,
     },
     config::runtime::RuntimeConfig,
 };
@@ -177,8 +178,9 @@ async fn work(
     };
     // The live session's mode, stated once at composition: the root's `shell`
     // reads it to decide whether a run outside the sandbox is put to the
-    // operator.
-    let application = application.with_approval_policy(approval_policy);
+    // operator. The panel is an attached surface, so its mode stays
+    // switchable.
+    let application = Launch::Attached(approval_policy).compose(application);
     // A run outside the sandbox is asked of the operator through the same
     // sender, token and job id the job approval uses. Any other command runs
     // no root, so it keeps the application without an operator.

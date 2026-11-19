@@ -7,6 +7,7 @@ use saya_agent::ApprovalPolicy;
 use saya_config::{CommandDecision, CommandRules};
 use serde_json::Value;
 
+use super::ModeCell;
 use crate::agent::tools::consent::Prompt;
 
 /// The refusal a host call earns under `ask` when no operator is present to
@@ -60,7 +61,9 @@ pub(crate) enum Lane {
 /// a shell that does not depend on which workspace it runs in, shared by every
 /// surface that advertises `shell`.
 pub(crate) struct ShellPolicy {
-    policy: ApprovalPolicy,
+    /// The mode every call resolves — the job's shared cell where the composing
+    /// surface handed one, and this policy's own otherwise.
+    mode: ModeCell,
     /// The operator's approver for the host lane, when one is present.
     prompt: Option<Prompt>,
     /// Whether the shell this policy decides for holds a sandbox lane.
@@ -82,12 +85,19 @@ impl ShellPolicy {
         workspace: Option<PathBuf>,
     ) -> Self {
         Self {
-            policy,
+            mode: ModeCell::new(policy),
             prompt,
             has_sandbox,
             rules,
             workspace,
         }
+    }
+
+    /// Follows a caller's shared mode cell: every call resolves the mode the
+    /// cell holds, not the one this policy was composed under.
+    pub(crate) fn following(mut self, mode: ModeCell) -> Self {
+        self.mode = mode;
+        self
     }
 
     /// Whether this call asks for the host lane: `sandbox` is omitted or
@@ -104,17 +114,19 @@ impl ShellPolicy {
         }
     }
 
-    /// The lane this call takes, decided once. A deny rule refuses in every
-    /// mode, `bypass` included. An allow rule that covers every segment of a
-    /// substitution-free command pre-answers the host lane under the asking
-    /// modes; it never widens `read-only` or `never`. Every other call is
-    /// decided as before: a call that named the sandbox on a host that holds
-    /// one runs there, unasked; the two asking modes (`ask`, `accept-edits`)
-    /// run a host call when an operator is there to answer and otherwise fall
-    /// back to the sandbox when one is proven, carrying the reason no operator
-    /// could be asked, and refusing when none is; `read-only` serves it from
-    /// the sandbox with the root write-denied, refusing when no sandbox is
-    /// proven; and `never` has no shell to run it in.
+    /// The lane this call takes, decided once. The mode is read from the
+    /// policy's cell on every call, so a mode stated between two calls decides
+    /// the second. A deny rule refuses in every mode, `bypass` included. An
+    /// allow rule that covers every segment of a substitution-free command
+    /// pre-answers the host lane under the asking modes; it never widens
+    /// `read-only` or `never`. Every other call is decided as before: a call
+    /// that named the sandbox on a host that holds one runs there, unasked;
+    /// the two asking modes (`ask`, `accept-edits`) run a host call when an
+    /// operator is there to answer and otherwise fall back to the sandbox when
+    /// one is proven, carrying the reason no operator could be asked, and
+    /// refusing when none is; `read-only` serves it from the sandbox with the
+    /// root write-denied, refusing when no sandbox is proven; and `never` has
+    /// no shell to run it in.
     pub(crate) fn lane(&self, arguments: &Value) -> Lane {
         if let CommandDecision::Deny(rule) = self.decision(arguments) {
             return Lane::Refused(format!(
@@ -126,7 +138,7 @@ impl ShellPolicy {
             return Lane::Sandbox(None);
         }
         let rule_allowed = self.decision(arguments) == CommandDecision::Allow;
-        match self.policy {
+        match self.mode.get() {
             ApprovalPolicy::Bypass => Lane::Host(rule_allowed),
             ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits
                 if rule_allowed || self.prompt.is_some() =>
@@ -163,7 +175,7 @@ impl ShellPolicy {
                 // ask. Any other mode naming the host (`bypass`) allowed it
                 // outright.
                 if !matches!(
-                    self.policy,
+                    self.mode.get(),
                     ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits
                 ) {
                     return true;
@@ -187,7 +199,7 @@ impl ShellPolicy {
             Lane::Host(rule_allowed) => {
                 !rule_allowed
                     && matches!(
-                        self.policy,
+                        self.mode.get(),
                         ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits
                     )
                     && self.prompt.is_some()

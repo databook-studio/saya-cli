@@ -80,7 +80,7 @@ pub async fn run(
                 runtime,
                 format,
                 &state,
-                approval,
+                coding::Launch::Detached(approval),
             )
             .await
         }
@@ -93,7 +93,7 @@ pub async fn run(
                 runtime,
                 format,
                 &state,
-                approval,
+                coding::Launch::Detached(approval),
             )
             .await
         }
@@ -106,7 +106,7 @@ pub async fn run(
                 runtime,
                 format,
                 &state,
-                approval,
+                coding::Launch::Detached(approval),
             )
             .await
         }

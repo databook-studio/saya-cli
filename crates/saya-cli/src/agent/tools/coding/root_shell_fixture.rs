@@ -20,7 +20,9 @@ use serde_json::{Value, json};
 use super::super::root_shell::{self, RootShell};
 use crate::agent::tools::consent::{Caller, Operator, Prompt};
 use crate::agent::tools::shell_policy::HOST_APPROVAL_UNAVAILABLE;
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::agent::tools::shell_policy::prompt as shell_prompt;
+use saya_config::CommandRules;
 
 /// The refusal a host call earns under `ask` with no operator to answer it:
 /// the policy's own text, never a copy of it, so the two cannot drift.
@@ -116,6 +118,35 @@ pub(crate) fn shell_over(
     operator: Option<Arc<dyn Operator>>,
 ) -> Option<RootShell> {
     root_shell::build_with_policy(checkout, policy, prompt(operator), CancellationToken::new())
+}
+
+/// A root shell over `checkout` that takes its mode from `mode`'s cell, with
+/// `rules` as the trusted command-prefix table, or `None` where the sandbox
+/// does not prove on this host.
+pub(crate) fn shell_over_mode_cell(
+    checkout: &Path,
+    mode: ModeCell,
+    operator: Option<Arc<dyn Operator>>,
+    rules: CommandRules,
+) -> Option<RootShell> {
+    root_shell::build_with_mode_cell(
+        checkout,
+        mode,
+        prompt(operator),
+        CancellationToken::new(),
+        rules,
+    )
+}
+
+/// As [`shell_over_mode_cell`], over the host lane alone — the composition a
+/// host with no proven sandbox gives, where `read-only` refuses outright.
+pub(crate) fn host_shell_over_mode_cell(
+    checkout: &Path,
+    mode: ModeCell,
+    operator: Option<Arc<dyn Operator>>,
+    rules: CommandRules,
+) -> Option<RootShell> {
+    root_shell::build_host_only_with_mode_cell(checkout, mode, prompt(operator), rules)
 }
 
 /// A root shell over the host lane alone, as a host with no proven sandbox
