@@ -65,6 +65,9 @@ mod progress;
 #[path = "engine_episode/retry_brief.rs"]
 mod retry_brief;
 
+#[path = "engine_episode/dead_provider.rs"]
+mod dead_provider;
+
 // --- the fetch step, end to end ----------------------------------------------
 
 /// A hermetic in-process transport: every policy-judged URL resolves to a

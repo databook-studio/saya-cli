@@ -8,9 +8,9 @@ use saya_types::StepSpec;
 use crate::engine::episode::EpisodeRequest;
 
 /// Turns the step's budget into the loop's limits. The budget's turn,
-/// tool-call and progress dimensions are the only ceilings: the environment
-/// is never read and a ceiling beyond the loop's counter is taken as the
-/// countable maximum rather than invented smaller.
+/// tool-call, progress, and elapsed dimensions are the only ceilings: the
+/// environment is never read and a ceiling beyond the loop's counter is taken
+/// as the countable maximum rather than invented smaller.
 /// Learning is pinned off by construction: a run episode is
 /// a synthetic conversation, not user intent, so the caller's
 /// memory-mode-derived permission is deliberately not consulted — that pin
@@ -49,12 +49,14 @@ pub(crate) fn limits(request: &EpisodeRequest, spec: &StepSpec) -> AgentLimits {
         permit_external_effects: caps.fetch.is_some(),
         context_byte_budget: AgentLimits::default().context_byte_budget,
         // The progress guards are the step's own declared dimensions. The
-        // run's wall clock stays with the engine, which owns the clock, and
-        // `[limits.run]` has no cost ceiling, so both hard guards stay off.
+        // step's elapsed budget is the loop's wall clock, so the provider
+        // retry schedule reads the same bound the engine's clock enforces:
+        // without it a dead provider spends its whole schedule inside every
+        // attempt. `[limits.run]` has no cost ceiling, so that guard stays off.
         progress: budget.map(|budget| ProgressLimits {
             no_progress_turns: guard(budget.no_progress_turns),
             repeat_limit: guard(budget.repeat_limit),
-            wall_clock: None,
+            wall_clock: budget.wall_clock,
             max_cost_micros: None,
             limit_prefix: "limits.run",
         }),
