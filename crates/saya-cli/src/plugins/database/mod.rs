@@ -8,6 +8,8 @@
 //! constructors so the core sees one plugin with one name.
 
 #[cfg(test)]
+mod activation_tests;
+#[cfg(test)]
 mod learning_fixture;
 #[cfg(test)]
 mod learning_tests;
@@ -26,8 +28,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEventSink, ContextBlock, RunContext, RunPlugin, TokenUsage, ToolDefinition, ToolExecutor,
-    TurnOutcome,
+    AgentEventSink, ContextBlock, RunContext, RunPlugin, RunSurface, TokenUsage, ToolDefinition,
+    ToolExecutor, TurnOutcome,
 };
 use saya_harness::coding::policy::ChildAuthorityView;
 
@@ -170,10 +172,19 @@ impl RunPlugin for DatabasePlugin {
         &DECLARED_TOOLS
     }
 
-    /// Every surface activates the plugin for now; the rule that keys it on the
-    /// run's database profiles comes later.
-    fn activate(&self, _ctx: &RunContext) -> bool {
-        true
+    /// Whether this run has a database side at all.
+    ///
+    /// The rule is the surface's: a chat run activates the plugin only when it
+    /// was resolved with at least one database profile — a chat with none has
+    /// nothing to read and nothing to ask — while a headless, background or
+    /// helper run always does, because the job that started it already decided
+    /// its database scope before the run existed. The chat is not wired through
+    /// the registry yet; this is the rule it will activate under.
+    fn activate(&self, ctx: &RunContext) -> bool {
+        match ctx.surface {
+            RunSurface::Chat => ctx.database_profiles > 0,
+            RunSurface::Headless | RunSurface::Background | RunSurface::Helper => true,
+        }
     }
 
     /// The run's database contracts for this turn's prompt, recalled through the
