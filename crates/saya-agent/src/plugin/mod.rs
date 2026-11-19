@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::{ContextBlock, ToolDefinition, ToolExecutor};
+use crate::{AgentEventSink, AgentOutput, ContextBlock, TokenUsage, ToolDefinition, ToolExecutor};
 
 /// Which surface is running — the fact a plugin keys its activation on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,14 +46,23 @@ pub struct RunContext {
     pub database_profiles: usize,
 }
 
-/// How a turn ended. Minimal on purpose: unit 2.4 extends it with the fields a
-/// budget plugin needs to report what stopped the turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct TurnOutcome {
+/// How a turn ended, and what it produced. Minimal on purpose: unit 2.4 extends
+/// it with the fields a budget plugin needs to report what stopped the turn.
+///
+/// The prompt and the output are borrowed from the turn — a plugin observes
+/// them, never owns them. `Eq` and `Default` go with the borrowed output, whose
+/// events carry a JSON value; `Copy` stays, since every field is `Copy`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurnOutcome<'a> {
     /// The turn produced an answer for the user.
     pub answered: bool,
     /// The user cancelled the turn before it answered.
     pub cancelled: bool,
+    /// The user's question for this turn.
+    pub prompt: &'a str,
+    /// What the turn produced, or `None` when the answering call failed —
+    /// there is nothing for a post-turn hook to read.
+    pub output: Option<&'a AgentOutput>,
 }
 
 /// The turn-level limits a plugin asks the core to enforce.
@@ -114,9 +123,18 @@ pub trait RunPlugin: Send + Sync {
     /// does nothing.
     async fn on_turn_start(&self, _ctx: &RunContext) {}
 
-    /// Called once when a turn ends, with its outcome. The default does nothing;
-    /// an implementation observes and records, it never changes the outcome.
-    async fn on_turn_finish(&self, _ctx: &RunContext, _outcome: &TurnOutcome) {}
+    /// Called once when a turn ends, with its outcome and the run's event sink.
+    /// The default does nothing; an implementation observes, records, and may
+    /// return the usage its own post-turn work spent, which the registry sums
+    /// into the turn's learning total. It never changes the outcome.
+    async fn on_turn_finish(
+        &self,
+        _ctx: &RunContext,
+        _outcome: &TurnOutcome<'_>,
+        _sink: &dyn AgentEventSink,
+    ) -> Option<TokenUsage> {
+        None
+    }
 
     /// The turn limits this plugin asks for, or `None` — the default — to ask
     /// for none.

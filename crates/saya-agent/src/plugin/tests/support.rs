@@ -7,8 +7,8 @@ use async_trait::async_trait;
 
 use super::super::{RunContext, RunPlugin, RunSurface, TurnOutcome, TurnPolicy};
 use crate::{
-    ContextBlock, LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect, ToolError,
-    ToolExecutor,
+    AgentEventSink, ContextBlock, LocalStateEffect, TokenUsage, ToolConcurrency, ToolDefinition,
+    ToolEffect, ToolError, ToolExecutor,
 };
 
 /// A chat run with a database attached.
@@ -51,6 +51,7 @@ pub(super) struct FakePlugin {
     executor: Option<Arc<dyn ToolExecutor>>,
     blocks: Vec<ContextBlock>,
     policy: Option<TurnPolicy>,
+    usage: Option<TokenUsage>,
     calls: Arc<Mutex<Vec<String>>>,
 }
 
@@ -65,6 +66,7 @@ impl FakePlugin {
             executor: None,
             blocks: Vec::new(),
             policy: None,
+            usage: None,
             calls: Arc::default(),
         }
     }
@@ -110,6 +112,12 @@ impl FakePlugin {
 
     pub(super) fn policy(mut self, policy: TurnPolicy) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// The usage this plugin reports from its turn-finish hook.
+    pub(super) fn usage(mut self, usage: TokenUsage) -> Self {
+        self.usage = Some(usage);
         self
     }
 
@@ -162,8 +170,14 @@ impl RunPlugin for FakePlugin {
         self.record("start");
     }
 
-    async fn on_turn_finish(&self, _ctx: &RunContext, outcome: &TurnOutcome) {
+    async fn on_turn_finish(
+        &self,
+        _ctx: &RunContext,
+        outcome: &TurnOutcome<'_>,
+        _sink: &dyn AgentEventSink,
+    ) -> Option<TokenUsage> {
         self.record(if outcome.answered { "finish" } else { "end" });
+        self.usage
     }
 
     fn turn_policy(&self, _ctx: &RunContext) -> Option<TurnPolicy> {
@@ -211,9 +225,11 @@ pub(super) fn definition_names(definitions: Vec<ToolDefinition>) -> Vec<String> 
         .collect()
 }
 
-pub(super) fn answered() -> TurnOutcome {
+pub(super) fn answered() -> TurnOutcome<'static> {
     TurnOutcome {
         answered: true,
         cancelled: false,
+        prompt: "a question about orders",
+        output: None,
     }
 }
