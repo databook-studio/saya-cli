@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deferred_composition_starts_at_build_and_blocks_the_first_call() {
+    async fn deferred_composition_waits_for_the_first_turn_context() {
         let root = temp_root("started");
         let compose_root = root.clone();
         let (started_tx, started_rx) = mpsc::channel();
@@ -172,10 +172,31 @@ mod tests {
         })
         .expect("the deferred shell is built");
 
-        // The probe is dispatched at build, before any call asks for it.
+        // The run composes the root's shell, then the first turn builds the
+        // context whose readiness walk reads W: the composition — whose probe
+        // creates and removes canaries INSIDE W — must not run before that, so
+        // an entry it deletes can never race the walk.
+        assert!(
+            !shell.composition_started(),
+            "the composition must not be started at build"
+        );
+        assert!(
+            started_rx.recv_timeout(Duration::from_millis(500)).is_err(),
+            "the composition must not run before the first turn's context is built"
+        );
+
+        // The run starts it once the turn's context is built, and that is the
+        // first time anything runs the probe.
+        shell.start_composition();
+        assert!(
+            shell.composition_started(),
+            "the composition is started once the first turn's context is built"
+        );
         started_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("composition starts at build");
+            .expect("the composition starts once the first turn's context is built");
+        // Every later turn asks again, and only the first ask starts anything.
+        shell.start_composition();
 
         let call = tokio::spawn(async move {
             shell
@@ -203,6 +224,8 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// A first call without a start still composes: `resolve` starts the held
+    /// composition itself, so a shell reached before any turn asked is served.
     #[tokio::test]
     async fn a_deferred_composition_that_yields_no_shell_refuses_the_call() {
         let shell = build_deferred_with(|| None).expect("the deferred shell is built");

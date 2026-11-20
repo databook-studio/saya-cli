@@ -259,6 +259,17 @@ impl DirectCodingTools {
             .collect()
     }
 
+    /// Starts the root shell's held composition, if this surface has one. The
+    /// composition proves the sandbox by creating and removing canary
+    /// directories inside W, so the run starts it only once the turn no longer
+    /// needs W to itself — after the turn's context blocks are built. A later
+    /// call starts nothing, and the tool was advertised the whole time.
+    pub(super) fn start_shell_composition(&self) {
+        if let Some(shell) = &self.shell {
+            shell.start_composition();
+        }
+    }
+
     /// Notes a call's outcome against the advertisement: a `shell` call that
     /// started a background run is what puts `shell_output` and `shell_kill`
     /// in the tool list, from the next request on. A call that failed — an

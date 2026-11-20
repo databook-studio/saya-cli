@@ -47,6 +47,7 @@ toml.workspace = true
 tokio.workspace = true
 sha2.workspace = true
 chrono.workspace = true
+tracing.workspace = true
 ratatui.workspace = true
 # MCP stdio server (ADR 0008): pinned exactly, minimal features — `server`
 # (handler + service, which carries schemars transitively) and `transport-io`

@@ -208,6 +208,11 @@ pub enum DeltaError {
     OutputRootTooLarge,
     #[error("the checkout could not be read")]
     Io,
+    /// A path the walk listed left the tree before the walk read it. The tree
+    /// is live, so this is not the same failure as a checkout that cannot be
+    /// read: a caller may answer it by walking again.
+    #[error("an entry left the checkout while the walk was reading it")]
+    Vanished,
 }
 
 pub const DEFAULT_DELTA_DEADLINE: Duration = Duration::from_secs(30);

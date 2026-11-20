@@ -55,6 +55,14 @@ impl RootTools {
             .any(|definition| definition.name == "shell")
     }
 
+    /// Starts the root shell's held composition, if this surface has one, once
+    /// the turn's context is built: the probe it starts mutates W.
+    pub(crate) fn start_shell_composition(&self) {
+        if let RootTools::WorkingCheckout(direct) = self {
+            direct.start_shell_composition();
+        }
+    }
+
     /// Builds the root tool surface from the job. A job with no working
     /// checkout (no approved write path, or in place) gets the read-only
     /// workspace toolset over its own folder; a job with one gets the composed

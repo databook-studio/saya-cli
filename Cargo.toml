@@ -58,6 +58,10 @@ sha2 = { version = "0.10", features = ["oid"] }
 unicode-normalization = "0.1.25"
 url = "2"
 terminal-colorsaurus = "1.0.3"
+# Diagnostics for a degradation that is not user-facing text — a readiness walk
+# that gave up — so it is a log line rather than rendered output. Already in the
+# lock (transitive); this pin adds no crate to it.
+tracing = "0.1"
 
 # Dev-only. Snapshot testing (insta) and property testing (proptest). Declared
 # workspace-wide; wired as dev-dependencies in the crates that use them.

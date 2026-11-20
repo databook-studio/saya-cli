@@ -53,6 +53,7 @@ mod project_context;
 mod readiness;
 mod readiness_cache;
 mod readiness_direct;
+mod readiness_generation;
 mod usage;
 pub use delegate::CodingTask;
 mod assignment_added;

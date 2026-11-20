@@ -110,6 +110,12 @@ impl NativeCodingJob {
         // The prompt as it was sent: the prompt half of the pair a later turn
         // of this run replays.
         let asked = prompt.clone();
+        // This turn's context comes first: the root shell's composition proves
+        // the sandbox by creating and removing canary directories inside W, and
+        // a readiness walk that met one of them mid-removal would send the model
+        // a different view than the run's first request must carry.
+        let context_blocks = self.continuation_context().await?;
+        session.tools.start_shell_composition();
         let request = AgentRequest {
             prompt,
             profile_names: vec![],
@@ -120,7 +126,7 @@ impl NativeCodingJob {
             // for the shared assembly to bound by this run's context byte
             // budget, exactly as chat's is bounded.
             history: session.history.replay(),
-            context_blocks: self.continuation_context().await?,
+            context_blocks,
         };
         self.lifecycle().enter("model_loop");
         let outcome = run_agent_with_control(

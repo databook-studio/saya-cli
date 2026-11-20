@@ -11,7 +11,7 @@
 use super::{
     NativeCodingJob, continuation::is_terminal, prepare::SourceGeneration,
     prepare_receipt::PreparedReceipt, readiness::CandidateReadiness,
-    readiness_cache::ReadinessFacts,
+    readiness_cache::ReadinessFacts, readiness_generation,
 };
 use saya_harness::coding::integration::DeltaKind;
 use saya_store::{CodingChildRecord, CodingCompletionPage, StoreError};
@@ -172,10 +172,8 @@ impl NativeCodingJob {
             }
             _ => Vec::new(),
         };
-        let generation = verified
-            .as_ref()
-            .zip(ignored.as_ref())
-            .and_then(|(verified, ignored)| self.source_generation_from(verified, ignored).ok());
+        let generation =
+            readiness_generation::generation(self, verified.as_deref().zip(ignored.as_ref()));
         // W's path and base are fixed for the job's checkout; the outcome's
         // commit walk reads them from here rather than verifying W again.
         let checkout = verified.as_ref().and_then(|verified| {
