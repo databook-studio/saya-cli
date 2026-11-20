@@ -30,6 +30,21 @@ impl Drop for Fixture {
 
 /// An in-place job over a plain folder, wired to `endpoint`.
 pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
+    in_place_with(case, endpoint, None).await
+}
+
+/// The same, with the run's context byte budget stated by the test — the one
+/// bound the shared history assembly reads, so a test can make a run's
+/// history outgrow it and see which turns the bound drops.
+pub(super) async fn in_place_with_budget(
+    case: &str,
+    endpoint: &str,
+    context_byte_budget: usize,
+) -> Fixture {
+    in_place_with(case, endpoint, Some(context_byte_budget)).await
+}
+
+async fn in_place_with(case: &str, endpoint: &str, byte_budget: Option<usize>) -> Fixture {
     use std::os::unix::fs::PermissionsExt;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -56,6 +71,9 @@ pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
     runtime.resolved.ai.timeout_seconds = 5;
     runtime.resolved.ai.idle_timeout_seconds = 5;
     runtime.resolved.ai.max_output_tokens = Some(4096);
+    if let Some(byte_budget) = byte_budget {
+        runtime.resolved.ai.context_byte_budget = byte_budget;
+    }
     let effective = runtime
         .resolved
         .endpoints
