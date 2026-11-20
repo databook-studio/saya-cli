@@ -105,6 +105,45 @@ async fn a_turn_budget_stop_ends_the_turn_and_the_run_keeps_taking_turns() {
     );
 }
 
+/// Test 1b — the elapsed dimension stops the same turn the same way: the
+/// deadline stops the turn's token, so the run's own stop stays unset and the
+/// run keeps taking turns.
+#[tokio::test]
+async fn an_elapsed_budget_stop_ends_the_turn_and_leaves_the_run_open() {
+    let provider = Scripted::start();
+    // A provider that holds its first answer open until the test says stop: the
+    // turn's own deadline is the only thing that can end it.
+    provider.hold_first();
+    let fixture = in_place_writing("turn-budget-elapsed", &provider.endpoint).await;
+    fixture.job.set_turn_policy(Some(TurnPolicy {
+        max_requests: None,
+        max_tool_calls: None,
+        max_known_tokens: None,
+        max_elapsed: Some(Duration::from_millis(100)),
+    }));
+
+    let stopped = turn(&fixture.job, None).await;
+    provider.release();
+    assert!(
+        stopped.is_ok(),
+        "a spent budget is a partial answer: {stopped:?}"
+    );
+    let stop = fixture
+        .job
+        .turn_stop()
+        .expect("the turn states what stopped it");
+    assert_eq!(
+        stop.message(),
+        "the run stopped on its elapsed-time budget; any answer it produced is partial or absent",
+        "chat's own elapsed-budget wording, unchanged"
+    );
+    assert_eq!(
+        fixture.job.cancellation.reason(),
+        None,
+        "the deadline stopped the turn's token, never the run's"
+    );
+}
+
 /// Test 2 — a job turn with no policy is not capped by the question budget: 30
 /// progress-making tool calls, past the chat's 24 requests, complete with no
 /// budget wording at all.
