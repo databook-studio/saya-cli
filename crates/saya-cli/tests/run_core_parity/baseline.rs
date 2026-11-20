@@ -19,9 +19,11 @@
 //!
 //! Regenerate deliberately with `SAYA_UPDATE_GOLDENS=1 cargo nextest run -p
 //! saya-cli --locked --test run_core_parity`, then review the diff like code:
-//! a moved number is a change in what the model is sent.
+//! a moved number is a change in what the model is sent. Set
+//! `SAYA_PARITY_DUMP_DIR` to a directory to also write each surface's
+//! normalised first body there for a diff; the measurement never reads it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +177,13 @@ impl Surface {
             serde_json::from_str::<serde_json::Value>(&text)
                 .unwrap_or_else(|error| panic!("the request body is JSON: {error}"))
         };
+        if let Ok(dir) = std::env::var("SAYA_PARITY_DUMP_DIR") {
+            dump_first_body(
+                Path::new(&dir),
+                captured.surface,
+                &normaliser.normalise(&captured.bodies[0]),
+            );
+        }
         let first = body(0);
         let second = body(1);
         Self {
@@ -186,6 +195,21 @@ impl Surface {
             prefix_stable: repeats_prefix(&first, &second),
         }
     }
+}
+
+/// Writes one surface's normalised first request body under `dir` when
+/// `SAYA_PARITY_DUMP_DIR` names a directory. The file name carries the
+/// surface, the process id and a nanosecond stamp, so a loop of runs —
+/// concurrent or not — keeps every sample and two samples can be diffed to
+/// name the field that moved. The measurement itself never reads the dump.
+fn dump_first_body(dir: &Path, surface: &str, body: &str) {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let path = dir.join(format!("{surface}-{}-{stamp}.json", std::process::id()));
+    std::fs::create_dir_all(dir)
+        .unwrap_or_else(|error| panic!("create {}: {error}", dir.display()));
+    std::fs::write(&path, body).unwrap_or_else(|error| panic!("write {}: {error}", path.display()));
 }
 
 /// True when `second` carries `first`'s tools and system message(s) unchanged
