@@ -180,3 +180,8 @@ mod records;
 /// The rewind and finish sides of the same per-turn records.
 #[path = "parent_turn_rewind_tests.rs"]
 mod rewind_turns;
+
+/// A detached run still resumes: a finished job is continued, and a job whose
+/// root turn is running refuses without disturbing it.
+#[path = "parent_turn_resume_tests.rs"]
+mod resume_turns;

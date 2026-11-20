@@ -23,11 +23,19 @@ use std::{
 pub(super) struct Fixture {
     pub(super) root: PathBuf,
     pub(super) job: Arc<NativeCodingJob>,
+    /// Declared after the job, so the folder lease is released before the
+    /// directory goes. A field rather than `Drop` on the fixture: a test that
+    /// must give the job up (a resume takes the lease only once the ended run's
+    /// handle is gone) destructures the fixture instead.
+    pub(super) _root: RootGuard,
 }
 
-impl Drop for Fixture {
+/// Removes the throwaway root when it drops.
+pub(super) struct RootGuard(PathBuf);
+
+impl Drop for RootGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -130,7 +138,11 @@ async fn in_place_with(
         .create(request, &approval, CancellationToken::new())
         .await
         .expect("the in-place fixture job is created");
-    Fixture { root, job }
+    Fixture {
+        root: root.clone(),
+        job,
+        _root: RootGuard(root),
+    }
 }
 
 /// A managed-checkout job: the shape this release runs one turn per run.
@@ -141,7 +153,11 @@ pub(super) async fn managed(case: &str) -> Fixture {
     // This fixture owns the cleanup; forget `base` so its Drop does not remove
     // the directory out from under it.
     std::mem::forget(base);
-    Fixture { root, job }
+    Fixture {
+        root: root.clone(),
+        job,
+        _root: RootGuard(root),
+    }
 }
 
 /// Ends the scripted job so a rewind is admitted: only a `Running` job
