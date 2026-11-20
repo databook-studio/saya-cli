@@ -89,8 +89,10 @@ pub(crate) fn command_available(
 /// The job shell's own lane: a held `shell:<prefix>` token opens `shell`
 /// where the host route composed. It is deliberately not the `command:`
 /// family: one program grant must never admit a shell command, nor the
-/// other way round, so the two words answer for different doors.
-#[cfg_attr(not(test), allow(dead_code))] // the shell's advertisement reads it with the prompt arm, not yet wired
+/// other way round, so the two words answer for different doors. The
+/// session's advertisement reads it beside its own lane facts
+/// (`SessionUniverse::shell_available`), and the shell's lane reads the same
+/// store before it refuses a call for want of an operator.
 pub(crate) fn shell_available(
     agent_mode: AgentMode,
     mode: ApprovalPolicy,

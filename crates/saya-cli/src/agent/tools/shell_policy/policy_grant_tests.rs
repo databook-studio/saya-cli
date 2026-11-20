@@ -14,7 +14,9 @@ use saya_types::{AgentId, JobId};
 use serde_json::{Value, json};
 
 use super::ModeCell;
-use super::policy::{Lane, NEVER_REFUSAL, READ_ONLY_REFUSAL, ShellPolicy};
+use super::policy::{
+    HOST_APPROVAL_UNAVAILABLE, Lane, NEVER_REFUSAL, READ_ONLY_REFUSAL, ShellPolicy,
+};
 use crate::agent::tools::consent::{Caller, Operator, Prompt};
 
 /// One job's operator: the store it remembers answers in, and how many calls
@@ -251,4 +253,30 @@ async fn a_helper_of_the_same_job_sees_the_grant_and_another_job_does_not() {
     );
     assert!(!stranger.approve(&call).await);
     assert_eq!(other_job.asked(), 1, "it asks");
+}
+
+/// A session's store outlives its prompts: it is bound per turn by the
+/// surface, not held by an operator, so a shell with nobody to ask still
+/// pre-answers what the user granted — and refuses, rather than runs, every
+/// call it does not name.
+#[tokio::test]
+async fn a_store_bound_without_a_prompt_still_pre_answers_its_calls() {
+    let grants = SessionGrants::default();
+    grants.grant("shell:cargo test");
+    let shell = ShellPolicy::new(ApprovalPolicy::Ask, None, false, no_rules(), None)
+        .with_grants(Some(grants));
+    let granted = json!({ "command": "cargo test -p y" });
+    assert_eq!(
+        shell.lane(&granted),
+        Lane::Host(true),
+        "the bound store pre-answers the call with no operator composed"
+    );
+    assert!(shell.approve(&granted).await, "the granted call runs");
+
+    let other = json!({ "command": "cargo build" });
+    assert_eq!(
+        shell.lane(&other),
+        Lane::Refused(HOST_APPROVAL_UNAVAILABLE.to_owned()),
+        "a call outside the prefix keeps the no-operator refusal"
+    );
 }

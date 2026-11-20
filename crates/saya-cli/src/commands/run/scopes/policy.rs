@@ -18,6 +18,7 @@ pub(crate) enum Surface {
 /// states the replacement.
 const KNOWN: &str = "known scopes: none, workspace-write, \
                      fetch:<scheme>+<host>, command:<program>, \
+                     shell:<command prefix>, \
                      endpoint:<role>=<endpoint>, sql:<connection>";
 
 /// One family-surface refusal: the family parses under the grammar but the
@@ -89,6 +90,20 @@ pub(crate) fn refuse_deny_on_run() -> String {
 #[cfg(test)]
 pub(crate) fn refuse_deny_on_run_for_tests() -> String {
     refuse_deny_on_run()
+}
+
+/// The run-surface refusal for a `shell:` scope: the token is a session
+/// grant word — it pre-answers a session's ask for the job shell — and a run
+/// composes no such store. Permanent policy in the same class as
+/// [`run_command_refusal`]: a run's steps run commands with the `shell` tool,
+/// and a grant that pre-answered nothing would state a silence the run cannot
+/// keep.
+fn run_shell_refusal(token: &str) -> String {
+    format!(
+        "scope `{token}` is not available on runs, by design: a `shell:` grant pre-answers a \
+         session's ask, and a run is unattended — its steps run commands with the `shell` \
+         tool. Re-run without it."
+    )
 }
 
 /// The run-surface refusal for a `command:` scope: a permanent policy

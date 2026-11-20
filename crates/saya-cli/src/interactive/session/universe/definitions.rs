@@ -47,14 +47,15 @@ impl SessionUniverse {
     ///
     /// The `shell` is the other exception, and it is the *mode's* rather than
     /// the surface's: it is advertised wherever the mode keeps a lane for it
-    /// and a workspace root binds, and it rides no grant — its own lane
-    /// decision is the consent (`session/universe/shell.rs`). So `read-only`
-    /// advertises it (the sandbox lane, where nothing in the checkout is
-    /// writable) even though the engine denies every external side effect
-    /// there, and a headless `ask` advertises it where the sandbox proves,
-    /// because a `sandbox: true` call needs no prompt at all. Plan hides it
-    /// with the rest of the write-shaped surface, whose posture denies an
-    /// external side effect outright.
+    /// and a workspace root binds, and — under the asking modes — wherever a
+    /// held `shell:<prefix>` grant pre-answers the ask those modes would
+    /// otherwise put to a person (`SessionUniverse::shell_available`). So
+    /// `read-only` advertises it (the sandbox lane, where nothing in the
+    /// checkout is writable) even though the engine denies every external side
+    /// effect there, and a headless `ask` advertises it where the sandbox
+    /// proves or a grant covers the call, because a `sandbox: true` call needs
+    /// no prompt at all. Plan hides it with the rest of the write-shaped
+    /// surface, whose posture denies an external side effect outright.
     // The arguments are the turn's facts, one per decision the doc above
     // makes; bundling them would hide which surface fact each caller holds.
     #[allow(clippy::too_many_arguments)]
@@ -135,10 +136,11 @@ impl SessionUniverse {
         // The session's `shell`: the shared command tool, advertised wherever
         // the mode keeps a lane for it and a
         // workspace root binds — `ask` (through this turn's approval surface,
-        // or the sandbox headless), `bypass`, and `read-only` (the sandbox
-        // lane, nothing writable) — and nowhere under `never`. It rides no
-        // grant: a session grant names a program or a destination, and the
-        // shell's own lane decision is the consent. A closed gate under Plan
+        // the sandbox headless, or a held `shell:` grant that pre-answers the
+        // call), `bypass`, and `read-only` (the sandbox lane, nothing
+        // writable) — and nowhere under `never`. The grant is the shell's own
+        // family, never the host lane's `command:` word: one token opens its
+        // own door (`shell_available`). A closed gate under Plan
         // never reaches here: the posture denies an external side effect, so
         // the shell hides with the rest of the write-shaped surface, and an
         // open gate reaches here exactly as `build` does.

@@ -23,4 +23,5 @@ mod tests {
     include!("scopes/tests/grammar.rs");
     include!("scopes/tests/test_helpers.rs");
     include!("scopes/tests/command.rs");
+    include!("scopes/tests/shell.rs");
 }

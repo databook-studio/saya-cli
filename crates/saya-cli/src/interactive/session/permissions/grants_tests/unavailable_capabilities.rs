@@ -18,6 +18,7 @@ fn allow_refuses_a_token_the_composition_cannot_carry() {
         ("workspace-write", "no workspace root is bound"),
         ("fetch:https+docs.example", "this session composed no fetch member"),
         ("command:cargo", "the host-command lane is not composed in this session"),
+        ("shell:cargo test", "composes no `shell` tool"),
     ];
     for (token, reason) in cases {
         let error = match allow(&[token.to_owned()], &bare, &grants, &journal) {

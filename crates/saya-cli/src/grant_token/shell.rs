@@ -48,7 +48,20 @@ pub(super) fn shell_token(arguments: &Value, host: Option<&HostFacts>) -> Option
 /// none.
 pub(crate) fn shell_token_for_host_route(arguments: &Value) -> Option<String> {
     let command = arguments.get("command")?.as_str()?;
-    Some(format!("shell:{}", prefix_words(command)?.join(" ")))
+    Some(format!("shell:{}", normalised_prefix(command)?))
+}
+
+/// The one spelling of a `shell:` payload, for the two writers that state it:
+/// the suggester, spelling a call's command, and the grammar
+/// (`commands::run::scopes::parse`), spelling a typed `/allow`. Both ask this
+/// function, so `/allow shell:cargo   test` and a prompt's [s] on `cargo test`
+/// record one identical token — and a payload the suggester would never
+/// produce is `None` here, refused there.
+///
+/// The words are the command's first two (or the one a one-word command has),
+/// joined by single spaces exactly as the token spells them.
+pub(crate) fn normalised_prefix(payload: &str) -> Option<String> {
+    Some(prefix_words(payload)?.join(" "))
 }
 
 /// The command's leading words, when the command is one plain segment: at most

@@ -57,13 +57,15 @@ fn the_removed_runner_and_interpreter_families_are_refused_on_both_surfaces() {
 /// parenthetical carries that family's own lane gate; a sentence-wide
 /// reader attributes that gate to every listed scope.
 ///
-/// `command:` is deliberately outside this agreement: it is refused on
-/// runs by permanent policy (`run_command_refusal`, its own class — the
-/// wiring-shaped list never carries it) and parsed on sessions subject
-/// to the composition gate, so no `NOT_YET_WIRED` entry can state its
-/// status. Its help wording is pinned by
-/// `a_run_refuses_command_scopes_by_design` (run surfaces) and the
-/// `/allow` help names the lane gate instead.
+/// `command:` and `shell:` are deliberately outside this agreement: each
+/// is refused on runs by permanent policy (`run_command_refusal`,
+/// `run_shell_refusal` — their own class, which the wiring-shaped list
+/// never carries) and parsed on sessions subject to a live fact (the lane,
+/// the granted prefix), so no `NOT_YET_WIRED` entry can state either
+/// status. Their help wording is pinned by
+/// `a_run_refuses_command_scopes_by_design` and
+/// `a_run_refuses_shell_scopes_by_design` (run surfaces), and the `/allow`
+/// help names them among the wired scopes.
 #[test]
 fn the_help_surfaces_and_the_refusal_list_agree() {
     let surfaces = [
@@ -90,10 +92,10 @@ fn the_help_surfaces_and_the_refusal_list_agree() {
                 "{surface_name} must name the scope `{token}` — a surface that \
                      omits a scope leaves its status to the reader's guess, got: {text}"
             );
-            // `command:` is outside the wiring-shaped agreement (see the
-            // doc comment): its run refusal is permanent policy and its
-            // session status is a composition gate, not a list entry.
-            if family == "command" {
+            // `command:` and `shell:` are outside the wiring-shaped agreement
+            // (see the doc comment): their run refusals are permanent policy
+            // and their session status is a live fact, not a list entry.
+            if family == "command" || family == "shell" {
                 continue;
             }
             let claimed = claims_refused(text, token);

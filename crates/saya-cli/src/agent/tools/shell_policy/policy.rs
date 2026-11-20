@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use saya_agent::ApprovalPolicy;
+use saya_agent::{ApprovalPolicy, SessionGrants};
 use saya_config::{CommandDecision, CommandRules};
 use serde_json::Value;
 
@@ -79,6 +79,10 @@ pub(crate) struct ShellPolicy {
     /// The trusted command-prefix rules. A deny rule refuses in every mode;
     /// an allow rule pre-answers the host lane under `ask`.
     rules: CommandRules,
+    /// The surface's own "yes for this run" store, where it keeps one
+    /// independently of an operator — a session binds it per turn. Read by
+    /// [`remembered`](Self::remembered) beside the prompt's store.
+    grants: Option<SessionGrants>,
     /// The workspace root, when one is known, bounding the leading `cd` the
     /// rule matcher may strip.
     workspace: Option<PathBuf>,
@@ -101,8 +105,18 @@ impl ShellPolicy {
             // mode but `read-only`, which has nothing outside it to reach.
             host_lane: !has_sandbox || policy != ApprovalPolicy::ReadOnly,
             rules,
+            grants: None,
             workspace,
         }
+    }
+
+    /// Binds the surface's own store: the grants it consults beside whatever
+    /// the operator remembers. A session's store outlives its prompts — a
+    /// headless turn composes no operator at all — so the policy is handed it
+    /// directly rather than reaching it through a prompt nobody built.
+    pub(crate) fn with_grants(mut self, grants: Option<SessionGrants>) -> Self {
+        self.grants = grants;
+        self
     }
 
     /// Follows a caller's shared mode cell: every call resolves the mode the
@@ -127,20 +141,32 @@ impl ShellPolicy {
     }
 
     /// Whether this job's remembered answers pre-answer this call without the
-    /// operator: the call's own `shell:` token is one the job's store holds.
-    /// Read from the asking arm of [`lane`](Self::lane) only, so a deny rule
-    /// and the mode have each decided first, and only for a shell that holds
-    /// the host lane the token names. A command that is not one plain segment
-    /// names no token, so it never matches.
+    /// operator: the call's own `shell:` token is one the store holds. Read
+    /// from the asking arm of [`lane`](Self::lane) only, so a deny rule and the
+    /// mode have each decided first, and only for a shell that holds the host
+    /// lane the token names. The store is the surface's own where it keeps one
+    /// (a session binds it per turn, and a headless turn composes no prompt at
+    /// all) and the operator's otherwise (a job's). A command that is not one
+    /// plain segment names no token, so it never matches.
     fn remembered(&self, arguments: &Value) -> bool {
         if !self.host_lane {
             return false;
         }
-        let Some(prompt) = &self.prompt else {
+        let Some(token) = crate::grant_token::shell_token_for_host_route(arguments) else {
             return false;
         };
-        crate::grant_token::shell_token_for_host_route(arguments)
-            .is_some_and(|token| prompt.granted(&token))
+        self.granted(&token)
+    }
+
+    /// Whether either store this shell consults remembers `token`.
+    fn granted(&self, token: &str) -> bool {
+        self.grants
+            .as_ref()
+            .is_some_and(|grants| grants.is_granted(token))
+            || self
+                .prompt
+                .as_ref()
+                .is_some_and(|prompt| prompt.granted(token))
     }
 
     /// The lane this call takes, decided once. The mode is read from the
@@ -173,8 +199,7 @@ impl ShellPolicy {
         match self.mode.get() {
             ApprovalPolicy::Bypass => Lane::Host(rule_allowed),
             ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => {
-                let pre_answered =
-                    rule_allowed || (self.prompt.is_some() && self.remembered(arguments));
+                let pre_answered = rule_allowed || self.remembered(arguments);
                 if pre_answered || self.prompt.is_some() {
                     Lane::Host(pre_answered)
                 } else if self.has_sandbox {
