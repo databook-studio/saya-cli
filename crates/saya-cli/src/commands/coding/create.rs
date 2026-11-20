@@ -13,7 +13,10 @@ use saya_types::{
     JobState, MAX_SNAPSHOT_WARNING_PATH_BYTES, Sha256Digest,
 };
 use sha2::{Digest, Sha256};
-use std::{num::NonZeroU64, path::Path, sync::Arc};
+use std::{num::NonZeroU64, sync::Arc};
+
+#[path = "job_files.rs"]
+mod job_files;
 
 impl CodingApplication {
     /// Captures the original project only after exact fresh approval; creates
@@ -203,38 +206,7 @@ impl CodingApplication {
             .await
             .map_err(CodingError::owner)?;
         let records = private_directory(&self.state_root.join(request.job_id.as_str()))?;
-        super::context::write_new(
-            &records.join("request.json"),
-            &serde_json::to_vec(&request).map_err(CodingError::owner)?,
-            64 * 1024,
-        )?;
-        match &plan {
-            saya_harness::coding::local::JobBaseline::Git(_) => {
-                super::context::write_new(
-                    &records.join("plan.json"),
-                    plan.canonical_bytes(),
-                    saya_harness::coding::snapshot::MAX_SNAPSHOT_MANIFEST_BYTES,
-                )?;
-            }
-            saya_harness::coding::local::JobBaseline::InPlace(baseline) => {
-                super::context::write_new(
-                    &records.join("baseline.json"),
-                    plan.canonical_bytes(),
-                    saya_harness::coding::snapshot::MAX_SNAPSHOT_MANIFEST_BYTES,
-                )?;
-                // Shell-made changes are this start read's difference; non-Git is unrecorded.
-                let start = super::in_place_start::capture(
-                    &self.service,
-                    Path::new(baseline.root_path()),
-                    &records,
-                    &token,
-                )
-                .await?;
-                let (git, start_head) = super::in_place_start::git_and_head(&start);
-                super::root_checkout::InPlaceRootRecord::new(baseline, git, start_head)
-                    .write(&records.join("inplace-root.json"))?;
-            }
-        }
+        job_files::write(&request, &plan, &records, &self.service, &token).await?;
         lifecycle.attach(&records);
         // An in-place job records edit-time before-images and holds the
         // one-live-job lease over its folder; a managed checkout needs
@@ -249,6 +221,7 @@ impl CodingApplication {
             transcript_lock: std::sync::Mutex::new(()),
             root_steering,
             root_mailbox: tokio::sync::Mutex::new(Some(root_mailbox)),
+            root_run: super::parent::RootRun::new(),
             failure: std::sync::Mutex::new(super::failure::FailureState::default()),
             preparation: std::sync::Mutex::new(None),
             delegated_children: std::sync::atomic::AtomicUsize::new(0),
