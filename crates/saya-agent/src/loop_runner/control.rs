@@ -83,8 +83,9 @@ pub struct AgentRunControl<'a> {
     pub(super) answering_scope: AnsweringScope,
     pub(super) approval: &'a dyn ApprovalDecider,
     pub(super) sink: &'a dyn AgentEventSink,
-    /// The run's own stop signal. The turn's [`Self::cancellation`] is a child
-    /// of it, so a turn-scoped stop never ends the run.
+    /// The run's own stop signal. An unarmed turn runs on it directly; a turn
+    /// that arms a turn-scoped budget ([`Self::with_answering_scope`]) runs on
+    /// a token that follows it, so a turn-scoped stop never ends the run.
     pub(super) run_cancellation: CancellationToken,
     pub(super) cancellation: CancellationToken,
     pub(super) request_preflight: Option<RequestPreflightConfig>,
@@ -110,15 +111,17 @@ impl<'a> AgentRunControl<'a> {
         cancellation: CancellationToken,
     ) -> Self {
         let run = cancellation;
-        let turn = run.turn_of();
+        // Nothing here arms a turn-scoped budget: no answering scope has been
+        // supplied, so the turn answers on the caller's own token and every
+        // stop — a budget stop included — latches where the caller reads it.
         Self {
             mailbox: None,
             limits,
-            answering_scope: AnsweringScope::new(answering, turn.clone()),
+            answering_scope: AnsweringScope::new(answering, run.clone()),
             approval,
             sink,
-            run_cancellation: run,
-            cancellation: turn,
+            run_cancellation: run.clone(),
+            cancellation: run,
             request_preflight: None,
             effect_admission: None,
             require_physical_effect_admission: false,
@@ -150,7 +153,8 @@ impl<'a> AgentRunControl<'a> {
     /// Reuses one question's admission counts and stop signal across
     /// invocations, as a child of this run's stop signal: a budget stop cancels
     /// only that child, so an open run keeps taking turns, while a stop of the
-    /// run still stops the answering work.
+    /// run still stops the answering work. Supplying a scope is what arms a
+    /// turn-scoped budget; a turn without one answers on the run's own token.
     #[must_use]
     pub fn with_answering_scope(mut self, scope: AnsweringScope) -> Self {
         scope.cancellation_token().follows(&self.run_cancellation);
