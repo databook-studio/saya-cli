@@ -2,6 +2,7 @@ use saya_agent::{AgentMode, ApprovalPolicy, PermissionMode};
 
 use super::super::{launch_posture, switch};
 use super::support::Fixture;
+use crate::agent::tools::shell_policy::ModeCell;
 
 /// A resumed session keeps the task posture the record carries: `plan` is
 /// the session's own axis, and nothing in the launch path moves it.
@@ -28,6 +29,32 @@ fn a_resumed_bypass_session_degrades_to_ask_when_the_config_withholds_it() {
         "the withheld mode is not restored by the record"
     );
     assert_eq!(agent, "build");
+}
+
+/// A record that says `bypass` degrades the posture a *job* resumes under, not
+/// only the session's field: a job's own record carries no mode, so the cell a
+/// resumed job composes is the degraded one — `bypass` cannot ride in on the
+/// record of the session that resumes it.
+#[test]
+fn a_record_carrying_bypass_composes_a_resumed_job_at_ask() {
+    let (approval, agent) = launch_posture("bypass", "build", false, false);
+    assert_eq!(approval, "ask");
+    assert_eq!(agent, "build");
+
+    let posture = approval
+        .parse::<ApprovalPolicy>()
+        .expect("the degraded spelling is one the policy parses");
+    assert_eq!(
+        posture,
+        ApprovalPolicy::Ask,
+        "the mode a resumed job composes with is the degraded one"
+    );
+    let cell = ModeCell::new(posture);
+    assert_eq!(
+        cell.get(),
+        ApprovalPolicy::Ask,
+        "so the job's root shell never resolves bypass from a record"
+    );
 }
 
 /// Two things keep a stated consent: an explicit `--approval-mode` this

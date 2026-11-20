@@ -8,6 +8,10 @@ mod dispatch;
 mod print;
 use dispatch::dispatch;
 
+#[cfg(test)]
+#[path = "app/launch_mode_tests.rs"]
+mod launch_mode_tests;
+
 pub fn run(cli: Cli) -> i32 {
     match dispatch(cli) {
         Ok(code) => code,

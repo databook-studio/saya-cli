@@ -28,5 +28,9 @@ mod launch;
 mod running_job;
 
 #[cfg(test)]
+#[path = "mode_tests/bypass_gate.rs"]
+mod bypass_gate;
+
+#[cfg(test)]
 #[path = "mode_tests/round_trip.rs"]
 mod round_trip;
