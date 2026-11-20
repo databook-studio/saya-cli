@@ -3,7 +3,7 @@ use crate::interactive::tui::types::SessionUsage;
 use saya_agent::{AgentOutput, ChatMessage, ToolMetadata};
 use saya_store::{
     ParentLink, RedactedSession, RedactedToolMetadata, RedactedToolResultShape, RedactedTurn,
-    SESSION_VERSION, StoredContinuation,
+    RunLink, SESSION_VERSION, StoredContinuation,
 };
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +78,12 @@ pub struct SessionState {
     /// session came from and grants nothing.
     #[serde(skip)]
     pub(crate) parent: Option<ParentLink>,
+    /// The session's link to the run it owns, carried through `redacted()`
+    /// and back on a resume like `parent`. LINEAGE ONLY: the link says which
+    /// run the session belongs to and grants nothing. Nothing sets it yet —
+    /// it stays `None` on every session this binary opens.
+    #[serde(skip)]
+    pub(crate) run: Option<RunLink>,
     pub messages: Vec<SessionLine>,
     pub turns: Vec<RedactedTurn>,
     /// The `/compact` summary of the older turns, replayed ahead of the

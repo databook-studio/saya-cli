@@ -17,6 +17,7 @@ impl SessionState {
             observations: crate::interactive::session::continuation::SessionObservations::default(),
             continuation: None,
             parent: None,
+            run: None,
             messages: Vec::new(),
             turns: Vec::new(),
             compaction_summary: None,
