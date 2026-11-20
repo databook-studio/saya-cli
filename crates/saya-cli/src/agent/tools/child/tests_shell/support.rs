@@ -14,9 +14,10 @@ use saya_harness::runner::HostPolicy;
 use saya_types::{AgentId, JobId};
 use serde_json::{Value, json};
 
+use super::super::shell_lane::compose_shell;
 use super::super::tests::Sandbox;
 use crate::agent::tools::consent::{Caller, Operator};
-use crate::agent::tools::shell_policy::{self, Background, ShellPlacement, ShellTool};
+use crate::agent::tools::shell_policy::{self, ModeCell, ShellPlacement, ShellTool};
 
 /// The helper these tests compose: one named helper of one named job, so the
 /// subject line can be asserted exactly.
@@ -121,6 +122,24 @@ pub(in crate::agent::tools::child) fn helper_shell(
     policy: ApprovalPolicy,
     operator: Option<Arc<dyn Operator>>,
 ) -> Option<Arc<ShellTool>> {
+    helper_shell_following_mode(
+        sandbox,
+        &ModeCell::new(policy),
+        ApprovalPolicy::Bypass,
+        operator,
+    )
+}
+
+/// The helper's shell composed from the job's one mode cell and the capability
+/// the helper's type caps it at — the two inputs `compose_child` hands the
+/// composition. A mode stated on `mode` between two calls is the mode the
+/// second one resolves.
+pub(in crate::agent::tools::child) fn helper_shell_following_mode(
+    sandbox: &Sandbox,
+    mode: &ModeCell,
+    capability: ApprovalPolicy,
+    operator: Option<Arc<dyn Operator>>,
+) -> Option<Arc<ShellTool>> {
     let root = sandbox.ws_root();
     let scratch = root.join(".saya").join(format!("helper-{HELPER}"));
     let home = scratch.join("home");
@@ -136,14 +155,13 @@ pub(in crate::agent::tools::child) fn helper_shell(
             },
         )
     });
-    shell_policy::compose(
+    compose_shell(
         ShellPlacement::helper(&root, (&home, &tmpdir)),
-        policy,
+        mode,
+        capability,
         prompt,
         HostPolicy::default(),
         CancellationToken::new(),
-        // A helper's shell owns its background runs; they end with the helper.
-        Background::Owned,
         saya_config::CommandRules::default(),
     )
     .map(Arc::new)
@@ -153,6 +171,11 @@ pub(in crate::agent::tools::child) fn helper_shell(
 /// the host lane — applies.
 pub(super) fn call(command: &str) -> Value {
     json!({ "command": command, "description": "a probe" })
+}
+
+/// A call that names the sandbox lane explicitly.
+pub(super) fn sandbox_call(command: &str) -> Value {
+    json!({ "command": command, "description": "a probe", "sandbox": true })
 }
 
 /// A call that names the host lane explicitly.

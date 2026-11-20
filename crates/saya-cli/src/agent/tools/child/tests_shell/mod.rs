@@ -12,6 +12,7 @@
 mod advertisement;
 mod approval;
 mod background;
+mod mode_cell;
 mod read_only;
 mod serialisation;
 mod support;

@@ -73,6 +73,10 @@ mod view;
 mod concurrency_tests;
 
 #[cfg(test)]
+#[path = "mode_cell_tests.rs"]
+mod mode_cell_tests;
+
+#[cfg(test)]
 #[path = "policy_grant_tests.rs"]
 mod policy_grant_tests;
 
@@ -93,10 +97,18 @@ mod spool_read_tests;
 /// next call resolves — no policy keeps a copy that can go stale. It is the
 /// session's own cell shape, and a frozen one refuses every change: a headless
 /// or background run states its approval before it starts.
+///
+/// A cell can also be **capped** ([`ModeCell::capped_at`]): the same cell read
+/// through the widest mode one caller's capability allows. That is how a helper
+/// follows the job's mode and still cannot exceed its own type — the cap is
+/// applied after the mode, never instead of it.
 #[derive(Debug, Clone)]
 pub(crate) struct ModeCell {
     mode: SessionPolicy,
     frozen: Arc<AtomicBool>,
+    /// The widest mode this view may resolve. `None` is a cell that states its
+    /// mode whole, which is every cell a surface composes for itself.
+    ceiling: Option<ApprovalPolicy>,
 }
 
 /// The refusal a frozen cell gives, so a caller reports a change that did not
@@ -112,12 +124,29 @@ impl ModeCell {
         Self {
             mode: SessionPolicy::new(mode),
             frozen: Arc::new(AtomicBool::new(false)),
+            ceiling: None,
         }
     }
 
-    /// The mode the next call resolves.
+    /// A view of this cell that never resolves wider than `ceiling`: the
+    /// narrowing a capability applies *after* the mode is read. The view shares
+    /// this cell's mode, so a switch is still read at the next call; a mode the
+    /// cap already covers is resolved as the cell states it, never widened.
+    pub(crate) fn capped_at(&self, ceiling: ApprovalPolicy) -> Self {
+        Self {
+            mode: self.mode.clone(),
+            frozen: Arc::clone(&self.frozen),
+            ceiling: Some(ceiling),
+        }
+    }
+
+    /// The mode the next call resolves: the cell's own, or — where a caller
+    /// capped it — the narrower of that and the cap.
     pub(crate) fn get(&self) -> ApprovalPolicy {
-        self.mode.mode()
+        match self.ceiling {
+            Some(ceiling) => narrower(self.mode.mode(), ceiling),
+            None => self.mode.mode(),
+        }
     }
 
     /// States the mode, refused on a frozen cell.
@@ -140,6 +169,28 @@ impl ModeCell {
     pub(crate) fn freeze_at(&self, mode: ApprovalPolicy) {
         self.mode.set_mode(mode);
         self.frozen.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The narrower of two modes: the order a capability and the job's current mode
+/// combine under. `never` holds no tool at all, so it is narrowest;
+/// `read-only` reaches nothing outside the sandbox; the two asking modes put a
+/// host call to the operator, and are one width because the shell lane decides
+/// them alike; and `bypass` allows the host outright, so it is widest.
+fn narrower(mode: ApprovalPolicy, ceiling: ApprovalPolicy) -> ApprovalPolicy {
+    if width(mode) <= width(ceiling) {
+        mode
+    } else {
+        ceiling
+    }
+}
+
+fn width(mode: ApprovalPolicy) -> u8 {
+    match mode {
+        ApprovalPolicy::Never => 0,
+        ApprovalPolicy::ReadOnly => 1,
+        ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => 2,
+        ApprovalPolicy::Bypass => 3,
     }
 }
 

@@ -9,6 +9,7 @@ mod factory;
 mod no_effect;
 mod plugins;
 mod scope;
+mod shell_lane;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
