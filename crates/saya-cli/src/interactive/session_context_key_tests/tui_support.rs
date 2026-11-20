@@ -79,6 +79,8 @@ impl TuiHarness {
             &self.app.captured,
             self.app.agent_captures.gap,
             &mut self.session,
+            // This fixture's panel runs no job.
+            None,
         );
     }
 

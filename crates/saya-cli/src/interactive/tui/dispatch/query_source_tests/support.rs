@@ -119,6 +119,7 @@ impl GuardFixture {
             &self.captured,
             None,
             &mut self.session,
+            None,
         )
     }
 

@@ -126,6 +126,7 @@ impl Seed {
             &self.app.captured,
             self.app.agent_captures.gap,
             &mut self.session,
+            None,
         )
     }
 

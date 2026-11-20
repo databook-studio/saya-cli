@@ -18,16 +18,25 @@
 //! governs nothing structural — the SQL safety layer, the sandbox and the
 //! allowlists answer every mode the same way.
 //!
+//! A TUI session's switch also states the mode on the job that session started,
+//! when one is running: the same operation, after the same checks, through the
+//! job adapter beside this file, so a switch the session refuses never reaches
+//! the job either.
+//!
 //! [`SessionPolicy`]: saya_agent::SessionPolicy
 //! [`SessionState::allow_bypass`]: crate::interactive::session::state::SessionState::allow_bypass
 
 use saya_agent::{AgentMode, ApprovalPolicy, PermissionMode};
 
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::interactive::session::commands::{approval_name, mode_message};
 use crate::interactive::session::permissions::activation;
 use crate::interactive::session::runtime::SessionRuntime;
 use crate::interactive::session::state::SessionState;
 use saya_store::BypassSource;
+
+#[path = "mode/attached.rs"]
+mod attached;
 
 /// The mode's spelling — the one copy the switch answer, the refusal and the
 /// status bar read, so no surface invents a name of its own.
@@ -117,6 +126,11 @@ pub(crate) fn cycle_from(state: &SessionState) -> PermissionMode {
 pub(crate) const BYPASS_REFUSAL: &str = "bypass is off: `[permissions] allow_bypass = true` in your \
      user configuration is the only way to allow it (a project's `.saya/config.toml` cannot).";
 
+/// The refusal a frozen policy answers a switch with. One sentence for the
+/// session and for the job it state a mode on: neither can be told a different
+/// story about the same frozen policy.
+pub(crate) const FROZEN_REFUSAL: &str = "this session's approval policy is fixed for the run";
+
 /// Switches the session's permission mode. Sets the pair on the state and on
 /// the session's one policy, journals a fresh bypass activation (the moment
 /// of consent, the same seam the launch and `/approvals` use), and answers
@@ -131,13 +145,26 @@ pub(crate) fn switch(
     session: &mut SessionRuntime,
     next: PermissionMode,
 ) -> Result<String, String> {
+    switch_with_job(state, session, next, None)
+}
+
+/// As [`switch`], and states the mode on the job a TUI session started when one
+/// is running: after the same checks, so a mode the switch itself refuses —
+/// a withheld `bypass`, a frozen session policy — never reaches the job. `None`
+/// is a session with no job under it, and changes nothing.
+pub(crate) fn switch_with_job(
+    state: &mut SessionState,
+    session: &mut SessionRuntime,
+    next: PermissionMode,
+    job: Option<&ModeCell>,
+) -> Result<String, String> {
     if next == PermissionMode::Bypass && !state.allow_bypass {
         return Err(BYPASS_REFUSAL.to_owned());
     }
     let (consent, agent_mode) = next.decompose();
     let before = state.approval_mode.clone();
     if !session.switch_policy(consent, agent_mode) {
-        return Err("this session's approval policy is fixed for the run".to_owned());
+        return Err(FROZEN_REFUSAL.to_owned());
     }
     // Leaving `plan` closes the gate: the approval the operator gave belonged
     // to a plan written for that posture, so a session that walks out of it
@@ -158,6 +185,12 @@ pub(crate) fn switch(
             message.push('\n');
             message.push_str(&line);
         }
+    }
+    // The job hears the mode last: every check above has already passed, so a
+    // refused switch leaves the job's cell exactly as it found it.
+    if let Some(job) = job {
+        message.push('\n');
+        message.push_str(&attached::line(job, consent));
     }
     Ok(message)
 }

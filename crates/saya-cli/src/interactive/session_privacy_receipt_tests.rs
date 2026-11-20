@@ -86,6 +86,8 @@ impl RoundTrip {
             &self.app.captured,
             self.app.agent_captures.gap,
             &mut self.session,
+            // This round trip runs no job under the session.
+            None,
         )
     }
 

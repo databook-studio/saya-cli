@@ -24,5 +24,9 @@ mod switch;
 mod launch;
 
 #[cfg(test)]
+#[path = "mode_tests/running_job.rs"]
+mod running_job;
+
+#[cfg(test)]
 #[path = "mode_tests/round_trip.rs"]
 mod round_trip;

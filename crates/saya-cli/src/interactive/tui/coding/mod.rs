@@ -1,8 +1,12 @@
 mod worker;
 use super::{transcript::BlockKind, types::App};
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::cli::CodingCommand;
 use saya_agent::{ApprovalChoice, CancellationToken};
-use std::{sync::mpsc, thread::JoinHandle};
+use std::{
+    sync::{Arc, OnceLock, mpsc},
+    thread::JoinHandle,
+};
 use tokio::sync::oneshot;
 
 #[cfg(test)]
@@ -43,10 +47,43 @@ pub(crate) struct CodingPanel {
     pending: Option<oneshot::Sender<bool>>,
     worker: Option<JoinHandle<()>>,
     active: bool,
+    /// The running job's one permission-mode cell, published by the worker the
+    /// moment it has built the job: the handle the session's switch states a
+    /// mode on, so Shift+Tab and `/mode` reach the job they are typed over. A
+    /// command that runs no root — `/job show`, an export — never fills it.
+    job_mode: Arc<OnceLock<ModeCell>>,
 }
 impl CodingPanel {
     pub(crate) fn is_active(&self) -> bool {
         self.active
+    }
+    /// The job this panel is running, as the switch addresses it: `None` until
+    /// the worker has built it, and for a command that runs no root at all.
+    pub(crate) fn running_job(&self) -> Option<ModeCell> {
+        self.job_mode.get().cloned()
+    }
+    /// A panel with no worker, holding `job`'s cell: what a live panel looks
+    /// like from the switch's side once its worker has built the job.
+    #[cfg(test)]
+    pub(crate) fn holding(job: ModeCell) -> Self {
+        let (_activity, rx) = mpsc::sync_channel(1);
+        let (_receipt_tx, receipts) = mpsc::sync_channel(1);
+        let (_done_tx, done) = mpsc::sync_channel(1);
+        let (commands, _control) = tokio::sync::mpsc::channel(1);
+        let job_mode = OnceLock::new();
+        let _ = job_mode.set(job);
+        Self {
+            id: None,
+            rx,
+            receipts,
+            done,
+            commands,
+            cancellation: CancellationToken::new(),
+            pending: None,
+            worker: None,
+            active: true,
+            job_mode: Arc::new(job_mode),
+        }
     }
 }
 impl Drop for CodingPanel {
@@ -63,6 +100,15 @@ fn started_line(command: &CodingCommand) -> Option<String> {
     }
 }
 impl App {
+    /// The job the panel is running, if one is: the cell the session's mode
+    /// switch also states a mode on. `None` when nothing runs, so a switch made
+    /// with no job under it changes nothing but the session.
+    pub(crate) fn running_job(&self) -> Option<ModeCell> {
+        self.coding_panel
+            .as_ref()
+            .filter(|panel| panel.is_active())
+            .and_then(CodingPanel::running_job)
+    }
     pub(crate) fn coding_command(
         &mut self,
         command: CodingCommand,

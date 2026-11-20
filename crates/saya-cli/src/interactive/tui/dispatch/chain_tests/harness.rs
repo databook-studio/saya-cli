@@ -127,6 +127,32 @@ fn dispatch_line(line: &str, fx: &mut ChainFixture) -> Dispatch {
         &fx.app.captured,
         fx.app.agent_captures.gap,
         &mut fx.session,
+        // No job runs under this fixture: the switch moves the session alone.
+        None,
+    )
+}
+
+/// The real `dispatch`, for a line typed over a running job: `job` is the
+/// cell the switch also states the mode on.
+fn dispatch_line_with_job(
+    line: &str,
+    job: &crate::agent::tools::shell_policy::ModeCell,
+    fx: &mut ChainFixture,
+) -> Dispatch {
+    super::dispatch(
+        line,
+        &mut fx.app.transcript,
+        &fx.app.profiles,
+        &mut fx.state,
+        &fx.runtime,
+        &fx.store,
+        &fx.app.state_db,
+        RenderFormat::Text,
+        &mut fx.app.last_query,
+        &fx.app.captured,
+        fx.app.agent_captures.gap,
+        &mut fx.session,
+        Some(job),
     )
 }
 

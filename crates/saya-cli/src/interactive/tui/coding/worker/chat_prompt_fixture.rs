@@ -10,7 +10,7 @@ use crate::interactive::tui::types::app::idle_app;
 use saya_agent::{ApprovalChoice, CancellationToken};
 use saya_types::{AgentId, JobId};
 use serde_json::Value;
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 
 fn job() -> JobId {
     JobId::parse("job-a").expect("the fixture's job id parses")
@@ -56,6 +56,8 @@ pub(super) fn frame() -> Frame {
         pending: None,
         worker: None,
         active: true,
+        // This fixture's panel runs no job, so nothing is ever stated on it.
+        job_mode: Arc::new(OnceLock::new()),
     });
     Frame {
         app,
