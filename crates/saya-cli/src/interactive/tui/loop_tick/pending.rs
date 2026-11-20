@@ -68,6 +68,10 @@ pub(crate) fn tick_pending(
         && let Some(line) = app.pending.take()
     {
         let id_before = state.id.clone();
+        // The job the panel is running, as the switch addresses it: `/mode`
+        // states the mode on it too. Taken before the transcript is borrowed
+        // mutably, and `None` when nothing runs.
+        let job = app.running_job();
         let outcome = super::super::dispatch::dispatch(
             &line,
             &mut app.transcript,
@@ -81,6 +85,7 @@ pub(crate) fn tick_pending(
             &app.captured,
             app.agent_captures.gap,
             session,
+            job.as_ref(),
         );
         match outcome {
             Dispatch::Coding(command) => {

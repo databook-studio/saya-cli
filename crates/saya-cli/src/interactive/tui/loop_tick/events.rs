@@ -72,6 +72,10 @@ pub(crate) fn tick_events(
 /// cells are shared, so an in-flight turn's decider reads the new posture at
 /// its next call — and the answer lands in the transcript as a System block,
 /// an Error block on a refusal (a withheld `bypass`, a frozen policy).
+///
+/// A job this session started from the panel moves with the session: the same
+/// switch states the mode on the job's cell, after its own checks, and the
+/// answer says what the job's next call reads.
 pub(super) fn apply_permission_cycle(
     app: &mut App,
     state: &mut crate::interactive::session::state::SessionState,
@@ -83,7 +87,8 @@ pub(super) fn apply_permission_cycle(
     app.pending_permission_cycle = false;
     use crate::interactive::session::permissions::mode;
     let before = state.context_key();
-    match mode::switch(state, session, mode::cycle_from(state)) {
+    let job = app.running_job();
+    match mode::switch_with_job(state, session, mode::cycle_from(state), job.as_ref()) {
         Ok(message) => app.transcript.push(BlockKind::System, message),
         Err(message) => app.transcript.push(BlockKind::Error, message),
     }

@@ -158,6 +158,31 @@ fn a_cycle_into_plan_closes_the_write_surface() {
     );
 }
 
+/// Shift+Tab with a job running: the cycle lands on the job's cell too, so the
+/// job's next call reads the mode the session switched to, and the answer says
+/// so.
+#[test]
+fn a_cycle_switch_also_moves_the_running_jobs_cell() {
+    let mut fixture = Fixture::acquire("cycle-job", false);
+    let cell = crate::agent::tools::shell_policy::ModeCell::new(ApprovalPolicy::Ask);
+    fixture.app.coding_panel = Some(crate::interactive::tui::coding::CodingPanel::holding(
+        cell.clone(),
+    ));
+    fixture.app.pending_permission_cycle = true;
+    apply_permission_cycle(&mut fixture.app, &mut fixture.state, &mut fixture.session);
+
+    assert_eq!(
+        cell.get(),
+        ApprovalPolicy::AcceptEdits,
+        "the job's cell moved with the session's"
+    );
+    assert!(
+        fixture.said().contains("The running job switched too"),
+        "the switch's answer says the job got it: {}",
+        fixture.said()
+    );
+}
+
 /// The `write`/`edit` family's shape: a workspace file write needing an
 /// approval and carrying the token the mode's pre-answer names.
 fn write_shape() -> saya_agent::ToolEffect {

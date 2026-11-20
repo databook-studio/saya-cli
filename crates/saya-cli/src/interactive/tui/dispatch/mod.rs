@@ -31,6 +31,7 @@ pub(crate) use outcome::Dispatch;
 
 use super::transcript::{BlockKind, Transcript};
 use super::types::{CapturedResult, LastQuery};
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session::commands::SessionAction;
 use crate::interactive::session::runtime::SessionRuntime;
@@ -43,6 +44,8 @@ use saya_store::FsSessionStore;
 /// A non-command line returns `Dispatch::Agent` for the caller to stream.
 /// `captured` is the session's ephemeral result capture, read by the export
 /// snapshot (a snapshot export is decided and written here, with no query).
+/// `job` is the job the panel is running, when one is: `/mode` states the mode
+/// on it through the same switch it states the session's own.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch(
     line: &str,
@@ -57,6 +60,7 @@ pub(crate) fn dispatch(
     captured: &Option<CapturedResult>,
     capture_gap: Option<super::capture_agent::CaptureGap>,
     session: &mut SessionRuntime,
+    job: Option<&ModeCell>,
 ) -> Dispatch {
     // In the TUI, /sessions opens an interactive picker rather than a text list.
     if line.trim() == "/sessions" {
@@ -130,6 +134,7 @@ pub(crate) fn dispatch(
                             format,
                             session,
                             last_query,
+                            job,
                         ) {
                             result = outcome;
                         } else if let Some(outcome) =

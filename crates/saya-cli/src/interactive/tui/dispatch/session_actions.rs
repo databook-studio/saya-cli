@@ -10,6 +10,7 @@ use super::super::dispatch_runs;
 use super::super::transcript::{BlockKind, Transcript};
 use super::super::types::LastQuery;
 use super::outcome::Dispatch;
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session::commands::SessionAction;
 use crate::interactive::session::runtime::SessionRuntime;
@@ -28,6 +29,7 @@ pub(super) fn apply_session_action(
     format: RenderFormat,
     session: &mut SessionRuntime,
     last_query: &Option<LastQuery>,
+    job: Option<&ModeCell>,
 ) -> Option<Dispatch> {
     // The arms this helper owns. Anything else is left in `action`
     // untouched for the next helper in the chain.
@@ -71,7 +73,9 @@ pub(super) fn apply_session_action(
             // a pending clarification must not answer under a mode the user
             // changed out from under it.
             let before = state.context_key();
-            match crate::interactive::session::permissions::mode::switch(state, session, next) {
+            match crate::interactive::session::permissions::mode::switch_with_job(
+                state, session, next, job,
+            ) {
                 Ok(message) => transcript.push(BlockKind::System, message),
                 Err(message) => transcript.push(BlockKind::Error, message),
             }

@@ -33,6 +33,8 @@ include!("chain_tests/sessions.rs");
 
 include!("chain_tests/preferences.rs");
 
+include!("chain_tests/mode_job.rs");
+
 include!("chain_tests/user_commands.rs");
 
 /// Compacts the fixture state through the production compaction path, so

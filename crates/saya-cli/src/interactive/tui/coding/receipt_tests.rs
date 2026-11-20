@@ -6,7 +6,7 @@
 use super::{CodingMessage, CodingPanel};
 use crate::interactive::tui::types::app::idle_app;
 use saya_agent::CancellationToken;
-use std::sync::mpsc;
+use std::sync::{Arc, OnceLock, mpsc};
 
 fn panel_with_channels(
     app: &mut crate::interactive::tui::types::App,
@@ -27,6 +27,8 @@ fn panel_with_channels(
         pending: None,
         worker: None,
         active: true,
+        // This fixture's panel runs no job, so nothing is ever stated on it.
+        job_mode: Arc::new(OnceLock::new()),
     });
     done_tx
 }
