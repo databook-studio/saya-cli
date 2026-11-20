@@ -20,6 +20,7 @@ use super::parent::CodingTools;
 use super::readonly::ReadOnlyTools;
 use super::root_shell::RootShell;
 use super::routes::routes_to_root_owned;
+use crate::agent::tools::write_ask::{self, hidden_write};
 
 /// The root loop's tool surface, keyed on the job's working checkout:
 /// `ReadOnly` reads the job's own folder; `WorkingCheckout` is the composed
@@ -328,7 +329,16 @@ impl ApprovalDecider for RootTools {
                         None => false,
                     };
                 }
-                direct.decider.approve(tool, arguments).await
+                // The exact-write admission decides what this call may
+                // touch, and the job's mode then decides whether its consent
+                // covers a write: only an `ask` job with an operator asks. A
+                // write this surface does not offer at all is refused before
+                // the question, because the executor would refuse it too.
+                match write_ask::for_root(&direct.coordinator.job) {
+                    Some(_) if hidden_write(tool, |name| direct.advertises(name)) => false,
+                    Some(ask) => ask.approve(&direct.decider, tool, arguments).await,
+                    None => direct.decider.approve(tool, arguments).await,
+                }
             }
         }
     }
@@ -342,7 +352,11 @@ impl ApprovalDecider for RootTools {
                 if routes_to_root_owned(&tool.name) {
                     return Some(false);
                 }
-                direct.decider_for(tool).would_ask(tool, arguments)
+                match write_ask::for_root(&direct.coordinator.job) {
+                    Some(_) if hidden_write(tool, |name| direct.advertises(name)) => Some(false),
+                    Some(ask) => ask.would_ask(direct.decider_for(tool), tool, arguments),
+                    None => direct.decider_for(tool).would_ask(tool, arguments),
+                }
             }
         }
     }

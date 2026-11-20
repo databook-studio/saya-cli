@@ -9,12 +9,16 @@
 //! executor keeps the same admission as defense in depth, so the two can only
 //! agree.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use saya_agent::{ApprovalDecider, ImmutableAuthorityRefusal, ToolDefinition};
 use saya_harness::coding::integration::AssignedPaths;
 use saya_harness::coding::policy::{ChildApprovalDecider, ChildAuthorityView};
 use saya_types::{ManagedCheckoutId, WorkspacePath};
 use serde_json::Value;
+
+use crate::agent::tools::WriteAsk;
 
 /// Wraps the child's coarse decider with the one exact check the executor
 /// would otherwise refuse mid-run: whether this call writes the working
@@ -25,6 +29,10 @@ pub(crate) struct ExactWriteChildApproval {
     view: ChildAuthorityView,
     checkout_id: ManagedCheckoutId,
     write_scope: Option<AssignedPaths>,
+    /// The job's write ask, when an operator is attached to it. `None` — a
+    /// detached composition — leaves every admitted write as the capability
+    /// decided it.
+    ask: Option<Arc<WriteAsk>>,
 }
 
 impl ExactWriteChildApproval {
@@ -34,7 +42,16 @@ impl ExactWriteChildApproval {
             view: view.clone(),
             checkout_id,
             write_scope: None,
+            ask: None,
         }
+    }
+
+    /// Puts the job's write ask in front of a helper's admitted writes: a write
+    /// the capability admits is then resolved by the job's mode, exactly as
+    /// the root's is.
+    pub(crate) fn with_ask(mut self, ask: Option<Arc<WriteAsk>>) -> Self {
+        self.ask = ask;
+        self
     }
 
     /// Bounds every admitted write to the in-place job's approved `--write`
@@ -88,12 +105,35 @@ impl ExactWriteChildApproval {
 
 #[async_trait]
 impl ApprovalDecider for ExactWriteChildApproval {
+    /// The capability first — a write this view does not hold, or a path outside
+    /// the approved scope, is refused before anything is asked — and then the
+    /// job's write ask, when one is attached.
     async fn approve(&self, tool: &ToolDefinition, arguments: &Value) -> bool {
         if !self.coarse.approve(tool, arguments).await {
             return false;
         }
-        !crate::agent::tools::workspace::is_write_tool(&tool.name)
-            || self.write_admission(arguments).is_ok()
+        if !crate::agent::tools::workspace::is_write_tool(&tool.name) {
+            return true;
+        }
+        if self.write_admission(arguments).is_err() {
+            return false;
+        }
+        match &self.ask {
+            Some(ask) => ask.resolve(arguments).await,
+            None => true,
+        }
+    }
+
+    /// A write this decider's ask would put to the operator reports so, so a
+    /// caller can decide what an ask means before making it. A call the
+    /// capability already refuses is never put to anyone, and a helper of a job
+    /// with no operator attached reports no ask of its own.
+    fn would_ask(&self, tool: &ToolDefinition, arguments: &Value) -> Option<bool> {
+        if !crate::agent::tools::workspace::is_write_tool(&tool.name) {
+            return None;
+        }
+        let ask = self.ask.as_ref()?;
+        Some(ask.asks() && self.write_admission(arguments).is_ok())
     }
 
     fn refusal_detail(&self, tool: &ToolDefinition, arguments: &Value) -> Option<String> {

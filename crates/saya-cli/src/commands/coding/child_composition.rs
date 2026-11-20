@@ -234,8 +234,14 @@ impl NativeCodingJob {
         // The coding operations are attached in both modes: they carry the
         // `delete` tool and the private search prefixes, which an in-place
         // helper needs over the shared folder as much as a managed checkout.
+        // The job's write ask rides the same factory: a write-shaped call this
+        // helper makes is resolved by the job's one mode cell and put to the
+        // job's operator under a line that names this helper. A job with no
+        // operator has nobody to ask, so it composes none.
+        let write_ask = crate::agent::tools::write_ask::for_helper(self, &task.agent_id);
         let factory = composition
             .factory
+            .with_write_ask(write_ask)
             .with_tools(self.tools.for_helper())
             .with_coding(Arc::new(super::checks::ChildCodingOperations {
                 application: Arc::clone(host),

@@ -27,6 +27,20 @@ use saya_agent::{
 use saya_types::{AgentId, JobId};
 use serde_json::Value;
 
+/// What an operator's answer to one call leaves behind. A caller that owns a
+/// "yes for this run" store records it only for [`Answer::Session`], so the
+/// difference between the two yeses cannot be lost on the way back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Answer {
+    /// Refused outright.
+    Deny,
+    /// Admitted for this call only.
+    Once,
+    /// Admitted for this call, and for the rest of the run under the grant its
+    /// token names.
+    Session,
+}
+
 /// The operator a call is put to. `subject` names who is asking, so one panel
 /// can answer for every caller without either surface wording its own prompt.
 /// Deliberately not [`ApprovalDecider`]: the model-facing approval contract
@@ -36,6 +50,19 @@ pub(crate) trait Operator: Send + Sync {
     /// Puts one call to the operator under `subject`, and returns the answer.
     /// A refusal is a normal denial.
     async fn ask(&self, subject: &str, arguments: &Value) -> bool;
+
+    /// Puts one call to the operator and reports *which* yes came back, so a
+    /// caller with a "yes for this run" store can record it. The default
+    /// keeps the coarse answer and remembers nothing: an operator that keeps
+    /// no store cannot tell the two yeses apart, and remembering nothing asks
+    /// again rather than admitting a call nobody granted.
+    async fn answer(&self, subject: &str, arguments: &Value) -> Answer {
+        if self.ask(subject, arguments).await {
+            Answer::Once
+        } else {
+            Answer::Deny
+        }
+    }
 
     /// The "yes for this run" store this operator records an
     /// `AllowSession` into, when it keeps one: one per job, shared by every
@@ -113,9 +140,24 @@ impl Prompt {
             .is_some_and(|grants| grants.is_granted(token))
     }
 
+    /// Records `token` in this prompt's store, when it keeps one — the "yes for
+    /// this run" a caller stores after an [`Answer::Session`]. A prompt with no
+    /// store remembers nothing.
+    pub(crate) fn record(&self, token: &str) {
+        if let Some(grants) = &self.grants {
+            grants.grant(token);
+        }
+    }
+
     /// Puts one call to the operator under this prompt's line.
     pub(crate) async fn ask(&self, arguments: &Value) -> bool {
         self.operator.ask(&self.line, arguments).await
+    }
+
+    /// Puts one call to the operator under this prompt's line and reports
+    /// which yes came back, for the policy that records a session answer.
+    pub(crate) async fn answer(&self, arguments: &Value) -> Answer {
+        self.operator.answer(&self.line, arguments).await
     }
 }
 
@@ -148,6 +190,19 @@ impl Operator for SerialisedOperator {
             guard = self.gate.lock() => guard,
         };
         let answer = self.inner.ask(subject, arguments).await;
+        drop(guard);
+        answer
+    }
+
+    /// Serialised like every other ask: two writes of one job never hold two
+    /// pending prompts, and the answer's kind survives the gate. A cancelled
+    /// job never holds it, and its write is refused.
+    async fn answer(&self, subject: &str, arguments: &Value) -> Answer {
+        let guard = tokio::select! {
+            _ = self.cancellation.cancelled() => return Answer::Deny,
+            guard = self.gate.lock() => guard,
+        };
+        let answer = self.inner.answer(subject, arguments).await;
         drop(guard);
         answer
     }

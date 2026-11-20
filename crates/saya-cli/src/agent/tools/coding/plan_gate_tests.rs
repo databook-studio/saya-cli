@@ -66,7 +66,10 @@ impl Operator for CannedOperator {
 ///
 /// The shell is `None` on a host that proves no sandbox, and the test then
 /// asserts only the members this host can compose.
-async fn plan_root(fixture: &fixture::Fixture, operator: Option<Arc<dyn Operator>>) -> RootTools {
+pub(super) async fn plan_root(
+    fixture: &fixture::Fixture,
+    operator: Option<Arc<dyn Operator>>,
+) -> RootTools {
     let gate = PlanGate::new(
         operator,
         Caller::Root {
@@ -78,7 +81,7 @@ async fn plan_root(fixture: &fixture::Fixture, operator: Option<Arc<dyn Operator
 
 /// The same root with no gate at all: what a job that never stated `--plan`
 /// composes.
-async fn ungated_root(fixture: &fixture::Fixture) -> RootTools {
+pub(super) async fn ungated_root(fixture: &fixture::Fixture) -> RootTools {
     compose(fixture, None).await
 }
 

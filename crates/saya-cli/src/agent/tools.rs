@@ -43,12 +43,22 @@ mod tool_calls;
 /// and consented per call, shared by the coding root and its helpers.
 pub(crate) mod web;
 pub(crate) mod workspace;
+/// The question a write-shaped call of a job with an operator attached is put
+/// to, over the mode cell every policy of that job reads.
+pub(crate) mod write_ask;
+#[cfg(test)]
+#[path = "tools/write_ask_mode_tests.rs"]
+mod write_ask_mode_tests;
+#[cfg(test)]
+#[path = "tools/write_ask_tests.rs"]
+mod write_ask_tests;
 
 pub(crate) use database_tools::DatabaseTools;
 // The write bound the tool enforces, which the approval prompt states.
 pub(crate) use database_tools::WORKSPACE_WRITE_MAX_BYTES;
 pub(crate) use narrow::{NarrowedExecutor, admits, narrow, narrowed};
 pub(crate) use run_tools::RunTools;
+pub(crate) use write_ask::WriteAsk;
 // Whether the workspace holds a notebook, and the removal a surface whose list
 // is fixed for its run applies to the notebook edit: the run's per-step
 // toolsets decide by them exactly as the coding root does.
