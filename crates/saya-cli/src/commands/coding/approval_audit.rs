@@ -146,11 +146,18 @@ impl CodingApplication {
     /// open, and an open request blocks resume. When that request is the SOLE
     /// blocker (no live child, unresolved effect or checkout operation: a
     /// genuinely live job is never touched) it is closed `Expired` before a
-    /// new question is asked.
+    /// new question is asked. A job a live run still holds is refused here, in
+    /// this path rather than by the caller's ordering: its stream takes no
+    /// closure this verb wrote.
     pub(super) async fn close_stale_approvals(&self, job: &JobId) -> Result<(), CodingError> {
         let status = inspect_recovery(&self.store, job)
             .await
             .map_err(CodingError::owner)?;
+        // Asked before anything is written, in this path: a cleanup reached by
+        // any caller writes no closure into a run that is still numbering.
+        if self.live_run_holds(job)? {
+            return Err(CodingError::InPlaceRootBusy);
+        }
         if status.pending_approvals == 0
             || status.active_children != 0
             || status.unresolved_reservations != 0

@@ -32,6 +32,9 @@ pub(super) use history::TurnHistory;
 /// The open root run of one job: the one-time composition every turn of the
 /// run shares, and whether a turn is running right now.
 pub(crate) struct RootRun {
+    /// The job this run belongs to: the identity its own liveness is recorded
+    /// under, so a verb of the same process can ask whether a run is open.
+    job: String,
     /// One turn at a time: a second is refused `Busy` rather than interleaved.
     running: AtomicBool,
     /// How many turns this run has started. Every turn records the next number
@@ -44,8 +47,9 @@ pub(crate) struct RootRun {
 }
 
 impl RootRun {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(job: &saya_types::JobId) -> Self {
         Self {
+            job: job.as_str().to_owned(),
             running: AtomicBool::new(false),
             turns: AtomicU64::new(0),
             session: Mutex::new(None),
@@ -68,6 +72,9 @@ impl RootRun {
 
     fn hold(&self, session: Arc<RootSession>) {
         *self.lock() = Some(session);
+        // From here until the run closes, this job numbers its own events: no
+        // verb that is not the run may append to the job's stream.
+        super::super::live_runs::run_opened(&self.job);
     }
 
     #[allow(dead_code)] // only `run_next_turn` reads it, and that entry is not wired yet
@@ -78,6 +85,7 @@ impl RootRun {
     /// The run is over: a further turn is refused as one on a finished run.
     pub(super) fn close(&self) {
         *self.lock() = None;
+        super::super::live_runs::run_closed(&self.job);
     }
 
     /// A guard that closes the run when it drops: the caller holds it for as
@@ -90,12 +98,6 @@ impl RootRun {
         self.session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-impl Default for RootRun {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

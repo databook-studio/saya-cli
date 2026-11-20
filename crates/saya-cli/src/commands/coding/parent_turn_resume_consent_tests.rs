@@ -166,16 +166,10 @@ async fn a_job_that_takes_an_open_fact_while_the_human_answers_is_refused_after_
     } = in_place("resume-and-then", &provider.endpoint).await;
     let id = job.job_id().clone();
     let application = Arc::clone(&job.application);
-    // One turn of an open run, ended between its turns: a job a resume may
-    // still continue, and the state a live helper can be started in.
-    let turn = tokio::time::timeout(RUN, job.run_open(&NoopEventSink))
-        .await
-        .expect("the turn must settle");
-    assert!(turn.is_ok(), "the turn must run: {turn:?}");
-    super::super::parent_turn_fixture::pause(&job).await;
+    // A job with no live run: created and left unrun, so nothing holds its
+    // folder and a resume is admitted. A live helper can still be started in
+    // it while the human answers.
     let epoch = super::resume_turns::epoch(&application, &id).await;
-    // The open run's handle owns the folder lease; a resume takes it only once
-    // that handle is gone.
     drop(job);
 
     let decider = AHelperStarts {

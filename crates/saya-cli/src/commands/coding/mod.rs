@@ -69,6 +69,7 @@ pub(crate) use host::mode::Launch;
 mod host_root;
 mod in_place_lease;
 mod integrate;
+mod live_runs;
 mod notes;
 mod oneshot;
 pub(crate) mod oneshot_cli;
