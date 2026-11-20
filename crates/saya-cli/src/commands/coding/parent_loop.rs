@@ -23,6 +23,11 @@ impl NativeCodingJob {
         sink: &dyn AgentEventSink,
         prompt: String,
     ) -> Result<AgentOutput, CodingError> {
+        // Every turn states its own boundary before it asks the model anything:
+        // the run's epoch and this turn's fresh sequence, so a message after the
+        // first turn is as durable a record as the turn that opened the run.
+        let turn = self.root_run.next_turn();
+        self.record_turn_boundary(turn).await?;
         let config = &self.application.runtime.resolved;
         let observed = super::super::observations::NativeSink {
             job: self,

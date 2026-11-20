@@ -22,7 +22,7 @@ use saya_agent::{AgentEventSink, AgentMailbox, AgentOutput, ToolExecutor};
 use saya_harness::coding::worktree::VerifiedCheckout;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 #[path = "parent_history.rs"]
@@ -34,6 +34,10 @@ pub(super) use history::TurnHistory;
 pub(crate) struct RootRun {
     /// One turn at a time: a second is refused `Busy` rather than interleaved.
     running: AtomicBool,
+    /// How many turns this run has started. Every turn records the next number
+    /// at its boundary, so the run's diagnostics show the second turn as
+    /// plainly as the first, in one increasing sequence.
+    turns: AtomicU64,
     /// The run's composition, present from the first turn until the owner
     /// closes the run. `None` before it and after it.
     session: Mutex<Option<Arc<RootSession>>>,
@@ -43,8 +47,15 @@ impl RootRun {
     pub(crate) fn new() -> Self {
         Self {
             running: AtomicBool::new(false),
+            turns: AtomicU64::new(0),
             session: Mutex::new(None),
         }
+    }
+
+    /// The fresh, monotonic number this turn's boundary record carries: 1 for
+    /// the run's first turn, one more for every turn after it.
+    pub(super) fn next_turn(&self) -> u64 {
+        self.turns.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     /// Claims the job's one turn slot for as long as the guard lives.
