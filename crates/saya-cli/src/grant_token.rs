@@ -28,6 +28,6 @@ mod wording;
 
 pub(crate) use family::SQL_FAMILY;
 pub(crate) use primary::TurnPrimary;
-pub(crate) use shell::shell_token_for_host_route;
+pub(crate) use shell::{normalised_prefix, shell_token_for_host_route};
 pub(crate) use token::grant_token;
 pub(crate) use wording::{grant_family, session_answers_line};

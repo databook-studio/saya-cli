@@ -129,6 +129,7 @@ include!("tests/grant_recompute_and_host_refusal.rs");
 
 include!("tests/shell_support.rs");
 include!("tests/shell_advertise.rs");
+include!("tests/shell_grant.rs");
 include!("tests/shell_approval.rs");
 include!("tests/shell_executor.rs");
 include!("tests/shell_turn.rs");

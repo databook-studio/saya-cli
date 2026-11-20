@@ -136,6 +136,9 @@ pub enum Command {
         /// `command:<program>` is refused with a usage error: a run is
         /// unattended and this scope names unconfined host execution — a
         /// run's steps run commands with the `shell` tool instead.
+        /// `shell:<command prefix>` is refused with a usage error: it names a
+        /// session's grant for the `shell` tool, and a run composes no session
+        /// grant store.
         /// `runner:<program>` and `interpreter:<program>` are refused with a
         /// usage error: those doors do not exist, and the `shell` tool runs
         /// a run's commands. `endpoint:<role>=<endpoint>` is refused with a
