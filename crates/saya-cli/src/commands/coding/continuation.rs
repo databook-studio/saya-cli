@@ -182,6 +182,7 @@ impl CodingApplication {
             transcript_lock: std::sync::Mutex::new(()),
             root_steering,
             root_mailbox: tokio::sync::Mutex::new(Some(root_mailbox)),
+            root_run: super::parent::RootRun::new(),
             application: Arc::clone(self),
             request,
             plan,
@@ -204,8 +205,7 @@ impl CodingApplication {
             operation: tokio::sync::Mutex::new(()),
             active: tokio::sync::Mutex::new(None),
             progress: tokio::sync::broadcast::channel(128).0,
-            // A resumed job gets its own one-prompt gate over the same
-            // operator.
+            // A resumed job gets its own one-prompt gate over the same operator.
             operator,
             // A resumed job composes its own egress, exactly as a fresh one
             // does: the wire is not carried across a resume.

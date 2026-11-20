@@ -33,6 +33,12 @@ pub struct NativeCodingJob {
     pub(super) tools: saya_config::ResolvedTools,
     pub(super) root_steering: saya_agent::AgentSteering,
     pub(super) root_mailbox: tokio::sync::Mutex<Option<saya_agent::AgentMailbox>>,
+    /// The job's open root run: the one-time composition a turn runs on. It
+    /// is present from the first turn until the run is closed, so a message
+    /// after the previous turn ended normally is another turn of this same
+    /// run — same epoch, ledger, lease and cancellation token — rather than a
+    /// resumed one.
+    pub(super) root_run: super::parent::RootRun,
     pub(super) observation_sequence: std::sync::atomic::AtomicU64,
     pub(super) observation_failed: std::sync::atomic::AtomicBool,
     /// How much tool-call transcript this job's journal has recorded, and
