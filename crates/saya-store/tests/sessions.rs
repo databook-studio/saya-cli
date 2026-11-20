@@ -1,6 +1,6 @@
 use saya_store::{
     FsSessionStore, MAX_SESSION_BYTES, RedactedMessage, RedactedSession, RedactedToolMetadata,
-    RedactedTurn, SessionHistoryQuery, SessionStore, StoreError, StoredContinuation,
+    RedactedTurn, RunLink, SessionHistoryQuery, SessionStore, StoreError, StoredContinuation,
 };
 use saya_types::{
     CONTINUATION_VERSION, CheckFact, CheckOutcome, FactProvenance, GeneratedNarrative,
@@ -54,5 +54,7 @@ mod continuation_redaction;
 mod continuation_roundtrip;
 #[path = "sessions/history.rs"]
 mod history;
+#[path = "sessions/run_link.rs"]
+mod run_link;
 #[path = "sessions/session_storage.rs"]
 mod session_storage;

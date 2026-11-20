@@ -66,7 +66,7 @@ pub use runs::{
 };
 pub use session::{
     ParentLink, RedactedMessage, RedactedSession, RedactedToolMetadata, RedactedToolResultShape,
-    RedactedTurn, SESSION_VERSION,
+    RedactedTurn, RunLink, SESSION_VERSION,
 };
 pub use session_journal::{
     BypassSource, GrantSource, JournalEvent, MAX_JOURNAL_BYTES, SessionJournal,

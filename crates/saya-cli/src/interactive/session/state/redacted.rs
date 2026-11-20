@@ -19,6 +19,7 @@ impl SessionState {
             messages: Vec::new(),
             continuation: self.continuation.clone(),
             parent: self.parent.clone(),
+            run: self.run.clone(),
         }
     }
 

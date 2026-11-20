@@ -1,4 +1,5 @@
 use super::{SessionDefaults, load_session};
+use crate::interactive::session::state::SessionState;
 use crate::{Cli, GlobalOptions};
 use saya_store::{FsSessionStore, RedactedMessage, RedactedSession, SessionStore};
 
@@ -22,3 +23,5 @@ include!("session_resume_tests/task_list.rs");
 include!("session_resume_tests/legacy_fields.rs");
 
 include!("session_resume_tests/bypass_and_fallback.rs");
+
+include!("session_resume_tests/run_link.rs");
