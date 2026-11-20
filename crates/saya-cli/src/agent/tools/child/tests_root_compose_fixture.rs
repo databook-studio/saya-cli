@@ -91,12 +91,58 @@ impl Fixture {
         Self::with_directory_name(label, write_paths, &format!("saya-root-compose-{label}")).await
     }
 
+    /// The same fixture with an operator attached and that mode stated: the
+    /// shape a job started from the TUI panel runs in, where a call can be put
+    /// to a person and the mode decides the rest.
+    pub(crate) async fn asking(
+        label: &str,
+        write_paths: &[&str],
+        operator: Arc<dyn crate::agent::tools::consent::Operator>,
+        mode: saya_agent::ApprovalPolicy,
+    ) -> Self {
+        Self::build(
+            label,
+            write_paths,
+            &format!("saya-root-compose-{label}"),
+            Some(operator),
+            Some(mode),
+        )
+        .await
+    }
+
+    /// The same fixture with its mode stated and nobody to ask: the detached
+    /// shape (`-p`, start, background) whose approval is fixed at composition.
+    pub(crate) async fn stating(
+        label: &str,
+        write_paths: &[&str],
+        mode: saya_agent::ApprovalPolicy,
+    ) -> Self {
+        Self::build(
+            label,
+            write_paths,
+            &format!("saya-root-compose-{label}"),
+            None,
+            Some(mode),
+        )
+        .await
+    }
+
     /// The same fixture under a chosen directory name, so a test can put the
     /// checkout root outside a host facility's safe text class.
     pub(crate) async fn with_directory_name(
         label: &str,
         write_paths: &[&str],
         directory: &str,
+    ) -> Self {
+        Self::build(label, write_paths, directory, None, None).await
+    }
+
+    async fn build(
+        label: &str,
+        write_paths: &[&str],
+        directory: &str,
+        operator: Option<Arc<dyn crate::agent::tools::consent::Operator>>,
+        mode: Option<saya_agent::ApprovalPolicy>,
     ) -> Self {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -224,6 +270,14 @@ impl Fixture {
         )
         .await
         .unwrap();
+        let application = match operator {
+            Some(operator) => application.with_operator(operator),
+            None => application,
+        };
+        let application = match mode {
+            Some(mode) => application.with_approval_policy(mode),
+            None => application,
+        };
         let delegate_id = JobId::parse(&format!("root-compose-delegate-{label}")).unwrap();
         let request = CodingJobRequest::new(
             delegate_id,

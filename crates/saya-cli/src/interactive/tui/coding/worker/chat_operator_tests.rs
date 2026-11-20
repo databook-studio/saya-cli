@@ -6,7 +6,7 @@
 
 use super::chat_operator::ChatOperator;
 use super::chat_prompt_fixture::{frame, helper_subject, root_subject};
-use crate::agent::tools::consent::{Operator, SerialisedOperator};
+use crate::agent::tools::consent::{Answer, Operator, SerialisedOperator};
 use saya_agent::ApprovalChoice;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -252,4 +252,39 @@ async fn two_questions_arrive_one_at_a_time() {
     assert!(detail.contains("GET https://example.test/x"), "{detail}");
     frame.answer(ApprovalChoice::Deny);
     assert!(!helper.await.unwrap());
+}
+
+/// A write-shaped call is shown by the path it would change, and the answer
+/// reports which yes it was — the difference the job's write ask records a
+/// grant from.
+#[tokio::test]
+async fn a_write_question_shows_its_path_and_reports_the_yes() {
+    let mut frame = frame();
+    let operator: Arc<dyn Operator> = Arc::new(frame.operator());
+    let asked = tokio::spawn({
+        let operator = Arc::clone(&operator);
+        async move {
+            operator
+                .answer(
+                    &root_subject(),
+                    &json!({"path": "src/lib.rs", "content": "changed"}),
+                )
+                .await
+        }
+    });
+    frame.until_asked().await;
+    let (tool, detail, _) = frame.question();
+    assert_eq!(tool, root_subject(), "the prompt names who asks");
+    assert!(
+        detail.contains("path: src/lib.rs"),
+        "the path being changed is shown: {detail}"
+    );
+    frame.answer(ApprovalChoice::AllowSession {
+        token: "workspace-write".into(),
+    });
+    assert_eq!(
+        asked.await.unwrap(),
+        Answer::Session,
+        "a yes for the run is reported as one"
+    );
 }

@@ -40,6 +40,9 @@ mod tests_scope;
 mod tests_shell;
 #[cfg(all(test, unix))]
 mod tests_stop;
+#[cfg(test)]
+#[path = "write_ask_tests.rs"]
+mod write_ask_tests;
 
 pub(crate) use compose::{ChildComposeRequest, HelperShell, HelperWeb, compose_child};
 // `ChildTools` is exposed unconditionally so the direct-mode root composition

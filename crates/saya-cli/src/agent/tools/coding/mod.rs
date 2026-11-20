@@ -38,6 +38,10 @@ mod direct_tests;
 mod direct_web_tests;
 
 #[cfg(test)]
+#[path = "direct_write_ask_tests.rs"]
+mod direct_write_ask_tests;
+
+#[cfg(test)]
 #[path = "helpers_concurrency_tests.rs"]
 mod helpers_concurrency_tests;
 
