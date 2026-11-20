@@ -18,6 +18,18 @@ use std::{
 /// before the provider answers anyway.
 const HOLD: Duration = Duration::from_secs(60);
 
+/// One request's scripted reply, in the order requests arrive: a `write` call
+/// makes the turn change one file of the working checkout, and a text ends the
+/// turn that asked for it. A request past the script is answered with text, as
+/// an unscripted provider answers every request.
+pub(super) enum Reply {
+    Text(&'static str),
+    Write {
+        path: &'static str,
+        content: &'static str,
+    },
+}
+
 /// A local scripted provider: every request is one root turn, answered with a
 /// final text. The first answer can be held, so a turn that is still running
 /// is observable while it runs.
@@ -32,7 +44,14 @@ pub(super) struct Scripted {
 }
 
 impl Scripted {
+    /// A provider that answers every request with text.
     pub(super) fn start() -> Self {
+        Self::start_with_script(Vec::new())
+    }
+
+    /// The same, with the first `replies.len()` requests answered as scripted:
+    /// one `write` call per turn, then the text that ends it.
+    pub(super) fn start_with_script(replies: Vec<Reply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -48,6 +67,7 @@ impl Scripted {
             Arc::clone(&released),
             Arc::clone(&stop),
         );
+        let script = Arc::new(replies);
         let worker = thread::spawn(move || {
             while !done.load(Ordering::Acquire) {
                 let (mut stream, _) = match listener.accept() {
@@ -73,7 +93,15 @@ impl Scripted {
                         thread::sleep(Duration::from_millis(5));
                     }
                 }
-                let response = answer(&format!("turn {turn} answered"));
+                let response = match script.get(turn) {
+                    Some(Reply::Text(text)) => answer(text),
+                    Some(Reply::Write { path, content }) => tool_call(
+                        &format!("call-{turn}"),
+                        "write",
+                        &serde_json::json!({"path": path, "content": content}),
+                    ),
+                    None => answer(&format!("turn {turn} answered")),
+                };
                 let _ = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
@@ -150,6 +178,20 @@ fn read_request(stream: &mut TcpStream) -> Option<String> {
 fn answer(text: &str) -> String {
     let delta = serde_json::json!({
         "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": "stop"}]
+    });
+    format!(
+        "data: {delta}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        serde_json::json!({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+    )
+}
+
+/// One tool call as the OpenAI-compatible stream carries it: the arguments are
+/// the serialized object the model sent.
+fn tool_call(id: &str, name: &str, arguments: &serde_json::Value) -> String {
+    let delta = serde_json::json!({
+        "choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": id, "type": "function",
+            "function": {"name": name, "arguments": arguments.to_string()}}]},
+            "finish_reason": "tool_calls"}]
     });
     format!(
         "data: {delta}\n\ndata: {}\n\ndata: [DONE]\n\n",

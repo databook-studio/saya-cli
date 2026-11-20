@@ -1,17 +1,20 @@
 //! The in-place job and the managed job the turn-per-message tests share.
 //!
-//! The in-place fixture states no write scope: a job that does keeps its own
-//! readiness precompute alive in this process, and the folder lease with it.
+//! The default in-place fixture states no write scope, so it is a read-only
+//! root; the writing one states the whole folder, so a scripted turn can change
+//! a file the run checkpoints. A job that states a scope keeps its own readiness
+//! precompute alive in this process, and the folder lease with it.
 
 use super::super::direct_root_fixture;
 use super::super::{CodingApplication, CodingAuthorization, CodingJobRequest, NativeCodingJob};
 use crate::{GlobalOptions, load_with_sources};
 use saya_agent::CancellationToken;
 use saya_store::SqliteStateStore;
-use saya_types::JobId;
+use saya_types::{CodingEventKind, CodingEventV1, JobId, JobState};
 use std::{
     collections::BTreeMap,
     fs,
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -30,7 +33,14 @@ impl Drop for Fixture {
 
 /// An in-place job over a plain folder, wired to `endpoint`.
 pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
-    in_place_with(case, endpoint, None).await
+    in_place_with(case, endpoint, None, false).await
+}
+
+/// The same, with a whole-folder write scope: the root is offered the
+/// workspace write tools, so a turn can change a file of the folder every
+/// turn of the run is checkpointed from.
+pub(super) async fn in_place_writing(case: &str, endpoint: &str) -> Fixture {
+    in_place_with(case, endpoint, None, true).await
 }
 
 /// The same, with the run's context byte budget stated by the test — the one
@@ -41,10 +51,15 @@ pub(super) async fn in_place_with_budget(
     endpoint: &str,
     context_byte_budget: usize,
 ) -> Fixture {
-    in_place_with(case, endpoint, Some(context_byte_budget)).await
+    in_place_with(case, endpoint, Some(context_byte_budget), false).await
 }
 
-async fn in_place_with(case: &str, endpoint: &str, byte_budget: Option<usize>) -> Fixture {
+async fn in_place_with(
+    case: &str,
+    endpoint: &str,
+    byte_budget: Option<usize>,
+    writes: bool,
+) -> Fixture {
     use std::os::unix::fs::PermissionsExt;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -97,7 +112,11 @@ async fn in_place_with(case: &str, endpoint: &str, byte_budget: Option<usize>) -
     let request = CodingJobRequest::new(
         JobId::parse(&format!("turn-{case}")).unwrap(),
         "first message: read this folder".into(),
-        Vec::new(),
+        if writes {
+            vec![".".to_owned()]
+        } else {
+            Vec::new()
+        },
     )
     .unwrap();
     let approval = CodingAuthorization::scoped(
@@ -123,6 +142,44 @@ pub(super) async fn managed(case: &str) -> Fixture {
     // the directory out from under it.
     std::mem::forget(base);
     Fixture { root, job }
+}
+
+/// Ends the scripted job so a rewind is admitted: only a `Running` job
+/// refuses one, and an open run between its turns is still running.
+pub(super) async fn pause(job: &NativeCodingJob) {
+    let mut cursor = None;
+    let mut last = 0;
+    loop {
+        let page = job
+            .application
+            .store
+            .list_coding_events(job.job_id(), cursor, 100)
+            .await
+            .unwrap();
+        if let Some(event) = page.events.last() {
+            last = event.sequence().get();
+        }
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    job.application
+        .store
+        .append_coding_event(
+            CodingEventV1::new(
+                NonZeroU64::new(last + 1).unwrap(),
+                job.job_id().clone(),
+                None,
+                None,
+                CodingEventKind::StateChanged {
+                    state: JobState::Paused,
+                },
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
 }
 
 fn git_path() -> PathBuf {

@@ -60,6 +60,10 @@ impl AgentEventSink for NativeSink<'_> {
         self.downstream.metric(metric).await;
     }
 }
+/// The phase a root turn's own boundary record states. The run's `started` and
+/// `finished` records stay one per run; this one is written per turn.
+const TURN_BOUNDARY: &str = "turn_started";
+
 /// Longest persisted error text: the closed rendering a failure class carries
 /// is already far shorter, so this bound is a ceiling on the record shape, not
 /// a truncation in practice.
@@ -204,13 +208,35 @@ impl NativeCodingJob {
         }
         let _ = self.progress.send(event);
     }
+    /// The run's own boundary record: one per run, at its start and its end.
     pub(super) async fn record_observation_boundary(
         &self,
         phase: &str,
         complete: bool,
     ) -> Result<(), CodingError> {
+        self.record_boundary(phase, complete, None).await
+    }
+
+    /// One root turn's boundary record: the run's epoch and the turn's own
+    /// fresh sequence, so a message after the first turn is as visible as the
+    /// turn that opened the run.
+    pub(super) async fn record_turn_boundary(&self, turn: u64) -> Result<(), CodingError> {
+        self.record_boundary(TURN_BOUNDARY, false, Some(turn)).await
+    }
+
+    /// Both boundary writers share one record: the run's identity and epoch, the
+    /// compaction count, the budget now held, and `turn` only for a turn.
+    async fn record_boundary(
+        &self,
+        phase: &str,
+        complete: bool,
+        turn: Option<u64>,
+    ) -> Result<(), CodingError> {
         let budget = self.ledger.snapshot().await;
-        let value = json!({"job_id":self.job_id(),"epoch":self.epoch,"phase":phase,"complete":complete&&!self.observation_failed.load(Ordering::Acquire),"compaction_records":self.observation_sequence.load(Ordering::Acquire).saturating_sub(1),"logical_requests":budget.logical_requests,"transport_attempts":budget.transport_attempts,"tool_calls":budget.tool_calls,"unsettled_reservations":budget.unsettled_reservations});
+        let mut value = json!({"job_id":self.job_id(),"epoch":self.epoch,"phase":phase,"complete":complete&&!self.observation_failed.load(Ordering::Acquire),"compaction_records":self.observation_sequence.load(Ordering::Acquire).saturating_sub(1),"logical_requests":budget.logical_requests,"transport_attempts":budget.transport_attempts,"tool_calls":budget.tool_calls,"unsettled_reservations":budget.unsettled_reservations});
+        if let Some(turn) = turn {
+            value["turn"] = json!(turn);
+        }
         let result = serde_json::to_vec(&value)
             .map_err(|_| diagnostics::Fault::InvalidRecord)
             .and_then(|bytes| {

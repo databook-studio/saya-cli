@@ -171,3 +171,12 @@ async fn a_managed_checkout_job_takes_no_further_turn() {
 /// and provider.
 #[path = "parent_turn_history_tests.rs"]
 mod history;
+
+/// What each turn of an open run leaves behind: its boundary record, its
+/// progress events and its rewind checkpoint.
+#[path = "parent_turn_records_tests.rs"]
+mod records;
+
+/// The rewind and finish sides of the same per-turn records.
+#[path = "parent_turn_rewind_tests.rs"]
+mod rewind_turns;
