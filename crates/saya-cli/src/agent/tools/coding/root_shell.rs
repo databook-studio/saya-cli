@@ -12,13 +12,15 @@ use std::{path::Path, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use saya_agent::{ApprovalDecider, ToolDefinition, ToolError, ToolExecutionContext, ToolExecutor};
-use tokio::sync::OnceCell;
 
 use crate::commands::coding::NativeCodingJob;
 
 use super::shell_secrets::host_policy;
 use crate::agent::tools::consent::Caller;
 use crate::agent::tools::shell_policy::{self, Background, ShellPlacement, ShellTool};
+
+#[path = "root_shell_deferred.rs"]
+mod deferred;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 #[path = "root_shell_hooks.rs"]
@@ -30,22 +32,10 @@ pub(crate) use hooks::{
     build_with_policy,
 };
 
-/// The root's shell: the shared tool, or the background composition that is
-/// still preparing it.
+/// The root's shell: the shared tool, or the composition that is still held
+/// until the run starts it.
 pub(crate) struct RootShell {
-    state: ShellState,
-}
-
-enum ShellState {
-    /// The tool is composed and ready.
-    Ready(ShellTool),
-    /// The composition — which proves the sandbox and costs most of a second —
-    /// runs on a blocking thread started at build. The first call waits for
-    /// it; a job that never calls the shell pays nothing.
-    Deferred {
-        task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Option<ShellTool>>>>,
-        cell: OnceCell<Option<ShellTool>>,
-    },
+    state: deferred::ShellState,
 }
 
 /// Builds the root shell, or `None` when it must not exist. `None` when the
@@ -55,10 +45,11 @@ enum ShellState {
 /// error for the run — and nothing about the failure is logged as a secret.
 ///
 /// Under every mode but `read-only` the composition always yields a shell (the
-/// host lane when no sandbox proves), so the advertisement is fixed at build
-/// and the probe runs in the background. Under `read-only` whether a shell
-/// exists at all depends on the probe, so that composition stays synchronous
-/// and the tool is advertised only when the sandbox proves.
+/// host lane when no sandbox proves), so the advertisement is fixed at build and
+/// the composition waits, started once, until the run starts it. Under
+/// `read-only` whether a shell exists at all depends on the probe, so that
+/// composition stays synchronous and the tool is advertised only when the
+/// sandbox proves.
 pub(crate) fn build(
     job: &NativeCodingJob,
     checkout_root: &Path,
@@ -115,7 +106,8 @@ pub(crate) fn build(
             None => tool,
         });
         // The probe is the expensive part; the span says what it cost without
-        // holding the first model request for it.
+        // holding the first model request for it, and it starts only after that
+        // request's context is built.
         lifecycle.note_elapsed("shell_probe", started.elapsed());
         tool
     };
@@ -131,41 +123,47 @@ impl RootShell {
     /// the only places a root shell is made.
     pub(super) fn new(tool: ShellTool) -> Self {
         Self {
-            state: ShellState::Ready(tool),
+            state: deferred::ShellState::Ready(tool),
         }
     }
 
-    /// Starts the composition on a blocking thread and returns at once. The
-    /// probe still runs on this host for this job; only when it is awaited
-    /// changes.
+    /// Holds the composition until the run starts it. Nothing runs here: the
+    /// probe it starts mutates the working checkout, and the first turn's
+    /// readiness walks it. The probe still runs on this host for this job; only
+    /// when it starts changes.
     pub(super) fn deferred<F>(compose: F) -> Self
     where
         F: FnOnce() -> Option<ShellTool> + Send + 'static,
     {
-        let task = tokio::task::spawn_blocking(compose);
         Self {
-            state: ShellState::Deferred {
-                task: tokio::sync::Mutex::new(Some(task)),
-                cell: OnceCell::new(),
-            },
+            state: deferred::ShellState::Deferred(deferred::Deferred::new(compose)),
         }
     }
 
-    /// The composed tool, waiting for the background composition the first
-    /// time. A composition that yielded no shell, or panicked, is `None`.
+    /// Starts a held composition, if there is one. Idempotent: the run asks
+    /// after every turn's context, and only the first ask starts anything.
+    pub(super) fn start_composition(&self) {
+        if let deferred::ShellState::Deferred(pending) = &self.state {
+            pending.start();
+        }
+    }
+
+    /// Whether the held composition has been started. The test build asserts
+    /// the run's ordering through it; no product path asks.
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(super) fn composition_started(&self) -> bool {
+        match &self.state {
+            deferred::ShellState::Ready(_) => true,
+            deferred::ShellState::Deferred(pending) => pending.started(),
+        }
+    }
+
+    /// The composed tool, starting a held composition and waiting for it the
+    /// first time. A composition that yielded no shell, or panicked, is `None`.
     async fn resolve(&self) -> Option<&ShellTool> {
         match &self.state {
-            ShellState::Ready(tool) => Some(tool),
-            ShellState::Deferred { task, cell } => cell
-                .get_or_init(|| async {
-                    let handle = task.lock().await.take();
-                    match handle {
-                        Some(handle) => handle.await.ok().flatten(),
-                        None => None,
-                    }
-                })
-                .await
-                .as_ref(),
+            deferred::ShellState::Ready(tool) => Some(tool),
+            deferred::ShellState::Deferred(pending) => pending.tool().await,
         }
     }
 
@@ -184,15 +182,14 @@ impl RootShell {
         tool.call(name, arguments).await
     }
 
-    /// The background runs that ended since the loop last asked. A deferred
-    /// composition that has not resolved yet holds no run, so it answers with
-    /// nothing rather than waiting for the probe.
+    /// The background runs that ended since the loop last asked. A composition
+    /// that has not started holds no run, so it answers with nothing rather
+    /// than waiting for the probe.
     pub(crate) fn take_background_exits(&self) -> Vec<saya_agent::BackgroundExit> {
         match &self.state {
-            ShellState::Ready(tool) => tool.take_background_exits(),
-            ShellState::Deferred { cell, .. } => cell
-                .get()
-                .and_then(Option::as_ref)
+            deferred::ShellState::Ready(tool) => tool.take_background_exits(),
+            deferred::ShellState::Deferred(pending) => pending
+                .settled()
                 .map(shell_policy::ShellTool::take_background_exits)
                 .unwrap_or_default(),
         }
@@ -200,20 +197,18 @@ impl RootShell {
 
     pub(crate) fn background_live(&self) -> bool {
         match &self.state {
-            ShellState::Ready(tool) => tool.background_live(),
-            ShellState::Deferred { cell, .. } => cell
-                .get()
-                .and_then(Option::as_ref)
+            deferred::ShellState::Ready(tool) => tool.background_live(),
+            deferred::ShellState::Deferred(pending) => pending
+                .settled()
                 .is_some_and(shell_policy::ShellTool::background_live),
         }
     }
 
     pub(crate) fn background_notice_pending(&self) -> bool {
         match &self.state {
-            ShellState::Ready(tool) => tool.background_notice_pending(),
-            ShellState::Deferred { cell, .. } => cell
-                .get()
-                .and_then(Option::as_ref)
+            deferred::ShellState::Ready(tool) => tool.background_notice_pending(),
+            deferred::ShellState::Deferred(pending) => pending
+                .settled()
                 .is_some_and(shell_policy::ShellTool::background_notice_pending),
         }
     }
@@ -234,10 +229,9 @@ impl ApprovalDecider for RootShell {
 
     fn would_ask(&self, tool: &ToolDefinition, arguments: &serde_json::Value) -> Option<bool> {
         match &self.state {
-            ShellState::Ready(shell) => shell.would_ask(tool, arguments),
-            ShellState::Deferred { cell, .. } => cell
-                .get()
-                .and_then(Option::as_ref)
+            deferred::ShellState::Ready(shell) => shell.would_ask(tool, arguments),
+            deferred::ShellState::Deferred(pending) => pending
+                .settled()
                 .and_then(|shell| shell.would_ask(tool, arguments)),
         }
     }
@@ -248,10 +242,9 @@ impl ApprovalDecider for RootShell {
         arguments: &serde_json::Value,
     ) -> Option<String> {
         match &self.state {
-            ShellState::Ready(shell) => shell.refusal_detail(tool, arguments),
-            ShellState::Deferred { cell, .. } => cell
-                .get()
-                .and_then(Option::as_ref)
+            deferred::ShellState::Ready(shell) => shell.refusal_detail(tool, arguments),
+            deferred::ShellState::Deferred(pending) => pending
+                .settled()
                 .and_then(|shell| shell.refusal_detail(tool, arguments)),
         }
     }

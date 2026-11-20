@@ -23,6 +23,17 @@ use crate::coding::snapshot::{
 };
 use crate::workspace::fd::{open_file_at, read_link_at};
 
+/// The class of an I/O failure on a path the walk has already listed. A path
+/// that left the tree between the listing and the read is
+/// [`DeltaError::Vanished`], which a delta answers by walking again; every other
+/// failure is the I/O refusal it was.
+pub(super) fn listed_io(error: &std::io::Error) -> DeltaError {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => DeltaError::Vanished,
+        _ => DeltaError::Io,
+    }
+}
+
 /// Records one path the walk could not include. A representable refusal is
 /// absorbed; anything else is returned so the caller can stop or refuse.
 pub(super) fn record(
@@ -84,7 +95,7 @@ pub(super) fn hash_file(
         open_file_at(dir_fd, name, libc::O_RDONLY | libc::O_NONBLOCK, 0).map_err(|error| {
             match error.raw_os_error() {
                 Some(libc::ELOOP) => DeltaError::Symlink,
-                _ => DeltaError::Io,
+                _ => listed_io(&error),
             }
         })?;
     let meta = file.metadata().map_err(|_| DeltaError::Io)?;
@@ -152,7 +163,7 @@ pub(super) fn hash_symlink(
         read_link_at(dir_fd, name, MAX_SYMLINK_TARGET_BYTES).map_err(|error| {
             match error.kind() {
                 ErrorKind::InvalidData => DeltaError::FileTooLarge,
-                _ => DeltaError::Io,
+                _ => listed_io(&error),
             }
         })?;
     validate_symlink_target(path, &target).map_err(|_| DeltaError::UnsafePath)?;
