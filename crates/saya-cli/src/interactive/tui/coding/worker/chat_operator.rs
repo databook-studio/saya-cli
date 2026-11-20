@@ -2,8 +2,13 @@
 //! `shell` host run — the root's or a helper's — a `web_fetch`, and a
 //! plan-first job's `submit_plan`. The subject line names the caller, and the
 //! one thing the operator really answers for is the call's own target: the
-//! exact command and working directory, or the URL about to be fetched. No
-//! answer is remembered between calls — a refusal is a normal denial.
+//! exact command and working directory, or the URL about to be fetched.
+//!
+//! One answer outlives its call: `AllowSession` records the call's own
+//! `shell:` grant in this job's store (see [`Operator::grants`]), which every
+//! shell of the job reads through its prompt — after its deny rules and its
+//! mode, never instead of them. Nothing is persisted: the store is the
+//! operator's, and ends with the job. A refusal is a normal denial.
 //!
 //! A shell call reaches this only on the host lane, never when it named the
 //! sandbox; a fetch reaches it under `ask` and never under `bypass`.
@@ -22,7 +27,7 @@ use super::wait_policy::{WaitPolicy, await_answer};
 use crate::agent::tools::consent::Operator;
 use crate::agent::tools::shell_policy::sanitise_prompt_text;
 use async_trait::async_trait;
-use saya_agent::{ApprovalChoice, CancellationToken};
+use saya_agent::{ApprovalChoice, CancellationToken, SessionGrants};
 use serde_json::Value;
 use std::sync::mpsc;
 use tokio::sync::oneshot;
@@ -39,11 +44,20 @@ const MAX_PROMPT_CHARS: usize = 2048;
 pub(super) struct ChatOperator {
     sender: mpsc::SyncSender<CodingMessage>,
     token: CancellationToken,
+    /// This job's "yes for this run" store: the shell grants its operator has
+    /// already answered `AllowSession` for. One per operator, so the root and
+    /// every helper of the job share it, and it ends with the job's operator:
+    /// process-lifetime, never persisted.
+    grants: SessionGrants,
 }
 
 impl ChatOperator {
     pub(super) fn new(sender: mpsc::SyncSender<CodingMessage>, token: CancellationToken) -> Self {
-        Self { sender, token }
+        Self {
+            sender,
+            token,
+            grants: SessionGrants::default(),
+        }
     }
 }
 
@@ -87,6 +101,12 @@ fn target(arguments: &Value) -> Option<String> {
 
 #[async_trait]
 impl Operator for ChatOperator {
+    /// The job's own store, shared by every shell of the job through the prompt
+    /// it is composed into.
+    fn grants(&self) -> Option<SessionGrants> {
+        Some(self.grants.clone())
+    }
+
     async fn ask(&self, subject: &str, arguments: &Value) -> bool {
         // Never ask about a target the operator cannot read in full, and never
         // ask with no target at all: a refusal is the safe answer, and the
@@ -110,16 +130,23 @@ impl Operator for ChatOperator {
             return false;
         }
         // A person is answering this one: no deadline, but the job's token
-        // still ends the wait. `AllowSession` admits this call only — what a
-        // remembered grant means for a job's calls is not decided here, so
-        // nothing is stored.
+        // still ends the wait. `AllowSession` remembers this call's own
+        // `shell:` grant in the job's store and admits the call; a command that
+        // is not one plain segment names no token, so it is admitted for this
+        // call only. `AllowOnce` admits the call and remembers nothing.
         let choice = tokio::select! {
             _ = self.token.cancelled() => return false,
             choice = await_answer(answer, WaitPolicy::Attached) => choice,
         };
-        matches!(
-            choice,
-            Some(ApprovalChoice::AllowOnce | ApprovalChoice::AllowSession { .. })
-        )
+        match choice {
+            Some(ApprovalChoice::AllowSession { .. }) => {
+                if let Some(token) = crate::grant_token::shell_token_for_host_route(arguments) {
+                    self.grants.grant(&token);
+                }
+                true
+            }
+            Some(ApprovalChoice::AllowOnce) => true,
+            _ => false,
+        }
     }
 }

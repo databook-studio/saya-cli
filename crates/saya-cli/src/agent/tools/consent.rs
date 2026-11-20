@@ -21,7 +21,9 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use saya_agent::{ApprovalDecider, CancellationToken, ImmutableAuthorityRefusal, ToolDefinition};
+use saya_agent::{
+    ApprovalDecider, CancellationToken, ImmutableAuthorityRefusal, SessionGrants, ToolDefinition,
+};
 use saya_types::{AgentId, JobId};
 use serde_json::Value;
 
@@ -34,6 +36,14 @@ pub(crate) trait Operator: Send + Sync {
     /// Puts one call to the operator under `subject`, and returns the answer.
     /// A refusal is a normal denial.
     async fn ask(&self, subject: &str, arguments: &Value) -> bool;
+
+    /// The "yes for this run" store this operator records an
+    /// `AllowSession` into, when it keeps one: one per job, shared by every
+    /// caller of that job and living no longer than it. `None` — the default
+    /// — is an operator that remembers nothing, and so pre-answers nothing.
+    fn grants(&self) -> Option<SessionGrants> {
+        None
+    }
 }
 
 /// Who is asking, as the operator's prompt says it: the root's own tool names
@@ -74,11 +84,33 @@ impl Caller {
 pub(crate) struct Prompt {
     operator: Arc<dyn Operator>,
     line: String,
+    /// The store this prompt's operator records a "yes for this run" into,
+    /// read by the policy that owns the prompt to pre-answer a call the store
+    /// remembers. `None` where the operator keeps none.
+    grants: Option<SessionGrants>,
 }
 
 impl Prompt {
     pub(crate) fn new(operator: Arc<dyn Operator>, line: String) -> Self {
-        Self { operator, line }
+        Self {
+            operator,
+            line,
+            grants: None,
+        }
+    }
+
+    /// Pairs the prompt with the store its operator remembers answers in.
+    pub(crate) fn with_grants(mut self, grants: Option<SessionGrants>) -> Self {
+        self.grants = grants;
+        self
+    }
+
+    /// Whether this prompt's store remembers `token`. A prompt with no store
+    /// remembers nothing.
+    pub(crate) fn granted(&self, token: &str) -> bool {
+        self.grants
+            .as_ref()
+            .is_some_and(|grants| grants.is_granted(token))
     }
 
     /// Puts one call to the operator under this prompt's line.
@@ -118,6 +150,12 @@ impl Operator for SerialisedOperator {
         let answer = self.inner.ask(subject, arguments).await;
         drop(guard);
         answer
+    }
+
+    /// The wrapped operator's store: one job serialises its asks, not its
+    /// memory, so the grants a caller records are the ones every caller reads.
+    fn grants(&self) -> Option<SessionGrants> {
+        self.inner.grants()
     }
 }
 

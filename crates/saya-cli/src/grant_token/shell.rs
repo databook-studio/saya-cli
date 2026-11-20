@@ -38,6 +38,15 @@ const LEADING_CD: &str = "cd";
 /// empty, or not one plain segment yields `None` — never a guessed prefix.
 pub(super) fn shell_token(arguments: &Value, host: Option<&HostFacts>) -> Option<String> {
     host?;
+    shell_token_for_host_route(arguments)
+}
+
+/// [`shell_token`] for a caller that knows the host route composed without
+/// holding the route's facts: a shell policy decides the lane itself, so the
+/// one thing the gate says — this host may run the command — is the caller's
+/// own answer. The key is the same one; a caller with no host route names
+/// none.
+pub(crate) fn shell_token_for_host_route(arguments: &Value) -> Option<String> {
     let command = arguments.get("command")?.as_str()?;
     Some(format!("shell:{}", prefix_words(command)?.join(" ")))
 }
