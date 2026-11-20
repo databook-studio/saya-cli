@@ -10,6 +10,10 @@
 //! `run()` stays one job, one root run: it opens the run, runs the task's turn
 //! and closes it. The composition below is the run's one-time setup, held on
 //! the job while the run is open so no turn repeats it.
+//!
+//! The run also keeps the turns it has completed: every turn after the first
+//! replays them as its history, in chat's shape and under chat's bound
+//! (`history`), so a conversation on an open job reads as it does in chat.
 
 use super::{CodingError, NativeCodingJob};
 use crate::agent::hooks::{HookApprovalGate, Hooks};
@@ -20,6 +24,10 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+
+#[path = "parent_history.rs"]
+mod history;
+pub(super) use history::TurnHistory;
 
 /// The open root run of one job: the one-time composition every turn of the
 /// run shares, and whether a turn is running right now.
@@ -124,6 +132,10 @@ pub(super) struct RootSession {
     /// the receiver; a later turn carries none, so steering a root between
     /// turns arrives nowhere until an attached front end owns it.
     pub(super) mailbox: Mutex<Option<AgentMailbox>>,
+    /// The turns this run has completed, in order: what a further turn
+    /// replays as its history, bounded by the run's own context byte budget
+    /// exactly as chat bounds its own.
+    pub(super) history: TurnHistory,
 }
 
 impl NativeCodingJob {

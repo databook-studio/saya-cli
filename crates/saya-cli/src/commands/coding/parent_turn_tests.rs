@@ -166,3 +166,8 @@ async fn a_managed_checkout_job_takes_no_further_turn() {
         "the refusal names the managed checkout: {error}"
     );
 }
+
+/// The conversation a further turn carries, over this module's own fixture
+/// and provider.
+#[path = "parent_turn_history_tests.rs"]
+mod history;

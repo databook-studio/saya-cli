@@ -102,12 +102,19 @@ impl NativeCodingJob {
             crate::agent::preflight_config::request_preflight_config(&config.ai)
                 .map_err(|_| CodingError::InvalidRequest)?,
         );
+        // The prompt as it was sent: the prompt half of the pair a later turn
+        // of this run replays.
+        let asked = prompt.clone();
         let request = AgentRequest {
             prompt,
             profile_names: vec![],
             model: session.model.clone(),
             system_prompt: session.system_prompt.clone(),
-            history: vec![],
+            // Chat's own shape of history — one (prompt, final answer) pair per
+            // completed turn, tool arguments and results never replayed — left
+            // for the shared assembly to bound by this run's context byte
+            // budget, exactly as chat's is bounded.
+            history: session.history.replay(),
             context_blocks: self.continuation_context().await?,
         };
         self.lifecycle().enter("model_loop");
@@ -156,6 +163,11 @@ impl NativeCodingJob {
             .note_elapsed("rewind_checkpoint", started.elapsed());
         match outcome {
             Ok(output) => {
+                // The run keeps this turn for the next one to replay: the
+                // prompt it answered and the answer it settled on, partial
+                // included. A failed or cancelled turn is recorded by
+                // neither chat nor this run.
+                session.history.record(&asked, &output.answer);
                 // A clean progress stop ended the loop `Ok`; the final turn
                 // wrote its best state, and the candidate is prepared as for
                 // a normal finish.

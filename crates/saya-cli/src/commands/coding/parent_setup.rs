@@ -3,7 +3,7 @@
 //! the tools. It runs once per run, however many turns the run takes, so a
 //! further turn never re-opens the workspace it already works in.
 
-use super::parent_turn::RootSession;
+use super::parent_turn::{RootSession, TurnHistory};
 use super::{CodingError, NativeCodingJob};
 use crate::agent::hooks::{HookApprovalGate, HookCaller, HookGate, Hooks};
 use crate::agent::{provider, tools::coding::RootTools};
@@ -120,6 +120,9 @@ impl NativeCodingJob {
             system_prompt,
             model: config.ai.model.clone(),
             mailbox: Mutex::new(Some(mailbox)),
+            // A run opens with no completed turn: its first turn carries no
+            // history, exactly as it always did.
+            history: TurnHistory::new(),
         })
     }
 }
