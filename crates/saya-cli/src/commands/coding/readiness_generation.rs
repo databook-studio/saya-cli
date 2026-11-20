@@ -5,8 +5,10 @@
 //! the view `unknown` instead of failing the read that asked for it. It is not
 //! silent, though: a walk that gave up because entries kept leaving the working
 //! checkout — the class a live checkout produces, and the one the sandbox
-//! probe's own cleanup produces inside it — is reported with its error class and
-//! nothing else. Every other refusal keeps the handling it had.
+//! probe's own cleanup produces inside it — is reported the way this job reports
+//! every non-fatal fact, as one record on its own observation path, carrying the
+//! fixed error class and the phase and nothing else. Every other refusal keeps
+//! the handling it had.
 
 use saya_harness::coding::git::IgnoredPaths;
 use saya_harness::coding::integration::{CandidateError, DeltaError};
@@ -17,26 +19,27 @@ use super::{CodingError, NativeCodingJob, prepare::SourceGeneration};
 /// The generation of an already-verified W, or `None` when the walk refused.
 /// The verification is the one the caller already holds for the delta, so the
 /// binding is not paid twice.
-pub(super) fn generation(
+pub(super) async fn generation(
     job: &NativeCodingJob,
     verified: Option<(&VerifiedCheckout, &IgnoredPaths)>,
 ) -> Option<SourceGeneration> {
     let (verified, ignored) = verified?;
-    reported(job.source_generation_from(verified, ignored))
+    reported(job, job.source_generation_from(verified, ignored)).await
 }
 
 /// The generation, or `None` when the walk refused. A refusal caused by an
-/// entry that vanished under the walk is warned about; the view it feeds stays
-/// `unknown`, which is what it was when every refusal was swallowed.
-pub(super) fn reported(result: Result<SourceGeneration, CodingError>) -> Option<SourceGeneration> {
+/// entry that vanished under the walk is reported on the job's observation
+/// path; the view it feeds stays `unknown`, which is what it was when every
+/// refusal was swallowed.
+pub(super) async fn reported(
+    job: &NativeCodingJob,
+    result: Result<SourceGeneration, CodingError>,
+) -> Option<SourceGeneration> {
     match result {
         Ok(generation) => Some(generation),
         Err(error) => {
             if let Some(class) = vanished_class(&error) {
-                tracing::warn!(
-                    class,
-                    "the source-generation walk gave up on an entry that vanished; readiness stays unknown"
-                );
+                job.record_readiness_walk_gave_up(class).await;
             }
             None
         }

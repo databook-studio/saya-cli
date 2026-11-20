@@ -173,7 +173,7 @@ impl NativeCodingJob {
             _ => Vec::new(),
         };
         let generation =
-            readiness_generation::generation(self, verified.as_deref().zip(ignored.as_ref()));
+            readiness_generation::generation(self, verified.as_deref().zip(ignored.as_ref())).await;
         // W's path and base are fixed for the job's checkout; the outcome's
         // commit walk reads them from here rather than verifying W again.
         let checkout = verified.as_ref().and_then(|verified| {
