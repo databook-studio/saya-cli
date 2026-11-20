@@ -18,7 +18,9 @@
 use super::{CodingError, NativeCodingJob};
 use crate::agent::hooks::{HookApprovalGate, Hooks};
 use crate::agent::tools::coding::RootTools;
-use saya_agent::{AgentEventSink, AgentMailbox, AgentOutput, ToolExecutor};
+use crate::commands::coding::TurnStop;
+use parent_turn_limits::TurnInputs;
+use saya_agent::{AgentEventSink, AgentMailbox, AgentOutput, ToolExecutor, TurnPolicy};
 use saya_harness::coding::worktree::VerifiedCheckout;
 use std::sync::{
     Arc, Mutex,
@@ -28,6 +30,9 @@ use std::sync::{
 #[path = "parent_history.rs"]
 mod history;
 pub(super) use history::TurnHistory;
+
+#[path = "parent_turn_limits.rs"]
+mod parent_turn_limits;
 
 /// The open root run of one job: the one-time composition every turn of the
 /// run shares, and whether a turn is running right now.
@@ -41,6 +46,9 @@ pub(crate) struct RootRun {
     /// The run's composition, present from the first turn until the owner
     /// closes the run. `None` before it and after it.
     session: Mutex<Option<Arc<RootSession>>>,
+    /// The limits a surface set for this run's turns, and how the turn that
+    /// ended most recently ended.
+    inputs: TurnInputs,
 }
 
 impl RootRun {
@@ -49,7 +57,29 @@ impl RootRun {
             running: AtomicBool::new(false),
             turns: AtomicU64::new(0),
             session: Mutex::new(None),
+            inputs: TurnInputs::default(),
         }
+    }
+
+    /// Sets this run's per-turn limits, or clears them: an explicit input a
+    /// surface states before a turn.
+    pub(super) fn set_turn_policy(&self, policy: Option<TurnPolicy>) {
+        self.inputs.set_policy(policy);
+    }
+
+    /// The limits the next turn applies.
+    pub(super) fn turn_policy(&self) -> Option<TurnPolicy> {
+        self.inputs.policy()
+    }
+
+    /// States how the turn that just ended ended, for the surface that ran it.
+    pub(super) fn note_turn_stop(&self, stop: Option<TurnStop>) {
+        self.inputs.note_stop(stop);
+    }
+
+    /// How the turn that ended most recently ended.
+    pub(super) fn turn_stop(&self) -> Option<TurnStop> {
+        self.inputs.stop()
     }
 
     /// The fresh, monotonic number this turn's boundary record carries: 1 for
@@ -213,6 +243,23 @@ impl NativeCodingJob {
         // no downstream sink; the chat surface of a later unit hands it one.
         self.run_turn(&session, &saya_agent::NoopEventSink, prompt.to_owned())
             .await
+    }
+
+    /// Sets the limits every turn of this run applies, or clears them.
+    ///
+    /// An explicit input a surface states before the turn it applies to:
+    /// `None` — the default — is a turn with no turn-scoped budget, which is
+    /// every job turn today.
+    #[allow(dead_code)] // the chat surface of phase 4.6 is its production caller
+    pub(crate) fn set_turn_policy(&self, policy: Option<TurnPolicy>) {
+        self.root_run.set_turn_policy(policy);
+    }
+
+    /// How the turn that ended most recently ended, or `None` for one that
+    /// simply finished.
+    #[allow(dead_code)] // the chat surface of phase 4.6 is its production caller
+    pub(crate) fn turn_stop(&self) -> Option<TurnStop> {
+        self.root_run.turn_stop()
     }
 }
 

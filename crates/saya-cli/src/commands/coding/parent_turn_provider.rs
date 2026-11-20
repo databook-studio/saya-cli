@@ -19,15 +19,23 @@ use std::{
 const HOLD: Duration = Duration::from_secs(60);
 
 /// One request's scripted reply, in the order requests arrive: a `write` call
-/// makes the turn change one file of the working checkout, and a text ends the
-/// turn that asked for it. A request past the script is answered with text, as
-/// an unscripted provider answers every request.
+/// makes the turn change one file of the working checkout, a `read` or a search
+/// call asks for one that changes nothing, and a text ends the turn that asked
+/// for it. A request past the script is answered with text, as an unscripted
+/// provider answers every request.
 pub(super) enum Reply {
     Text(&'static str),
     Write {
         path: &'static str,
         content: &'static str,
     },
+    /// A `write` to a file named for the request that asked for it: a long
+    /// scripted turn that makes progress on every call, with no repeated call.
+    DistinctWrite,
+    /// A `grep` for a pattern nothing matches, named for the request that asked
+    /// for it: a settled call that moves nothing, and is never the same call
+    /// twice, so the no-progress streak grows without tripping the repeat guard.
+    FruitlessGrep,
 }
 
 /// A local scripted provider: every request is one root turn, answered with a
@@ -99,6 +107,19 @@ impl Scripted {
                         &format!("call-{turn}"),
                         "write",
                         &serde_json::json!({"path": path, "content": content}),
+                    ),
+                    Some(Reply::DistinctWrite) => tool_call(
+                        &format!("call-{turn}"),
+                        "write",
+                        &serde_json::json!({
+                            "path": format!("note-{turn}.txt"),
+                            "content": format!("note {turn}\n"),
+                        }),
+                    ),
+                    Some(Reply::FruitlessGrep) => tool_call(
+                        &format!("call-{turn}"),
+                        "grep",
+                        &serde_json::json!({"pattern": format!("nothing-matches-{turn}")}),
                     ),
                     None => answer(&format!("turn {turn} answered")),
                 };

@@ -104,6 +104,18 @@ impl TurnPolicy {
             max_elapsed,
         }
     }
+
+    /// The same four dimensions as the answering engine states them: the
+    /// admission ceilings a turn-scoped scope is armed with, and the elapsed
+    /// deadline its owner arms. The inverse of [`Self::from_answering`].
+    #[must_use]
+    pub fn answering_limits(self) -> AnsweringLimits {
+        AnsweringLimits {
+            max_requests: self.max_requests.map(u64::from),
+            max_tool_calls: self.max_tool_calls.map(u64::from),
+            max_reported_tokens: self.max_known_tokens.map(u64::from),
+        }
+    }
 }
 
 /// One answering ceiling as the policy ceiling that carries it.

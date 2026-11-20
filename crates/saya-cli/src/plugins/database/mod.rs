@@ -19,17 +19,20 @@ mod recall_fixture;
 mod recall_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod turn_policy_tests;
 
 mod job_adapter;
 mod learning;
 mod recall;
+mod turn_policy;
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use saya_agent::{
     AgentEventSink, ContextBlock, RunContext, RunPlugin, RunSurface, TokenUsage, ToolDefinition,
-    ToolExecutor, TurnOutcome,
+    ToolExecutor, TurnOutcome, TurnPolicy,
 };
 use saya_harness::coding::policy::ChildAuthorityView;
 
@@ -40,6 +43,7 @@ use crate::contracts::RecallReceipt;
 
 pub(crate) use learning::LearningSource;
 pub(crate) use recall::RecallSource;
+pub(crate) use turn_policy::SessionBudget;
 
 /// Every database tool name either surface can offer. The registry checks
 /// collisions against this list once, so it is the whole of what the plugin may
@@ -68,10 +72,12 @@ pub(crate) struct ChatDatabaseFlags {
     pub(crate) permit_candidate_writes: bool,
 }
 
-/// The chat surface's toolset and the gates it advertises under.
+/// The chat surface's toolset, the gates it advertises under, and the
+/// `[limits.session]` budget a chat turn of this run is bounded by.
 struct ChatSurface {
     tools: Arc<DatabaseTools>,
     flags: ChatDatabaseFlags,
+    session: SessionBudget,
 }
 
 /// A coding job's toolset and the authority view it serves.
@@ -102,10 +108,19 @@ pub(crate) struct DatabasePlugin {
 }
 
 impl DatabasePlugin {
-    /// The chat surface's database tools.
-    pub(crate) fn for_chat(tools: Arc<DatabaseTools>, flags: ChatDatabaseFlags) -> Self {
+    /// The chat surface's database tools, over the session budget its turns
+    /// are bounded by.
+    pub(crate) fn for_chat(
+        tools: Arc<DatabaseTools>,
+        flags: ChatDatabaseFlags,
+        session: SessionBudget,
+    ) -> Self {
         Self {
-            surface: Surface::Chat(ChatSurface { tools, flags }),
+            surface: Surface::Chat(ChatSurface {
+                tools,
+                flags,
+                session,
+            }),
             recall: None,
             learning: None,
             last_receipt: Mutex::new(None),
@@ -229,6 +244,13 @@ impl RunPlugin for DatabasePlugin {
                 job.view.clone(),
             ))),
         }
+    }
+
+    /// The chat's question budget as the core enforces it: every turn of a chat
+    /// with a database configured is a database question, and its ceilings come
+    /// from `[limits.session]`. A job surface asks for none.
+    fn turn_policy(&self, ctx: &RunContext) -> Option<TurnPolicy> {
+        self.turn_policy_for(ctx)
     }
 
     /// Learns from the turn through the one function the chat's turn calls, and

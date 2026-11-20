@@ -181,6 +181,15 @@ mod records;
 #[path = "parent_turn_rewind_tests.rs"]
 mod rewind_turns;
 
+/// The DB question budget a surface can hand the open run: it stops one turn
+/// and leaves the run taking turns, and a job turn with no policy is uncapped.
+#[path = "parent_turn_budget_tests.rs"]
+mod budget_turns;
+
+/// A progress guard's stop on a turn, which reads as a pause.
+#[path = "parent_turn_pause_tests.rs"]
+mod pause_turns;
+
 /// A detached run still resumes: a finished job is continued, and a job whose
 /// root turn is running refuses without disturbing it.
 #[path = "parent_turn_resume_tests.rs"]
