@@ -83,6 +83,9 @@ pub struct AgentRunControl<'a> {
     pub(super) answering_scope: AnsweringScope,
     pub(super) approval: &'a dyn ApprovalDecider,
     pub(super) sink: &'a dyn AgentEventSink,
+    /// The run's own stop signal. The turn's [`Self::cancellation`] is a child
+    /// of it, so a turn-scoped stop never ends the run.
+    pub(super) run_cancellation: CancellationToken,
     pub(super) cancellation: CancellationToken,
     pub(super) request_preflight: Option<RequestPreflightConfig>,
     pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
@@ -106,13 +109,16 @@ impl<'a> AgentRunControl<'a> {
         sink: &'a dyn AgentEventSink,
         cancellation: CancellationToken,
     ) -> Self {
+        let run = cancellation;
+        let turn = run.turn_of();
         Self {
             mailbox: None,
             limits,
-            answering_scope: AnsweringScope::new(answering, cancellation.clone()),
+            answering_scope: AnsweringScope::new(answering, turn.clone()),
             approval,
             sink,
-            cancellation,
+            run_cancellation: run,
+            cancellation: turn,
             request_preflight: None,
             effect_admission: None,
             require_physical_effect_admission: false,
@@ -142,10 +148,12 @@ impl<'a> AgentRunControl<'a> {
     }
 
     /// Reuses one question's admission counts and stop signal across
-    /// invocations. The scope's limits and token replace this control's fresh
-    /// scope and token.
+    /// invocations, as a child of this run's stop signal: a budget stop cancels
+    /// only that child, so an open run keeps taking turns, while a stop of the
+    /// run still stops the answering work.
     #[must_use]
     pub fn with_answering_scope(mut self, scope: AnsweringScope) -> Self {
+        scope.cancellation_token().follows(&self.run_cancellation);
         self.cancellation = scope.cancellation_token();
         self.answering_scope = scope;
         self

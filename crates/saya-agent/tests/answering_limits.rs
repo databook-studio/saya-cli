@@ -143,5 +143,7 @@ mod shared_scope;
 mod stream_item_limit;
 #[path = "answering_limits/tool_admission.rs"]
 mod tool_admission;
+#[path = "answering_limits/turn_stop.rs"]
+mod turn_stop;
 #[path = "answering_limits/usage_cancellation.rs"]
 mod usage_cancellation;

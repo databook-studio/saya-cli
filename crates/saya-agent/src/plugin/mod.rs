@@ -17,7 +17,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::{AgentEventSink, AgentOutput, ContextBlock, TokenUsage, ToolDefinition, ToolExecutor};
+use crate::{
+    AgentEventSink, AgentOutput, AnsweringLimits, ContextBlock, TokenUsage, ToolDefinition,
+    ToolExecutor,
+};
 
 /// Which surface is running — the fact a plugin keys its activation on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,16 +70,45 @@ pub struct TurnOutcome<'a> {
 
 /// The turn-level limits a plugin asks the core to enforce.
 ///
-/// Minimal on purpose: unit 2.4 extends it (the question budget, elapsed-time
-/// and request ceilings a database turn needs). Each field is optional, and the
-/// registry keeps the tightest value any active plugin asks for, so a plugin can
-/// only ever make a turn cheaper, never more expensive than the core allows.
+/// The four dimensions are the ones an answering surface's budget already
+/// states — provider requests, tool calls, known reported tokens, and elapsed
+/// time — so a database plugin can hand the core its whole question budget.
+/// Each field is optional, and the registry keeps the tightest value any active
+/// plugin asks for, so a plugin can only ever make a turn cheaper, never more
+/// expensive than the core allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TurnPolicy {
     /// The most provider requests the turn may make.
     pub max_requests: Option<u32>,
+    /// The most tool calls the turn may request.
+    pub max_tool_calls: Option<u32>,
+    /// The most reported tokens the turn may know it spent.
+    pub max_known_tokens: Option<u32>,
     /// The longest the turn may run.
     pub max_elapsed: Option<Duration>,
+}
+
+impl TurnPolicy {
+    /// The policy one answering surface's ceilings ask for: the three
+    /// admission dimensions its [`AnsweringLimits`] states, plus the elapsed
+    /// deadline the same table carries — which the answering engine leaves with
+    /// the owner that arms it.
+    ///
+    /// A ceiling above `u32::MAX` saturates: a policy may only tighten.
+    #[must_use]
+    pub fn from_answering(limits: AnsweringLimits, max_elapsed: Option<Duration>) -> Self {
+        Self {
+            max_requests: ceiling(limits.max_requests),
+            max_tool_calls: ceiling(limits.max_tool_calls),
+            max_known_tokens: ceiling(limits.max_reported_tokens),
+            max_elapsed,
+        }
+    }
+}
+
+/// One answering ceiling as the policy ceiling that carries it.
+fn ceiling(limit: Option<u64>) -> Option<u32> {
+    limit.map(|value| u32::try_from(value).unwrap_or(u32::MAX))
 }
 
 /// A built-in plugin: definitions, an executor, untrusted context, turn hooks,

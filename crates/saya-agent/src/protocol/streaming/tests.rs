@@ -82,6 +82,8 @@ impl ChatProvider for CannedProvider {
     }
 }
 
+#[path = "tests/cancellation.rs"]
+mod cancellation;
 #[path = "tests/provider.rs"]
 mod provider;
 #[path = "tests/reasoning.rs"]
