@@ -9,9 +9,12 @@
 
 use super::parent_turn::RootSession;
 use super::{CodingError, NativeCodingJob, map_root_error};
+use crate::budget_wording::budget_dimension;
+use crate::commands::coding::TurnStop;
 use saya_agent::{
-    AgentError, AgentEventSink, AgentOutput, AgentRequest, AgentRunControl, ApprovalDecider,
-    ContextPreamble, ProgressCheck, ProgressHandle, run_agent_with_control,
+    AgentError, AgentEventSink, AgentOutput, AgentRequest, AgentRunControl, AnsweringScope,
+    ApprovalDecider, BudgetDimension, CancellationReason, ContextPreamble, ProgressCheck,
+    ProgressHandle, run_agent_with_control,
 };
 use std::sync::{Arc, Mutex};
 
@@ -70,6 +73,16 @@ impl NativeCodingJob {
             None => session.tools.as_ref(),
         };
         let root_budget = self.ledger.root_view();
+        // The limits a surface set for this run's turns. A turn-scoped
+        // answering scope carries them: its own token is a child of the run's,
+        // so a budget stop ends this turn and leaves the run running.
+        let policy = self.root_run.turn_policy();
+        let turn_budget = policy.map(|policy| {
+            AnsweringScope::new(
+                policy.answering_limits(),
+                saya_agent::CancellationToken::new(),
+            )
+        });
         let control = AgentRunControl::new(
             super::super::limits::agent_limits(config),
             super::super::limits::answering_limits(config),
@@ -107,6 +120,10 @@ impl NativeCodingJob {
             crate::agent::preflight_config::request_preflight_config(&config.ai)
                 .map_err(|_| CodingError::InvalidRequest)?,
         );
+        let control = match turn_budget.as_ref() {
+            Some(scope) => control.with_answering_scope(scope.clone()),
+            None => control,
+        };
         // The prompt as it was sent: the prompt half of the pair a later turn
         // of this run replays.
         let asked = prompt.clone();
@@ -129,14 +146,31 @@ impl NativeCodingJob {
             context_blocks,
         };
         self.lifecycle().enter("model_loop");
-        let outcome = run_agent_with_control(
+        let work = run_agent_with_control(
             session.provider.as_ref(),
             session.executor.as_ref(),
             request,
             session.tools.definitions(),
             control,
-        )
-        .await;
+        );
+        tokio::pin!(work);
+        // The elapsed dimension of the policy is the owner's to arm, as chat
+        // arms its own: the deadline stops the turn's token, not the run's.
+        let outcome = match policy.and_then(|policy| policy.max_elapsed) {
+            Some(deadline) => tokio::select! {
+                biased;
+                outcome = &mut work => outcome,
+                _ = tokio::time::sleep(deadline) => {
+                    if let Some(scope) = turn_budget.as_ref() {
+                        scope.cancellation_token().cancel_with_reason(
+                            CancellationReason::Budget(BudgetDimension::ElapsedTime),
+                        );
+                    }
+                    work.await
+                }
+            },
+            None => work.await,
+        };
         self.lifecycle().enter("after_loop");
         // The root loop has finished: record its progress as durable job
         // events, then the final report, then run the `stop` hooks. Reporting
@@ -179,11 +213,24 @@ impl NativeCodingJob {
                 // included. A failed or cancelled turn is recorded by
                 // neither chat nor this run.
                 session.history.record(&asked, &output.answer);
-                // A clean progress stop ended the loop `Ok`; the final turn
-                // wrote its best state, and the candidate is prepared as for
-                // a normal finish.
-                if let Some(stop) = progress.snapshot().and_then(|snapshot| snapshot.stop) {
-                    self.latch_progress_stop(stop);
+                // The question budget stopped THIS turn, not the run: chat's
+                // partial wording says so, and the next turn is admitted afresh.
+                if let Some(dimension) = turn_budget
+                    .as_ref()
+                    .and_then(|scope| budget_dimension(scope.cancellation_token().reason()))
+                {
+                    self.root_run
+                        .note_turn_stop(Some(TurnStop::budget(dimension)));
+                } else if let Some(stop) = progress.snapshot().and_then(|snapshot| snapshot.stop) {
+                    // A clean progress stop ended the loop `Ok`; the final turn
+                    // wrote its best state, and the candidate is prepared as for
+                    // a normal finish. The stop reads as a pause, with the
+                    // guard's own class and message.
+                    let failure = self.latch_progress_stop(stop);
+                    self.root_run
+                        .note_turn_stop(Some(TurnStop::of_failure(&failure)));
+                } else {
+                    self.root_run.note_turn_stop(None);
                 }
                 Ok(output)
             }
@@ -192,10 +239,17 @@ impl NativeCodingJob {
                 if matches!(error, AgentError::Cancelled)
                     && let Some(failure) = watched.failure()
                 {
+                    self.root_run
+                        .note_turn_stop(Some(TurnStop::of_failure(&failure)));
                     return Err(CodingError::Failed(Box::new(failure)));
                 }
                 let backstop = self.backstop_failure().await;
-                Err(map_root_error(error, config.ai.max_output_tokens, backstop))
+                let error = map_root_error(error, config.ai.max_output_tokens, backstop);
+                self.root_run.note_turn_stop(match &error {
+                    CodingError::Failed(failure) => Some(TurnStop::of_failure(failure)),
+                    _ => None,
+                });
+                Err(error)
             }
         }
     }

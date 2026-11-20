@@ -12,7 +12,7 @@ use saya_agent::{
 use saya_store::SqliteStateStore;
 use saya_types::DatabaseProfile;
 
-use super::{ChatDatabaseFlags, DatabasePlugin};
+use super::{ChatDatabaseFlags, DatabasePlugin, SessionBudget};
 use crate::agent::tools::DatabaseTools;
 use crate::agent::tools::workspace::is_tool_name;
 use crate::commands::coding::database::CodingDatabaseTools;
@@ -29,6 +29,17 @@ const CHAT: RunContext = RunContext {
 };
 
 pub(super) fn chat_plugin() -> DatabasePlugin {
+    chat_plugin_over(chat_session())
+}
+
+/// The chat's `[limits.session]`, resolved from an empty configuration: the
+/// product defaults a chat turn is bounded by.
+pub(super) fn chat_session() -> SessionBudget {
+    SessionBudget::of(&runtime(&scratch("session")))
+}
+
+/// The same, over the `[limits.session]` numbers the test states.
+pub(super) fn chat_plugin_over(session: SessionBudget) -> DatabasePlugin {
     DatabasePlugin::for_chat(
         Arc::new(DatabaseTools::new(None, 100, true)),
         ChatDatabaseFlags {
@@ -36,6 +47,7 @@ pub(super) fn chat_plugin() -> DatabasePlugin {
             has_state_store: true,
             permit_candidate_writes: true,
         },
+        session,
     )
 }
 

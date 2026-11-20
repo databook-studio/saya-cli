@@ -91,6 +91,8 @@ mod task_merge;
 mod task_merge_record;
 mod transcript;
 pub use proposal::CodingApprovalRequest;
+mod turn_stop;
+pub(crate) use turn_stop::TurnStop;
 mod review;
 mod review_diff;
 mod review_in_place;

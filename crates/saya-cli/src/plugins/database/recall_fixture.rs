@@ -6,7 +6,6 @@
 //! tests assert against rather than over a second, drifting fixture.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use saya_agent::{RunContext, RunSurface};
@@ -17,8 +16,7 @@ use saya_types::{
     SqlDialect,
 };
 
-use super::{ChatDatabaseFlags, DatabasePlugin};
-use crate::agent::tools::DatabaseTools;
+use super::DatabasePlugin;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 
 /// The conversation byte budget these tests recall under — the same role the
@@ -120,15 +118,10 @@ pub(super) fn memory(mode: MemoryMode) -> ResolvedMemory {
     }
 }
 
+/// The chat plugin the recall tests drive: the one `tests` builds, so both
+/// files describe the same surface.
 pub(super) fn chat_plugin() -> DatabasePlugin {
-    DatabasePlugin::for_chat(
-        Arc::new(DatabaseTools::new(None, 100, true)),
-        ChatDatabaseFlags {
-            allow_query_data: true,
-            has_state_store: true,
-            permit_candidate_writes: true,
-        },
-    )
+    super::tests::chat_plugin()
 }
 
 /// What a caller sees of a block: everything but the type's identity.

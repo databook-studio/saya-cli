@@ -58,11 +58,12 @@ impl NativeCodingJob {
         };
         self.failures().latch(failure);
     }
-    /// Latches a progress guard's stop. A clean stop returns `Ok` from the
-    /// loop, so the caller reads it from the progress handle rather than an
-    /// error; a hard stop arrives through [`Self::latch_error`].
-    pub(super) fn latch_progress_stop(&self, stop: ProgressStop) {
-        self.failures().latch(progress_failure(stop));
+    /// Latches a progress guard's stop and states it back, so the caller reads the
+    /// guard's class and message. A hard stop arrives through [`Self::latch_error`].
+    pub(super) fn latch_progress_stop(&self, stop: ProgressStop) -> CodingRunFailure {
+        let failure = progress_failure(stop);
+        self.failures().latch(failure.clone());
+        failure
     }
     pub(super) fn latch_schedule(&self, report: &ScheduleReport) {
         let mut failures = self.failures();
@@ -275,7 +276,7 @@ impl NativeCodingJob {
 }
 /// The progress guards that stop a run without failing it: the root loop ended
 /// with the model's last turn, and the job waits for an operator decision.
-fn is_guard(class: Class) -> bool {
+pub(super) fn is_guard(class: Class) -> bool {
     matches!(
         class,
         Class::NoProgress | Class::Repeating | Class::WallClock | Class::Cost
