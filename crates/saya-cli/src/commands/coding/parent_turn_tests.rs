@@ -185,3 +185,7 @@ mod rewind_turns;
 /// root turn is running refuses without disturbing it.
 #[path = "parent_turn_resume_tests.rs"]
 mod resume_turns;
+
+/// What a resume decides before it asks, and the re-read after consent.
+#[path = "parent_turn_resume_consent_tests.rs"]
+mod resume_consent;

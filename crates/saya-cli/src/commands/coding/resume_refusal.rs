@@ -1,9 +1,56 @@
 //! The refusal for a job this application owns whose recovery facts leave no
 //! resume: "not owned" denied a job that is ours and had merely ended.
 
-use super::CodingError;
+use super::{CodingApplication, CodingError};
+use saya_harness::coding::coordinator::inspect_recovery;
 use saya_store::CodingRecoveryStatus;
 use saya_types::{JobId, JobState};
+
+impl CodingApplication {
+    /// The recovery verdict a resume needs before it asks anything or writes
+    /// anything: read-only, and a job that is not clear is refused here, with
+    /// nothing appended. An abandoned wait — the one blocker whose owner is
+    /// gone — is closed first, and the verdict is read again after that.
+    pub(super) async fn clear_for_resume(
+        &self,
+        job: &JobId,
+    ) -> Result<CodingRecoveryStatus, CodingError> {
+        let status = self.recovery(job).await?;
+        if status.clear_for_resume() {
+            return Ok(status);
+        }
+        if !solely_pending_approvals(&status) {
+            return Err(CodingError::not_resumable(job, &status));
+        }
+        self.close_stale_approvals(job).await?;
+        let status = self.recovery(job).await?;
+        if status.clear_for_resume() {
+            return Ok(status);
+        }
+        // A request still waiting for its answer is another resume's live
+        // question, not a fact that leaves this job no resume: that is busy.
+        if solely_pending_approvals(&status) {
+            return Err(CodingError::Busy);
+        }
+        Err(CodingError::not_resumable(job, &status))
+    }
+
+    async fn recovery(&self, job: &JobId) -> Result<CodingRecoveryStatus, CodingError> {
+        inspect_recovery(&self.store, job)
+            .await
+            .map_err(CodingError::owner)
+    }
+}
+
+/// Whether an approval request is the only open fact: a process that died
+/// while waiting on a human, whose run is gone by construction, so closing it
+/// writes into no live run. Every other open fact may belong to one.
+fn solely_pending_approvals(status: &CodingRecoveryStatus) -> bool {
+    status.pending_approvals != 0
+        && status.active_children == 0
+        && status.unresolved_reservations == 0
+        && status.unresolved_checkouts == 0
+}
 
 impl CodingError {
     /// States how the job ended and what is left to do, instead of denying a

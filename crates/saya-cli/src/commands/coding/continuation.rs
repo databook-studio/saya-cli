@@ -70,9 +70,9 @@ impl CodingApplication {
         // never widens or narrows what the operator approved at start.
         let tools = request.tools()?;
         let proposed = self.propose_resume(job).await?.value;
-        // The audit is written before the question is asked and closed with
-        // the answer actually given; an abandoned earlier wait is cleaned first.
-        self.close_stale_approvals(job).await?;
+        // Decide before asking or writing: the verdict is read-only, and the
+        // audit below takes the sequence its own append allocates.
+        self.clear_for_resume(job).await?;
         let audited = self
             .audit_request(
                 job,

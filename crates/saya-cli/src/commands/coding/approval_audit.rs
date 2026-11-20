@@ -19,11 +19,10 @@ use std::{
 /// How long a recorded request is a plausible pending decision.
 const AUDIT_WINDOW_MS: u64 = 10 * 60 * 1000;
 
-/// A recorded request waiting for its closure; `next` is the next free
-/// event sequence of the job's stream.
+/// A recorded request waiting for its closure. The closure's own sequence is
+/// allocated by that append, so nothing here holds a number read earlier.
 pub(super) struct AuditedRequest {
     request_sequence: NonZeroU64,
-    next: u64,
     expires_at_unix_ms: u64,
 }
 
@@ -41,15 +40,13 @@ fn now_ms() -> u64 {
         })
 }
 
-fn sequence(value: u64) -> Result<NonZeroU64, CodingError> {
-    NonZeroU64::new(value).ok_or(CodingError::InvalidRequest)
-}
-
 impl CodingApplication {
     /// Records the request for a job-level decision. Only a `Running` job can
     /// carry the audit (the store refuses anything else), so a paused job is
     /// not audited and `None` comes back. The request names the exact
-    /// proposal by digest.
+    /// proposal by digest, and takes the sequence its append allocates: no
+    /// number this verb read before the append can be taken from the live
+    /// turn it would have to share the stream with.
     pub(super) async fn audit_request(
         &self,
         job: &JobId,
@@ -65,26 +62,28 @@ impl CodingApplication {
         }
         let proposal = digest(&serde_json::to_vec(proposed).map_err(CodingError::owner)?)?;
         let requested = now_ms();
-        let request_sequence = sequence(status.last_sequence + 1)?;
-        let request = ApprovalRequestV1::new_for_coordinator(
-            job.clone(),
-            request_sequence,
-            ApprovalRequestContext::new(
-                proposal.clone(),
-                epoch,
-                requested,
-                requested.saturating_add(AUDIT_WINDOW_MS),
-            )
-            .map_err(CodingError::owner)?,
-            ApprovalScope::job_operation(action, proposal),
-        )
-        .map_err(CodingError::owner)?;
-        let expires_at_unix_ms = request.expires_at_unix_ms();
-        match self
+        let mut request_sequence = None;
+        let mut expires_at_unix_ms = 0;
+        let appended = self
             .store
-            .record_coding_approval_request(
+            .record_coding_approval_request_at_next_sequence(job, |sequence| {
+                let request = ApprovalRequestV1::new_for_coordinator(
+                    job.clone(),
+                    sequence,
+                    ApprovalRequestContext::new(
+                        proposal.clone(),
+                        epoch,
+                        requested,
+                        requested.saturating_add(AUDIT_WINDOW_MS),
+                    )
+                    .map_err(|_| StoreError::Invalid)?,
+                    ApprovalScope::job_operation(action, proposal.clone()),
+                )
+                .map_err(|_| StoreError::Invalid)?;
+                expires_at_unix_ms = request.expires_at_unix_ms();
+                request_sequence = Some(sequence);
                 CodingEventV1::new(
-                    request_sequence,
+                    sequence,
                     job.clone(),
                     None,
                     None,
@@ -92,17 +91,17 @@ impl CodingApplication {
                         request: Box::new(request),
                     },
                 )
-                .map_err(CodingError::owner)?,
-            )
-            .await
-        {
+                .map_err(|_| StoreError::Invalid)
+            })
+            .await;
+        match appended {
             Ok(_) => {}
             Err(StoreError::Conflict) => return Err(CodingError::Busy),
             Err(error) => return Err(CodingError::owner(error)),
         }
+        let request_sequence = request_sequence.ok_or(CodingError::InvalidRequest)?;
         Ok(Some(AuditedRequest {
             request_sequence,
-            next: request_sequence.get() + 1,
             expires_at_unix_ms,
         }))
     }
@@ -114,7 +113,7 @@ impl CodingApplication {
         request: AuditedRequest,
         disposition: ApprovalDisposition,
     ) -> Result<(), CodingError> {
-        self.close_audit(job, request.request_sequence, request.next, disposition)
+        self.close_audit(job, request.request_sequence, disposition)
             .await
     }
 
@@ -122,23 +121,22 @@ impl CodingApplication {
         &self,
         job: &JobId,
         request_sequence: NonZeroU64,
-        at: u64,
         disposition: ApprovalDisposition,
     ) -> Result<(), CodingError> {
         self.store
-            .close_coding_approval(
+            .close_coding_approval_at_next_sequence(job, |sequence| {
                 CodingEventV1::new(
-                    sequence(at)?,
+                    sequence,
                     job.clone(),
                     None,
                     None,
                     CodingEventKind::ApprovalClosed {
                         request_sequence,
-                        disposition,
+                        disposition: disposition.clone(),
                     },
                 )
-                .map_err(CodingError::owner)?,
-            )
+                .map_err(|_| StoreError::Invalid)
+            })
             .await
             .map_err(CodingError::owner)?;
         Ok(())
@@ -161,7 +159,6 @@ impl CodingApplication {
             return Ok(());
         }
         let now = now_ms();
-        let mut next = status.last_sequence + 1;
         let mut cursor = None;
         loop {
             let page = self
@@ -175,11 +172,9 @@ impl CodingApplication {
                 self.close_audit(
                     job,
                     record.request.request_sequence(),
-                    next,
                     ApprovalDisposition::Expired,
                 )
                 .await?;
-                next += 1;
             }
             match page.next_cursor {
                 Some(after) if Some(after) != cursor => cursor = Some(after),
