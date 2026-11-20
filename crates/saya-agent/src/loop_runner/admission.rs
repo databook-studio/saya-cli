@@ -152,6 +152,8 @@ impl Admission {
         token: &CancellationToken,
         dimension: BudgetDimension,
     ) -> Result<T, AgentError> {
+        // The token is the turn's, never the run's: a budget stop ends one
+        // turn's answering work and nothing else the run owns.
         token.cancel_with_reason(CancellationReason::Budget(dimension));
         match token.reason() {
             Some(CancellationReason::Budget(_)) => {

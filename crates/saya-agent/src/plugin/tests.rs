@@ -9,6 +9,8 @@ mod declared_tools;
 
 #[path = "tests/turn_finish.rs"]
 mod turn_finish;
+#[path = "tests/turn_policy.rs"]
+mod turn_policy;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,7 +29,7 @@ async fn an_inactive_plugin_contributes_nothing() {
         .blocks(vec![block("db-recall", 10)])
         .policy(TurnPolicy {
             max_requests: Some(3),
-            max_elapsed: None,
+            ..Default::default()
         })
         .logging(calls.clone());
     let registry = PluginRegistry::new(vec![Arc::new(plugin)], &["shell"]).expect("no collision");
@@ -164,10 +166,11 @@ fn turn_policy_takes_the_tightest_field() {
     let generous = FakePlugin::new("generous", true).policy(TurnPolicy {
         max_requests: Some(6),
         max_elapsed: Some(Duration::from_secs(90)),
+        ..Default::default()
     });
     let strict = FakePlugin::new("strict", true).policy(TurnPolicy {
         max_requests: Some(4),
-        max_elapsed: None,
+        ..Default::default()
     });
     let silent = FakePlugin::new("silent", true);
     let registry = PluginRegistry::new(
@@ -181,6 +184,8 @@ fn turn_policy_takes_the_tightest_field() {
         active.turn_policy(),
         Some(TurnPolicy {
             max_requests: Some(4),
+            max_tool_calls: None,
+            max_known_tokens: None,
             max_elapsed: Some(Duration::from_secs(90)),
         })
     );
@@ -193,7 +198,7 @@ fn turn_policy_is_none_when_no_plugin_sets_one() {
     let silent = FakePlugin::new("silent", true);
     let inactive = FakePlugin::new("inactive", false).policy(TurnPolicy {
         max_requests: Some(1),
-        max_elapsed: None,
+        ..Default::default()
     });
     let registry =
         PluginRegistry::new(vec![Arc::new(silent), Arc::new(inactive)], &[]).expect("distinct");

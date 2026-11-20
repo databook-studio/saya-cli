@@ -179,6 +179,11 @@ impl ActivePlugins {
             policy = Some(match policy {
                 Some(tightest) => TurnPolicy {
                     max_requests: tightest_of(tightest.max_requests, asked.max_requests),
+                    max_tool_calls: tightest_of(tightest.max_tool_calls, asked.max_tool_calls),
+                    max_known_tokens: tightest_of(
+                        tightest.max_known_tokens,
+                        asked.max_known_tokens,
+                    ),
                     max_elapsed: tightest_of(tightest.max_elapsed, asked.max_elapsed),
                 },
                 None => asked,
