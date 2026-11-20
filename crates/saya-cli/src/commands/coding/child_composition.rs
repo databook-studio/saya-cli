@@ -129,18 +129,26 @@ impl NativeCodingJob {
             }
             _ => None,
         };
-        // The helper's `shell` follows the job's Ask/Bypass rule; a
-        // helper that cannot write gets a sandbox-only shell with nothing
-        // writable whatever the job's mode. The mode `never` means no shell at
-        // all, and `[tools] allow` narrows it away after composition.
+        // The helper's `shell` follows the job's one mode cell, exactly as the
+        // root's does: a mode the job states while this helper runs decides the
+        // helper's next call. The helper type's capability caps that cell, so a
+        // type that cannot write stays read-only however wide the mode moves.
+        // The mode `never` means no shell at all, and `[tools] allow` narrows it
+        // away after composition.
         let shell = (self.approval_policy() != ApprovalPolicy::Never).then(|| HelperShell {
-            policy: shape.shell_policy(self.approval_policy()),
+            mode: self.approval_mode(),
+            // The cap the type states about itself, read without the job's own
+            // mode: `Bypass` asks for the job's mode unchanged, and this
+            // narrows that answer to `ReadOnly` for a type that cannot write.
+            capability: shape.shell_policy(ApprovalPolicy::Bypass),
             operator: self.operator(),
             spool: Some(self.records.clone()),
         });
         // The helper's web lane follows the job's mode and nothing else: a
         // helper is one more caller on the job's own egress, and a helper that
-        // cannot write fetches the same read a root does. A mode that reaches
+        // cannot write fetches the same read a root does. Like the root's own
+        // web lane it states that mode once, at composition; the mode cell a
+        // helper's `shell` reads is not this lane's input. A mode that reaches
         // no host — or no wire having been composed — means no web tool at
         // all. Whether the lane also holds `web_search` is the egress's own
         // answer, so it is the same for every caller of this job.
