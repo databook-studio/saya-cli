@@ -4,12 +4,23 @@
 //! only on a yes. Time is paused wherever a wait is involved, so no test
 //! really waits.
 
+use super::chat_operator::ChatOperator;
 use super::chat_prompt_fixture::{frame, helper_subject, root_subject};
 use crate::agent::tools::consent::{Operator, SerialisedOperator};
 use saya_agent::ApprovalChoice;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Puts one call to a held operator, from its own task, as a job's shell does.
+fn ask(
+    operator: &Arc<ChatOperator>,
+    subject: String,
+    arguments: Value,
+) -> tokio::task::JoinHandle<bool> {
+    let operator: Arc<dyn Operator> = operator.clone();
+    tokio::spawn(async move { operator.ask(&subject, &arguments).await })
+}
 
 #[tokio::test]
 async fn a_job_egress_question_reaches_the_chat_approval_prompt() {
@@ -71,28 +82,122 @@ async fn cancelling_the_job_refuses_a_pending_question() {
     assert!(!asked.await.unwrap(), "cancellation is a refusal");
 }
 
-/// `AllowSession` admits this call and remembers nothing: the next identical
-/// call is asked again.
+/// `AllowSession` admits this call and remembers nothing it could not name: a
+/// command that is not one plain segment has no `shell:` token, so the job's
+/// store stays empty and the next call is asked again.
 #[tokio::test]
-async fn an_allow_session_admits_only_this_call() {
+async fn an_allow_session_admits_a_call_it_cannot_remember() {
     let mut frame = frame();
-    let arguments = json!({"command": "cargo test"});
-    let first = frame.ask(root_subject(), arguments.clone());
+    let operator = Arc::new(frame.operator());
+    let arguments = json!({"command": "cargo test && rm -rf x"});
+    let first = ask(&operator, root_subject(), arguments.clone());
     frame.until_asked().await;
     frame.answer(ApprovalChoice::AllowSession {
-        token: "command:cargo".into(),
+        token: "shell:cargo test".into(),
     });
     assert!(first.await.unwrap(), "AllowSession admits this call");
+    let grants = operator
+        .grants()
+        .expect("the operator keeps the job's store");
+    assert!(
+        grants.is_empty(),
+        "a compound command names no token to remember: {:?}",
+        grants.tokens()
+    );
 
-    let second = frame.ask(root_subject(), arguments.clone());
+    let second = ask(&operator, root_subject(), arguments);
     frame.until_asked().await;
     let (tool, _, _) = frame.question();
     assert_eq!(tool, root_subject(), "the next identical call asks again");
     frame.answer(ApprovalChoice::Deny);
-    assert!(
-        !second.await.unwrap(),
-        "the remembered answer never answers it"
+    assert!(!second.await.unwrap(), "the store never answers it");
+}
+
+/// `AllowSession` records the call's own `shell:` grant, so a later call of the
+/// same prefix is answered by the store rather than by the person.
+#[tokio::test]
+async fn an_allow_session_remembers_the_call_for_the_job() {
+    let mut frame = frame();
+    let operator = Arc::new(frame.operator());
+    let first = ask(
+        &operator,
+        root_subject(),
+        json!({"command": "cargo test -p x"}),
     );
+    frame.until_asked().await;
+    frame.answer(ApprovalChoice::AllowSession {
+        token: "shell:cargo test".into(),
+    });
+    assert!(first.await.unwrap(), "AllowSession admits this call");
+    let grants = operator
+        .grants()
+        .expect("the operator keeps the job's store");
+    assert!(
+        grants.is_granted("shell:cargo test"),
+        "the call's own token is remembered: {:?}",
+        grants.tokens()
+    );
+}
+
+/// `AllowOnce` is one call and no memory: the job's store stays empty. Denial
+/// likewise.
+#[tokio::test]
+async fn an_allow_once_remembers_nothing() {
+    let mut frame = frame();
+    let operator = Arc::new(frame.operator());
+    let first = ask(
+        &operator,
+        root_subject(),
+        json!({"command": "cargo test -p x"}),
+    );
+    frame.until_asked().await;
+    frame.answer(ApprovalChoice::AllowOnce);
+    assert!(first.await.unwrap(), "AllowOnce admits this call");
+    let grants = operator
+        .grants()
+        .expect("the operator keeps the job's store");
+    assert!(
+        grants.is_empty(),
+        "one call remembers nothing: {:?}",
+        grants.tokens()
+    );
+
+    let second = ask(
+        &operator,
+        root_subject(),
+        json!({"command": "cargo test -p x"}),
+    );
+    frame.until_asked().await;
+    frame.answer(ApprovalChoice::Deny);
+    assert!(!second.await.unwrap());
+    assert!(grants.is_empty(), "a denial remembers nothing either");
+}
+
+/// The store is the job's, not the operator's to answer from: the operator
+/// itself still asks, so the shell policy is the one place a remembered answer
+/// can pre-answer a call — after its rules and its mode.
+#[tokio::test]
+async fn an_allow_session_does_not_answer_the_next_call_itself() {
+    let mut frame = frame();
+    let operator = Arc::new(frame.operator());
+    let arguments = json!({"command": "cargo test"});
+    let first = ask(&operator, root_subject(), arguments.clone());
+    frame.until_asked().await;
+    frame.answer(ApprovalChoice::AllowSession {
+        token: "shell:cargo test".into(),
+    });
+    assert!(first.await.unwrap(), "AllowSession admits this call");
+
+    let second = ask(&operator, root_subject(), arguments);
+    frame.until_asked().await;
+    let (tool, _, _) = frame.question();
+    assert_eq!(
+        tool,
+        root_subject(),
+        "the next call is put to a person again"
+    );
+    frame.answer(ApprovalChoice::Deny);
+    assert!(!second.await.unwrap());
 }
 
 /// Two callers ask at once — the root and a helper — and the single-pending

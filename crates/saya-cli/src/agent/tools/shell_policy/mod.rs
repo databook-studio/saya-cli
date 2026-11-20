@@ -73,6 +73,10 @@ mod view;
 mod concurrency_tests;
 
 #[cfg(test)]
+#[path = "policy_grant_tests.rs"]
+mod policy_grant_tests;
+
+#[cfg(test)]
 #[path = "policy_tests.rs"]
 mod policy_tests;
 

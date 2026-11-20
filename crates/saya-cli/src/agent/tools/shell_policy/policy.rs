@@ -49,9 +49,11 @@ pub(crate) enum Lane {
     /// the sandbox, and a mode that serves it by its own rule (`read-only`),
     /// carry `None`: nothing was taken from them.
     Sandbox(Option<&'static str>),
-    /// The host, with whether a permission rule pre-answered the call. A
-    /// rule-allowed call takes this lane under `ask` without reaching the
-    /// operator; every other host call reaches the mode's own decision.
+    /// The host, with whether something other than the operator pre-answered
+    /// the call: a permission rule, or a `shell:` grant this job remembered
+    /// from an earlier "yes for this run". Either way the call reaches the
+    /// host under `ask` without reaching the operator; every other host call
+    /// reaches the mode's own decision.
     Host(bool),
     /// Refuse, for this reason.
     Refused(String),
@@ -64,10 +66,16 @@ pub(crate) struct ShellPolicy {
     /// The mode every call resolves — the job's shared cell where the composing
     /// surface handed one, and this policy's own otherwise.
     mode: ModeCell,
-    /// The operator's approver for the host lane, when one is present.
+    /// The operator's approver for the host lane, when one is present. Its
+    /// operator also holds the job's remembered grants, which pre-answer a call
+    /// the mode would otherwise ask about.
     prompt: Option<Prompt>,
     /// Whether the shell this policy decides for holds a sandbox lane.
     has_sandbox: bool,
+    /// Whether the composed shell holds a host lane at all: the lane a
+    /// remembered grant names, and the only one it may pre-answer. A shell
+    /// composed under `read-only` holds none.
+    host_lane: bool,
     /// The trusted command-prefix rules. A deny rule refuses in every mode;
     /// an allow rule pre-answers the host lane under `ask`.
     rules: CommandRules,
@@ -88,6 +96,10 @@ impl ShellPolicy {
             mode: ModeCell::new(policy),
             prompt,
             has_sandbox,
+            // The composition adds the host lane in every mode that serves it:
+            // always over the host alone, and over a proven sandbox in every
+            // mode but `read-only`, which has nothing outside it to reach.
+            host_lane: !has_sandbox || policy != ApprovalPolicy::ReadOnly,
             rules,
             workspace,
         }
@@ -114,15 +126,35 @@ impl ShellPolicy {
         }
     }
 
+    /// Whether this job's remembered answers pre-answer this call without the
+    /// operator: the call's own `shell:` token is one the job's store holds.
+    /// Read from the asking arm of [`lane`](Self::lane) only, so a deny rule
+    /// and the mode have each decided first, and only for a shell that holds
+    /// the host lane the token names. A command that is not one plain segment
+    /// names no token, so it never matches.
+    fn remembered(&self, arguments: &Value) -> bool {
+        if !self.host_lane {
+            return false;
+        }
+        let Some(prompt) = &self.prompt else {
+            return false;
+        };
+        crate::grant_token::shell_token_for_host_route(arguments)
+            .is_some_and(|token| prompt.granted(&token))
+    }
+
     /// The lane this call takes, decided once. The mode is read from the
     /// policy's cell on every call, so a mode stated between two calls decides
     /// the second. A deny rule refuses in every mode, `bypass` included. An
     /// allow rule that covers every segment of a substitution-free command
     /// pre-answers the host lane under the asking modes; it never widens
-    /// `read-only` or `never`. Every other call is decided as before: a call
-    /// that named the sandbox on a host that holds one runs there, unasked;
-    /// the two asking modes (`ask`, `accept-edits`) run a host call when an
-    /// operator is there to answer and otherwise fall back to the sandbox when
+    /// `read-only` or `never`. A `shell:` grant the job's operator remembered
+    /// pre-answers the same way, and only here — after the rule and after the
+    /// mode, for a call the mode would otherwise put to the operator. Every
+    /// other call is decided as before: a call that named the sandbox on a host
+    /// that holds one runs there, unasked; the two asking modes (`ask`,
+    /// `accept-edits`) run a host call when an operator is there to answer and
+    /// otherwise fall back to the sandbox when
     /// one is proven, carrying the reason no operator could be asked, and
     /// refusing when none is; `read-only` serves it from the sandbox with the
     /// root write-denied, refusing when no sandbox is proven; and `never` has
@@ -140,16 +172,16 @@ impl ShellPolicy {
         let rule_allowed = self.decision(arguments) == CommandDecision::Allow;
         match self.mode.get() {
             ApprovalPolicy::Bypass => Lane::Host(rule_allowed),
-            ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits
-                if rule_allowed || self.prompt.is_some() =>
-            {
-                Lane::Host(rule_allowed)
-            }
-            ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits if self.has_sandbox => {
-                Lane::Sandbox(Some(SANDBOX_DOWNGRADE_NOTICE))
-            }
             ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => {
-                Lane::Refused(HOST_APPROVAL_UNAVAILABLE.to_owned())
+                let pre_answered =
+                    rule_allowed || (self.prompt.is_some() && self.remembered(arguments));
+                if pre_answered || self.prompt.is_some() {
+                    Lane::Host(pre_answered)
+                } else if self.has_sandbox {
+                    Lane::Sandbox(Some(SANDBOX_DOWNGRADE_NOTICE))
+                } else {
+                    Lane::Refused(HOST_APPROVAL_UNAVAILABLE.to_owned())
+                }
             }
             ApprovalPolicy::ReadOnly if self.has_sandbox => Lane::Sandbox(None),
             ApprovalPolicy::ReadOnly => Lane::Refused(READ_ONLY_REFUSAL.to_owned()),
@@ -159,15 +191,15 @@ impl ShellPolicy {
 
     /// Decides one call. The lane [`lane`](Self::lane) names is allowed
     /// outright — a sandboxed call because the confinement is the consent, a
-    /// rule-allowed host call because the operator stated the prefix, and a
-    /// host call under `bypass` because the mode said so — and only the host
-    /// lane under an asking mode reaches the operator, which is told who is
-    /// asking.
+    /// pre-answered host call because the operator stated the prefix or the job
+    /// remembered the answer, and a host call under `bypass` because the mode
+    /// said so — and only the host lane under an asking mode reaches the
+    /// operator, which is told who is asking.
     pub(crate) async fn approve(&self, arguments: &Value) -> bool {
         match self.lane(arguments) {
             Lane::Sandbox(_) => true,
-            Lane::Host(rule_allowed) => {
-                if rule_allowed {
+            Lane::Host(pre_answered) => {
+                if pre_answered {
                     return true;
                 }
                 // `lane` names the host under an asking mode only when an
@@ -193,11 +225,11 @@ impl ShellPolicy {
 
     /// Whether [`approve`](Self::approve) would put this call to the operator:
     /// only an unallowed host call under an asking mode with an operator
-    /// present. The sandbox lane and a rule-allowed host call are automatic.
+    /// present. The sandbox lane and a pre-answered host call are automatic.
     pub(crate) fn would_ask(&self, arguments: &Value) -> bool {
         match self.lane(arguments) {
-            Lane::Host(rule_allowed) => {
-                !rule_allowed
+            Lane::Host(pre_answered) => {
+                !pre_answered
                     && matches!(
                         self.mode.get(),
                         ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits
