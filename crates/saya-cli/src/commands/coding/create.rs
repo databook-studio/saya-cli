@@ -221,7 +221,7 @@ impl CodingApplication {
             transcript_lock: std::sync::Mutex::new(()),
             root_steering,
             root_mailbox: tokio::sync::Mutex::new(Some(root_mailbox)),
-            root_run: super::parent::RootRun::new(),
+            root_run: super::parent::RootRun::new(request.job_id()),
             failure: std::sync::Mutex::new(super::failure::FailureState::default()),
             preparation: std::sync::Mutex::new(None),
             delegated_children: std::sync::atomic::AtomicUsize::new(0),

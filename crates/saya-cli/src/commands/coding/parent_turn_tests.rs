@@ -185,3 +185,16 @@ mod rewind_turns;
 /// root turn is running refuses without disturbing it.
 #[path = "parent_turn_resume_tests.rs"]
 mod resume_turns;
+
+/// What a resume decides before it asks, and the re-read after consent.
+#[path = "parent_turn_resume_consent_tests.rs"]
+mod resume_consent;
+
+/// A resume never writes into a job its live run owns, and a dead owner's
+/// stale lease still resumes.
+#[path = "parent_turn_open_run_tests.rs"]
+mod open_run;
+
+/// The stale-approval cleanup refuses a live owner in its own path.
+#[path = "parent_turn_stale_approval_tests.rs"]
+mod stale_approval;

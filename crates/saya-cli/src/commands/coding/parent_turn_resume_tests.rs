@@ -28,7 +28,7 @@ async fn resume(application: &Arc<CodingApplication>, id: &JobId) -> Result<Valu
 }
 
 /// The job's runtime epoch, as its authority records it.
-async fn epoch(application: &Arc<CodingApplication>, id: &JobId) -> u64 {
+pub(super) async fn epoch(application: &Arc<CodingApplication>, id: &JobId) -> u64 {
     application
         .store
         .coding_recovery_status(id)
@@ -131,10 +131,21 @@ async fn a_resume_while_the_root_turn_runs_is_refused_without_taking_the_epoch()
     );
     assert_eq!(after.tool_calls, charged.tool_calls, "and no tool call");
 
-    // The attempt writes its approval audit into the job's own durable stream
-    // before the recovery facts refuse it, so the held turn cannot settle
-    // cleanly afterwards; its outcome is not asserted here. Release it, so the
-    // fixture's scripted provider does not wait out its hold.
+    // The refusal decided before it asked or wrote, so the held turn still owns
+    // its stream: it finishes and records exactly one terminal event.
     provider.release();
-    let _ = tokio::time::timeout(RUN, running).await;
+    let held = tokio::time::timeout(RUN, running)
+        .await
+        .expect("the held turn must settle")
+        .expect("the held turn's task must not panic");
+    assert!(held.is_ok(), "the held run must still finish: {held:?}");
+    let terminal = super::records::events(&fixture.job)
+        .await
+        .iter()
+        .filter(|event| super::records::terminal(event.event()))
+        .count();
+    assert_eq!(
+        terminal, 1,
+        "the held run records exactly one terminal event"
+    );
 }
