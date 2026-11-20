@@ -2,26 +2,32 @@ use super::*;
 use saya_agent::{AgentRunControl, AnsweringScope, run_agent_with_control};
 use std::time::Duration;
 
-/// A turn control whose question budget stops it ends as a budget stop, and
-/// that stop belongs to the turn: the run's own token is untouched, so the next
-/// turn on the same run still admits requests.
+/// A turn control whose question scope arms its own budget: the stop ends as
+/// a budget stop, and it belongs to the turn, so the run's own token is
+/// untouched and the next turn on the same run still admits requests.
 #[tokio::test]
 async fn a_budget_stop_ends_the_turn_and_leaves_the_run_alive() {
     let run = CancellationToken::new();
     let sink = RecordingSink::new(run.clone());
     let (provider, requests) = ScriptedProvider::new(vec![turn("must not run", Vec::new())]);
+    let scope = AnsweringScope::new(
+        answering_limits(Some(0), None, None),
+        CancellationToken::new(),
+    );
 
-    let stopped_output = controlled_run(
+    let stopped_output = run_agent_with_control(
         &provider,
         &RecordingExecutor::default(),
-        RunSettings {
-            definitions: definitions(),
-            limits: AgentLimits::default(),
-            answering: answering_limits(Some(0), None, None),
-        },
-        &AllowReadOnlyApproval,
-        &sink,
-        run.clone(),
+        request(),
+        definitions(),
+        AgentRunControl::new(
+            AgentLimits::default(),
+            answering_limits(Some(0), None, None),
+            &AllowReadOnlyApproval,
+            &sink,
+            run.clone(),
+        )
+        .with_answering_scope(scope),
     )
     .await
     .expect("a spent question budget is a typed partial answer");
@@ -43,17 +49,23 @@ async fn a_budget_stop_ends_the_turn_and_leaves_the_run_alive() {
 
     let (next, next_requests) =
         ScriptedProvider::new(vec![turn("the next turn answers", Vec::new())]);
-    let next_output = controlled_run(
+    let next_scope = AnsweringScope::new(
+        answering_limits(Some(4), None, None),
+        CancellationToken::new(),
+    );
+    let next_output = run_agent_with_control(
         &next,
         &RecordingExecutor::default(),
-        RunSettings {
-            definitions: definitions(),
-            limits: AgentLimits::default(),
-            answering: answering_limits(Some(4), None, None),
-        },
-        &AllowReadOnlyApproval,
-        &sink,
-        run.clone(),
+        request(),
+        definitions(),
+        AgentRunControl::new(
+            AgentLimits::default(),
+            answering_limits(Some(4), None, None),
+            &AllowReadOnlyApproval,
+            &sink,
+            run.clone(),
+        )
+        .with_answering_scope(next_scope),
     )
     .await
     .expect("the next turn on the same run answers");
