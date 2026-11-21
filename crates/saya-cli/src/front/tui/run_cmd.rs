@@ -35,6 +35,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::CancelTurn => port.cancel(),
         Cmd::Answer(id, answer) => port.answer(id, answer),
         Cmd::SwitchMode(mode) => port.switch_mode(mode),
+        Cmd::SetMode(mode) => port.switch_mode(mode),
     }
 }
 

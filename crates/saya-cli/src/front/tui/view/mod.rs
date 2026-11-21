@@ -40,6 +40,10 @@
 //! T13 lands the empty transcript (`02` §9): one screen per way a session can have
 //! nothing to show yet, with the examples a connected database suggests read from
 //! today's `starter_questions`.
+//!
+//! T18 lands the mode picker (`02` §8): the six modes of the one consent axis on
+//! one screen, each with the one line it means, and the words a change says —
+//! §3.10's transcript line and §4's toast.
 
 mod blocks;
 mod blocks_question;
@@ -52,6 +56,8 @@ mod empty_lines;
 mod empty_welcome;
 mod help;
 mod help_keys;
+pub(crate) mod mode_picker;
+pub(crate) mod mode_words;
 mod palette;
 mod palette_frame;
 mod palette_match;
@@ -88,6 +94,8 @@ pub(crate) use composer_frame::rows;
 pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]
 pub(crate) use help::{Context, rows as help_rows};
+#[allow(unused_imports)]
+pub(crate) use mode_picker::{ModePicker, ROWS as MODE_PICKER_ROWS, rows as mode_picker_rows};
 #[allow(unused_imports)]
 pub(crate) use palette::Palette;
 #[allow(unused_imports)]
@@ -152,6 +160,10 @@ mod help_fixture;
 #[cfg(test)]
 #[path = "help_tests.rs"]
 mod help_tests;
+
+#[cfg(test)]
+#[path = "mode_picker_tests.rs"]
+mod mode_picker_tests;
 
 #[cfg(test)]
 #[path = "palette_fixture.rs"]

@@ -8,6 +8,7 @@ use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::update::update;
 use crate::chat::{ChatEvent, ChatOutcome, Question};
+use crate::front::Entry;
 
 /// One press, as the input thread would hand it over.
 fn key(code: KeyCode, modifiers: KeyModifiers) -> Msg {
@@ -54,4 +55,40 @@ pub(super) fn card(id: u64) -> Msg {
 /// One turn ending as the session reports it.
 pub(super) fn turn_ended() -> Msg {
     Msg::Chat(ChatEvent::TurnEnded(ChatOutcome::Answered))
+}
+
+/// One press of a bare key, as the picker reads it.
+pub(super) fn press(code: KeyCode) -> Msg {
+    key(code, KeyModifiers::NONE)
+}
+
+/// A model with `/mode` typed into the composer and the picker opened by it.
+pub(super) fn picker_open() -> Model {
+    let mut model = Model::default();
+    typed(&mut model, "/mode");
+    let cmds = update(&mut model, enter());
+    assert!(
+        cmds.is_empty(),
+        "opening the picker is not a turn: {cmds:?}"
+    );
+    assert!(
+        model.overlay_open(),
+        "/mode with no argument opens the picker"
+    );
+    model
+}
+
+/// The `mode:` lines the transcript holds, oldest first.
+pub(super) fn mode_lines(model: &Model) -> Vec<String> {
+    model
+        .turns()
+        .iter()
+        .flat_map(|turn| turn.entries())
+        .filter_map(|entry| match entry {
+            Entry::Notice(notice) if notice.message.starts_with("mode: ") => {
+                Some(notice.message.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }

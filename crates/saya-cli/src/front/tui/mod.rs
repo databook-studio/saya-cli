@@ -18,12 +18,14 @@
 pub(crate) mod cards_keys;
 pub(crate) mod keys;
 pub(crate) mod model;
+pub(crate) mod model_overlay;
 pub(crate) mod msg;
 pub(crate) mod run;
 pub(crate) mod run_clock;
 pub(crate) mod run_cmd;
 pub(crate) mod run_draw;
 pub(crate) mod run_draw_card;
+pub(crate) mod run_draw_overlay;
 pub(crate) mod run_front;
 pub(crate) mod run_input;
 pub(crate) mod run_panic;
@@ -42,6 +44,8 @@ pub(crate) use cards_keys::{CARD_PAGE_ROWS, CardIntent, card_intent};
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
 pub(crate) use model::Model;
+#[allow(unused_imports)]
+pub(crate) use model_overlay::Overlay;
 #[allow(unused_imports)]
 pub(crate) use msg::{Cmd, Msg, Worker};
 #[allow(unused_imports)]
@@ -76,6 +80,14 @@ mod update_fixture;
 mod update_tests;
 
 #[cfg(test)]
+#[path = "update_mode_tests.rs"]
+mod update_mode_tests;
+
+#[cfg(test)]
+#[path = "update_cycle_tests.rs"]
+mod update_cycle_tests;
+
+#[cfg(test)]
 #[path = "run_fixture.rs"]
 pub(crate) mod run_fixture;
 
@@ -86,6 +98,10 @@ pub(crate) mod run_fixture_port;
 #[cfg(test)]
 #[path = "run_tests.rs"]
 mod run_tests;
+
+#[cfg(test)]
+#[path = "run_mode_tests.rs"]
+mod run_mode_tests;
 
 #[cfg(test)]
 #[path = "run_draw_tests.rs"]

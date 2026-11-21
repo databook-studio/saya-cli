@@ -61,4 +61,8 @@ pub(crate) enum Cmd {
     Answer(u64, Answer),
     /// State a mode on the run's cell.
     SwitchMode(PermissionMode),
+    /// State the mode an operator chose in the picker (`02` §8). Performers
+    /// route it to the same switch as [`Cmd::SwitchMode`]: the cycle and the
+    /// picker differ only in how the mode was chosen.
+    SetMode(PermissionMode),
 }

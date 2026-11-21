@@ -13,6 +13,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::cards_keys::{self, CardIntent};
 use super::model::Model;
+use super::model_overlay::Overlay;
 use crate::agent::tools::consent::Answer;
 
 /// What the surface says when a mode switch is asked for over an open card.
@@ -44,16 +45,46 @@ pub(crate) enum Intent {
     ScrollCard(isize),
     /// Walk the mode cycle to its next member.
     CycleMode,
+    /// Move the mode picker's selection one row up.
+    ModeUp,
+    /// Move the mode picker's selection one row down.
+    ModeDown,
+    /// State the mode the picker's selected row names.
+    ModeSet,
+    /// Close the picker without stating anything.
+    ModeCancel,
     /// Say this instead of doing anything: the state the press met refuses it.
     Refused(&'static str),
 }
 
 /// What `key` means to `model` now, or nothing at all.
 pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
+    if let Some(overlay) = model.overlay() {
+        return overlay_key(overlay, key);
+    }
     if model.card().is_some() {
         return card_key(model, key);
     }
     composer_key(model, key)
+}
+
+/// The open pane's keys: while one is up it owns the keyboard, so no press can
+/// reach the composer behind it.
+fn overlay_key(overlay: &Overlay, key: KeyEvent) -> Option<Intent> {
+    match overlay {
+        Overlay::Mode(_) => mode_key(key),
+    }
+}
+
+/// `/mode`'s picker: ↑↓ choose, Enter set, Esc cancel (`02` §8).
+fn mode_key(key: KeyEvent) -> Option<Intent> {
+    match key.code {
+        KeyCode::Up => Some(Intent::ModeUp),
+        KeyCode::Down => Some(Intent::ModeDown),
+        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::ALT) => Some(Intent::ModeSet),
+        KeyCode::Esc => Some(Intent::ModeCancel),
+        _ => None,
+    }
 }
 
 /// The card's keys: its own answers (`cards_keys`), and a refusal of the one
