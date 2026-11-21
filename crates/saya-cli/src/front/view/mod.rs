@@ -16,7 +16,7 @@ pub(crate) use entry::{
 #[allow(unused_imports)]
 pub(crate) use reduce::apply;
 #[allow(unused_imports)]
-pub(crate) use steps::{folded_summary, step_line};
+pub(crate) use steps::{elapsed_text, folded_summary, step_line};
 #[allow(unused_imports)]
 pub(crate) use steps_sql::one_line as sql_one_line;
 

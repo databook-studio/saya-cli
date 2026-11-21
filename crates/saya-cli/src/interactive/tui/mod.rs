@@ -83,3 +83,5 @@ pub(crate) use session::{TrustOutcome, TuiSession, run};
 pub(crate) use complete::{Candidate, slash_candidates};
 #[allow(unused_imports)]
 pub(crate) use input::InputBuffer;
+#[allow(unused_imports)]
+pub(crate) use ui::surface::markdown_spans_fenced;
