@@ -165,6 +165,7 @@ pub(super) fn inputs(plugin: Arc<TestPlugin>) -> TurnInputs {
         plugins: Some(RunPlugins {
             registry: registry(plugin),
             context: chat(),
+            primary: None,
         }),
         seed: Vec::new(),
     }
