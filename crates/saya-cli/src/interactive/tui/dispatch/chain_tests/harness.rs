@@ -199,6 +199,8 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
         "rotate" => "/rotate",
         "preferences" => "/preferences",
         "recovery" => "/recovery",
+        "undo" => "/undo",
+        "rewind" => "/rewind",
         "resume" => "/resume 20260101-000000-abc",
         "setup" => "/setup",
         "reload" => "/reload",

@@ -17,6 +17,7 @@ mod operator;
 mod ops;
 mod ops_context;
 mod ops_rewind;
+mod ops_rewind_run;
 mod port;
 mod queue;
 mod rollover;
@@ -46,7 +47,9 @@ pub(crate) use ops::{ChatOps, Fate, Op, OpResult};
 #[allow(unused_imports)]
 pub(crate) use ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest, SessionOp};
 #[allow(unused_imports)]
-pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, RunCheckpoints, rewind, undo};
+pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, rewind, undo};
+#[allow(unused_imports)]
+pub(crate) use ops_rewind_run::RunCheckpoints;
 #[allow(unused_imports)]
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]
