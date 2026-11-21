@@ -2,9 +2,9 @@
 //!
 //! The palette keeps no command list of its own. Every row is read from
 //! [`catalog::CATALOGUE`], filtered to the rows the `/help` listing carries
-//! (`listed`) and the TUI can run (`surfaces`), and scored with the same fuzzy
-//! matcher the `/` popup uses, so a name, a description or a surface never has
-//! a second definition to drift from.
+//! (`listed`), is not hidden (`hidden`) and the TUI can run (`surfaces`), and
+//! scored with the same fuzzy matcher the `/` popup uses, so a name, a
+//! description or a surface never has a second definition to drift from.
 //!
 //! A query is matched against every spelling a command answers to: the
 //! canonical name first, then its aliases. An alias that scores *better* than
@@ -46,7 +46,7 @@ pub(crate) fn entries_in(table: &[CommandSpec], query: &str) -> Vec<Entry> {
         .iter()
         .filter_map(|spec| {
             let (usage, _rank) = spec.listed?;
-            if !spec.surfaces.covers(Surface::Tui) {
+            if spec.hidden || !spec.surfaces.covers(Surface::Tui) {
                 return None;
             }
             let (score, alias) = best(spec, query)?;

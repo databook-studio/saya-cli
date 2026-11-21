@@ -224,9 +224,10 @@ fn setup_is_the_one_full_screen_only_command() {
     }
 }
 
-/// The `/help` listing is a view of the catalogue: every canonical row is
+/// The `/help` listing is a view of the catalogue: every visible row is
 /// listed, carries a description and its own usage line, ranks are unique,
-/// and the folded aliases are the only names the listing does not show.
+/// and the folded aliases are the only names the listing does not show. A
+/// hidden row keeps its listing data and prints nothing.
 #[test]
 fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
     let mut ranks: Vec<u8> = Vec::new();
@@ -244,9 +245,17 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
             "/{} is listed without a description",
             spec.name
         );
+        if spec.hidden {
+            assert!(
+                catalog::entries().all(|entry| entry.name != spec.name),
+                "the hidden /{} is offered by the lookup",
+                spec.name
+            );
+            continue;
+        }
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 48, "the listing shows 48 of today's 63 names");
+    assert_eq!(ranks.len(), 45, "the listing shows 45 of today's 63 names");
     assert_eq!(
         catalog::names().count(),
         63,

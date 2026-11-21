@@ -6,10 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// the spelling today's `/help` listing shows: K5 folded `/rotate` into
 /// `/compact --new-session` and `/context` into `/status`, and the listing
 /// prints the canonical rows (the aliases stay in the popup, with their own
-/// descriptions).
+/// descriptions). K8 hid `/recovery` from the listing while keeping the
+/// command and its documentation, so it is named here only where the listing
+/// prints it — nowhere.
 pub(crate) const Q04_COMMANDS: &[&str] = &[
     "/notes",
-    "/recovery",
     "/compact [--new-session]",
     "/reload",
     "/setup",

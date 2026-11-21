@@ -8,7 +8,12 @@
 /// section after `/clear`, where the run's checkpoints are undone. K5 folds
 /// `/history` into `/sessions`, `/rotate` into `/compact [--new-session]`, and
 /// `/usage`, `/workspace`, `/context` into the one `/status` row (all five are
-/// catalogue aliases now). Any other difference is a regression.
+/// catalogue aliases now). K8 is the last deliberate move: `/run`, `/runs`
+/// (O5 — out of scope for the new TUI, which points at `saya run`) and
+/// `/recovery` (O6 — hidden this release, removed next) are hidden rows, so
+/// their three lines leave the listing, and the `Runs` heading leaves with the
+/// only two rows it had — a heading with nothing under it is not a listing.
+/// Any other difference is a regression.
 #[test]
 fn help_listing_is_byte_identical() {
     assert_eq!(help_text(), LISTING);
@@ -64,7 +69,6 @@ Session
   /thinking [on|off] — Toggle display of the model's chain-of-thought
   /tasks [clear] — Show the session's task list, or clear it with /tasks clear
   /notes [set <text>|clear] — Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember
-  /recovery [on|off|list|diff <id>|restore <id>] — Record file edits so you can undo them; list, preview and restore
   /help [command] — Show help for slash commands
   /exit  (alias /quit) — Exit the REPL
 
@@ -72,8 +76,4 @@ Memory
   /contracts <list|show|queue|confirm|reject|confirm-all|export|import> — The knowledge store: list every contract, show one object's contract, review and decide the queue, and export or import the context
   /remember <table> <kind> <value…> — Store a confirmed contract claim
   /forget <id> — Tombstone a contract claim so recall excludes it
-  /preferences [list|add <text>|edit <id> <text>|forget <id>|forget-all] — Explicit per-worktree guidance you confirmed: list, add, edit, forget; never permissions; separate from /remember
-
-Runs
-  /run <goal…> --allow <scopes> — Start or operate a headless run from the session
-  /runs [id] — List runs, or show one run by id"#;
+  /preferences [list|add <text>|edit <id> <text>|forget <id>|forget-all] — Explicit per-worktree guidance you confirmed: list, add, edit, forget; never permissions; separate from /remember"#;
