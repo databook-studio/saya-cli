@@ -54,10 +54,8 @@ use crate::contracts::RecallReceipt;
 
 pub(crate) use learning::LearningSource;
 pub(crate) use recall::RecallSource;
-// The two surfaces' constructors and gates live in `surface`; the tests build
-// a chat plugin through them, so the flag type is re-exported for test runs
-// only — the plugin's own code never names it.
-#[cfg(test)]
+// The two surfaces' constructors and gates live in `surface`; the chat's gate
+// type is composed by the chat's own composition, so it is reachable there.
 pub(crate) use surface::ChatDatabaseFlags;
 pub(crate) use turn_policy::SessionBudget;
 

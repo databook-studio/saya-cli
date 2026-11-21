@@ -56,7 +56,8 @@ impl NativeCodingJob {
         // lane's own, stated once, so it cannot drift from the plugin's
         // activation.
         if let Some(supplied) = inputs.plugins.as_ref()
-            && let Some(lane) = DbApprovalLane::for_run(self, &supplied.context)
+            && let Some(lane) =
+                DbApprovalLane::for_run(self, &supplied.context, supplied.primary.clone())
         {
             tools.attach_db_lane(Arc::new(lane));
         }

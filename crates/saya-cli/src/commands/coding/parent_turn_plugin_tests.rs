@@ -162,6 +162,7 @@ async fn the_root_turn_consults_the_registry_it_is_given() {
                 surface: RunSurface::Chat,
                 database_profiles: 0,
             },
+            primary: None,
         }),
         seed: Vec::new(),
     };

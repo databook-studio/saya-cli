@@ -7,6 +7,8 @@
 //! Presentation-free: a front decides how any of it looks, so nothing here
 //! names a terminal library, a widget, or the renderer.
 
+mod compose;
+mod compose_plugins;
 mod event;
 mod front;
 mod link;
@@ -22,6 +24,8 @@ mod workspace_shape;
 // session, the turn, the operator and the fronts above them consume it. Nothing
 // in the crate references it yet, so the re-exports read as unused in a lib
 // build — they are the boundary, not dead code.
+#[allow(unused_imports)]
+pub(crate) use compose::{RunComposition, SessionRun};
 #[allow(unused_imports)]
 pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
@@ -48,6 +52,18 @@ mod contract_guard_tests;
 #[cfg(test)]
 #[path = "operator_front_fixture.rs"]
 pub(crate) mod operator_front_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_fixture.rs"]
+pub(crate) mod compose_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_tests.rs"]
+mod compose_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_sql_tests.rs"]
+mod compose_sql_tests;
 
 #[cfg(test)]
 #[path = "workspace_shape_tests.rs"]

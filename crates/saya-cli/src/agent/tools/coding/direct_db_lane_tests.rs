@@ -84,7 +84,10 @@ async fn a_chat_surface_root_asks_once_per_connection() {
     )
     .await;
     let mut root = working_checkout_root(&fixture).await;
-    root.attach_db_lane(Arc::new(DbApprovalLane::for_root(&fixture.delegate_job)));
+    root.attach_db_lane(Arc::new(DbApprovalLane::for_root(
+        &fixture.delegate_job,
+        Some("demo".to_owned()),
+    )));
     let tool = db_tool("bounded_sql_query");
 
     assert!(
@@ -127,7 +130,7 @@ async fn only_a_chat_run_composes_the_lane() {
         database_profiles: 1,
     };
     assert!(
-        DbApprovalLane::for_run(&fixture.delegate_job, &chat).is_some(),
+        DbApprovalLane::for_run(&fixture.delegate_job, &chat, Some("demo".to_owned())).is_some(),
         "a chat run with a profile takes the lane"
     );
     let profileless_chat = RunContext {
@@ -135,7 +138,12 @@ async fn only_a_chat_run_composes_the_lane() {
         database_profiles: 0,
     };
     assert!(
-        DbApprovalLane::for_run(&fixture.delegate_job, &profileless_chat).is_none(),
+        DbApprovalLane::for_run(
+            &fixture.delegate_job,
+            &profileless_chat,
+            Some("demo".to_owned())
+        )
+        .is_none(),
         "a chat with no database has nothing to decide"
     );
     for surface in [
@@ -148,7 +156,8 @@ async fn only_a_chat_run_composes_the_lane() {
             database_profiles: 2,
         };
         assert!(
-            DbApprovalLane::for_run(&fixture.delegate_job, &context).is_none(),
+            DbApprovalLane::for_run(&fixture.delegate_job, &context, Some("demo".to_owned()))
+                .is_none(),
             "{surface:?} keeps today's decider"
         );
     }
