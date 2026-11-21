@@ -71,21 +71,12 @@ async fn ask_job(
     let store = SqliteStateStore::new(records.join("state.sqlite3"));
     let token = CancellationToken::new();
     let state_root = records.join("coding");
-    let application = match mode {
-        RootMode::NoWorkspace => {
-            CodingApplication::session_without_workspace(
-                runtime,
-                store,
-                folder,
-                RootMode::NoWorkspace,
-                &state_root,
-                &token,
-            )
+    // The ask's own constructors, over a state root this test owns: the same
+    // root the composition states when the configured one lands in the folder.
+    let application =
+        CodingApplication::session_over(runtime, store, folder, mode, &state_root, &token)
             .await
-        }
-        other => CodingApplication::session(runtime, store, folder, other, &token).await,
-    }
-    .expect("the ask's application opens over the folder");
+            .expect("the ask's application opens over the folder");
     // The one-turn facts the ask states on its host, from their one place.
     state_on(&application);
     let request = CodingJobRequest::new(
@@ -151,11 +142,14 @@ async fn ask_from_home_advertises_no_workspace_tool() {
 #[tokio::test]
 async fn ask_from_a_plain_folder_keeps_its_workspace() {
     let plain = scratch("plain-root");
-    // The same rule over a folder that can root a job: it reads the folder.
+    let records = scratch("plain-state");
+    // The same rule over a folder that can root a job: it reads the folder. A
+    // session's records live elsewhere, never inside it.
+    let plain_shape = workspace_shape(&plain, &records);
     assert_eq!(
-        workspace(&workspace_shape(&plain, &plain)),
+        workspace(&plain_shape),
         Workspace::Here,
-        "a plain folder roots the run"
+        "a plain folder roots the run: {plain_shape:?}"
     );
     let job = ask_job(&plain, "plain", RootMode::InPlace).await;
     assert!(job.has_workspace(), "a plain folder is the run's workspace");
@@ -168,4 +162,5 @@ async fn ask_from_a_plain_folder_keeps_its_workspace() {
         );
     }
     let _ = fs::remove_dir_all(&plain);
+    let _ = fs::remove_dir_all(&records);
 }
