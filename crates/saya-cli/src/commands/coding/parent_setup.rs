@@ -143,9 +143,10 @@ impl NativeCodingJob {
             system_prompt,
             model: config.ai.model.clone(),
             mailbox: Mutex::new(Some(mailbox)),
-            // A run opens with no completed turn: its first turn carries no
-            // history, exactly as it always did.
-            history: TurnHistory::new(),
+            // A run opens with no completed turn, ahead of the conversation it
+            // was seeded with: an unseeded run's first turn carries no history,
+            // exactly as it always did.
+            history: TurnHistory::seeded(inputs.seed.clone()),
             plugins,
         })
     }
