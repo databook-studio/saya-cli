@@ -7,16 +7,20 @@
 //! decision that leaves the surface a [`Cmd`] the runtime performs. No
 //! terminal I/O, no widgets, no drawing — the panes come later.
 
+pub(crate) mod cards_keys;
 pub(crate) mod keys;
 pub(crate) mod model;
 pub(crate) mod msg;
 pub(crate) mod theme;
 pub(crate) mod update;
+pub(crate) mod view;
 
 // This `pub(crate)` surface is the surface's boundary: the runtime above it
 // reads the model, feeds it messages and performs the commands it answers
 // with. Nothing in the crate references it yet, so the re-exports read as
 // unused in a lib build — they are the boundary, not dead code.
+#[allow(unused_imports)]
+pub(crate) use cards_keys::{CARD_PAGE_ROWS, CardIntent, card_intent};
 #[allow(unused_imports)]
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
@@ -27,6 +31,10 @@ pub(crate) use msg::{Cmd, Msg, Worker};
 pub(crate) use theme::{Charset, Glyph, Scheme, Token, bypass_chip, charset, form, glyph, style};
 #[allow(unused_imports)]
 pub(crate) use update::update;
+
+#[cfg(test)]
+#[path = "cards_keys_tests.rs"]
+mod cards_keys_tests;
 
 #[cfg(test)]
 #[path = "update_fixture.rs"]

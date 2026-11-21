@@ -6,12 +6,14 @@
 //! a card waits — a mode switch the operator asked for mid-answer would leave
 //! the question they were reading behind.
 //!
-//! The card owns the keyboard while it is open (its answer keys land with the
-//! card's own unit); the composer owns it otherwise.
+//! The card owns the keyboard while it is open, and its own answers are read
+//! there ([`super::cards_keys`]); the composer owns it otherwise.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::cards_keys::{self, CardIntent};
 use super::model::Model;
+use crate::agent::tools::consent::Answer;
 
 /// What the surface says when a mode switch is asked for over an open card.
 /// The card asks for an answer first, and the wording says so.
@@ -30,8 +32,13 @@ pub(crate) enum Intent {
     Submit,
     /// Stop the turn in flight; the run stays open.
     CancelTurn,
-    /// Deny the call the open card asks about.
-    DenyCard,
+    /// Answer the call the open card asks about with this.
+    AnswerCard(Answer),
+    /// Show the open card's whole body, or fold it back to its rows.
+    ViewCard,
+    /// Move the open card's body by this many rows; a negative count moves it
+    /// up.
+    ScrollCard(isize),
     /// Walk the mode cycle to its next member.
     CycleMode,
     /// Say this instead of doing anything: the state the press met refuses it.
@@ -40,24 +47,26 @@ pub(crate) enum Intent {
 
 /// What `key` means to `model` now, or nothing at all.
 pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
-    if model.card.is_some() {
-        return card_key(key);
+    if model.card().is_some() {
+        return card_key(model, key);
     }
     composer_key(model, key)
 }
 
-/// The card's keys: a denial, and a refusal of the one global key that would
-/// otherwise act on a state the operator cannot see behind the card. The
-/// answer keys (`y`, `a`, `s`, `n`, `d`, Esc) belong to the card's own unit;
-/// Enter is deliberately none of them, so a press meant for the composer
-/// during a card can never consent.
-fn card_key(key: KeyEvent) -> Option<Intent> {
+/// The card's keys: its own answers (`cards_keys`), and a refusal of the one
+/// global key that would otherwise act on a state the operator cannot see
+/// behind the card. Enter is deliberately none of them, so a press meant for
+/// the composer during a card can never consent.
+fn card_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
-        KeyCode::Esc => Some(Intent::DenyCard),
         KeyCode::BackTab => Some(Intent::Refused(CARD_HOLDS_MODE)),
         KeyCode::Tab if shift => Some(Intent::Refused(CARD_HOLDS_MODE)),
-        _ => None,
+        _ => match cards_keys::card_intent(model.card()?, key)? {
+            CardIntent::Answer(answer) => Some(Intent::AnswerCard(answer)),
+            CardIntent::View => Some(Intent::ViewCard),
+            CardIntent::Scroll(rows) => Some(Intent::ScrollCard(rows)),
+        },
     }
 }
 

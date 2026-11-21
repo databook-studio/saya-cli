@@ -60,7 +60,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         }
         Some(Intent::Submit) => submit(model, cmds),
         Some(Intent::CancelTurn) => cmds.push(Cmd::CancelTurn),
-        Some(Intent::DenyCard) => deny(model, cmds),
+        Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
+        Some(Intent::ViewCard) => model.toggle_card_full(),
+        Some(Intent::ScrollCard(rows)) => model.scroll_card(rows),
         Some(Intent::CycleMode) => cycle(model, cmds),
         Some(Intent::Refused(reason)) => model.say(reason),
         None => {}
@@ -90,10 +92,12 @@ fn send(model: &mut Model, text: String, cmds: &mut Vec<Cmd>) {
     cmds.push(Cmd::Send(text));
 }
 
-/// Esc over a card: the call is refused, and the turn that asked keeps going.
-fn deny(model: &mut Model, cmds: &mut Vec<Cmd>) {
+/// One answer to the open card: the call is answered, and the turn that asked
+/// keeps going. An approval is the operator's consent, so the answer is
+/// carried out exactly as it was given — once, for the session, or never.
+fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
     if let Some(card) = model.take_card() {
-        cmds.push(Cmd::Answer(card.id, Answer::Deny));
+        cmds.push(Cmd::Answer(card.id, given));
     }
 }
 
