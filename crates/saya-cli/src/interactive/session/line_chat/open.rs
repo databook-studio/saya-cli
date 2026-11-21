@@ -85,7 +85,7 @@ impl LineChat {
             .enable_all()
             .build()
             .map_err(|error| format!("the session's runtime could not be built: {error}"))?;
-        let line = runtime.block_on(assemble(parts, OneShot::No))?;
+        let line = runtime.block_on(assemble(parts, super::one_shot::OneShot::No))?;
         Ok(LineChat::new(line, runtime))
     }
 }
@@ -101,36 +101,13 @@ impl LineChat {
 /// refused for where the job's records would have gone.
 ///
 pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
-    parts.state_root = one_turn_state_root(&parts)?;
-    assemble(parts, OneShot::Yes).await
-}
-
-/// The state root a one-turn ask records under: `None` when the configured one
-/// is already outside the folder it asks about, and a private root of its own
-/// when it is not.
-fn one_turn_state_root(parts: &LineSession) -> Result<Option<PathBuf>, String> {
-    let configured = coding_state_root(&parts.runtime)?;
-    let folder = std::fs::canonicalize(&parts.folder).unwrap_or_else(|_| parts.folder.clone());
-    if !configured.starts_with(&folder) {
-        return Ok(None);
-    }
-    Ok(Some(
-        std::env::temp_dir().join(format!("saya-ask-{}", parts.session)),
-    ))
-}
-
-/// Whether the composition is a surface's one-shot question: one message, one
-/// turn, one answer. A one-shot run inherits no continuation context, because
-/// there is nothing before its first turn for it to inherit.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum OneShot {
-    Yes,
-    No,
+    parts.state_root = super::one_shot::state_root(&parts)?;
+    assemble(parts, super::one_shot::OneShot::Yes).await
 }
 
 /// Builds the application over the session's folder, states the run's facts,
 /// composes it and opens it — asking nobody: the session's mode is the consent.
-async fn assemble(parts: LineSession, one_shot: OneShot) -> Result<Line, String> {
+async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
     let config: &RuntimeConfig = &parts.runtime;
     let token = CancellationToken::new();
     let application = match parts.state_root.clone() {
@@ -157,7 +134,7 @@ async fn assemble(parts: LineSession, one_shot: OneShot) -> Result<Line, String>
         }
     }
     .map_err(|error| error.to_string())?;
-    if one_shot == OneShot::Yes {
+    if one_shot == super::one_shot::OneShot::Yes {
         application.with_continuation_context(false);
     }
     // The launch's own seeds ride the host the run composes over: a held token
