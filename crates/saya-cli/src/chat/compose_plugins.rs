@@ -27,6 +27,7 @@ use crate::connection::ConnectionRegistry;
 use crate::plugins::database::prompt::ChatPrompt;
 use crate::plugins::database::{
     ChatDatabaseFlags, DatabaseBudget, DatabasePlugin, LearningSource as DatabasePluginLearning,
+    RecallSource as DatabasePluginRecall,
 };
 
 /// What a session hands the database plugin once, at composition.
@@ -73,6 +74,9 @@ pub(super) fn run_plugins(
     // What this session's memory mode attaches: the write permission and the
     // observation log the learning pass reads, both absent with memory off.
     let setup_learning = crate::agent::learning::LearningSetup::from(memory);
+    // Whether this run has a database side at all: the same fact the plugin's
+    // own activation rule reads, taken before the registry moves into the tools.
+    let has_profile = !connections.is_empty();
     // The log the tools record the model's own overrides into; the learning
     // pass reads the same one, so an override of a recalled claim is seen.
     let override_log = Arc::new(crate::agent::tools::OverrideLog::new());
@@ -99,6 +103,23 @@ pub(super) fn run_plugins(
         prompt,
         capture,
     );
+    // A turn recalls the session's stored knowledge before it is sent, through
+    // the one function the chat's turn calls — the same store the session opened,
+    // the same bounds its `[memory]` resolved and the same conversation byte
+    // budget, over the registry the run's tools query. Off attaches no source at
+    // all: nothing is recalled and the turn's receipt stays the empty one. The
+    // source states no system prompt because the hook receives only the turn's
+    // prompt; the run assembles its system prompt itself, after this point.
+    if memory != MemoryMode::Off && has_profile {
+        plugin = plugin.with_recall(DatabasePluginRecall::new(
+            None,
+            allow_query_data,
+            runtime.resolved.memory.clone(),
+            tools.registry_handle(),
+            Some(application.store().clone()),
+            runtime.resolved.ai.context_byte_budget,
+        ));
+    }
     // A turn that produced an answer learns after it, through the one function
     // the chat's turn calls — the same policy the TUI and the plain loop used.
     if let Some(provider) = learning {

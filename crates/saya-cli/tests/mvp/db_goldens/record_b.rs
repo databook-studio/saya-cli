@@ -32,7 +32,9 @@ impl Golden {
 
 /// The recall block in a request, if the user turn carries one. The block is
 /// rendered into the first user message and replayed in later requests, so
-/// each request is inspected rather than only the first.
+/// each request is inspected rather than only the first; it is not necessarily
+/// that message's *first* block, because a run's own continuation context
+/// precedes the blocks its plugins contribute, so every block is tried.
 pub(crate) fn recall_block(value: &serde_json::Value) -> Option<RecallRecord> {
     let messages = value["messages"].as_array()?;
     messages.iter().find_map(|message| {
@@ -48,16 +50,19 @@ pub(crate) fn recall_block(value: &serde_json::Value) -> Option<RecallRecord> {
 }
 
 /// Bytes between the `database-contracts` source line and the closing
-/// sentinel. The sentinels are `saya-agent`'s; the body is already normalised
-/// because the whole request was.
+/// sentinel, for whichever context block carries that source line. The
+/// sentinels are `saya-agent`'s; the body is already normalised because the
+/// whole request was.
 fn recall_body_bytes(content: &str) -> Option<usize> {
     const OPEN: &str = "<<<CONTEXT_BLOCK_BEGIN>>>\n";
     const SOURCE: &str = "source: database-contracts\n";
     const CLOSE: &str = "<<<CONTEXT_BLOCK_END>>>";
-    let after_open = content.find(OPEN)? + OPEN.len();
-    let after_source = content[after_open..].strip_prefix(SOURCE)?;
-    let body = &after_source[..after_source.find(CLOSE)?];
-    Some(body.len())
+    content.match_indices(OPEN).find_map(|(open, _)| {
+        let after_open = open + OPEN.len();
+        let after_source = content[after_open..].strip_prefix(SOURCE)?;
+        let body = &after_source[..after_source.find(CLOSE)?];
+        Some(body.len())
+    })
 }
 
 /// Whether this request is the post-turn extractor's: the extractor is the one

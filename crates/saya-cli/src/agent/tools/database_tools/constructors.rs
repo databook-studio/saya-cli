@@ -31,7 +31,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db: None,
@@ -65,7 +65,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db,
@@ -99,7 +99,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db,
@@ -127,7 +127,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry: ConnectionRegistry::new("none"),
+            registry: Arc::new(ConnectionRegistry::new("none")),
             max_rows: 0,
             allow_query_data: false,
             state_db: None,
