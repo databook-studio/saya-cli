@@ -109,7 +109,6 @@ impl NativeCodingJob {
     /// that is already running is `Busy`; a finished run and a
     /// managed-checkout job are refused, in place being the only shape this
     /// release runs a further turn on.
-    #[allow(dead_code)] // the attached front end of a later unit is its caller
     pub(crate) async fn run_next_turn(
         &self,
         sink: &dyn AgentEventSink,
@@ -146,14 +145,12 @@ impl NativeCodingJob {
 
     /// How the turn that ended most recently ended, or `None` for one that
     /// simply finished.
-    #[allow(dead_code)] // the chat surface of phase 4.6 is its production caller
     pub(crate) fn turn_stop(&self) -> Option<TurnStop> {
         self.root_run.turn_stop()
     }
 
     /// The stop signal of the turn running right now, or `None` between turns:
     /// what an attached surface cancels to end that turn and no other.
-    #[allow(dead_code)] // the attached front end of a later unit is its caller
     pub(crate) fn turn_cancellation(&self) -> Option<CancellationToken> {
         self.root_run.turn_cancellation()
     }

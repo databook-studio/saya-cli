@@ -28,7 +28,6 @@ impl NativeCodingJob {
     /// `run_next_turn`, whose request carries exactly that message — the sink is
     /// stated here for the same surface's turns, and an open with no turn
     /// reports nothing on it.
-    #[allow(dead_code)] // the chat surface of a later unit is its caller
     pub(crate) async fn run_prepare(
         self: &Arc<Self>,
         _sink: &dyn AgentEventSink,
@@ -71,5 +70,16 @@ impl NativeCodingJob {
         let session = Arc::new(self.compose_root(mailbox, inputs).await?);
         self.root_run.hold(Arc::clone(&session));
         Ok(session)
+    }
+
+    /// Closes the run: after it, the run is no longer open in this process and a
+    /// message that arrives late is refused as one on a finished run instead of
+    /// becoming another turn.
+    ///
+    /// This is a surface's close of a run whose turns are done — the session's
+    /// quit — and never a turn's own end: a cancelled or stopped turn leaves the
+    /// run open, so the next message is another turn of it.
+    pub(crate) async fn run_close(&self) {
+        self.root_run.close();
     }
 }

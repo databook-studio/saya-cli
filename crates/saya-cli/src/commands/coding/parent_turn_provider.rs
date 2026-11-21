@@ -23,7 +23,7 @@ const HOLD: Duration = Duration::from_secs(60);
 /// call asks for one that changes nothing, and a text ends the turn that asked
 /// for it. A request past the script is answered with text, as an unscripted
 /// provider answers every request.
-pub(super) enum Reply {
+pub(crate) enum Reply {
     Text(&'static str),
     Write {
         path: &'static str,
@@ -47,8 +47,8 @@ pub(super) enum Reply {
 /// A local scripted provider: every request is one root turn, answered with a
 /// final text. The first answer can be held, so a turn that is still running
 /// is observable while it runs.
-pub(super) struct Scripted {
-    pub(super) endpoint: String,
+pub(crate) struct Scripted {
+    pub(crate) endpoint: String,
     bodies: Arc<Mutex<Vec<String>>>,
     arrived: Arc<AtomicUsize>,
     held: Arc<AtomicBool>,
@@ -59,13 +59,13 @@ pub(super) struct Scripted {
 
 impl Scripted {
     /// A provider that answers every request with text.
-    pub(super) fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self::start_with_script(Vec::new())
     }
 
     /// The same, with the first `replies.len()` requests answered as scripted:
     /// one `write` call per turn, then the text that ends it.
-    pub(super) fn start_with_script(replies: Vec<Reply>) -> Self {
+    pub(crate) fn start_with_script(replies: Vec<Reply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -153,21 +153,21 @@ impl Scripted {
 
     /// Holds the first answer until `release`, so the turn that sent it is
     /// still running.
-    pub(super) fn hold_first(&self) {
+    pub(crate) fn hold_first(&self) {
         self.held.store(true, Ordering::Release);
     }
 
-    pub(super) fn release(&self) {
+    pub(crate) fn release(&self) {
         self.released.store(true, Ordering::Release);
     }
 
     /// How many requests have arrived so far.
-    pub(super) fn arrived(&self) -> usize {
+    pub(crate) fn arrived(&self) -> usize {
         self.arrived.load(Ordering::Acquire)
     }
 
     /// The request bodies as they arrived, in order.
-    pub(super) fn bodies(&self) -> Vec<String> {
+    pub(crate) fn bodies(&self) -> Vec<String> {
         self.bodies.lock().unwrap().clone()
     }
 }

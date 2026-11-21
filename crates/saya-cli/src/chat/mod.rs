@@ -15,6 +15,7 @@ mod port;
 mod queue;
 mod session;
 mod transcript;
+mod turn;
 mod workspace_shape;
 
 // This `pub(crate)` surface is the chat layer's boundary: the composition, the
@@ -35,6 +36,8 @@ pub(crate) use port::{PortError, Prepared, RunPort};
 pub(crate) use session::{Admission, ChatSession, SessionState};
 #[allow(unused_imports)]
 pub(crate) use transcript::{SettledTurn, Transcript};
+#[allow(unused_imports)]
+pub(crate) use turn::{ChatTurn, JobPort};
 #[allow(unused_imports)]
 pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
 
