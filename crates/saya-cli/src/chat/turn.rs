@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use saya_agent::{AgentEventSink, NoopEventSink};
+use saya_agent::{AgentEventSink, AgentOutput, NoopEventSink};
 
 use super::ChatOutcome;
 use super::port::{PortError, Prepared, RunPort};
@@ -41,6 +41,11 @@ pub(crate) struct JobPort {
     cancelled: AtomicBool,
     /// Whether the run's one close has been stated.
     closed: AtomicBool,
+    /// The typed output of the last turn this port ran: the engine's own
+    /// `AgentOutput`, which the session's compaction reads its report from —
+    /// the last answering call's `input_tokens` and the gates, never a
+    /// rendering of them.
+    last: Mutex<Option<AgentOutput>>,
 }
 
 impl JobPort {
@@ -52,6 +57,7 @@ impl JobPort {
             metrics: None,
             cancelled: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            last: Mutex::new(None),
         }
     }
 
@@ -66,6 +72,7 @@ impl JobPort {
             metrics: None,
             cancelled: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            last: Mutex::new(None),
         }
     }
 
@@ -78,6 +85,15 @@ impl JobPort {
 
     fn inputs(&self) -> MutexGuard<'_, Option<TurnInputs>> {
         self.inputs.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The typed output of the last turn this port ran, taken once by the
+    /// surface above it: the turn's own report, as the engine stated it.
+    pub(crate) fn take_output(&self) -> Option<AgentOutput> {
+        self.last
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 }
 
@@ -106,7 +122,7 @@ impl RunPort for JobPort {
         // This turn's cancel is the operator's, stated during it: a message
         // after it starts the next one uncancelled.
         self.cancelled.store(false, Ordering::Release);
-        let turn = ChatTurn::new(&self.job, self.metrics.clone(), &self.cancelled);
+        let turn = ChatTurn::new(&self.job, self.metrics.clone(), &self.cancelled, &self.last);
         turn.run(sink.as_ref(), &prompt).await
     }
 
@@ -138,6 +154,9 @@ pub(crate) struct ChatTurn<'a> {
     /// The port's memory of the operator's cancel, read once the turn ended: a
     /// cancelled turn reports a failure of its own, and this says which.
     cancelled: &'a AtomicBool,
+    /// Where this turn's typed output is left for the surface: the turn's own
+    /// report, kept beside the outcome it settled on.
+    output: &'a Mutex<Option<AgentOutput>>,
 }
 
 impl<'a> ChatTurn<'a> {
@@ -145,11 +164,13 @@ impl<'a> ChatTurn<'a> {
         job: &'a NativeCodingJob,
         metrics: Option<Arc<LocalMetrics>>,
         cancelled: &'a AtomicBool,
+        output: &'a Mutex<Option<AgentOutput>>,
     ) -> Self {
         Self {
             job,
             metrics,
             cancelled,
+            output,
         }
     }
 
@@ -164,7 +185,12 @@ impl<'a> ChatTurn<'a> {
         // metrics reach the surface under the names it already reads.
         let metrics = MetricsSink::new(sink, self.metrics.clone());
         match self.job.run_next_turn(&metrics, prompt).await {
-            Ok(_) => Ok(self.read()),
+            Ok(output) => {
+                // The turn's own report is kept for the surface above: a
+                // session's compaction states its trigger over this figure.
+                *self.output.lock().unwrap_or_else(PoisonError::into_inner) = Some(output);
+                Ok(self.read())
+            }
             Err(CodingError::Busy) => Err(PortError::Busy),
             Err(error) => {
                 // A turn that ended on its own stop — the operator's cancel, a

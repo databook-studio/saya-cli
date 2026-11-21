@@ -15,25 +15,9 @@ pub(crate) struct CompactResult {
     pub(crate) automatic: bool,
 }
 
-/// Runs `/compact` to completion: plan, summarise, validate, apply or leave
-/// the session exactly as it was. Pure against `state` except on validated
-/// success; the transcript is never rewritten.
-///
-/// `automatic` names the trigger only — the operation is identical either way
-/// (one code path, two triggers), and the message stays the manual one: the
-/// poll path prefixes the automatic strings, beside the single operation.
-pub(crate) async fn run(
-    runtime: &RuntimeConfig,
-    state: &mut SessionState,
-    _session: &SessionUniverse,
-    metrics: Option<&LocalMetrics>,
-) -> CompactResult {
-    run_with_trigger(runtime, state, _session, false, metrics).await
-}
-
-/// The shared operation with the trigger named: [`run`] is the manual
-/// spelling, the automatic path passes `automatic: true`. Kept as one
-/// function — never two copies — so the paths cannot drift.
+/// The shared operation with the trigger named: the automatic path passes
+/// `automatic: true`, the operator's ask `false`. One function — never two
+/// copies — so the paths cannot drift.
 pub(crate) async fn run_with_trigger(
     runtime: &RuntimeConfig,
     state: &mut SessionState,
