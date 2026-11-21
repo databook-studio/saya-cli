@@ -4,8 +4,10 @@
 //! further turn never re-opens the workspace it already works in.
 
 use super::parent_turn::{RootSession, TurnHistory};
+use super::parent_turn_limits::TurnInputs;
 use super::{CodingError, NativeCodingJob};
 use crate::agent::hooks::{HookApprovalGate, HookCaller, HookGate, Hooks};
+use crate::agent::tools::child::plugins::active_plugins;
 use crate::agent::{provider, tools::coding::RootTools};
 use saya_agent::{AgentMailbox, ApprovalPolicy, ToolExecutor};
 use saya_types::CodingRunFailure;
@@ -18,7 +20,16 @@ impl NativeCodingJob {
     pub(super) async fn compose_root(
         self: &Arc<Self>,
         mailbox: AgentMailbox,
+        inputs: &TurnInputs,
     ) -> Result<RootSession, CodingError> {
+        // The plugins this run activates, out of the registry the caller
+        // supplied: the same door a helper surface composes them through, so
+        // the two cannot turn one registry into two different active sets. A
+        // run given no registry activates none and consults none.
+        let plugins = inputs
+            .plugins
+            .as_ref()
+            .map(|supplied| Arc::new(active_plugins(&supplied.registry, &supplied.context)));
         // A direct-mode coordinator owns one working checkout for the whole
         // run; `RootTools::build` ensures it (resume re-ensures it) and composes
         // the toolset. Delegate-only jobs create nothing.
@@ -123,6 +134,7 @@ impl NativeCodingJob {
             // A run opens with no completed turn: its first turn carries no
             // history, exactly as it always did.
             history: TurnHistory::new(),
+            plugins,
         })
     }
 }

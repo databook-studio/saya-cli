@@ -6,6 +6,7 @@
 
 #![cfg(unix)]
 
+use super::super::TurnInputs;
 use super::super::parent_turn_fixture::in_place;
 use super::super::parent_turn_provider::{Reply, Scripted};
 use saya_agent::NoopEventSink;
@@ -27,10 +28,13 @@ async fn a_no_progress_guard_stop_reads_as_paused_with_its_own_message() {
     let provider = Scripted::start_with_script(script);
     let fixture = in_place("turn-pause", &provider.endpoint).await;
 
-    let settled = tokio::time::timeout(RUN, fixture.job.run_open(&NoopEventSink))
-        .await
-        .expect("the turn must settle")
-        .expect("a guard stop keeps the turn's answer");
+    let settled = tokio::time::timeout(
+        RUN,
+        fixture.job.run_open(&NoopEventSink, TurnInputs::default()),
+    )
+    .await
+    .expect("the turn must settle")
+    .expect("a guard stop keeps the turn's answer");
     assert_eq!(
         settled.answer, "nothing to report",
         "a pause keeps the answer the turn produced"

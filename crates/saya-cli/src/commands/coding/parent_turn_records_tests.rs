@@ -8,6 +8,7 @@
 #![cfg(unix)]
 
 use super::super::super::NativeCodingJob;
+use super::super::TurnInputs;
 use super::super::parent_turn_fixture::in_place_writing;
 use super::super::parent_turn_provider::{Reply, Scripted};
 use saya_agent::{AgentOutput, NoopEventSink};
@@ -39,8 +40,10 @@ pub(super) fn two_writes() -> Vec<Reply> {
 /// turn's output, which the run end takes as its result.
 pub(super) async fn turn(job: &Arc<NativeCodingJob>, prompt: Option<&str>) -> AgentOutput {
     let settled = match prompt {
-        None => tokio::time::timeout(RUN, job.run_open(&NoopEventSink)).await,
-        Some(prompt) => tokio::time::timeout(RUN, job.run_next_turn(prompt)).await,
+        None => {
+            tokio::time::timeout(RUN, job.run_open(&NoopEventSink, TurnInputs::default())).await
+        }
+        Some(prompt) => tokio::time::timeout(RUN, job.run_next_turn(&NoopEventSink, prompt)).await,
     };
     settled
         .expect("the turn must settle")

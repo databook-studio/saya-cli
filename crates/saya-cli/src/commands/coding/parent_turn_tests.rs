@@ -8,6 +8,7 @@
 #![cfg(unix)]
 
 use super::super::{CodingError, NativeCodingJob};
+use super::TurnInputs;
 use super::parent_turn_fixture::{in_place, managed};
 use super::parent_turn_provider::Scripted;
 use saya_agent::NoopEventSink;
@@ -17,14 +18,14 @@ use std::{sync::Arc, time::Duration};
 const RUN: Duration = Duration::from_secs(120);
 
 async fn first_turn(job: &Arc<NativeCodingJob>) -> Result<(), CodingError> {
-    let result = tokio::time::timeout(RUN, job.run_open(&NoopEventSink))
+    let result = tokio::time::timeout(RUN, job.run_open(&NoopEventSink, TurnInputs::default()))
         .await
         .expect("the first turn must settle");
     result.map(|_| ())
 }
 
 async fn next_turn(job: &Arc<NativeCodingJob>, prompt: &str) -> Result<(), CodingError> {
-    let result = tokio::time::timeout(RUN, job.run_next_turn(prompt))
+    let result = tokio::time::timeout(RUN, job.run_next_turn(&NoopEventSink, prompt))
         .await
         .expect("the further turn must settle");
     result.map(|_| ())
@@ -109,11 +110,14 @@ async fn a_turn_while_a_turn_is_running_is_busy() {
     let fixture = in_place("busy", &provider.endpoint).await;
     let running = {
         let job = Arc::clone(&fixture.job);
-        tokio::spawn(async move { job.run_open(&NoopEventSink).await })
+        tokio::spawn(async move { job.run_open(&NoopEventSink, TurnInputs::default()).await })
     };
     until(|| provider.arrived() >= 1).await;
 
-    let refused = fixture.job.run_next_turn("second message").await;
+    let refused = fixture
+        .job
+        .run_next_turn(&NoopEventSink, "second message")
+        .await;
     assert!(
         matches!(refused, Err(CodingError::Busy)),
         "a turn while another is running must be refused Busy: {refused:?}"
@@ -136,7 +140,7 @@ async fn a_turn_after_the_run_finished_is_refused() {
         .expect("the single run must settle");
     assert!(run.is_ok(), "the single run must finish: {run:?}");
 
-    let refused = fixture.job.run_next_turn("too late").await;
+    let refused = fixture.job.run_next_turn(&NoopEventSink, "too late").await;
     let Err(error) = refused else {
         panic!("a finished run must take no further turn: {refused:?}");
     };
@@ -153,7 +157,10 @@ async fn a_turn_after_the_run_finished_is_refused() {
 #[tokio::test]
 async fn a_managed_checkout_job_takes_no_further_turn() {
     let fixture = managed("turn-managed").await;
-    let refused = fixture.job.run_next_turn("second message").await;
+    let refused = fixture
+        .job
+        .run_next_turn(&NoopEventSink, "second message")
+        .await;
     let Err(error) = refused else {
         panic!("a managed-checkout job must take no further turn: {refused:?}");
     };
@@ -189,6 +196,23 @@ mod budget_turns;
 /// A progress guard's stop on a turn, which reads as a pause.
 #[path = "parent_turn_pause_tests.rs"]
 mod pause_turns;
+
+/// The stop signal of a turn: cancelling it ends that turn and no other.
+#[path = "parent_turn_scope_tests.rs"]
+mod scope_turns;
+
+/// The sink a further turn reports to: the caller's, not a no-op.
+#[path = "parent_turn_sink_tests.rs"]
+mod sink_turns;
+
+/// The per-turn inputs a surface states at open, which bound the first turn.
+#[path = "parent_turn_open_policy_tests.rs"]
+mod open_policy;
+
+/// The plugin registry a run consults: its tools after the core's, its context
+/// and turn-end hook once per turn, its tools routed to it.
+#[path = "parent_turn_plugin_tests.rs"]
+mod plugin_turns;
 
 /// A detached run still resumes: a finished job is continued, and a job whose
 /// root turn is running refuses without disturbing it.

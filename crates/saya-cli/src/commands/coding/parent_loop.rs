@@ -12,11 +12,10 @@ use super::{CodingError, NativeCodingJob, map_root_error};
 use crate::budget_wording::budget_dimension;
 use crate::commands::coding::TurnStop;
 use saya_agent::{
-    AgentError, AgentEventSink, AgentOutput, AgentRequest, AgentRunControl, AnsweringScope,
-    ApprovalDecider, BudgetDimension, CancellationReason, ContextPreamble, ProgressCheck,
-    ProgressHandle, run_agent_with_control,
+    AgentError, AgentEventSink, AgentOutput, AgentRequest, ApprovalDecider, BudgetDimension,
+    CancellationReason, ToolExecutor, run_agent_with_control,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 impl NativeCodingJob {
     /// Runs one root turn on the run's composition and returns its output.
@@ -31,6 +30,12 @@ impl NativeCodingJob {
         // first turn is as durable a record as the turn that opened the run.
         let turn = self.root_run.next_turn();
         self.record_turn_boundary(turn).await?;
+        // This turn's stop signal, a child of the run's: a stop of the turn —
+        // an attached surface's Esc, a surface's cancel — ends this turn and
+        // leaves the run taking turns, while a stop of the run ends the turn it
+        // is running.
+        let scope = self.root_run.begin_turn(&self.cancellation);
+        let cancellation = scope.token();
         let config = &self.application.runtime.resolved;
         let observed = super::super::observations::NativeSink {
             job: self,
@@ -45,27 +50,8 @@ impl NativeCodingJob {
         // returns `Ok`, so the stop itself travels on this handle. Each turn
         // that reports a check is also appended to `progress.jsonl` as it
         // happens, so `saya job show` sees the streak while the job runs.
-        let checks: Arc<Mutex<Vec<ProgressCheck>>> = Arc::default();
-        let observed_checks = Arc::clone(&checks);
-        let progress_records = self.records.clone();
-        let progress_lifecycle = self.lifecycle_arc();
-        let progress = ProgressHandle::new().with_observer(Arc::new(move |snapshot| {
-            let Some(check) = snapshot.report.check else {
-                return;
-            };
-            let Ok(mut checks) = observed_checks.lock() else {
-                return;
-            };
-            // A turn boundary can publish twice (the final turn is published
-            // by its own end and again with the stop); record it once.
-            if checks.last().is_some_and(|last| last.turn == check.turn) {
-                return;
-            }
-            checks.push(check);
-            let started = std::time::Instant::now();
-            super::super::progress_report::record(&progress_records, &snapshot.report);
-            progress_lifecycle.note_elapsed("progress_persist", started.elapsed());
-        }));
+        let (progress, checks) =
+            super::parent_progress::handle(&self.records, self.lifecycle_arc());
         // A `PermissionRequest` hook can only refuse an ask this root would
         // make, so the gate wraps the toolset where the hooks are composed.
         let approver: &dyn ApprovalDecider = match &session.approval_gate {
@@ -73,57 +59,18 @@ impl NativeCodingJob {
             None => session.tools.as_ref(),
         };
         let root_budget = self.ledger.root_view();
-        // The limits a surface set for this run's turns. A turn-scoped
-        // answering scope carries them: its own token is a child of the run's,
-        // so a budget stop ends this turn and leaves the run running.
-        let policy = self.root_run.turn_policy();
-        let turn_budget = policy.map(|policy| {
-            AnsweringScope::new(
-                policy.answering_limits(),
-                saya_agent::CancellationToken::new(),
-            )
-        });
-        let control = AgentRunControl::new(
-            super::super::limits::agent_limits(config),
-            super::super::limits::answering_limits(config),
+        let turn_control = super::parent_control::build(
+            self,
+            session,
             approver,
             &checkpointed,
-            self.cancellation.clone(),
-        )
-        .with_actor_correlation(super::super::create::actor_correlation_digest(&[
-            "root",
-            self.job_id().as_str(),
-        ]))
-        .with_physical_effect_admission(&root_budget)
-        .with_progress_report(progress.clone())
-        // A headless run waits one request-deadline slice at a time for a
-        // background exit instead of ending and polling; the job's wall clock
-        // still bounds the whole wait.
-        .with_background_wait(std::time::Duration::from_secs(
-            config.ai.request_timeout_seconds,
-        ));
-        // The run's mailbox belongs to its first turn: the loop consumes the
-        // receiver, so only that turn can carry it.
-        let mailbox = session
-            .mailbox
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        let mut control = control
-            // This job's blocks are the continuation snapshot, not database
-            // context, so the framing says only that they are untrusted data.
-            .with_context_preamble(ContextPreamble::Coding);
-        if let Some(mailbox) = mailbox {
-            control = control.with_mailbox(mailbox);
-        }
-        let control = control.with_request_preflight(
-            crate::agent::preflight_config::request_preflight_config(&config.ai)
-                .map_err(|_| CodingError::InvalidRequest)?,
-        );
-        let control = match turn_budget.as_ref() {
-            Some(scope) => control.with_answering_scope(scope.clone()),
-            None => control,
-        };
+            cancellation,
+            &progress,
+            &root_budget,
+        )?;
+        let control = turn_control.control;
+        let turn_budget = turn_control.budget;
+        let deadline = turn_control.deadline;
         // The prompt as it was sent: the prompt half of the pair a later turn
         // of this run replays.
         let asked = prompt.clone();
@@ -131,7 +78,15 @@ impl NativeCodingJob {
         // the sandbox by creating and removing canary directories inside W, and
         // a readiness walk that met one of them mid-removal would send the model
         // a different view than the run's first request must carry.
-        let context_blocks = self.continuation_context().await?;
+        let mut context_blocks = self.continuation_context().await?;
+        // The active plugins' context joins it, bounded by the same context
+        // byte budget, asked for once for this turn.
+        if let Some(plugins) = session.plugins.as_ref() {
+            context_blocks.extend(
+                super::parent_plugins::context(plugins, &asked, config.ai.context_byte_budget)
+                    .await,
+            );
+        }
         session.tools.start_shell_composition();
         let request = AgentRequest {
             prompt,
@@ -146,17 +101,35 @@ impl NativeCodingJob {
             context_blocks,
         };
         self.lifecycle().enter("model_loop");
+        // A name an active plugin declares is the plugin's to serve; every
+        // other name is the run's own executor. With no plugins the run hands
+        // the loop exactly the executor it always did.
+        let routed = session.plugins.as_ref().map(|plugins| {
+            super::parent_plugins::Routed::new(Arc::clone(plugins), Arc::clone(&session.executor))
+        });
+        let executor: &dyn ToolExecutor = match &routed {
+            Some(routed) => routed,
+            None => session.executor.as_ref(),
+        };
+        // The core tools first, then the active plugins', as a helper composes
+        // them; with no plugins this is the list the core advertises.
+        let definitions = match session.plugins.as_ref() {
+            Some(plugins) => {
+                super::parent_plugins::definitions(session.tools.definitions(), plugins)
+            }
+            None => session.tools.definitions(),
+        };
         let work = run_agent_with_control(
             session.provider.as_ref(),
-            session.executor.as_ref(),
+            executor,
             request,
-            session.tools.definitions(),
+            definitions,
             control,
         );
         tokio::pin!(work);
         // The elapsed dimension of the policy is the owner's to arm, as chat
         // arms its own: the deadline stops the turn's token, not the run's.
-        let outcome = match policy.and_then(|policy| policy.max_elapsed) {
+        let outcome = match deadline {
             Some(deadline) => tokio::select! {
                 biased;
                 outcome = &mut work => outcome,
@@ -172,6 +145,17 @@ impl NativeCodingJob {
             None => work.await,
         };
         self.lifecycle().enter("after_loop");
+        // The turn's end is stated to the active plugins once, whatever it was:
+        // a plugin observes the outcome and never changes it.
+        if let Some(plugins) = session.plugins.as_ref() {
+            let finished = saya_agent::TurnOutcome {
+                answered: outcome.is_ok(),
+                cancelled: matches!(&outcome, Err(AgentError::Cancelled)),
+                prompt: &asked,
+                output: outcome.as_ref().ok(),
+            };
+            super::parent_plugins::turn_finished(plugins, &finished, sink).await;
+        }
         // The root loop has finished: record its progress as durable job
         // events, then the final report, then run the `stop` hooks. Reporting
         // is not authority, so its failure never changes the turn's outcome.

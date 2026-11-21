@@ -36,6 +36,12 @@ pub(super) enum Reply {
     /// for it: a settled call that moves nothing, and is never the same call
     /// twice, so the no-progress streak grows without tripping the repeat guard.
     FruitlessGrep,
+    /// One call to a tool the test names — a plugin's tool, or any other name a
+    /// scripted turn must reach with the arguments the test states.
+    Call {
+        name: &'static str,
+        arguments: serde_json::Value,
+    },
 }
 
 /// A local scripted provider: every request is one root turn, answered with a
@@ -121,6 +127,9 @@ impl Scripted {
                         "grep",
                         &serde_json::json!({"pattern": format!("nothing-matches-{turn}")}),
                     ),
+                    Some(Reply::Call { name, arguments }) => {
+                        tool_call(&format!("call-{turn}"), name, arguments)
+                    }
                     None => answer(&format!("turn {turn} answered")),
                 };
                 let _ = write!(

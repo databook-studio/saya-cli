@@ -33,10 +33,20 @@ pub(super) fn database_plugins(
         Some(view.clone()),
     )) as Arc<dyn RunPlugin>;
     let registry = PluginRegistry::new(vec![plugin], &core).map_err(ChildFactoryError::new)?;
-    Ok(registry.active(&RunContext {
-        surface,
-        database_profiles: view.database_profiles().len(),
-    }))
+    Ok(active_plugins(
+        &registry,
+        &RunContext {
+            surface,
+            database_profiles: view.database_profiles().len(),
+        },
+    ))
+}
+
+/// The plugins active for `ctx` out of a registry that was checked against the
+/// core tool names once. The one place a registry is turned into its active
+/// set, so the root run and a helper compose them by the same door.
+pub(crate) fn active_plugins(registry: &PluginRegistry, ctx: &RunContext) -> ActivePlugins {
+    registry.active(ctx)
 }
 
 /// Every non-database tool name this child surface can advertise: the ones
