@@ -38,6 +38,11 @@ use saya_store::BypassSource;
 #[path = "mode/attached.rs"]
 mod attached;
 
+/// The posture a switch states on the run's cell: the job adapter's one rule,
+/// shared with the chat layer's `/mode`, so a mode cannot mean one posture on a
+/// job and another on a chat session's run.
+pub(crate) use attached::posture as stated_posture;
+
 /// The mode's spelling — the one copy the switch answer, the refusal and the
 /// status bar read, so no surface invents a name of its own.
 pub(crate) const fn name(mode: PermissionMode) -> &'static str {

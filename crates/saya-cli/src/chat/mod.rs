@@ -11,6 +11,8 @@ mod event;
 mod front;
 mod link;
 mod operator;
+mod ops;
+mod ops_context;
 mod port;
 mod queue;
 mod session;
@@ -30,6 +32,10 @@ pub(crate) use front::ChatFront;
 pub(crate) use link::{Resume, RunFacts};
 #[allow(unused_imports)]
 pub(crate) use operator::SessionOperator;
+#[allow(unused_imports)]
+pub(crate) use ops::{ChatOps, Fate, Op, OpResult};
+#[allow(unused_imports)]
+pub(crate) use ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest, SessionOp};
 #[allow(unused_imports)]
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]
