@@ -15,7 +15,12 @@ mod panel_tests;
 #[cfg(test)]
 mod receipt_tests;
 
-pub(super) enum CodingMessage {
+/// What a panel's control mailbox says when it is closed or full: cancellation
+/// stays available either way.
+pub(crate) const CONTROL_FULL: &str =
+    "Job control mailbox is full or closed; cancellation remains available";
+
+pub(crate) enum CodingMessage {
     Activity(String),
     Approval {
         text: String,
@@ -54,6 +59,20 @@ pub(crate) struct CodingPanel {
     job_mode: Arc<OnceLock<ModeCell>>,
 }
 impl CodingPanel {
+    /// Cancels the job this id names, through the panel's own control path: the
+    /// running job's own token when it is the one, the control mailbox
+    /// otherwise. The old TUI's `App::coding_command` and the new surface's
+    /// drawer `x` both read this, so a job is cancelled one way.
+    pub(crate) fn cancel(&mut self, id: &str) -> Result<(), &'static str> {
+        if self.id.as_deref() == Some(id) {
+            self.cancellation.cancel();
+            return Ok(());
+        }
+        self.commands
+            .try_send(CodingCommand::Cancel { id: id.to_owned() })
+            .map_err(|_| CONTROL_FULL)
+    }
+
     pub(crate) fn is_active(&self) -> bool {
         self.active
     }
@@ -128,13 +147,8 @@ impl App {
                             let _ = reply.send(matches!(&command, CodingCommand::Approve { .. }));
                         })
                 }
-                CodingCommand::Cancel { id } if panel.id.as_deref() == Some(id) => {
-                    panel.cancellation.cancel();
-                    Ok(())
-                }
-                _ => panel.commands.try_send(command).map_err(
-                    |_| "Job control mailbox is full or closed; cancellation remains available",
-                ),
+                CodingCommand::Cancel { id } => panel.cancel(id),
+                _ => panel.commands.try_send(command).map_err(|_| CONTROL_FULL),
             };
             if let Err(message) = result {
                 self.transcript.push(BlockKind::Error, message);

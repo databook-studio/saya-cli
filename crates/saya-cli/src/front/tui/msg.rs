@@ -10,6 +10,7 @@ use ratatui::crossterm::event::KeyEvent;
 use saya_agent::PermissionMode;
 
 use super::direct::{Direct, DirectOutcome};
+use super::jobs::JobReport;
 use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 
@@ -27,6 +28,11 @@ pub(crate) struct Worker {
     /// rows a query returned, or the sentence a command ends in. The units
     /// that ask a worker for something else add their field beside it.
     pub(crate) direct: Option<DirectOutcome>,
+    /// What a job's plumbing said: the run's job list as it now is, or one call
+    /// a job puts to the operator (`02` §8). It rides the worker slot because a
+    /// job is a worker of this surface — never the queue's key slot, so a slow
+    /// job can never read as a press.
+    pub(crate) job: Option<JobReport>,
 }
 
 /// One thing the surface has to react to.
@@ -81,4 +87,7 @@ pub(crate) enum Cmd {
     /// trust question's `y`, carried out through today's trust store, exactly
     /// like an explicit `--workspace`.
     Trust,
+    /// Cancel the job this id names, through today's job plumbing (`02` §8's
+    /// `x`, once the confirm has been answered).
+    CancelJob(String),
 }
