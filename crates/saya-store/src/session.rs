@@ -119,6 +119,13 @@ pub struct RedactedSession {
     /// link says which run a session belongs to and grants nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<RunLink>,
+    /// The narrative a compaction folded the session's older turns into,
+    /// additive beside `run`: a chat session saves it here when it compacts,
+    /// and the run that follows replays it as its working memory ahead of the
+    /// pairs kept verbatim. Absent is a session that never compacted, and it
+    /// re-serializes without the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_summary: Option<String>,
 }
 
 impl Default for RedactedSession {
@@ -143,6 +150,7 @@ impl Default for RedactedSession {
             continuation: None,
             parent: None,
             run: None,
+            compaction_summary: None,
         }
     }
 }

@@ -64,46 +64,32 @@ pub(crate) async fn run_with_trigger(
         automatic,
     };
     let history = state.provider_history();
-    let Some(plan) = manual::plan(&state.turns, &history) else {
-        return no_work("Nothing to compact: the conversation is short enough already.".into());
-    };
     if state.turns.len() <= COMPACT_MIN_TURNS {
         return no_work("Nothing to compact: the conversation is short enough already.".into());
     }
     let overrides = state.prompt_overrides();
-    let ai = crate::agent::runtime::effective_ai(&runtime.resolved.ai, &overrides);
-    let resolver = runtime.secret_resolver();
-    let provider = match provider::build(&ai, &resolver) {
-        Ok(provider) => provider,
-        Err(error) => {
-            return failed(
-                manual::failure_message(&format!("the summariser errored: {error}")),
-                None,
-            );
-        }
-    };
     let started = std::time::Instant::now();
-    if let Some(metrics) = metrics {
-        metrics.record(&saya_agent::AgentMetric::Count(
-            saya_agent::AgentMetricCount::CompactionStarted,
-        ));
-    }
-    let result = match super::provider::summarise(&*provider, &ai.model, &plan).await {
-        Ok(outcome) => {
-            match manual::apply_with_continuation(state, &plan, &outcome.summary, &digest_of) {
-                Ok(()) => CompactResult {
-                    message: manual::success_message(plan.compacted_turns, &outcome.summary),
-                    failed: false,
-                    usage: outcome.usage,
-                    summary: Some(outcome.summary),
-                    compacted_turns: plan.compacted_turns,
-                    source_identity: Some(plan.source_identity),
-                    automatic,
-                },
-                Err(reason) => failed(manual::failure_message(&reason), outcome.usage),
-            }
+    let result = match summarise(runtime, &overrides, &state.turns, &history, metrics).await {
+        Pass::Nothing => {
+            return no_work("Nothing to compact: the conversation is short enough already.".into());
         }
-        Err(reason) => failed(manual::failure_message(&reason), None),
+        Pass::Failed { reason, usage } => failed(manual::failure_message(&reason), usage),
+        Pass::Summarised {
+            plan,
+            summary,
+            usage,
+        } => match manual::apply_with_continuation(state, &plan, &summary, &digest_of) {
+            Ok(()) => CompactResult {
+                message: manual::success_message(plan.compacted_turns, &summary),
+                failed: false,
+                usage,
+                summary: Some(summary),
+                compacted_turns: plan.compacted_turns,
+                source_identity: Some(plan.source_identity),
+                automatic,
+            },
+            Err(reason) => failed(manual::failure_message(&reason), usage),
+        },
     };
     record_compaction(
         metrics,
@@ -115,6 +101,72 @@ pub(crate) async fn run_with_trigger(
         u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
     );
     result
+}
+
+/// What one summarising pass produced, before anyone applies it: the plan and
+/// its validated summary, a reason it failed, or nothing to do.
+pub(crate) enum Pass {
+    /// The conversation is short enough already: no provider call ran.
+    Nothing,
+    /// A validated summary of `plan.compacted_turns` turns.
+    Summarised {
+        plan: manual::CompactionPlan,
+        summary: String,
+        usage: Option<saya_agent::TokenUsage>,
+    },
+    /// The reason it failed, in words a person reads.
+    Failed {
+        reason: String,
+        usage: Option<saya_agent::TokenUsage>,
+    },
+}
+
+/// Plans one compaction and asks the summariser for it: the one operation
+/// behind every trigger — the manual `/compact`, the automatic firing, and a
+/// chat session's compaction at the turn boundary.
+///
+/// The conversation is stated as the caller holds it — the turns and the
+/// history replayed for them — so an owner whose conversation is not a
+/// `SessionState` runs the same plan, the same summariser call and the same
+/// validation, and never a copy of them. Applying the summary is the caller's:
+/// this half changes nothing.
+pub(crate) async fn summarise(
+    runtime: &RuntimeConfig,
+    overrides: &crate::agent::runtime::PromptOverrides,
+    turns: &[saya_store::RedactedTurn],
+    history: &[saya_agent::ChatMessage],
+    metrics: Option<&LocalMetrics>,
+) -> Pass {
+    let Some(plan) = manual::plan(turns, history) else {
+        return Pass::Nothing;
+    };
+    let ai = crate::agent::runtime::effective_ai(&runtime.resolved.ai, overrides);
+    let resolver = runtime.secret_resolver();
+    let provider = match provider::build(&ai, &resolver) {
+        Ok(provider) => provider,
+        Err(error) => {
+            return Pass::Failed {
+                reason: format!("the summariser errored: {error}"),
+                usage: None,
+            };
+        }
+    };
+    if let Some(metrics) = metrics {
+        metrics.record(&saya_agent::AgentMetric::Count(
+            saya_agent::AgentMetricCount::CompactionStarted,
+        ));
+    }
+    match super::provider::summarise(&*provider, &ai.model, &plan).await {
+        Ok(outcome) => Pass::Summarised {
+            plan,
+            summary: outcome.summary,
+            usage: outcome.usage,
+        },
+        Err(reason) => Pass::Failed {
+            reason,
+            usage: None,
+        },
+    }
 }
 
 /// Records one Compaction phase sample through the session collector, when

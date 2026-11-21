@@ -29,6 +29,7 @@ use super::compose::{RunComposition, SessionRun};
 use super::link;
 use super::transcript::Transcript;
 use crate::commands::coding::{CodingApplication, CodingError};
+use crate::interactive::session::continuation::compaction::manual::COMPACT_KEEP_TAIL_TURNS;
 
 /// What a context change changed. The change is what the surface states; the
 /// run it states next is composed from it.
@@ -42,6 +43,9 @@ pub(crate) enum RolloverCause {
     Connection,
     /// A different data-sharing setting.
     Privacy,
+    /// The conversation was compacted: its older turns were folded into a
+    /// summary, and the next run starts from that summary and the newest tail.
+    Compact,
     /// The conversation cleared: the next run starts with nothing.
     Clear,
 }
@@ -52,6 +56,14 @@ impl RolloverCause {
     /// every other change carries the conversation over.
     pub(crate) fn clears_transcript(self) -> bool {
         matches!(self, Self::Clear)
+    }
+
+    /// Whether the change folds the conversation into a summary. A compaction
+    /// leaves the transcript alone — what was said does not change — but the
+    /// run it prepares carries the summary and only the newest tail pairs, so
+    /// the turns the summary replaced are not replayed over it.
+    pub(crate) fn compacts(self) -> bool {
+        matches!(self, Self::Compact)
     }
 }
 
@@ -165,10 +177,13 @@ impl Rollover {
         if change.clears_transcript() {
             transcript.clear();
         }
-        let rolled =
-            RunComposition::compose_seeded(Arc::clone(&self.application), next, seeded(transcript))
-                .await
-                .map_err(RolloverError::Engine)?;
+        let rolled = RunComposition::compose_seeded(
+            Arc::clone(&self.application),
+            next,
+            seeded(transcript, change),
+        )
+        .await
+        .map_err(RolloverError::Engine)?;
         rolled.open().await.map_err(RolloverError::Engine)?;
         // The record names the run the session belongs to now.
         link::after_rollover(
@@ -199,12 +214,37 @@ impl Rollover {
     }
 }
 
-/// The conversation a run is seeded with: the transcript's settled pairs,
-/// oldest first. Empty after `/clear` and for a session that settled none.
-fn seeded(transcript: &Transcript) -> Vec<(String, String)> {
-    transcript
-        .turns()
+/// The assistant's line of the summary pair: the run's history is (prompt,
+/// answer) pairs by contract — `saya_agent`'s assembly refuses an odd length and
+/// any role out of turn — so a summary standing ahead of the tail rides as one
+/// pair rather than one message.
+const SUMMARY_ACK: &str = "Understood. I have the summary of the earlier conversation.";
+
+/// The conversation a run is seeded with, oldest pair first: the transcript's
+/// settled pairs and, once a compaction saved a summary, that summary ahead of
+/// them — a compaction keeps the newest tail pairs, `/clear` keeps none.
+fn seeded(transcript: &Transcript, change: RolloverCause) -> Vec<(String, String)> {
+    if change.clears_transcript() {
+        return Vec::new();
+    }
+    let turns = transcript.turns();
+    let kept = if change.compacts() {
+        turns.len().saturating_sub(COMPACT_KEEP_TAIL_TURNS)
+    } else {
+        0
+    };
+    let summary = transcript
+        .record()
+        .compaction_summary
+        .clone()
+        .map(|summary| (summary, SUMMARY_ACK.to_owned()));
+    summary
         .into_iter()
-        .map(|turn| (turn.prompt, turn.answer))
+        .chain(
+            turns
+                .into_iter()
+                .skip(kept)
+                .map(|turn| (turn.prompt, turn.answer)),
+        )
         .collect()
 }

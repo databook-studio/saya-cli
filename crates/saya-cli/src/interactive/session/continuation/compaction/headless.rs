@@ -55,8 +55,9 @@ pub(crate) fn headless_auto_compact_input(
 /// the context numerator, the same figure the TUI captures as
 /// `last_answering_input`. The LAST report measures this turn's occupancy
 /// (a multi-round turn re-sends the conversation); the summed `output.usage`
-/// and a `FailedAttemptUsage` never answer here — absent is not zero.
-fn last_answering_input(output: &AgentOutput) -> Option<u64> {
+/// and a `FailedAttemptUsage` never answer here — absent is not zero. The chat
+/// session's compaction reads the same figure from the same place.
+pub(crate) fn last_answering_input(output: &AgentOutput) -> Option<u64> {
     output.events.iter().rev().find_map(|event| match event {
         AgentEvent::Usage {
             call: UsageCall::Answer,

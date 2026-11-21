@@ -7,6 +7,7 @@
 //! Presentation-free: a front decides how any of it looks, so nothing here
 //! names a terminal library, a widget, or the renderer.
 
+mod compact;
 mod compose;
 mod compose_plugins;
 mod event;
@@ -27,6 +28,8 @@ mod workspace_shape;
 // session, the turn, the operator and the fronts above them consume it. Nothing
 // in the crate references it yet, so the re-exports read as unused in a lib
 // build — they are the boundary, not dead code.
+#[allow(unused_imports)]
+pub(crate) use compact::{Compacted, Compaction};
 #[allow(unused_imports)]
 pub(crate) use compose::{RunComposition, SessionRun};
 #[allow(unused_imports)]
@@ -85,6 +88,22 @@ mod rollover_tests;
 #[cfg(all(test, unix))]
 #[path = "rollover_clear_tests.rs"]
 mod rollover_clear_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compact_provider.rs"]
+mod compact_provider;
+
+#[cfg(all(test, unix))]
+#[path = "compact_fixture.rs"]
+mod compact_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compact_tests.rs"]
+mod compact_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compact_latch_tests.rs"]
+mod compact_latch_tests;
 
 #[cfg(test)]
 #[path = "workspace_shape_tests.rs"]
