@@ -145,7 +145,6 @@ fn scope_switching_changes_the_advertised_surface_exactly() {
         "join_check",
         "list",
         "read",
-        "request_clarification",
         "result_shape",
         "schema_discovery",
     ];
@@ -165,7 +164,6 @@ fn scope_switching_changes_the_advertised_surface_exactly() {
         "join_check",
         "list",
         "read",
-        "request_clarification",
         "result_shape",
         "run_command",
         "schema_discovery",

@@ -1,8 +1,9 @@
-//! Tests for the `request_clarification` surface: the definition the
-//! model is advertised, and the executor arm that answers a landed ask with
-//! the short result — without touching any connection, with or without data
-//! sharing.
+//! Tests for the `request_clarification` surface: the definition the model is
+//! advertised through the database plugin, and the executor arm that answers a
+//! landed ask with the short result — without touching any connection, with or
+//! without data sharing.
 
+use super::clarification;
 use super::database_tools::DatabaseTools;
 use saya_agent::ToolExecutor;
 
@@ -13,13 +14,21 @@ fn valid_args() -> serde_json::Value {
     })
 }
 
-/// The tool is advertised in every surface's definitions: it declares no
-/// effect and no approval need (an ask touches nothing), is read-only-shaped,
-/// and its schema states the bounds.
+/// The tool is the database plugin's, and its definition declares no effect
+/// and no approval need (an ask touches nothing), is read-only-shaped, and
+/// states its bounds in the schema. The core's own database list carries it
+/// nowhere: only the plugin places it.
 #[test]
 fn request_clarification_is_advertised_with_an_effect_none_declaration() {
     for allow_query_data in [false, true] {
-        let definitions = DatabaseTools::definitions(allow_query_data, false, false, false);
+        let mut definitions = DatabaseTools::definitions(allow_query_data, false, false, false);
+        assert!(
+            !definitions
+                .iter()
+                .any(|definition| clarification::is_ask(&definition.name)),
+            "the core list carries no ask: it is the plugin's name"
+        );
+        clarification::advertise(&mut definitions);
         let definition = definitions
             .iter()
             .find(|definition| definition.name == "request_clarification")
@@ -55,7 +64,8 @@ fn request_clarification_is_advertised_with_an_effect_none_declaration() {
 }
 
 /// A landed ask executes through the executor arm without any connection: an
-/// empty registry (no connector at all) still answers.
+/// empty registry (no connector at all) still answers, which is what makes the
+/// plugin's own routing enough to serve it.
 #[tokio::test]
 async fn the_executor_answers_the_ask_without_touching_a_connection() {
     let tools = DatabaseTools::new(None, 10, false);

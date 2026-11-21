@@ -75,11 +75,12 @@ impl CodingDatabaseTools {
     }
 
     /// The definitions the coding root and its helpers advertise: the
-    /// clarification ask when an operator can answer it, plus the standard
-    /// read-only database tools narrowed to the profiles this view admits. The
-    /// SQL half is empty when this view admits no profile, so a job with no
-    /// selected profile advertises no way to reach a database; the ask is
-    /// advertised whether or not one is selected.
+    /// clarification ask — when an operator can answer it and this job selected
+    /// at least one profile — plus the standard read-only database tools
+    /// narrowed to the profiles this view admits. The SQL half is empty when
+    /// this view admits no profile, so a job with no selected profile
+    /// advertises no way to reach a database and no ask either: the ask is a
+    /// database tool, and a job whose work is code alone has none.
     pub(crate) fn definitions(&self, view: Option<&ChildAuthorityView>) -> Vec<ToolDefinition> {
         let mut definitions = Vec::new();
         if self.advertises_clarification() {
@@ -110,10 +111,10 @@ impl CodingDatabaseTools {
         definitions
     }
 
-    /// Whether this surface advertises the ask: only when an operator surface
-    /// is attached to answer it.
+    /// Whether this surface advertises the ask: an operator surface is
+    /// attached to answer it, and the job selected a profile to ask about.
     pub(crate) fn advertises_clarification(&self) -> bool {
-        self.clarification
+        self.clarification && !self.selected.is_empty()
     }
 
     /// The ask's fixed result, when this surface advertises it. `None` when it

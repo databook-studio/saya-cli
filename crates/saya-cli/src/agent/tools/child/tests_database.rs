@@ -43,7 +43,7 @@ pub(super) fn store() -> SqliteStateStore {
 
 /// An absolute, read/write SQLite profile whose file exists: the connection is
 /// writable, so a write statement can only be refused by the safety layer.
-pub(super) fn sqlite_profile(root: &Path, name: &str) -> (DatabaseProfile, PathBuf) {
+pub(crate) fn sqlite_profile(root: &Path, name: &str) -> (DatabaseProfile, PathBuf) {
     let path = root.join(format!("{name}.sqlite3"));
     std::fs::File::create(&path).unwrap();
     let profile = DatabaseProfile::Sqlite {
@@ -54,7 +54,7 @@ pub(super) fn sqlite_profile(root: &Path, name: &str) -> (DatabaseProfile, PathB
 }
 
 /// A runtime that carries exactly `profiles`.
-pub(super) fn runtime_with(profiles: &[(String, DatabaseProfile)]) -> RuntimeConfig {
+pub(crate) fn runtime_with(profiles: &[(String, DatabaseProfile)]) -> RuntimeConfig {
     let mut runtime = runtime();
     for (name, profile) in profiles {
         runtime

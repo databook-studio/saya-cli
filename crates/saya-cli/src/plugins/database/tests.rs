@@ -124,10 +124,12 @@ fn serialized(definitions: &[ToolDefinition]) -> Vec<String> {
 #[test]
 fn chat_definitions_are_the_non_workspace_subset() {
     let plugin = chat_plugin();
-    let expected: Vec<ToolDefinition> = DatabaseTools::definitions(true, true, true, false)
+    let mut expected: Vec<ToolDefinition> = DatabaseTools::definitions(true, true, true, false)
         .into_iter()
         .filter(|definition| !is_tool_name(&definition.name))
         .collect();
+    // The ask is the plugin's own name: the core list carries it nowhere.
+    crate::agent::tools::clarification::advertise(&mut expected);
 
     let actual = plugin.definitions(&CHAT);
 

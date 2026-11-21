@@ -86,7 +86,6 @@ fn every_step_s_definitions_follow_the_step_s_capabilities() {
         names(&built, 0),
         [
             "schema_discovery",
-            "request_clarification",
             "read",
             "glob",
             "grep",

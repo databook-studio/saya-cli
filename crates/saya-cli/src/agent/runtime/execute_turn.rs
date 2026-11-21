@@ -169,6 +169,7 @@ async fn run_agent_turn(
             allow_query_data,
             has_state_store,
             permit_candidate_writes,
+            database.has_connection(),
             mcp.as_ref(),
             &runtime.resolved.tools,
         ),
