@@ -1,14 +1,14 @@
 //! The session-facing projection's own tests: every mode decomposes into the
-//! engine's two axes, and every pair the modes produce projects back to the
-//! mode it came from.
+//! engine's two axes, every pair the modes produce projects back to the mode it
+//! came from, and the six names are one axis.
 
 use super::{AgentMode, PermissionMode};
 use crate::protocol::approval::ApprovalPolicy;
 
-/// The table, read in both directions: `accept-edits` and `bypass` set a
-/// consent posture of their own, `plan` sets none — it is a task posture, and
-/// the consent it found is the consent it leaves — and every mode names the
-/// task posture it sets.
+/// The table, read in both directions: `accept-edits`, `bypass`, `read-only`
+/// and `never` each set a consent posture of their own, `plan` sets none — it
+/// is a task posture, and the consent it found is the consent it leaves — and
+/// every mode names the task posture it sets.
 #[test]
 fn every_mode_decomposes_into_the_engine_s_two_axes() {
     assert_eq!(
@@ -28,6 +28,16 @@ fn every_mode_decomposes_into_the_engine_s_two_axes() {
         PermissionMode::Bypass.decompose(),
         (Some(ApprovalPolicy::Bypass), AgentMode::Build)
     );
+    assert_eq!(
+        PermissionMode::ReadOnly.decompose(),
+        (Some(ApprovalPolicy::ReadOnly), AgentMode::Build),
+        "read-only states the posture its own words name"
+    );
+    assert_eq!(
+        PermissionMode::Never.decompose(),
+        (Some(ApprovalPolicy::Never), AgentMode::Build),
+        "never states the posture its own words name"
+    );
 }
 
 /// `of` reads the task axis first: a Plan session projects to `plan` whatever
@@ -44,36 +54,36 @@ fn of_reads_plan_first_and_the_consent_posture_otherwise() {
     ] {
         assert_eq!(
             PermissionMode::of(policy, AgentMode::Plan),
-            Some(PermissionMode::Plan),
+            PermissionMode::Plan,
             "the task posture decides first, under {policy:?}"
         );
     }
     assert_eq!(
         PermissionMode::of(ApprovalPolicy::Ask, AgentMode::Build),
-        Some(PermissionMode::Ask)
+        PermissionMode::Ask
     );
     assert_eq!(
         PermissionMode::of(ApprovalPolicy::AcceptEdits, AgentMode::Build),
-        Some(PermissionMode::AcceptEdits)
+        PermissionMode::AcceptEdits
     );
     assert_eq!(
         PermissionMode::of(ApprovalPolicy::Bypass, AgentMode::Build),
-        Some(PermissionMode::Bypass)
+        PermissionMode::Bypass
     );
 }
 
-/// `read-only` and `never` are consent postures with no mode of their own — a
-/// pair carrying one projects to nothing, so a bar keeps showing the pair
-/// rather than a mode the user never chose.
+/// `read-only` and `never` are modes like the other four: a pair carrying one
+/// projects to it, so the switch, the bar and `/mode`'s report name one axis
+/// rather than treating two postures as unnameable.
 #[test]
-fn read_only_and_never_project_to_no_mode() {
+fn read_only_and_never_are_modes_of_their_own() {
     assert_eq!(
         PermissionMode::of(ApprovalPolicy::ReadOnly, AgentMode::Build),
-        None
+        PermissionMode::ReadOnly
     );
     assert_eq!(
         PermissionMode::of(ApprovalPolicy::Never, AgentMode::Build),
-        None
+        PermissionMode::Never
     );
 }
 
@@ -86,12 +96,14 @@ fn the_modes_round_trip_through_their_pair() {
         PermissionMode::AcceptEdits,
         PermissionMode::Plan,
         PermissionMode::Bypass,
+        PermissionMode::ReadOnly,
+        PermissionMode::Never,
     ] {
         let (policy, agent_mode) = mode.decompose();
         let policy = policy.unwrap_or(ApprovalPolicy::Ask);
         assert_eq!(
             PermissionMode::of(policy, agent_mode),
-            Some(mode),
+            mode,
             "{mode:?} does not survive its own pair"
         );
     }

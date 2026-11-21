@@ -137,6 +137,7 @@ fn every_alias_resolves_to_its_command() {
     assert_eq!(
         aliases,
         vec![
+            ("approvals", "mode"),
             ("investigations", "investigation"),
             ("contract", "contracts"),
             ("quit", "exit"),
@@ -213,7 +214,7 @@ fn setup_is_the_one_full_screen_only_command() {
 
 /// The `/help` listing is a view of the catalogue: every canonical row is
 /// listed, carries a description and its own usage line, ranks are unique,
-/// and the three folded aliases are the only names the listing does not show.
+/// and the folded aliases are the only names the listing does not show.
 #[test]
 fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
     let mut ranks: Vec<u8> = Vec::new();
@@ -233,11 +234,11 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         );
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 56, "the listing shows 56 of today's 59 names");
+    assert_eq!(ranks.len(), 55, "the listing shows 55 of today's 59 names");
     assert_eq!(
         catalog::names().count(),
         59,
-        "with the three folded aliases, the parser answers 59 names"
+        "with the four folded aliases, the parser answers 59 names"
     );
     ranks.sort_unstable();
     let mut unique = ranks.clone();

@@ -115,3 +115,86 @@ fn the_print_launch_still_takes_bypass() {
     assert!(cli.print.task.is_some());
     assert_eq!(cli.options.permission_mode.as_deref(), Some("bypass"));
 }
+
+/// The one axis on the launch: `--mode plan` states plan, through the same
+/// grammar and the same gate `/mode` reads, and owes no deprecation note.
+#[test]
+fn the_mode_flag_states_plan_and_owes_no_note() {
+    use crate::interactive::session::permissions::mode::stated_mode;
+
+    let cli = Cli::try_parse_from(["saya", "--mode", "plan"]).expect("`--mode plan` parses");
+    assert!(cli.command.is_none());
+    assert_eq!(cli.options.mode.as_deref(), Some("plan"));
+    assert_eq!(
+        stated_mode("--mode", cli.options.mode.as_deref().unwrap(), false),
+        Ok(saya_agent::PermissionMode::Plan),
+        "the flag resolves through the one six-value grammar"
+    );
+    assert_eq!(consent_alias_note(&cli.options), None, "no alias, no note");
+}
+
+/// `--approval-mode` still works for one release, and says on stderr that it is
+/// the alias: the posture it states is the same one the axis states.
+#[test]
+fn the_approval_mode_alias_still_works_and_notes_itself() {
+    use crate::interactive::session::permissions::mode::APPROVAL_MODE_FLAG_NOTE;
+
+    let cli =
+        Cli::try_parse_from(["saya", "--approval-mode", "read-only"]).expect("the alias parses");
+    assert_eq!(
+        config::runtime::approval_mode(&cli.options).expect("the alias resolves"),
+        saya_agent::ApprovalPolicy::ReadOnly,
+        "the alias states the same posture the axis does"
+    );
+    assert_eq!(
+        consent_alias_note(&cli.options),
+        Some(APPROVAL_MODE_FLAG_NOTE),
+        "the alias says it is an alias, once"
+    );
+
+    let cli =
+        Cli::try_parse_from(["saya", "--permission-mode", "never"]).expect("the alias parses");
+    assert_eq!(
+        consent_alias_note(&cli.options),
+        Some(crate::interactive::session::permissions::mode::PERMISSION_MODE_FLAG_NOTE)
+    );
+}
+
+/// Stating two of the three consent flags is refused rather than resolved by
+/// precedence — `--mode` beside either alias included.
+#[test]
+fn two_consent_flags_on_one_launch_are_refused() {
+    for argv in [
+        &["saya", "--approval-mode", "ask", "--mode", "never"][..],
+        &["saya", "--mode", "never", "--permission-mode", "ask"][..],
+        &[
+            "saya",
+            "--permission-mode",
+            "plan",
+            "--approval-mode",
+            "read-only",
+        ][..],
+    ] {
+        let cli = Cli::try_parse_from(argv).expect("each flag parses on its own");
+        let error = refuse_conflicting_consent(
+            cli.options.mode.as_deref(),
+            cli.options.permission_mode.as_deref(),
+            cli.options.approval_mode.as_deref(),
+        )
+        .expect_err("two spellings of one consent must refuse");
+        assert!(
+            error.contains("both state the session's consent"),
+            "the refusal keeps today's wording style: {error}"
+        );
+    }
+    let cli = Cli::try_parse_from(["saya", "--mode", "never"]).expect("one flag parses");
+    assert!(
+        refuse_conflicting_consent(
+            cli.options.mode.as_deref(),
+            cli.options.permission_mode.as_deref(),
+            cli.options.approval_mode.as_deref(),
+        )
+        .is_ok(),
+        "one stated consent is never a conflict"
+    );
+}

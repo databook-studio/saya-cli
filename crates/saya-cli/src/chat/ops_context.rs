@@ -13,7 +13,7 @@
 //! and the session performs the rollover; the wording of a refusal is the mode
 //! module's, so `/mode` cannot refuse the same request in two sentences.
 
-use saya_agent::{ApprovalPolicy, PermissionMode};
+use saya_agent::PermissionMode;
 
 use crate::agent::tools::shell_policy::ModeCell;
 use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
@@ -21,7 +21,7 @@ use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::commands::approval_name;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
 use crate::interactive::session::permissions::mode;
-use crate::slash::{ExportRequest, ReportRequest};
+use crate::slash::{ExportRequest, ModeRequest, ReportRequest};
 
 /// The session's handles, as one operation sees them.
 pub(crate) struct OpsContext {
@@ -119,10 +119,10 @@ pub(crate) enum ContextChange {
 /// An operation on the session itself: never a turn of the run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionOp {
-    /// `/mode`: state the mode on the run's cell; bare shows it.
-    Mode(Option<PermissionMode>),
-    /// `/approvals`: the consent posture on its own, today's separate axis.
-    Approvals(Option<ApprovalPolicy>),
+    /// `/mode`: state the mode on the run's cell; bare shows it. `/approvals`
+    /// states the same operation through the one-release alias, so the note is
+    /// the switch's, not a second command's.
+    Mode(ModeRequest),
     /// `/allow`: seed the session's grant store.
     Allow(Vec<String>),
     /// `/thinking`: whether the transcript shows reasoning.

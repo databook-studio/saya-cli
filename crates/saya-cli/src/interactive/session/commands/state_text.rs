@@ -13,7 +13,8 @@ pub(crate) fn approval_name(policy: ApprovalPolicy) -> String {
 /// for `plan` — that the model's tool list catches up at the next turn. Every
 /// answer carries the shared bypass-composition sentence (see
 /// [`crate::slash::PLAN_BYPASS_SENTENCE`]) in the same words as the detailed
-/// help entry.
+/// help entry. One answer for the whole six-value axis: `/mode read-only` and
+/// `/approvals read-only` read the same.
 pub(crate) fn mode_message(mode: PermissionMode) -> String {
     let meaning = match mode {
         PermissionMode::Ask => "writes allowed, asks per approval policy",
@@ -26,6 +27,12 @@ pub(crate) fn mode_message(mode: PermissionMode) -> String {
         PermissionMode::Bypass => {
             "every tool call runs without asking; every structural guard still applies"
         }
+        PermissionMode::ReadOnly => {
+            "read-shaped calls run; every call that would need approval is denied instead"
+        }
+        PermissionMode::Never => {
+            "nothing is put to you: every call that would need approval is denied"
+        }
     };
     format!(
         "Mode: {} — {meaning}. {}",
@@ -35,23 +42,14 @@ pub(crate) fn mode_message(mode: PermissionMode) -> String {
 }
 
 /// The bare `/mode` report: the session's current mode, from the pair the
-/// state carries. A consent posture with no mode of its own (`read-only`,
-/// `never`, set by `/approvals`) is reported as the pair it is, never
-/// rounded to one of the four.
+/// state carries. Every posture the pair can hold is one of the six modes, so
+/// the report always names a mode — there is no second vocabulary to read
+/// around.
 pub(crate) fn mode_report(state: &SessionState) -> String {
     let policy = state
         .approval_mode_parsed()
         .unwrap_or(ApprovalPolicy::Ask);
-    match PermissionMode::of(policy, state.agent_mode_parsed()) {
-        Some(mode) => mode_message(mode),
-        None => format!(
-            "Mode: {} — the approval policy is {}, which is not one of the switchable modes \
-             (ask, accept-edits, plan, bypass). {}",
-            state.agent_mode_parsed().as_str(),
-            approval_name(policy),
-            crate::slash::PLAN_BYPASS_SENTENCE
-        ),
-    }
+    mode_message(PermissionMode::of(policy, state.agent_mode_parsed()))
 }
 
 fn available_providers() -> &'static [&'static str] {

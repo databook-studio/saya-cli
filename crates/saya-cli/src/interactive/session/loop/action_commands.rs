@@ -179,7 +179,7 @@ fn handle_compact(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::err
 }
 
 fn handle_mode(
-    next: saya_agent::PermissionMode,
+    request: crate::slash::ModeRequest,
     ctx: &mut TurnContext,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let ActionParts {
@@ -200,11 +200,12 @@ fn handle_mode(
     // the shared abandon step has to run after it — a pending clarification
     // must not answer under a mode the user changed out from under it.
     let before = state.context_key();
-    let (emitted, outcome) =
-        match crate::interactive::session::permissions::mode::switch(state, session, next) {
-            Ok(message) => (SessionAction::Message(message), TurnOutcome::Completed),
-            Err(message) => (SessionAction::Error(message), TurnOutcome::Errored),
-        };
+    let (emitted, outcome) = match crate::interactive::session::permissions::mode::switch_requested(
+        state, session, request, None,
+    ) {
+        Ok(message) => (SessionAction::Message(message), TurnOutcome::Completed),
+        Err(message) => (SessionAction::Error(message), TurnOutcome::Errored),
+    };
     session_emit::emit_action(emitted, format, state, store)?;
     state.abandon_question_when_context_changed(&before, session);
     if let Some(outcome) = persist(state, store, format, save_refused)? {

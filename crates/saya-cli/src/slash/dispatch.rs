@@ -44,8 +44,10 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "provider" => SlashCommand::Provider((!arg.is_empty()).then_some(arg)),
         "model" => SlashCommand::Model((!arg.is_empty()).then_some(arg)),
         "privacy" => SlashCommand::Privacy(parse_bool(&arg)?),
-        "approvals" => SlashCommand::Approvals(parse_approval(&arg)?),
-        "mode" => SlashCommand::Mode(parse_mode(&arg)?),
+        // `/approvals` is `/mode`'s one-release alias, not a second command:
+        // one variant, one grammar, one switch.
+        "approvals" => SlashCommand::Mode(ModeRequest::alias(parse_mode(&arg)?)),
+        "mode" => SlashCommand::Mode(ModeRequest::mode(parse_mode(&arg)?)),
         "schema" => SlashCommand::Schema(arg == "refresh"),
         "sql" => {
             let query = trimmed.strip_prefix("/sql").unwrap_or("").trim();

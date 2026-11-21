@@ -9,15 +9,9 @@ fn parse_bool(value: &str) -> Result<Option<bool>, SlashParseError> {
     }
 }
 
-fn parse_approval(value: &str) -> Result<Option<ApprovalPolicy>, SlashParseError> {
-    if value.is_empty() {
-        return Ok(None);
-    }
-    ApprovalPolicy::from_str(value)
-        .map(Some)
-        .map_err(|error| SlashParseError(error.to_string()))
-}
-
+/// The one consent grammar: `/mode` and its `/approvals` alias both read it,
+/// so the six values are stated once. Case-sensitive; an unknown word names
+/// every value that parses rather than reading as a silent default.
 fn parse_mode(value: &str) -> Result<Option<PermissionMode>, SlashParseError> {
     if value.is_empty() {
         return Ok(None);
@@ -26,7 +20,8 @@ fn parse_mode(value: &str) -> Result<Option<PermissionMode>, SlashParseError> {
         .map(Some)
         .ok_or_else(|| {
             SlashParseError(format!(
-                "invalid permission mode: {value} (expected ask, accept-edits, plan, or bypass)"
+                "invalid permission mode: {value} (expected ask, accept-edits, plan, bypass, \
+                 read-only, or never)"
             ))
         })
 }

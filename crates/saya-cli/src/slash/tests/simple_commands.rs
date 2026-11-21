@@ -174,32 +174,44 @@ fn test_parse_context() {
     );
 }
 
-/// `/mode` reports bare and switches through the permission-mode grammar —
-/// the four modes plus `build` as an alias for `ask` — and refuses anything
-/// else naming every valid value. Matching `/approvals`'s case handling: the
-/// parse is case-sensitive, so `Plan` is an error, not a mode.
+/// `/mode` reports bare and switches through the session's one consent grammar
+/// — the six values plus `build` as an alias for `ask` — and refuses anything
+/// else naming every valid value. The parse is case-sensitive, so `Plan` is an
+/// error, not a mode.
 #[test]
 fn test_parse_mode_reports_switches_and_refuses() {
     use saya_agent::PermissionMode;
+
+    /// The request `/mode <value>` builds.
+    fn stated(value: PermissionMode) -> SlashCommand {
+        SlashCommand::Mode(crate::slash::ModeRequest {
+            value: Some(value),
+            ..Default::default()
+        })
+    }
+
     assert_eq!(
         parse_slash_command("/mode"),
-        Ok(Some(SlashCommand::Mode(None)))
+        Ok(Some(SlashCommand::Mode(
+            crate::slash::ModeRequest::default()
+        )))
     );
-    assert_eq!(
-        parse_slash_command("/mode plan"),
-        Ok(Some(SlashCommand::Mode(Some(PermissionMode::Plan))))
-    );
-    assert_eq!(
-        parse_slash_command("/mode accept-edits"),
-        Ok(Some(SlashCommand::Mode(Some(PermissionMode::AcceptEdits))))
-    );
-    assert_eq!(
-        parse_slash_command("/mode bypass"),
-        Ok(Some(SlashCommand::Mode(Some(PermissionMode::Bypass))))
-    );
+    for (spelling, expected) in [
+        ("plan", PermissionMode::Plan),
+        ("accept-edits", PermissionMode::AcceptEdits),
+        ("bypass", PermissionMode::Bypass),
+        ("read-only", PermissionMode::ReadOnly),
+        ("never", PermissionMode::Never),
+    ] {
+        assert_eq!(
+            parse_slash_command(&format!("/mode {spelling}")),
+            Ok(Some(stated(expected))),
+            "/mode {spelling} must state {expected:?}"
+        );
+    }
     assert_eq!(
         parse_slash_command("/mode build"),
-        Ok(Some(SlashCommand::Mode(Some(PermissionMode::Ask)))),
+        Ok(Some(stated(PermissionMode::Ask))),
         "`build` is the old spelling of `ask`"
     );
     let error = parse_slash_command("/mode nonsense").unwrap_err();
@@ -207,11 +219,13 @@ fn test_parse_mode_reports_switches_and_refuses() {
         error.0.contains("ask")
             && error.0.contains("accept-edits")
             && error.0.contains("plan")
-            && error.0.contains("bypass"),
+            && error.0.contains("bypass")
+            && error.0.contains("read-only")
+            && error.0.contains("never"),
         "the error names every valid value, got: {error}"
     );
     assert!(
         parse_slash_command("/mode Plan").is_err(),
-        "the parse is case-sensitive like /approvals"
+        "the parse is case-sensitive"
     );
 }

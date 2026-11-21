@@ -1,7 +1,5 @@
 fn finish_action(
     action: SessionAction,
-    before_mode: String,
-    approvals_set: bool,
     ctx: &mut TurnContext,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     if let SessionAction::Coding(command) = action {
@@ -74,36 +72,11 @@ fn finish_action(
         state,
         store,
         format,
-        session,
         save_refused,
         ..
     } = action_parts(ctx);
     let outcome = action_outcome(&action);
     session_emit::emit_action(action, format, state, store)?;
-    if approvals_set {
-        if let Some(line) = crate::interactive::session::permissions::activation::line_if_bypass(
-            state,
-            &session.universe(),
-        ) {
-            session_emit::emit_action(SessionAction::Message(line), format, state, store)?;
-        }
-        if crate::interactive::session::permissions::activation::bypass_activated_by_command(
-            &before_mode,
-            &state.approval_mode,
-        ) && let Err(error) = session
-            .journal()
-            .bypass_activated(saya_store::BypassSource::Command)
-        {
-            session_emit::emit_action(
-                SessionAction::Message(
-                    crate::interactive::session::permissions::grants::journal_warning(&error),
-                ),
-                format,
-                state,
-                store,
-            )?;
-        }
-    }
     if let Some(outcome) = persist(state, store, format, save_refused)? {
         return Ok(outcome);
     }

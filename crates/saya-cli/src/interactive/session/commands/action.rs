@@ -7,9 +7,11 @@ pub enum SessionAction {
     /// `/mode <mode>` — a switch, carried to the loops. The switch needs the
     /// session's one policy, the journal, and the launch's bypass gate, so it
     /// runs through the one shared `permissions::mode::switch` the keyboard
-    /// cycle runs, never in this pure state layer. The arm here keeps the
-    /// match exhaustive; an unhandled `Mode` is a bug, not a silent no-op.
-    Mode(PermissionMode),
+    /// cycle runs, never in this pure state layer. The request carries the
+    /// spelling that stated it, so the `/approvals` alias's deprecation note is
+    /// said by the one switch. The arm here keeps the match exhaustive; an
+    /// unhandled `Mode` is a bug, not a silent no-op.
+    Mode(crate::slash::ModeRequest),
     /// `/compact` — shrink working memory through a bounded summariser call.
     /// The loops intercept this (it needs the provider runtime); the arm here
     /// keeps the match exhaustive.

@@ -11,8 +11,10 @@ pub enum SlashCommand {
     Provider(Option<String>),
     Model(Option<String>),
     Privacy(Option<bool>),
-    Approvals(Option<ApprovalPolicy>),
-    Mode(Option<PermissionMode>),
+    /// `/mode [<value>]` — one statement of the session's consent axis, and
+    /// the spelling that stated it. `/approvals` is the one-release alias, so
+    /// it produces **this** variant: one operation, two spellings, one state.
+    Mode(ModeRequest),
     Schema(bool),
     Sql(String),
     /// `/export [--snapshot|--refresh] [--overwrite] <path>` — what to
@@ -145,4 +147,37 @@ pub enum SlashCommand {
     /// `run_recovery` operation runs on every surface.
     Recovery(RecoveryCommand),
     Exit,
+}
+
+/// One statement of the session's consent axis: the value `/mode` states, or
+/// the read-back when none is stated, and which spelling stated it.
+///
+/// `/mode` and its one-release alias `/approvals` both parse to this, so the
+/// operation is stated once — the switch, the bypass gate and the frozen-job
+/// refusal cannot answer two spellings differently — while the surface that
+/// runs it can still say that the alias is the alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModeRequest {
+    /// The value stated, in the one six-value grammar; `None` reads it back.
+    pub value: Option<PermissionMode>,
+    /// The deprecated `/approvals` spelling stated it (one release only).
+    pub via_approvals_alias: bool,
+}
+
+impl ModeRequest {
+    /// A statement through the canonical `/mode` spelling.
+    pub(crate) const fn mode(value: Option<PermissionMode>) -> Self {
+        Self {
+            value,
+            via_approvals_alias: false,
+        }
+    }
+
+    /// A statement through the deprecated `/approvals` alias.
+    pub(crate) const fn alias(value: Option<PermissionMode>) -> Self {
+        Self {
+            value,
+            via_approvals_alias: true,
+        }
+    }
 }

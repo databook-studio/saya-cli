@@ -72,14 +72,28 @@ fn slash_commands_parse_and_state_transitions_are_deterministic() {
         &["analytics".into(), "staging".into()],
     );
     state.apply(SlashCommand::Privacy(Some(true)), &[]);
-    state.apply(
+    // `/approvals never` is `/mode never`: the pure state layer hands the one
+    // switch to the loop and moves nothing itself, and the request keeps the
+    // spelling so the loop can say the alias is an alias.
+    let applied = state.apply(
         parse_slash_command("/approvals never").unwrap().unwrap(),
         &[],
+    );
+    let SessionAction::Mode(request) = applied else {
+        panic!("a named mode is handed to the loop as a switch, got {applied:?}");
+    };
+    assert_eq!(request.value, Some(saya_agent::PermissionMode::Never));
+    assert!(
+        request.via_approvals_alias,
+        "the alias says it is the alias"
     );
     assert_eq!(state.profile.as_deref(), Some("analytics"));
     assert_eq!(state.included_profiles, vec!["staging"]);
     assert!(state.allow_data_sharing);
-    assert_eq!(state.approval_mode, "never");
+    assert_eq!(
+        state.approval_mode, "ask",
+        "the state moves in the switch, not in the pure apply"
+    );
     assert!(matches!(
         state.apply(SlashCommand::History, &[]),
         SessionAction::History

@@ -16,13 +16,27 @@ use crate::slash::catalog::Category;
 
 include!("help/descriptions.rs");
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
+///
+/// An alias answers with the command it spells — `/help approvals` is
+/// `/help mode` — so a deprecated spelling keeps its help for the release it
+/// still works in.
 pub(crate) fn command_help(name: &str) -> Option<&'static str> {
     let clean_name = name.trim_start_matches('/').to_lowercase();
-    command_help_connection_provider(&clean_name)
-        .or_else(|| command_help_query(&clean_name))
-        .or_else(|| command_help_session(&clean_name))
-        .or_else(|| command_help_jobs(&clean_name))
-        .or_else(|| command_help_memory_runs(&clean_name))
+    let own = |name: &str| {
+        command_help_connection_provider(name)
+            .or_else(|| command_help_query(name))
+            .or_else(|| command_help_session(name))
+            .or_else(|| command_help_jobs(name))
+            .or_else(|| command_help_memory_runs(name))
+    };
+    // A spelling with help of its own keeps it — `/contract` says it is an
+    // alias in its own sentence — and anything else that the catalogue folds
+    // answers with the command it spells: `/help approvals` is `/help mode`.
+    own(&clean_name).or_else(|| {
+        crate::slash::catalog::resolve(&clean_name)
+            .and_then(|canonical| (canonical != clean_name).then(|| own(canonical)))
+            .flatten()
+    })
 }
 include!("help/connection_provider.rs");
 include!("help/query.rs");

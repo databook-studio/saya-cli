@@ -30,27 +30,41 @@ fn test_parse_tasks_shows_clears_and_refuses() {
     );
 }
 
-/// `/mode` is not bypass consent: it must not trip the journalling gate
-/// the two executors consult (`session_loop.rs` and `tui/dispatch.rs`
-/// match on `SlashCommand::Approvals(Some(_))`). A mode change — report
-/// or switch — never matches that shape.
+/// `/mode` and `/approvals` are one command: the same variant, the same value,
+/// and only the spelling differs. Nothing downstream can gate one spelling and
+/// not the other, because there is nothing left to gate separately — the one
+/// switch owns the bypass journal both spellings reach.
 #[test]
-fn mode_never_matches_the_bypass_consent_gate() {
-    for command in [
-        parse_slash_command("/mode").unwrap().unwrap(),
-        parse_slash_command("/mode plan").unwrap().unwrap(),
-        parse_slash_command("/mode build").unwrap().unwrap(),
+fn mode_and_approvals_are_one_command_with_two_spellings() {
+    use saya_agent::PermissionMode;
+    for spelling in [
+        Some(PermissionMode::Ask),
+        Some(PermissionMode::Plan),
+        Some(PermissionMode::Bypass),
+        Some(PermissionMode::ReadOnly),
+        Some(PermissionMode::Never),
+        None,
     ] {
+        let tail = match spelling {
+            Some(mode) => format!(" {}", crate::interactive::session::permissions::mode::name(mode)),
+            None => String::new(),
+        };
+        let canonical = parse_slash_command(&format!("/mode{tail}")).unwrap().unwrap();
+        let aliased = parse_slash_command(&format!("/approvals{tail}"))
+            .unwrap()
+            .unwrap();
+        let SlashCommand::Mode(canonical) = canonical else {
+            panic!("/mode{tail} is a mode statement");
+        };
+        let SlashCommand::Mode(aliased) = aliased else {
+            panic!("/approvals{tail} is the same mode statement");
+        };
+        assert_eq!(canonical.value, aliased.value);
+        assert_eq!(canonical.value, spelling);
         assert!(
-            !matches!(command, SlashCommand::Approvals(Some(_))),
-            "a mode change is not bypass consent: {command:?}"
+            !canonical.via_approvals_alias,
+            "/mode is the canonical spelling"
         );
+        assert!(aliased.via_approvals_alias, "/approvals is the alias");
     }
-    assert!(
-        matches!(
-            parse_slash_command("/approvals bypass").unwrap().unwrap(),
-            SlashCommand::Approvals(Some(_))
-        ),
-        "the gate still matches its own /approvals shape"
-    );
 }

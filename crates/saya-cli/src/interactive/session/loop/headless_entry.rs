@@ -57,15 +57,6 @@ fn handle_line_verbatim(
             }
         },
     };
-    // A mode change through `/approvals` carries the activation line with it:
-    // under bypass the no-euphemism wording, the staged interpreter facts,
-    // and the probe's verdict — said where the mode is set, not just implied
-    // by the indicator. The mode before the command decides whether this
-    // command newly activated bypass: only then is a consent recorded in
-    // the journal; a re-statement over an already-bypass session records
-    // none, and a failed journal write is said, not silent.
-    let before_mode = state.approval_mode.clone();
-    let approvals_set = matches!(parsed, Some(SlashCommand::Approvals(Some(_))));
     let action = match parsed {
         Some(command) => {
             // The answering context before and after the command decides
@@ -224,5 +215,5 @@ fn handle_line_verbatim(
     if matches!(action, SessionAction::Exit) {
         return Ok(TurnOutcome::Exit);
     }
-    finish_action(action, before_mode, approvals_set, ctx)
+    finish_action(action, ctx)
 }

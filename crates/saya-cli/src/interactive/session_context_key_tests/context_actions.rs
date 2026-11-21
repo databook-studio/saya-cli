@@ -59,7 +59,10 @@ fn a_context_change_abandons_the_pending_question_and_a_noop_preserves_it() {
                 let pending = h.pend(label);
                 let action = h.run_mode(PermissionMode::Plan);
                 assert!(
-                    matches!(action, SessionAction::Mode(PermissionMode::Plan)),
+                    matches!(
+                        action,
+                        SessionAction::Mode(request) if request.value == Some(PermissionMode::Plan)
+                    ),
                     "{label}: /mode hands the switch to the loop, got {action:?}"
                 );
                 assert_eq!(
@@ -79,11 +82,22 @@ fn a_context_change_abandons_the_pending_question_and_a_noop_preserves_it() {
             }),
         ),
         (
-            "/approval read-only is a non-escalating mode change",
+            "/mode read-only is a non-escalating mode change",
             Box::new(|h, label| {
                 let pending = h.pend(label);
-                let action = h.run(SlashCommand::Approvals(Some(ApprovalPolicy::ReadOnly)));
-                assert_message(&action, label);
+                let action = h.run_mode(PermissionMode::ReadOnly);
+                assert!(
+                    matches!(
+                        action,
+                        SessionAction::Mode(request)
+                            if request.value == Some(PermissionMode::ReadOnly)
+                    ),
+                    "{label}: /mode hands the switch to the loop, got {action:?}"
+                );
+                assert_eq!(
+                    h.state.approval_mode, "read-only",
+                    "{label}: read-only is a mode of the one axis"
+                );
                 assert_abandoned(h, &pending, label);
             }),
         ),
@@ -146,7 +160,7 @@ fn a_context_change_abandons_the_pending_question_and_a_noop_preserves_it() {
             "/mode with no argument only reports",
             Box::new(|h, label| {
                 let pending = h.pend(label);
-                let action = h.run(SlashCommand::Mode(None));
+                let action = h.run(SlashCommand::Mode(crate::slash::ModeRequest::default()));
                 assert_message(&action, label);
                 assert_preserved(h, &pending, label);
             }),

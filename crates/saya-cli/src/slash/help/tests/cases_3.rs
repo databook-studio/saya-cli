@@ -92,11 +92,11 @@ fn contracts_help_covers_both_forms_and_marks_the_optional_argument() {
     );
 }
 
-/// The approvals grammar has one authority (`ApprovalPolicy::from_str`)
-/// and every help surface must name the whole vocabulary it parses —
-/// including `bypass`. A mode that parses but no help names is the exact
-/// drift the run grammar's equivalence tests (`scopes.rs`) catch, on
-/// the session's own mode word. The clap doc, the `/approvals` per-command
+/// The consent mode has one grammar (the six-value mode parse) and every help
+/// surface must name the whole vocabulary it parses — including `bypass`,
+/// `read-only` and `never`. A mode that parses but no help names is the exact
+/// drift the run grammar's equivalence tests (`scopes.rs`) catch, on the
+/// session's own mode word. The clap docs, the `/approvals` alias's per-command
 /// help, and the `/help` listing must all carry it.
 #[test]
 fn every_help_surface_names_bypass() {
@@ -124,8 +124,12 @@ fn every_help_surface_names_bypass() {
 
     let listing = help_text();
     assert!(
-        listing.contains("/approvals [ask|read-only|never|bypass]"),
+        listing.contains("/mode [ask|accept-edits|plan|bypass|read-only|never]"),
         "the /help listing must show the full mode vocabulary: {listing}"
+    );
+    assert!(
+        !listing.contains("/approvals"),
+        "/approvals is an alias: the listing shows canonical names only: {listing}"
     );
 }
 

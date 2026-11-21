@@ -1,7 +1,9 @@
-/// K1 pins the user-visible `/help` listing byte for byte: the catalogue
+/// K1 pinned the user-visible `/help` listing byte for byte: the catalogue
 /// replaces the four hand-maintained tables, and the bytes the user reads must
-/// not move. This is the text the pre-catalogue listing printed, captured
-/// before the rewrite.
+/// not move. K2 is the one deliberate move since — `/approvals` folded into
+/// `/mode` as an alias — so the snapshot below is K1's text with exactly that
+/// edit: one line gone, one line's usage and description widened to the six
+/// values. Any other difference is a regression.
 #[test]
 fn help_listing_is_byte_identical() {
     assert_eq!(help_text(), LISTING);
@@ -30,8 +32,7 @@ Provider, model & privacy
   /provider [name] — Set or view the AI provider
   /model [name] — Set or view the AI model
   /privacy [on|off] — Enable or disable data sharing privacy
-  /approvals [ask|read-only|never|bypass] — Set approval policy for tool execution
-  /mode [ask|accept-edits|plan|bypass] — Set the session's permission mode: ask, accept-edits, plan, or bypass
+  /mode [ask|accept-edits|plan|bypass|read-only|never] — Set the session's consent mode: ask, accept-edits, plan, bypass, read-only, or never
   /allow <scopes…> — Seed pre-authorised scopes into this session's grant store
   /grants — List the session's granted scopes
 

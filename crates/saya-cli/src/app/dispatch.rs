@@ -17,6 +17,19 @@ pub(super) fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     // flag is a global arg, so clap accepts it on any subcommand, and a
     // subcommand with no tool surface refuses it rather than dropping it.
     refuse_tools_on_subcommand(cli.command.as_ref(), &cli.options)?;
+    // Three spellings of one consent: statement in pairs is refused, and a
+    // deprecated spelling says on stderr that it is one — once, before any
+    // surface runs.
+    if let Err(message) = refuse_conflicting_consent(
+        cli.options.mode.as_deref(),
+        cli.options.permission_mode.as_deref(),
+        cli.options.approval_mode.as_deref(),
+    ) {
+        return commands::failure_message(2, message, cli.options.format.into());
+    }
+    if let Some(note) = consent_alias_note(&cli.options) {
+        eprintln!("{note}");
+    }
     // `-p` is a whole launch: a subcommand beside it is a second intent,
     // refused before either surface runs.
     if let Err(message) =

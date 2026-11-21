@@ -60,12 +60,13 @@ pub(super) fn apply_session_action(
     let current = action.take()?;
     match current {
         SessionAction::History => list_sessions(transcript, store),
-        SessionAction::Mode(next) => {
+        SessionAction::Mode(request) => {
             // `/mode <mode>` — the one shared switch the keyboard cycle runs
             // too. It moves the session's one policy, journals a fresh bypass
             // activation, and answers with the mode's own words; a refusal (a
             // withheld `bypass`, a frozen policy) is an Error block and
-            // changes nothing.
+            // changes nothing. The request carries the spelling, so the
+            // `/approvals` alias's deprecation note rides the same answer.
             //
             // The key is read here rather than around `apply` because `apply`
             // is pure for this action: the pair the key carries moves in the
@@ -73,8 +74,8 @@ pub(super) fn apply_session_action(
             // a pending clarification must not answer under a mode the user
             // changed out from under it.
             let before = state.context_key();
-            match crate::interactive::session::permissions::mode::switch_with_job(
-                state, session, next, job,
+            match crate::interactive::session::permissions::mode::switch_requested(
+                state, session, request, job,
             ) {
                 Ok(message) => transcript.push(BlockKind::System, message),
                 Err(message) => transcript.push(BlockKind::Error, message),

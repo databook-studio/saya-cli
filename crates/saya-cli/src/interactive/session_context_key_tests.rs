@@ -180,12 +180,16 @@ impl Harness {
     fn run_mode(&mut self, next: PermissionMode) -> SessionAction {
         let available = ["demo".to_string()];
         let before = self.state.context_key();
-        let action = self.state.apply(SlashCommand::Mode(Some(next)), &available);
-        if let SessionAction::Mode(next) = action {
-            crate::interactive::session::permissions::mode::switch(
+        let action = self.state.apply(
+            SlashCommand::Mode(crate::slash::ModeRequest::mode(Some(next))),
+            &available,
+        );
+        if let SessionAction::Mode(request) = action {
+            crate::interactive::session::permissions::mode::switch_requested(
                 &mut self.state,
                 &mut self.session,
-                next,
+                request,
+                None,
             )
             .expect("the mode switch lands on a session that allows it");
         }

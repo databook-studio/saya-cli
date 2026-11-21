@@ -1,8 +1,8 @@
 use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
 use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
-use saya_agent::{ApprovalPolicy, PermissionMode};
-use std::{fmt, str::FromStr};
+use saya_agent::PermissionMode;
+use std::fmt;
 
 pub(crate) mod catalog;
 mod contracts;

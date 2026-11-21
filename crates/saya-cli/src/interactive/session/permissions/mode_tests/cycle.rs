@@ -3,7 +3,7 @@
 
 use saya_agent::{ApprovalPolicy, PermissionMode};
 
-use super::super::{cycle_from, switch};
+use super::super::{cycle_from, switch_with_job};
 use super::support::Fixture;
 
 /// Shift+Tab walks `ask → accept-edits → plan → ask` where the configuration
@@ -21,7 +21,7 @@ fn the_cycle_walks_the_reachable_modes_and_closes() {
     ] {
         let next = cycle_from(&fixture.state);
         assert_eq!(next, expected, "the cycle's next member");
-        switch(&mut fixture.state, &mut fixture.session, next)
+        switch_with_job(&mut fixture.state, &mut fixture.session, next, None)
             .expect("every reachable member switches");
     }
     assert_eq!(
@@ -48,24 +48,24 @@ fn the_cycle_reaches_bypass_only_when_the_configuration_allows_it() {
     ] {
         let next = cycle_from(&fixture.state);
         assert_eq!(next, expected, "the cycle's next member");
-        switch(&mut fixture.state, &mut fixture.session, next)
+        switch_with_job(&mut fixture.state, &mut fixture.session, next, None)
             .expect("the configuration allows every member");
     }
     assert_eq!(fixture.state.approval_mode, "ask");
 }
 
-/// A pair with no mode of its own — `read-only`, set by `/approvals` — is
-/// not a cycle member: the press enters at `ask`, which asks for every call,
-/// rather than landing on a mode the user never walked through.
+/// `read-only` names a mode but is not a cycle member: the key walks the four
+/// interactive modes only, so a press from it enters at `ask`, which asks for
+/// every call, rather than landing on a mode the user never walked through.
 #[test]
 fn a_pair_with_no_mode_of_its_own_enters_the_cycle_at_ask() {
     let fixture = Fixture::acquire("cycle-read-only", ApprovalPolicy::ReadOnly, false);
     assert_eq!(cycle_from(&fixture.state), PermissionMode::Ask);
 }
 
-/// The projection the cycle reads is the one the bar reads: a session under
-/// `never` has no mode either, and `plan` is the mode whatever consent sits
-/// beside it.
+/// The projection the cycle reads is the one the bar reads: every posture the
+/// pair can hold projects to a mode — `never` included — and `plan` is the
+/// mode whatever consent sits beside it.
 #[test]
 fn the_projection_reads_the_pair() {
     let mut fixture = Fixture::acquire("cycle-projection", ApprovalPolicy::Ask, false);
@@ -75,7 +75,17 @@ fn the_projection_reads_the_pair() {
     );
 
     fixture.state.approval_mode = "never".into();
-    assert_eq!(super::super::current(&fixture.state), None);
+    assert_eq!(
+        super::super::current(&fixture.state),
+        Some(PermissionMode::Never),
+        "one axis: `never` is a mode, not a posture with no name"
+    );
+    fixture.state.approval_mode = "read-only".into();
+    assert_eq!(
+        super::super::current(&fixture.state),
+        Some(PermissionMode::ReadOnly),
+        "one axis: `read-only` is a mode too"
+    );
 
     fixture.state.approval_mode = "bypass".into();
     fixture.state.agent_mode = "plan".into();

@@ -3,7 +3,6 @@
 //! results that would normally print to stdout are captured via `render_event`
 //! and pushed into the transcript instead.
 
-mod approvals;
 mod chart;
 mod grants;
 mod outcome;
@@ -88,16 +87,7 @@ pub(crate) fn dispatch(
         return Dispatch::OpenInvestigationPicker;
     }
     let mut result = Dispatch::Handled;
-    // A mode change through `/approvals` carries the activation line with
-    // it: under bypass the no-euphemism wording, the staged interpreter
-    // facts, and the probe's verdict — said where the mode is set. The mode
-    // before the command decides whether this command newly activated
-    // bypass: only then is a consent recorded in the journal; a
-    // re-statement over an already-bypass session records none, and a
-    // failed journal write is said, not silent.
-    let before_mode = state.approval_mode.clone();
     let parsed = parse_slash_command(line);
-    let approvals_set = matches!(parsed, Ok(Some(SlashCommand::Approvals(Some(_)))));
     match parsed {
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
         Ok(Some(command)) => match command {
@@ -187,7 +177,6 @@ pub(crate) fn dispatch(
         },
         Ok(None) => result = Dispatch::Agent(line.to_string()),
     }
-    approvals::report_approvals_set(approvals_set, &before_mode, transcript, state, session);
     transcript.scroll_to_bottom();
     result
 }
