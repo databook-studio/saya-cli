@@ -109,6 +109,11 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
 
     let session_root = root.join("sessions");
     let state_db = root.join("state.sqlite3");
+    // The session opens its run over the folder it was started in, so the
+    // child gets a scratch one: a plain fixture, not the checkout this test
+    // binary happens to run from.
+    let working_dir = root.join("cwd");
+    fs::create_dir_all(&working_dir).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
     command
         .args([
@@ -125,7 +130,11 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .current_dir(&working_dir)
         .env_clear()
+        // The run's composition resolves the host's Git through PATH; the
+        // environment is cleared for hermeticity, so restore the real one.
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("SAYA_SESSION_DIR", &session_root)
         .env("SAYA_STATE_DB", &state_db)
         .env("SAYA_PROVIDER", "openai_compatible")

@@ -26,7 +26,9 @@ impl AnsweringReceipts {
     }
 }
 
-fn add_usage(total: &mut TokenUsage, usage: TokenUsage) {
+/// Adds one report to a running answering receipt: every field the report
+/// carries, and only the optional ones it states.
+pub(crate) fn add_usage(total: &mut TokenUsage, usage: TokenUsage) {
     total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
     total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
     sum_optional(&mut total.cached_input_tokens, usage.cached_input_tokens);

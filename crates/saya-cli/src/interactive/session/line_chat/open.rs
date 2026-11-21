@@ -137,11 +137,13 @@ async fn assemble(parts: LineSession) -> Result<Opened, String> {
         _ => Some(Arc::from(inputs.provider)),
     };
     // The run's own counters, printed after every settled turn: the same
-    // collector the answering turn hands its metrics sink.
-    let metrics =
-        crate::agent::question_scope::QuestionScope::session(config, token.clone()).metrics();
-    let front =
-        Arc::new(LineFront::new(format, can_prompt, tally_handle()).with_metrics(metrics.clone()));
+    // collector the answering turn hands its metrics sink, and the stop
+    // instant a Ctrl-C is measured from. Its cancellation token is the scope's
+    // own — the run keeps the one it was opened with.
+    let scope =
+        crate::agent::question_scope::QuestionScope::session(config, CancellationToken::new());
+    let metrics = scope.metrics();
+    let front = Arc::new(LineFront::new(format, can_prompt, tally_handle()).with_scope(scope));
     let shape = workspace_shape(&folder, &coding_state_root(config)?);
     let run = SessionRun {
         front: Arc::clone(&front) as Arc<dyn crate::chat::ChatFront>,

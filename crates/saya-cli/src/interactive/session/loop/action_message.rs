@@ -54,10 +54,24 @@ fn handle_message(
         .as_ref()
         .map(LineChat::tally)
         .unwrap_or_default();
+    // What the turn's own stream reported feeds the session the way the old
+    // turn body's settle did: the usage every attempt spent (a cancelled or
+    // failed turn's consumed calls included) and, for an answered turn, the
+    // words a person read — a turn that stopped, paused, failed or was
+    // cancelled records nothing.
+    if let Some(settled) = &said {
+        settled
+            .record
+            .totals
+            .fold_into(&mut state.usage, &settled.outcome);
+        if matches!(settled.outcome, ChatOutcome::Answered) {
+            state.record_turn(line, settled.record.answer.clone(), false, Vec::new());
+        }
+    }
     // A pause is not a failure: the next message continues from where the guard
     // stopped the turn. Every other stop keeps today's exit contract — a
     // cancelled turn and a stop that ended it errored the run.
-    let (status, outcome) = match &said {
+    let (status, outcome) = match said.as_ref().map(|settled| &settled.outcome) {
         Some(ChatOutcome::Stopped(_)) => (
             prose_status(ProseOutcome::Failed, true),
             TurnOutcome::Errored,

@@ -72,6 +72,10 @@ pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
 pub(crate) mod tui;
 
+// The session's token accumulator — the answering and extraction totals
+// `/usage` reads — is the one a line turn's own stream folds into.
+pub(crate) use tui::types::SessionUsage;
+
 pub use session::commands::SessionAction;
 pub use session::turn_loop::run;
 pub use session::{Session, SessionState};
