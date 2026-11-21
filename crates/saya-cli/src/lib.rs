@@ -4,6 +4,8 @@ mod app;
 mod approval_facts;
 mod budget_wording;
 mod chart;
+#[allow(dead_code)] // contract types only: the session, turn and front consume them
+mod chat;
 mod cli;
 mod commands;
 mod config;
