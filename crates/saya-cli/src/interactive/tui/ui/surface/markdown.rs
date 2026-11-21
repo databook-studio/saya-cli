@@ -13,10 +13,10 @@ fn base_style() -> Style {
 
 /// Styles one assistant line, tracking ``` fence state across consecutive
 /// lines of the block (`fence` is owned by the caller's render loop).
-pub(in crate::interactive::tui) fn markdown_spans_fenced(
-    line: &str,
-    fence: &mut bool,
-) -> Vec<Span<'static>> {
+///
+/// `pub(crate)` because the new front's transcript pane renders the answer body
+/// with this renderer rather than a second copy of it (`06` §5, T5).
+pub(crate) fn markdown_spans_fenced(line: &str, fence: &mut bool) -> Vec<Span<'static>> {
     let base = base_style();
     let trimmed = line.trim_start();
 

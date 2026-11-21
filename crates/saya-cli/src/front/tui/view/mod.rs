@@ -13,6 +13,10 @@
 //! the rows a pane paints — the caller's title, the call's facts verbatim, why
 //! it is asked, the keys that answer it, and, for a clarification, the field
 //! the answer is typed into.
+//!
+//! T5 lands the transcript: the conversation as the rows a terminal paints,
+//! with the newest turn at the live edge. What one turn reads as is `turn`;
+//! how the turns sit under each other is `transcript`.
 
 pub(crate) mod cards;
 mod composer;
@@ -20,6 +24,11 @@ mod composer_frame;
 mod status;
 mod status_fit;
 mod status_segments;
+mod transcript;
+mod turn;
+mod turn_activity;
+mod turn_preview;
+mod turn_rows;
 
 // This `pub(crate)` surface is the pane layer's boundary: the runtime and the
 // panes above read it. Nothing in the crate references it yet, so the
@@ -36,6 +45,8 @@ pub(crate) use composer::{
 pub(crate) use composer_frame::rows;
 #[allow(unused_imports)]
 pub(crate) use status::{ActivityState, StatusFacts, status_line};
+#[allow(unused_imports)]
+pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
 
 #[cfg(test)]
 #[path = "cards_fixture.rs"]
@@ -60,3 +71,11 @@ mod status_fit_tests;
 #[cfg(test)]
 #[path = "status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "transcript_fixture.rs"]
+mod transcript_fixture;
+
+#[cfg(test)]
+#[path = "transcript_tests.rs"]
+mod transcript_tests;

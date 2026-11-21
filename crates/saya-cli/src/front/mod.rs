@@ -14,5 +14,5 @@ mod view;
 #[allow(unused_imports)]
 pub(crate) use view::{
     Activity, Answer, Entry, Notice, ResultPreview, Step, StepState, TranscriptView, TurnView,
-    UserMessage, apply,
+    UserMessage, apply, elapsed_text, folded_summary, sql_one_line, step_line,
 };
