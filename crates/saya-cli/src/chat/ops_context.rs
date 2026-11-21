@@ -21,7 +21,7 @@ use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::commands::approval_name;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
 use crate::interactive::session::permissions::mode;
-use crate::slash::{ExportRequest, ModeRequest, ReportRequest};
+use crate::slash::{ExportRequest, ModeRequest, ReportRequest, RewindRequest};
 
 /// The session's handles, as one operation sees them.
 pub(crate) struct OpsContext {
@@ -136,6 +136,13 @@ pub(crate) enum SessionOp {
     /// `/start`, `/follow-up`, `/job …` and the six child controls: a job
     /// beside the session's own run, never inside it.
     Job(crate::cli::CodingCommand),
+    /// `/undo`: restore the files the last turn edited, from the run's own
+    /// checkpoint taken before that turn. The adapter runs it through the one
+    /// rewind operation (`chat::ops_rewind`), never inside a turn.
+    Undo,
+    /// `/rewind [<id>]`: the run's checkpoints listed newest first, or one of
+    /// them restored — the same operation `/undo` and `saya job rewind` run.
+    Rewind(RewindRequest),
     /// `/exit`, `/quit`.
     Exit,
 }

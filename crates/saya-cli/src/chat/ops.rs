@@ -168,6 +168,10 @@ impl ChatOps {
             SlashCommand::Tasks(tail) => Op::Read(ReadOp::Tasks(tail.clone())),
             SlashCommand::Notes(command) => Op::Read(ReadOp::Notes(command.clone())),
             SlashCommand::Recovery(command) => Op::Read(ReadOp::Recovery(command.clone())),
+            // The run's own checkpoints: the session's to restore, never a turn
+            // of the run, so both are session ops and neither runs mid-turn.
+            SlashCommand::Undo => Op::Session(SessionOp::Undo),
+            SlashCommand::Rewind(request) => Op::Session(SessionOp::Rewind(request.clone())),
             SlashCommand::Setup => Op::Session(SessionOp::Setup),
             SlashCommand::Reload => Op::Session(SessionOp::Reload),
             SlashCommand::Columns(names) => Op::Session(SessionOp::Columns(names.clone())),

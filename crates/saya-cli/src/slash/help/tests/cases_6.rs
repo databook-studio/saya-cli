@@ -4,7 +4,9 @@
 /// since — the knowledge store is one command, `/contracts <verb>`: the
 /// `/contracts` row widens to its eight verbs and the four rows `/queue`,
 /// `/confirm`, `/reject`, `/approve-all` are gone (they are catalogue aliases
-/// now, folded out of the listing). Any other difference is a regression.
+/// now, folded out of the listing). `/undo` and `/rewind` then join the Session
+/// section after `/clear`, where the run's checkpoints are undone. Any other
+/// difference is a regression.
 #[test]
 fn help_listing_is_byte_identical() {
     assert_eq!(help_text(), LISTING);
@@ -49,6 +51,8 @@ Query & data
 
 Session
   /clear — Clear current session context
+  /undo — Undo the last turn's file edits: restore the run's checkpoint taken before that turn
+  /rewind [<id>] — List the run's checkpoints, newest first, or restore the one you name
   /compact — Summarise older turns to shrink working memory
   /history — List saved sessions as text
   /sessions [list|delete <id>] — Browse saved sessions: list or delete; bare opens a picker in the TUI

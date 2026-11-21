@@ -71,14 +71,14 @@ fn sample_line(name: &str) -> String {
     format!("/{name}{tail}")
 }
 
-/// Both directions, counted: the parser answers 59 command names, the
-/// catalogue lists the same 59, and every catalogued name parses.
+/// Both directions, counted: the parser answers 61 command names, the
+/// catalogue lists the same 61, and every catalogued name parses.
 #[test]
 fn catalogue_and_parser_name_the_same_commands() {
     let arms = parser_arm_names();
-    assert_eq!(arms.len(), 59, "the parser's match has 59 command arms");
+    assert_eq!(arms.len(), 61, "the parser's match has 61 command arms");
     let catalogued: Vec<&str> = catalog::names().collect();
-    assert_eq!(catalogued.len(), 59, "the catalogue has 59 names");
+    assert_eq!(catalogued.len(), 61, "the catalogue has 61 names");
 
     let missing: Vec<&String> = arms
         .iter()
@@ -239,11 +239,11 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         );
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 51, "the listing shows 51 of today's 59 names");
+    assert_eq!(ranks.len(), 53, "the listing shows 53 of today's 61 names");
     assert_eq!(
         catalog::names().count(),
-        59,
-        "with the four folded aliases, the parser answers 59 names"
+        61,
+        "with the folded aliases, the parser answers 61 names"
     );
     ranks.sort_unstable();
     let mut unique = ranks.clone();

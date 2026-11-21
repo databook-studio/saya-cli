@@ -39,7 +39,7 @@ fn recovery_status_on_and_list_dispatch_through_the_chain() {
     );
     let list = last_block(&fx.app.transcript, BlockKind::System).expect("the list is said");
     assert!(
-        list.contains("No recorded edits"),
+        list.contains("no recorded edits — use /undo or /rewind"),
         "an empty session says so: {list}"
     );
 }

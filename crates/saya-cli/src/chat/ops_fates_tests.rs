@@ -65,6 +65,9 @@ const TABLE: &[(&str, Fate)] = &[
     ("/tasks", Fate::ReadOnly),
     ("/notes", Fate::ReadOnly),
     ("/recovery", Fate::ReadOnly),
+    ("/undo", Fate::Session),
+    ("/rewind", Fate::Session),
+    ("/rewind 3", Fate::Session),
     ("/exit", Fate::Session),
 ];
 
@@ -89,7 +92,7 @@ fn every_slash_command_maps_to_exactly_one_fate() {
     );
     assert_eq!(
         TABLE.len(),
-        50,
+        53,
         "the table names every spelling this unit pins"
     );
 }

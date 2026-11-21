@@ -155,6 +155,23 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             SlashCommand::Recovery(parse_recovery(tail)?)
         }
         "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
+        "undo" => {
+            // `/undo` takes no argument: the run's checkpoints are named with
+            // `/rewind`, and a trailing word here would be a silent ignore.
+            let tail = trimmed.strip_prefix("/undo").unwrap_or("").trim();
+            parse_undo(tail)?;
+            SlashCommand::Undo
+        }
+        "rewind" => {
+            // `/rewind [<id>]`: bare is the listing, one word names the
+            // checkpoint restored. The id is resolved against the listing by
+            // the operation, so a typo is refused by name.
+            let tail = trimmed
+                .strip_prefix("/rewind")
+                .unwrap_or("")
+                .trim_start();
+            SlashCommand::Rewind(parse_rewind(tail)?)
+        }
         "doctor" => SlashCommand::Doctor,
         "usage" => SlashCommand::Usage,
         "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
