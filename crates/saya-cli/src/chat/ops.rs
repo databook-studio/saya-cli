@@ -150,7 +150,7 @@ impl ChatOps {
             SlashCommand::SessionsList => Op::Read(ReadOp::SessionsList),
             SlashCommand::SessionsDelete(id) => Op::Read(ReadOp::SessionsDelete(id.clone())),
             SlashCommand::Preferences(command) => Op::Read(ReadOp::Preferences(command.clone())),
-            SlashCommand::Contracts(command) => Op::Read(ReadOp::Contracts(command.clone())),
+            SlashCommand::Contracts(request) => Op::Read(ReadOp::Contracts(request.clone())),
             SlashCommand::Investigation(command) => {
                 Op::Read(ReadOp::Investigation(command.clone()))
             }

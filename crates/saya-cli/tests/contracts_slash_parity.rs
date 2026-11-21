@@ -17,7 +17,7 @@
 use saya_cli::{
     ClaimKindArg, ContractsCommand, ForgetReasonArg, RenderFormat, RuntimeConfig, SlashCommand,
     capture_output_start, capture_output_take, load_with_sources, parse_slash_command,
-    profile_identity, run_contracts,
+    profile_identity, run_contracts, run_contracts_request,
 };
 use saya_store::{KnowledgeItemStore, SchemaStore, SqliteStateStore};
 use saya_types::{
@@ -128,7 +128,7 @@ async fn run_slash(
     format: RenderFormat,
 ) -> (ContractsCommand, i32, String, String) {
     let command = match parse_slash_command(line) {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected SlashCommand::Contracts for {line:?}, got {other:?}"),
     };
     let (code, out, err) = run_headless(command.clone(), runtime, store, format).await;
@@ -157,3 +157,4 @@ include!("contracts_slash_parity/invalid_and_roundtrip.rs");
 include!("contracts_slash_parity/usage_store_errors.rs");
 include!("contracts_slash_parity/remember_translation.rs");
 include!("contracts_slash_parity/queue_parity.rs");
+include!("contracts_slash_parity/verb_aliases.rs");

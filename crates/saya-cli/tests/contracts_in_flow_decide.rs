@@ -121,7 +121,7 @@ async fn run_slash(
     format: RenderFormat,
 ) -> (ContractsCommand, i32, String, String) {
     let command = match parse_slash_command(line) {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected SlashCommand::Contracts for {line:?}, got {other:?}"),
     };
     let (code, out, err) = run_headless(command.clone(), runtime, store, format).await;

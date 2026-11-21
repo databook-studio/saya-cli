@@ -53,9 +53,21 @@ impl Transcript {
     }
 
     /// Forgets the conversation: `/clear` starts the next run with nothing, so
-    /// neither the seed nor the saved turns carry a word of it.
+    /// neither the seed nor the saved turns carry a word of it — and no summary
+    /// of it either, since a summary of a cleared conversation is a memory the
+    /// operator asked to forget.
     pub(crate) fn clear(&mut self) {
         self.record.turns.clear();
+        self.record.compaction_summary = None;
+    }
+
+    /// Saves the narrative a compaction folded the older turns into: it is the
+    /// working memory the run after the rollover replays, ahead of the pairs the
+    /// compaction kept verbatim. The turns themselves stay — what was said does
+    /// not change when working memory shrinks.
+    pub(crate) fn save_summary(&mut self, summary: &str) {
+        let summary = summary.trim();
+        self.record.compaction_summary = (!summary.is_empty()).then(|| summary.to_owned());
     }
 
     /// The settled turns, oldest first: what a new epoch is seeded with.

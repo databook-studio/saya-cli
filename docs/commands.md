@@ -752,6 +752,42 @@ with the same words, and reports pending cleanup the same way. Bare
 `/sessions` keeps its per-surface meaning: the text history list in the
 headless REPL, and the session picker in the TUI.
 
+## The knowledge store: `/contracts <verb>`
+
+In an interactive session the knowledge store is **one command, eight verbs**.
+Each verb runs exactly the operation the headless `saya contracts` subcommand
+of the same name runs — same store call, same output.
+
+| Verb | What it does |
+| --- | --- |
+| `list` | Print every recalled contract for the active profile (bare `/contracts` is `list`) |
+| `show <catalog.schema.object>` | Print one object's contract |
+| `queue [limit]` | List the candidate claims awaiting review |
+| `confirm <claim-id-prefix>` | Confirm one candidate, by the short `ki-…` prefix `/contracts` shows |
+| `reject <claim-id-prefix>` | Reject one candidate |
+| `confirm-all [--yes] [limit]` | Approve the whole review queue. Without `--yes` the queue is printed and nothing is approved; each candidate still gets the per-item validation `confirm` applies, so some may be refused and every decision is reported by id. **Knowledge claims only — never job approvals**, which are `/approve <id>` |
+| `export <path>` | Write the context for another machine |
+| `import <path>` | Read a context written elsewhere |
+
+`/contracts <catalog.schema.object>` — a lone token that is not a verb — is
+still a `show`, so the old one-token form keeps working.
+
+Five older spellings keep working for one release as aliases of the same
+operations, and each prints a one-line deprecation note naming its
+replacement:
+
+| Old spelling | New spelling |
+| --- | --- |
+| `/contract` | `/contracts` |
+| `/queue` | `/contracts queue` |
+| `/confirm` | `/contracts confirm` |
+| `/reject` | `/contracts reject` |
+| `/approve-all` | `/contracts confirm-all` (`/approve-all` was never about job approvals) |
+
+`/remember <table> <kind> <value…>` and `/forget <claim-id>` are unchanged:
+they are the store's own short verbs, not deprecated spellings. See
+[memory.md](memory.md) for what a claim is and how recall uses it.
+
 ## Project preferences: `saya preferences`
 
 `saya preferences` manages explicit, per-worktree guidance you confirmed

@@ -69,11 +69,13 @@ pub enum SlashCommand {
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
     Columns(Option<String>),
-    /// A contract slash command (`/contracts`, `/contract`, `/remember`,
-    /// `/forget`), already translated to the same `ContractsCommand` the
-    /// headless `saya contracts` parser produces. The adapter
-    /// hands it to the shared `run_contracts` dispatcher — no second parsing.
-    Contracts(ContractsCommand),
+    /// A contract slash command (`/contracts <verb>`, `/remember`, `/forget`,
+    /// and the one-release spellings `/contract`, `/queue`, `/confirm`,
+    /// `/reject`, `/approve-all`), already translated to the same
+    /// `ContractsCommand` the headless `saya contracts` parser produces, plus
+    /// the deprecation note a deprecated spelling states. The adapter hands it
+    /// to the shared `run_contracts_request` dispatcher — no second parsing.
+    Contracts(ContractsRequest),
     /// A saved-investigation slash command (`/investigation …`, and
     /// `/investigations` as `list`), already translated to the same
     /// `InvestigationCommand` the headless `saya investigation` parser

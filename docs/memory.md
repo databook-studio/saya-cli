@@ -49,10 +49,14 @@ saya ask "orders by month"
 saya contracts forget ki-1a2b3c…
 ```
 
-In the REPL and TUI the same operations are `/contracts [table]`, `/remember`, `/forget`,
-`/queue`, `/confirm` and `/reject`. `/contracts` lists every contract; `/contracts
-analytics.public.orders` shows one. They call the same code as the commands above, so they cannot
-disagree.
+In the REPL and TUI the same operations are one command, `/contracts <verb>`: `list`, `show
+<catalog.schema.object>`, `queue`, `confirm <claim-id-prefix>`, `reject <claim-id-prefix>`,
+`confirm-all [--yes]`, `export <path>` and `import <path>`. `/contracts` alone lists every
+contract; `/contracts show analytics.public.orders` shows one. They call the same code as the
+commands above, so they cannot disagree. `/remember` and `/forget` stay short verbs of their own.
+The older spellings `/contract`, `/queue`, `/confirm`, `/reject` and `/approve-all` keep working
+for one release as aliases of those verbs and print a one-line note naming the new spelling
+(`/approve-all` became `/contracts confirm-all`; it was never about job approvals).
 
 ## Configuration
 

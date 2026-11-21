@@ -42,9 +42,10 @@ pub enum SessionAction {
     Chart(String),
     Explain(String),
     /// A contract slash command, translated to the same `ContractsCommand` the
-    /// headless `saya contracts` parser produces. The loops hand it to the
-    /// shared `run_contracts` dispatcher — no second parsing or DTO mapping.
-    Contracts(ContractsCommand),
+    /// headless `saya contracts` parser produces, plus the deprecation note a
+    /// deprecated spelling states. The loops hand it to the shared
+    /// `run_contracts_request` seam — no second parsing or DTO mapping.
+    Contracts(crate::slash::ContractsRequest),
     /// A saved-investigation slash command, translated to the same
     /// `InvestigationCommand` the headless `saya investigation` parser
     /// produces. Both loops hand it to the shared `run_investigation`

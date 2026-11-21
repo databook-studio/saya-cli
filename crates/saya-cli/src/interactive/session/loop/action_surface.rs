@@ -106,7 +106,7 @@ fn handle_sql(
 }
 
 fn handle_contracts(
-    command: crate::cli::ContractsCommand,
+    request: crate::slash::ContractsRequest,
     ctx: &mut TurnContext,
 ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let ActionParts {
@@ -119,11 +119,12 @@ fn handle_contracts(
         ..
     } = action_parts(ctx);
     let runtime: &RuntimeConfig = &runtime;
-    // The slash adapter hands the translated `ContractsCommand` to the same
-    // `run_contracts` dispatcher the headless `saya contracts` path uses; the
-    // captured output goes to the terminal through the shared `emit` seam.
-    let code = block_on(crate::commands::run_contracts(
-        command, runtime, format, state_db,
+    // The slash adapter hands the translated request to the same
+    // `run_contracts` dispatcher the headless `saya contracts` path uses, plus
+    // the one-line note a deprecated spelling states (printed once, there);
+    // the captured output goes to the terminal through the shared `emit` seam.
+    let code = block_on(crate::commands::run_contracts_request(
+        request, runtime, format, state_db,
     ))?;
     if let Some(outcome) = persist(state, store, format, save_refused)? {
         return Ok(outcome);

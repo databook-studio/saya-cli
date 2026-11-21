@@ -33,6 +33,11 @@ pub(crate) struct Model {
     /// The last thing the surface said on its own — a refused key, a worker's
     /// word — until it expires or the next one replaces it.
     pub(crate) toast: Option<String>,
+    /// Whether the open card shows its whole body (`v`), and how far that body
+    /// is scrolled. Both are the card's own reading of a press, and both reset
+    /// with it: a new call opens folded, at its first row.
+    pub(crate) card_full: bool,
+    pub(crate) card_scroll: usize,
 }
 
 impl Model {
@@ -59,6 +64,17 @@ impl Model {
     /// The last thing the surface said on its own, if it still says it.
     pub(crate) fn toast(&self) -> Option<&str> {
         self.toast.as_deref()
+    }
+
+    /// Whether the open card's whole body is shown, or only the rows the
+    /// screen has for it.
+    pub(crate) const fn card_full(&self) -> bool {
+        self.card_full
+    }
+
+    /// How far the open card's body is scrolled, in rows.
+    pub(crate) const fn card_scroll(&self) -> usize {
+        self.card_scroll
     }
 
     /// The mode in force, as the status line's chip names it.
@@ -118,14 +134,32 @@ impl Model {
         self.busy = false;
     }
 
-    /// Puts a call to the operator: one card at a time.
+    /// Puts a call to the operator: one card at a time, opening folded at its
+    /// first row.
     pub(crate) fn show_card(&mut self, card: Question) {
         self.card = Some(card);
+        self.card_full = false;
+        self.card_scroll = 0;
     }
 
     /// Takes the open card, if one is waiting for an answer.
     pub(crate) fn take_card(&mut self) -> Option<Question> {
+        self.card_full = false;
+        self.card_scroll = 0;
         self.card.take()
+    }
+
+    /// Shows the open card's whole body, or folds it back to its rows.
+    pub(crate) fn toggle_card_full(&mut self) {
+        self.card_full = !self.card_full;
+    }
+
+    /// Moves the open card's body by `rows`, a negative count moving it up. It
+    /// never moves above its first row; the pane clamps the far end against
+    /// the body it paints.
+    pub(crate) fn scroll_card(&mut self, rows: isize) {
+        let moved = self.card_scroll as isize + rows;
+        self.card_scroll = moved.max(0) as usize;
     }
 
     /// States the mode the run's next call reads.

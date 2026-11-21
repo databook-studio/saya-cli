@@ -22,7 +22,7 @@ use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
 use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 
-pub use contracts::run_contracts;
+pub use contracts::{run_contracts, run_contracts_request};
 pub use investigation::run_investigation;
 // The replay-outcome seam: the TUI's saved-replay adapter consumes
 // the typed outcome instead of re-parsing rendered output.
