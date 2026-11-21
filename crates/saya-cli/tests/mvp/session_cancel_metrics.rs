@@ -93,6 +93,9 @@ fn a_verbose_sigint_records_one_cancellation_to_local_settlement_sample() {
         .stderr(Stdio::piped())
         .arg("--verbose")
         .env_clear()
+        // The run's composition resolves the host's Git through PATH; the
+        // environment is cleared for hermeticity, so restore the real one.
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("SAYA_CONFIG_HOME", &config_root)
         .env("SAYA_SESSION_DIR", &session_root)
         .env("SAYA_STATE_DB", config_root.join("state.sqlite3"))

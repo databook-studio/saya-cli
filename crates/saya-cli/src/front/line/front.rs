@@ -14,6 +14,11 @@
 //!   `Request cancelled.` for a cancel, and the failure's message for anything
 //!   else. The turn's outcome is also kept, so the loop above can read what the
 //!   turn settled on without the session telling anyone twice.
+//!
+//! Two things the old turn body did per turn, this front does now: the sink it
+//! hands each turn is also read for the session's bookkeeping ([`super::turn`]
+//! — the turn's usage and the words it said), and Ctrl-C is the turn's own stop
+//! ([`super::signals`]) — the next line is a fresh turn of the same run.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -21,12 +26,13 @@ use async_trait::async_trait;
 use saya_agent::{AgentEventSink, CancellationToken};
 
 use super::ask;
+use super::signals::Signals;
+use super::turn::{StreamSink, TurnRecord, TurnStream};
+use crate::agent::question_scope::QuestionScope;
 use crate::agent::tools::consent::Answer;
 use crate::budget_wording::budget_partial_message;
 use crate::chat::{ChatEvent, ChatFront, ChatOutcome, Question};
 use crate::interactive::turn_summary::TallyHandle;
-use crate::local_metrics::LocalMetrics;
-use crate::local_metrics_format::print_metrics_section;
 use crate::render::{RenderFormat, TerminalEvent, render_event};
 use crate::stream_render::TerminalSink;
 
@@ -50,8 +56,12 @@ pub(crate) struct LineFront {
     /// The tally every turn's sink records its tool events into, read by the
     /// scripted run's one terminal result.
     tally: TallyHandle,
-    /// The run's own counters, printed after every settled turn.
-    metrics: Option<Arc<LocalMetrics>>,
+    /// The run's one stop path: the sample a Ctrl-C settles, and the counters
+    /// every settled turn's metrics section prints.
+    signals: Signals,
+    /// The turn now running, read for the session as it is rendered: its usage
+    /// and the words it says.
+    stream: Arc<TurnStream>,
     shared: Mutex<Shared>,
 }
 
@@ -61,7 +71,8 @@ impl LineFront {
             format,
             can_prompt,
             tally,
-            metrics: None,
+            signals: Signals::new(None),
+            stream: Arc::new(TurnStream::default()),
             shared: Mutex::new(Shared {
                 turn: CancellationToken::new(),
                 ended: None,
@@ -69,10 +80,11 @@ impl LineFront {
         }
     }
 
-    /// The same front recording the run's counters, so `--verbose` prints the
-    /// section the headless turn always printed.
-    pub(crate) fn with_metrics(mut self, metrics: Option<Arc<LocalMetrics>>) -> Self {
-        self.metrics = metrics;
+    /// The same front recording the session's answering scope: its counters are
+    /// the `--verbose` section a settled turn prints, and its accepted stop is
+    /// what the settlement sample is measured from.
+    pub(crate) fn with_scope(mut self, scope: QuestionScope) -> Self {
+        self.signals = Signals::new(Some(scope));
         self
     }
 
@@ -81,10 +93,24 @@ impl LineFront {
         self.lock().turn = turn;
     }
 
+    /// The operator's stop: this turn's own token and the accepted stop
+    /// instant — never the run's, so the next line is a turn of the same run.
+    pub(crate) fn stop_turn(&self) {
+        let turn = self.lock().turn.clone();
+        turn.cancel();
+        self.signals.request_stop();
+    }
+
     /// How the last settled turn ended, taken once — the loop above reads it
     /// to word its exit status and to settle the session record.
     pub(crate) fn take_outcome(&self) -> Option<ChatOutcome> {
         self.lock().ended.take()
+    }
+
+    /// What the last settled turn said and spent, taken once beside its
+    /// outcome: the session folds it into its own accumulator.
+    pub(crate) fn take_record(&self) -> TurnRecord {
+        self.stream.take()
     }
 
     /// The tool tally every turn's sink recorded into: the scripted run's one
@@ -95,7 +121,9 @@ impl LineFront {
 
     /// Says one settled turn in today's wording.
     fn say(&self, outcome: &ChatOutcome) {
-        print_metrics_section(&self.metrics);
+        // The settle records the one cancellation sample a Ctrl-C was waiting
+        // for, then prints the section — the order the old turn body used.
+        self.signals.settle();
         if let Some(event) = wording(outcome) {
             let rendered = render_event(&event, self.format);
             print!("{}", rendered.stdout);
@@ -135,7 +163,11 @@ pub(crate) fn wording(outcome: &ChatOutcome) -> Option<TerminalEvent> {
 impl ChatFront for LineFront {
     fn sink(&self) -> Arc<dyn AgentEventSink> {
         // A sink per turn: the terminal renderer's bracket state is one turn's.
-        Arc::new(TerminalSink::new(self.format).with_tally(Arc::clone(&self.tally)))
+        let terminal: Arc<dyn AgentEventSink> =
+            Arc::new(TerminalSink::new(self.format).with_tally(Arc::clone(&self.tally)));
+        // The same stream, read for the session before it is rendered: the
+        // turn's usage and the words it says.
+        Arc::new(StreamSink::new(terminal, Arc::clone(&self.stream)))
     }
 
     async fn ask(&self, question: &Question) -> Answer {

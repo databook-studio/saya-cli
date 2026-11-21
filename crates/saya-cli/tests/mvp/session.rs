@@ -125,3 +125,4 @@ include!("session/terminal_provider_error.rs");
 include!("session/usage_zero.rs");
 include!("session/failed_attempt_usage.rs");
 include!("session/learning_receipt.rs");
+include!("session/next_line_same_run.rs");

@@ -24,12 +24,14 @@ use std::sync::Arc;
 use saya_agent::CancellationToken;
 use saya_store::RunLink;
 
-use crate::chat::{ChatOutcome, ChatSession, RunComposition};
+use crate::chat::{ChatSession, RunComposition};
 use crate::commands::coding::{CodingApplication, NativeCodingJob};
 use crate::front::LineFront;
 use crate::interactive::turn_summary::ToolTally;
 
 pub(crate) use self::open::LineSession;
+
+pub(crate) use crate::front::SettledTurn;
 
 /// One line session's open run.
 pub(crate) struct LineChat {
@@ -57,30 +59,35 @@ impl LineChat {
     }
 
     /// Sends one operator line as a turn of the session's run, and reports how
-    /// it settled. `None` means the message never ran (the session refused it:
-    /// it is closing, or a turn it queued behind never ended).
+    /// it settled and what its stream reported. `None` means the message never
+    /// ran (the session refused it: it is closing, or a turn it queued behind
+    /// never ended).
     ///
     /// A Ctrl-C during the turn ends that turn — the question it left pending
-    /// with it — and leaves the run taking the next line, which is today's
-    /// behaviour. The rest of the key handling belongs to the next unit.
-    pub(crate) fn send(&self, message: String) -> Result<Option<ChatOutcome>, String> {
-        let turn = CancellationToken::new();
-        self.front.set_turn(turn.clone());
+    /// with it — and leaves the run taking the next line: only the turn's child
+    /// token is cancelled, so the next line is a fresh turn of the same epoch,
+    /// on the lease the run already holds.
+    pub(crate) fn send(&self, message: String) -> Result<Option<SettledTurn>, String> {
+        self.front.set_turn(CancellationToken::new());
         self.runtime.block_on(async {
             let send = self.session.send(message);
             tokio::pin!(send);
             tokio::select! {
                 _ = &mut send => {}
                 _ = tokio::signal::ctrl_c() => {
-                    // The turn's own stop and the open question's: the message
-                    // does not run, and the run stays open for the next line.
-                    turn.cancel();
+                    // The turn's own stop and the single instant the settlement
+                    // sample is measured from. The message does not run, and
+                    // the run stays open for the next line.
+                    self.front.stop_turn();
                     self.session.cancel().await;
                     send.await;
                 }
             }
         });
-        Ok(self.front.take_outcome())
+        Ok(self.front.take_outcome().map(|outcome| SettledTurn {
+            outcome,
+            record: self.front.take_record(),
+        }))
     }
 
     /// The tool tally of every turn this session ran, for the scripted run's
