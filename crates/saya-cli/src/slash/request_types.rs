@@ -45,3 +45,15 @@ pub struct ReportRequest {
     pub rows: Option<usize>,
     pub overwrite: bool,
 }
+
+/// The parsed `/rewind` tail: bare is the run's checkpoint listing, one id is
+/// that checkpoint restored. The id is carried as stated — resolving it
+/// against the listing is the operation's job, so an id this run never
+/// checkpointed is refused by name rather than read as a different turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RewindRequest {
+    /// List the run's checkpoints, newest first.
+    List,
+    /// Restore the checkpoint `id` names.
+    Restore(String),
+}

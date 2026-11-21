@@ -148,6 +148,17 @@ pub enum SlashCommand {
     /// recorded edit. Translated once to the `RecoveryCommand` the shared
     /// `run_recovery` operation runs on every surface.
     Recovery(RecoveryCommand),
+    /// `/undo` — restore the files the last turn edited, from the run's own
+    /// checkpoint taken before that turn. One operation with
+    /// `/rewind <id>` and `saya job rewind`; the checkpoint store is the
+    /// run's, never the session's per-edit store. Parsed bare: trailing text
+    /// is a usage error.
+    Undo,
+    /// `/rewind [<id>]` — bare lists the run's checkpoints newest first; one
+    /// id restores that checkpoint. The id is carried as stated and resolved
+    /// against the listing, so an id the run never checkpointed is refused by
+    /// name.
+    Rewind(RewindRequest),
     Exit,
 }
 

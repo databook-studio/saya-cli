@@ -54,6 +54,13 @@ pub(crate) fn sessions_delete_text(
 pub(crate) const SETUP_TUI_ONLY_ERROR: &str =
     "Guided setup needs the full-screen terminal. Run `saya setup` from your shell.";
 
+/// The answer `/undo` and `/rewind` get from a session that runs no job: the
+/// run's checkpoints belong to a job, and this session's recorded edits are the
+/// per-edit store, so the words name the store that does exist here.
+pub(crate) const UNDO_NEEDS_A_RUN: &str = "`/undo` and `/rewind` restore a job run's checkpoints, and this session runs no job: its \
+     recorded file edits are the per-edit store, where `/recovery list` shows them and \
+     `/recovery restore <id>` puts one back";
+
 include!("action.rs");
 
 include!("apply.rs");

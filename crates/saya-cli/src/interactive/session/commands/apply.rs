@@ -220,6 +220,13 @@ impl SessionState {
             SlashCommand::Recovery(command) => SessionAction::Recovery(command),
             SlashCommand::Setup => SessionAction::Setup,
             SlashCommand::Reload => SessionAction::Reload,
+            // `/undo` and `/rewind` restore a job run's own checkpoints. This
+            // session runs no job, and its recorded edits are the per-edit
+            // store `/recovery` operates, so the answer names that store
+            // instead of pretending to undo something it never checkpointed.
+            SlashCommand::Undo | SlashCommand::Rewind(_) => {
+                SessionAction::Message(UNDO_NEEDS_A_RUN.into())
+            }
             SlashCommand::Exit => SessionAction::Exit,
         }
     }
