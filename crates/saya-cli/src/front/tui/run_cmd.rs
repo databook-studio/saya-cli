@@ -14,6 +14,7 @@ use super::msg::Cmd;
 use super::run_front::Forward;
 use crate::agent::tools::consent::Answer;
 use crate::chat::{ChatSession, OpsContext};
+use crate::interactive::tui::{copy_to_native_clipboard, osc52_copy};
 
 /// What a command is performed on: the session that runs the turns, and the
 /// front that holds the operator's unanswered calls.
@@ -26,6 +27,8 @@ pub(crate) trait CmdPort: Send + Sync {
     fn answer(&self, id: u64, answer: Answer);
     /// State a mode on the run's cell.
     fn switch_mode(&self, mode: PermissionMode);
+    /// Put this text on the clipboard (`02` §6's `c`).
+    fn copy(&self, text: String);
 }
 
 /// Performs one command on the port that can.
@@ -36,6 +39,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::Answer(id, answer) => port.answer(id, answer),
         Cmd::SwitchMode(mode) => port.switch_mode(mode),
         Cmd::SetMode(mode) => port.switch_mode(mode),
+        Cmd::Copy(text) => port.copy(text),
     }
 }
 
@@ -88,5 +92,19 @@ impl CmdPort for SessionPort {
         if let Err(refusal) = self.ops.state_mode(mode) {
             self.front.say(refusal);
         }
+    }
+
+    fn copy(&self, text: String) {
+        // Copying shells out to a clipboard tool and waits on it, so it runs off
+        // the loop's thread the way a turn does: the surface keeps reading keys
+        // while the clipboard works. The attempt is the crate's one: the OS
+        // tool first, then the terminal's own OSC 52, which is what reaches a
+        // local clipboard over SSH (today's rule, `interactive::tui`).
+        tokio::task::spawn_blocking(move || {
+            if copy_to_native_clipboard(&text) {
+                return;
+            }
+            let _ = osc52_copy(&mut std::io::stdout(), &text);
+        });
     }
 }

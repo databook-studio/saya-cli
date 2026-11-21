@@ -56,6 +56,7 @@ mod empty_lines;
 mod empty_welcome;
 mod help;
 mod help_keys;
+mod inspector;
 pub(crate) mod mode_picker;
 pub(crate) mod mode_words;
 mod palette;
@@ -75,6 +76,7 @@ mod toast;
 mod transcript;
 mod turn;
 mod turn_activity;
+mod turn_focus;
 mod turn_rows;
 
 // This `pub(crate)` surface is the pane layer's boundary: the runtime and the
@@ -225,3 +227,7 @@ mod transcript_fixture;
 #[cfg(test)]
 #[path = "transcript_tests.rs"]
 mod transcript_tests;
+
+#[cfg(test)]
+#[path = "transcript_focus_tests.rs"]
+mod transcript_focus_tests;

@@ -65,4 +65,7 @@ pub(crate) enum Cmd {
     /// route it to the same switch as [`Cmd::SwitchMode`]: the cycle and the
     /// picker differ only in how the mode was chosen.
     SetMode(PermissionMode),
+    /// Put this text on the clipboard (`02` §6's `c`): the entry's source, as
+    /// the view model holds it, never its painted rows.
+    Copy(String),
 }

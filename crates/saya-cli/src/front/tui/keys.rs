@@ -53,6 +53,20 @@ pub(crate) enum Intent {
     ModeSet,
     /// Close the picker without stating anything.
     ModeCancel,
+    /// Walk the block cursor one entry older (`02` §6).
+    FocusUp,
+    /// Walk the block cursor one entry newer.
+    FocusDown,
+    /// Expand the block the cursor holds, or fold it back.
+    FocusExpand,
+    /// Fold the block the cursor holds.
+    FocusFold,
+    /// Copy the focused entry's source text.
+    FocusCopy,
+    /// Show the focused entry's inspector line, or take it away.
+    FocusInspector,
+    /// Leave cursor mode.
+    FocusLeave,
     /// Say this instead of doing anything: the state the press met refuses it.
     Refused(&'static str),
 }
@@ -64,6 +78,9 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
     }
     if model.card().is_some() {
         return card_key(model, key);
+    }
+    if model.in_cursor_mode() {
+        return cursor_key(key);
     }
     composer_key(model, key)
 }
@@ -104,12 +121,37 @@ fn card_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     }
 }
 
+/// The block cursor's keys (`02` §6): while it holds an entry it owns the
+/// keyboard, so no press reaches the composer behind it. `Enter`/`→` expand the
+/// block, `←` folds it, `c` copies it, `i` shows its provenance, and Esc leaves
+/// cursor mode. `e` is deliberately none of them: exporting a result needs the
+/// export unit (T16), so this release leaves it unbound rather than half-wired.
+fn cursor_key(key: KeyEvent) -> Option<Intent> {
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Up if alt => Some(Intent::FocusUp),
+        KeyCode::Down if alt => Some(Intent::FocusDown),
+        KeyCode::Enter if !alt => Some(Intent::FocusExpand),
+        KeyCode::Right => Some(Intent::FocusExpand),
+        KeyCode::Left => Some(Intent::FocusFold),
+        KeyCode::Char('c') if !ctrl && !alt => Some(Intent::FocusCopy),
+        KeyCode::Char('i') if !ctrl && !alt => Some(Intent::FocusInspector),
+        KeyCode::Esc => Some(Intent::FocusLeave),
+        _ => None,
+    }
+}
+
 /// The composer's keys.
 fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     let modifiers = key.modifiers;
     let alt = modifiers.contains(KeyModifiers::ALT);
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
+        // The cursor is how a block is reached without a mouse: Alt+↑/↓ from the
+        // composer takes it, and from no seat it lands on the newest entry.
+        KeyCode::Up if alt => Some(Intent::FocusUp),
+        KeyCode::Down if alt => Some(Intent::FocusDown),
         KeyCode::Enter if alt => Some(Intent::Newline),
         KeyCode::Enter if !ctrl => Some(Intent::Submit),
         // Only a held line can be dropped; with nothing queued the press is

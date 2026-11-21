@@ -16,6 +16,8 @@
 //! — the panes T4-T13 built, composed into one screen.
 
 pub(crate) mod cards_keys;
+pub(crate) mod focus;
+mod focus_text;
 pub(crate) mod keys;
 pub(crate) mod model;
 pub(crate) mod model_overlay;
@@ -40,6 +42,8 @@ pub(crate) mod view;
 // unused in a lib build — they are the boundary, not dead code.
 #[allow(unused_imports)]
 pub(crate) use cards_keys::{CARD_PAGE_ROWS, CardIntent, card_intent};
+#[allow(unused_imports)]
+pub(crate) use focus::EntryPath;
 #[allow(unused_imports)]
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
@@ -78,6 +82,14 @@ mod update_fixture;
 #[cfg(test)]
 #[path = "update_tests.rs"]
 mod update_tests;
+
+#[cfg(test)]
+#[path = "focus_fixture.rs"]
+mod focus_fixture;
+
+#[cfg(test)]
+#[path = "focus_tests.rs"]
+mod focus_tests;
 
 #[cfg(test)]
 #[path = "update_mode_tests.rs"]

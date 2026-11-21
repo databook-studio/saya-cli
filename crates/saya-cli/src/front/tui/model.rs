@@ -8,6 +8,7 @@
 
 use saya_agent::PermissionMode;
 
+use super::focus::EntryPath;
 use super::model_overlay::Overlay;
 use crate::chat::Question;
 use crate::front::tui::view::Toast;
@@ -54,6 +55,12 @@ pub(crate) struct Model {
     /// the keyboard before the card and the composer, and it is painted over
     /// the transcript (`02` §8).
     pub(crate) overlay: Option<Overlay>,
+    /// The entry the block cursor holds (`02` §6), if it holds one. While it
+    /// does, the keyboard is the cursor's: Esc leaves it, Enter expands the
+    /// block and `←` folds it, `c` copies it and `i` shows its provenance.
+    pub(crate) focus: Option<EntryPath>,
+    /// Whether the focused entry shows its inspector line (`02` §6's `i`).
+    pub(crate) inspector: bool,
 }
 
 impl Model {

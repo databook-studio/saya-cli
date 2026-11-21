@@ -11,6 +11,7 @@ use ratatui::text::Line;
 use std::time::Duration;
 
 use super::turn;
+use crate::front::tui::focus::EntryPath;
 use crate::front::tui::theme::{Charset, Scheme};
 use crate::front::view::TurnView;
 
@@ -28,6 +29,11 @@ pub(crate) struct TranscriptFacts {
     pub(crate) scheme: Scheme,
     /// Which glyph set the rows draw with.
     pub(crate) charset: Charset,
+    /// The entry the block cursor holds, if the surface is in cursor mode: the
+    /// one block that carries §6's mark.
+    pub(crate) focus: Option<EntryPath>,
+    /// Whether the focused entry shows its inspector line (`i`).
+    pub(crate) inspector: bool,
 }
 
 impl Default for TranscriptFacts {
@@ -37,6 +43,8 @@ impl Default for TranscriptFacts {
             workspace: None,
             scheme: Scheme::Dark,
             charset: Charset::Utf8,
+            focus: None,
+            inspector: false,
         }
     }
 }
@@ -55,7 +63,7 @@ pub(crate) fn rows(
     let mut all: Vec<Line<'static>> = Vec::new();
     for (index, turn) in turns.iter().enumerate() {
         let elapsed = facts.elapsed.get(index).copied().unwrap_or_default();
-        all.extend(turn::rows(turn, elapsed, facts, width));
+        all.extend(turn::rows(index, turn, elapsed, facts, width));
     }
     let kept = height.min(all.len());
     all.split_off(all.len() - kept)

@@ -137,7 +137,7 @@ pub(super) fn painted(entry: Entry, width: usize) -> Vec<String> {
 pub(super) fn painted_in(entry: Entry, width: usize, scheme: Scheme) -> Vec<String> {
     let mut held = facts(ELAPSED);
     held.scheme = scheme;
-    rendered(&turn::rows(&turn_of(entry), ELAPSED, &held, width))
+    rendered(&turn::rows(0, &turn_of(entry), ELAPSED, &held, width))
 }
 
 /// Every block of `02` §3.4-§3.10, by the name a failure should mention.
