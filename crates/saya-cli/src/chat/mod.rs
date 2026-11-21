@@ -8,6 +8,7 @@
 
 mod event;
 mod front;
+mod workspace_shape;
 
 // This `pub(crate)` surface is the chat layer's boundary: the composition, the
 // session, the turn, the operator and the fronts above them consume it. Nothing
@@ -17,7 +18,13 @@ mod front;
 pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
 pub(crate) use front::ChatFront;
+#[allow(unused_imports)]
+pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]
 mod contract_guard_tests;
+
+#[cfg(test)]
+#[path = "workspace_shape_tests.rs"]
+mod workspace_shape_tests;

@@ -256,12 +256,12 @@ async fn in_place_second_job_same_root_refused() {
     let provider = Provider::parity();
     provider.release();
     let fixture = Fixture::in_place_with_endpoint("in-place-lease", &provider.endpoint).await;
-    let first = started(&fixture, "in-place-lease-one", vec![]).await;
+    let first = started(&fixture, "in-place-lease-one", vec![".".to_owned()]).await;
 
     let request = CodingJobRequest::new(
         JobId::parse("in-place-lease-two").unwrap(),
         "second job over the same folder".into(),
-        vec![],
+        vec![".".to_owned()],
     )
     .unwrap();
     let approval =

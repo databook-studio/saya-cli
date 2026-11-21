@@ -208,11 +208,17 @@ impl CodingApplication {
         let records = private_directory(&self.state_root.join(request.job_id.as_str()))?;
         job_files::write(&request, &plan, &records, &self.service, &token).await?;
         lifecycle.attach(&records);
-        // An in-place job records edit-time before-images and holds the
-        // one-live-job lease over its folder; a managed checkout needs
-        // neither.
-        let (before_images, _in_place_lease) =
-            super::in_place_lease::job_parts(&plan, &records, &self.state_root, true)?;
+        // An in-place job that states a write scope records edit-time
+        // before-images and holds the one-live-job lease over its folder; a
+        // job that only reads takes neither, so another session may hold the
+        // folder's lease while this run reads it. A managed checkout needs
+        // neither part either way.
+        let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
+            &plan,
+            &records,
+            &self.state_root,
+            request.has_write_scope()?,
+        )?;
         let (root_steering, root_mailbox) = saya_agent::agent_mailbox();
         Ok(Arc::new(NativeCodingJob {
             observation_sequence: std::sync::atomic::AtomicU64::new(1),

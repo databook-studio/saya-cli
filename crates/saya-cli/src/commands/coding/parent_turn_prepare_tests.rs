@@ -83,8 +83,8 @@ async fn prepare_opens_without_a_turn() {
         "the open takes no new epoch: it is the run, not a resume"
     );
     assert!(
-        fixture.job._in_place_lease.is_some(),
-        "the open holds the folder lease, so the run's turns never re-take it"
+        fixture.job._in_place_lease.is_none(),
+        "the open takes no folder lease: a run with no write scope never holds one"
     );
 }
 

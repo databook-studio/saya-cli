@@ -4,6 +4,7 @@
 //! is never given a second writer.
 
 use super::{
+    lease_probe::live_writer,
     provider::Provider,
     resume_support::{attempt, epoch, fixture, provider_failed, resume, run},
     script::{Fault, Scenario},
@@ -66,8 +67,10 @@ async fn a_job_resume_refuses_a_provider_failure_while_the_folder_is_leased() {
     let fixture = fixture(&provider).await;
     let id = provider_failed(&fixture, "resume-busy").await;
     provider.recover();
-    // A live job over the same folder holds the one-live-job lease.
-    let live = attempt(&fixture, "resume-busy-live").await.unwrap();
+    // A live write-scoped job over the same folder holds the one-live-job lease.
+    let live = live_writer(&fixture, "resume-busy-live")
+        .await
+        .expect("the folder is free, so the writer holds its lease");
 
     let refusal = resume(&fixture, id.as_str(), true)
         .await

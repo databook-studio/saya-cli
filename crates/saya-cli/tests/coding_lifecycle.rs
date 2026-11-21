@@ -18,6 +18,8 @@ mod in_place;
 mod in_place_edit_time;
 #[path = "coding_lifecycle/in_place_helpers.rs"]
 mod in_place_helpers;
+#[path = "coding_lifecycle/in_place_lease.rs"]
+mod in_place_lease;
 #[path = "coding_lifecycle/in_place_shell_changes.rs"]
 mod in_place_shell_changes;
 #[path = "coding_lifecycle/in_place_show.rs"]

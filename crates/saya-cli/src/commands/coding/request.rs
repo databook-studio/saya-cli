@@ -175,6 +175,13 @@ impl CodingJobRequest {
             .any(|name| crate::agent::tools::admits(&tools, name)))
     }
 
+    /// Whether the job states a write scope at all: a `--write` path, or a
+    /// write tool named in its own `[tools] allow` list. A job with neither
+    /// only reads its folder.
+    pub(crate) fn has_write_scope(&self) -> Result<bool, CodingError> {
+        Ok(!self.write_paths.is_empty() || self.states_write_tool()?)
+    }
+
     /// The approved write scope, or `None` when this job approved no path
     /// (and is therefore read-only).
     pub(crate) fn assigned_paths(&self) -> Result<Option<AssignedPaths>, CodingError> {
