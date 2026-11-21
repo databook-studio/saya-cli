@@ -61,6 +61,12 @@ fn handle_line_verbatim(
             // whether this command changed it: a changed key retires the
             // question authority once the command's message is produced, an
             // unchanged key leaves a pending clarification untouched.
+            //
+            // `/clear` forgets the conversation the run replays, and the state
+            // layer cannot do that alone: the session's own compaction clears
+            // its latch and rolls the run over with nothing, through the same
+            // operation `/compact` reports through.
+            let clearing = matches!(command, crate::slash::SlashCommand::Clear);
             let before = state.context_key();
             let action = state.apply(
                 command,
@@ -72,6 +78,11 @@ fn handle_line_verbatim(
                     .collect::<Vec<_>>(),
             );
             state.abandon_question_when_context_changed(&before, session);
+            if clearing && let Some(chat) = ctx.chat.as_ref()
+                && let Some(action) = chat.clear().action()
+            {
+                session_emit::emit_action(action, format, state, store)?;
+            }
             action
         }
         None => {

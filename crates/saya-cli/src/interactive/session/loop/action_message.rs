@@ -59,7 +59,8 @@ fn handle_message(
     // failed turn's consumed calls included) and, for an answered turn, the
     // words a person read — a turn that stopped, paused, failed or was
     // cancelled records nothing.
-    if let Some(settled) = &said {
+    if let Some(sent) = &said {
+        let settled = &sent.turn;
         settled
             .record
             .totals
@@ -67,11 +68,23 @@ fn handle_message(
         if matches!(settled.outcome, ChatOutcome::Answered) {
             state.record_turn(line, settled.record.answer.clone(), false, Vec::new());
         }
+        // What the turn's boundary then did — a compaction's own line, or the
+        // failure that latched it — is said through the session's one emit
+        // seam: the automatic trigger's wording already names its origin and
+        // the channel it belongs on.
+        if let Some(action) = sent.said.action() {
+            session_emit::emit_action(action, format, state, store)?;
+        }
+    }
+    // The record names the run the session belongs to now: a compaction or
+    // `/clear` moved it to the job that followed.
+    if let Some(chat) = ctx.chat.as_ref() {
+        state.run = chat.run_link();
     }
     // A pause is not a failure: the next message continues from where the guard
     // stopped the turn. Every other stop keeps today's exit contract — a
     // cancelled turn and a stop that ended it errored the run.
-    let (status, outcome) = match said.as_ref().map(|settled| &settled.outcome) {
+    let (status, outcome) = match said.as_ref().map(|sent| &sent.turn.outcome) {
         Some(ChatOutcome::Stopped(_)) => (
             prose_status(ProseOutcome::Failed, true),
             TurnOutcome::Errored,

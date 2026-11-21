@@ -11,6 +11,7 @@
 use saya_store::{RedactedSession, RedactedTurn};
 
 use super::ChatOutcome;
+use crate::interactive::session::continuation::compaction::manual::COMPACT_KEEP_TAIL_TURNS;
 
 /// One settled turn: what the operator asked, and the answer the turn settled
 /// on.
@@ -25,6 +26,11 @@ pub(crate) struct SettledTurn {
 /// A session's saved record, read as its transcript.
 pub(crate) struct Transcript {
     record: RedactedSession,
+    /// How many of the record's oldest turns the last compaction folded into
+    /// the summary: the pairs a run no longer replays. Kept in memory, because
+    /// the record states the summary and never the fold — a record loaded from
+    /// disk is a conversation whose fold this session did not perform.
+    folded: usize,
 }
 
 impl Transcript {
@@ -33,7 +39,7 @@ impl Transcript {
     /// field the next save must write unchanged, so a record loaded with no
     /// run link saves back byte for byte.
     pub(crate) fn from_record(record: RedactedSession) -> Self {
-        Self { record }
+        Self { record, folded: 0 }
     }
 
     /// The record as it was loaded, and as the next save writes it.
@@ -59,6 +65,7 @@ impl Transcript {
     pub(crate) fn clear(&mut self) {
         self.record.turns.clear();
         self.record.compaction_summary = None;
+        self.folded = 0;
     }
 
     /// Saves the narrative a compaction folded the older turns into: it is the
@@ -68,6 +75,39 @@ impl Transcript {
     pub(crate) fn save_summary(&mut self, summary: &str) {
         let summary = summary.trim();
         self.record.compaction_summary = (!summary.is_empty()).then(|| summary.to_owned());
+        // The fold is the plan's own: every turn but the tail it keeps
+        // verbatim, so the pairs before the tail are the ones a run stops
+        // replaying.
+        self.folded = self
+            .record
+            .turns
+            .len()
+            .saturating_sub(COMPACT_KEEP_TAIL_TURNS);
+    }
+
+    /// The working memory a run replays, as the compaction plans against it:
+    /// the summary a compaction saved, ahead of the pairs it kept verbatim —
+    /// the same shape [`super::Rollover`] seeds the run that follows with. A
+    /// summariser that read the folded turns again would re-pin facts the
+    /// session has already forgotten, which is exactly what a compaction must
+    /// never do.
+    pub(crate) fn replayed(&self) -> Vec<saya_agent::ChatMessage> {
+        let mut history = Vec::new();
+        if let Some(summary) = &self.record.compaction_summary {
+            history.push(saya_agent::ChatMessage::text("user", summary.clone()));
+            history.push(saya_agent::ChatMessage::text(
+                "assistant",
+                super::rollover::SUMMARY_ACK,
+            ));
+        }
+        for turn in self.turns().iter().skip(self.folded) {
+            history.push(saya_agent::ChatMessage::text("user", turn.prompt.clone()));
+            history.push(saya_agent::ChatMessage::text(
+                "assistant",
+                turn.answer.clone(),
+            ));
+        }
+        history
     }
 
     /// The settled turns, oldest first: what a new epoch is seeded with.

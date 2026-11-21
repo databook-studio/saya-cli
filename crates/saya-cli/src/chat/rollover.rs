@@ -218,7 +218,7 @@ impl Rollover {
 /// answer) pairs by contract — `saya_agent`'s assembly refuses an odd length and
 /// any role out of turn — so a summary standing ahead of the tail rides as one
 /// pair rather than one message.
-const SUMMARY_ACK: &str = "Understood. I have the summary of the earlier conversation.";
+pub(super) const SUMMARY_ACK: &str = "Understood. I have the summary of the earlier conversation.";
 
 /// The conversation a run is seeded with, oldest pair first: the transcript's
 /// settled pairs and, once a compaction saved a summary, that summary ahead of

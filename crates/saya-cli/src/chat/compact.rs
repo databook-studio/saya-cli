@@ -28,9 +28,8 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use saya_agent::{CONTEXT_COMPACT_PERCENT, ChatMessage, context_utilisation_percent};
+use saya_agent::{CONTEXT_COMPACT_PERCENT, context_utilisation_percent};
 use saya_config::CompactionMode;
-use saya_store::RedactedTurn;
 
 use super::transcript::Transcript;
 use crate::agent::turn_config::PromptOverrides;
@@ -122,10 +121,12 @@ impl Compaction {
     /// record's turns, then the summary saved in the record on success.
     async fn compact(&self, job: &NativeCodingJob, transcript: &mut Transcript) -> Compacted {
         // The turns are the conversation as the record holds it, and the history
-        // is the pairs replayed for them — exactly the shape the run's own turns
-        // carry. Taken by value so the record can be written after the call.
+        // is the working memory a run replays for them — the summary ahead of
+        // the pairs the last compaction kept — exactly the shape the run's own
+        // turns carry. Taken by value so the record can be written after the
+        // call.
         let turns = transcript.record().turns.clone();
-        let history = history(&turns);
+        let history = transcript.replayed();
         let result = engine::summarise(
             job.runtime_config(),
             &PromptOverrides::default(),
@@ -180,19 +181,4 @@ fn window(job: &NativeCodingJob, transcript: &Transcript) -> Option<u64> {
         .ai
         .context_window_tokens
         .or_else(|| saya_config::context_window_tokens(&transcript.record().model))
-}
-
-/// The history the summariser plans against: one (user, assistant) pair per
-/// settled turn, oldest first — the same shape the run replays, never the tool
-/// arguments or results a turn once carried.
-fn history(turns: &[RedactedTurn]) -> Vec<ChatMessage> {
-    turns
-        .iter()
-        .flat_map(|turn| {
-            [
-                ChatMessage::text("user", turn.user.clone()),
-                ChatMessage::text("assistant", turn.assistant.clone()),
-            ]
-        })
-        .collect()
 }
