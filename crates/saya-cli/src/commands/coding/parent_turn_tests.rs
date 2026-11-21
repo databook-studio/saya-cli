@@ -240,3 +240,8 @@ mod stale_approval;
 /// A run opened without a turn: its first message is its first turn.
 #[path = "parent_turn_prepare_tests.rs"]
 mod prepare;
+
+/// A prepared run's seeded conversation: history of the run, bounded like any
+/// other and kept for the turns after the first.
+#[path = "parent_turn_seed_tests.rs"]
+mod seed;

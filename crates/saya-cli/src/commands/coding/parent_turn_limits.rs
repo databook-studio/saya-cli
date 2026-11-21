@@ -21,6 +21,10 @@ pub(crate) struct TurnInputs {
     /// The plugins this run may activate, or `None` — every job surface today —
     /// for a run that consults no registry.
     pub(crate) plugins: Option<RunPlugins>,
+    /// The conversation the run begins with, oldest pair first: a session hands
+    /// over the transcript of the run before it when it prepares this one. Empty
+    /// — every job surface today — is a run whose first turn carries no history.
+    pub(crate) seed: Vec<(String, String)>,
 }
 
 /// The plugin registry a surface supplies at open, and the context its plugins

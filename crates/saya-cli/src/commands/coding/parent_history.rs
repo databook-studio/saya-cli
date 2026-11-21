@@ -21,18 +21,34 @@ struct CompletedTurn {
     answer: String,
 }
 
-/// The run's completed turns, oldest first.
+/// The conversation a run carries, oldest first: the pairs it was seeded with
+/// when it opened, then the turns it has completed.
 ///
-/// Append-only, so a later turn's history begins with exactly the history the
-/// turn before it carried whenever the bound dropped nothing — the provider's
-/// prompt cache then keeps what it already has.
+/// Append-only in its completed turns, so a later turn's history begins with
+/// exactly the history the turn before it carried whenever the bound dropped
+/// nothing — the provider's prompt cache then keeps what it already has.
 pub(in crate::commands::coding::parent) struct TurnHistory {
+    /// The conversation the run was seeded with when it opened, in the order it
+    /// arrived: a session replays the transcript of the run before it into the
+    /// run it prepares. It stays at the front of every turn's history, so the
+    /// first turn already carries the conversation it continues.
+    seed: Vec<CompletedTurn>,
     turns: Mutex<Vec<CompletedTurn>>,
 }
 
 impl TurnHistory {
-    pub(in crate::commands::coding::parent) fn new() -> Self {
+    /// The history a run opens with: the seeded pairs, oldest first, ahead of a
+    /// list of completed turns that starts empty.
+    ///
+    /// An empty seed is the run that begins with no conversation, which is
+    /// every job surface today — its first turn sends exactly the bytes it
+    /// always did.
+    pub(in crate::commands::coding::parent) fn seeded(pairs: Vec<(String, String)>) -> Self {
         Self {
+            seed: pairs
+                .into_iter()
+                .map(|(prompt, answer)| CompletedTurn { prompt, answer })
+                .collect(),
             turns: Mutex::new(Vec::new()),
         }
     }
@@ -50,15 +66,17 @@ impl TurnHistory {
     }
 
     /// The history the turn about to run replays: one (user, assistant) pair
-    /// per completed turn, oldest first, in chat's own shape. Empty for a
-    /// run's first turn, so that turn's request is unchanged.
+    /// per seeded and completed turn, oldest first, in chat's own shape. Empty
+    /// for a run seeded with nothing, before its first turn, so that turn's
+    /// request is unchanged.
     ///
     /// Unbounded here on purpose — the shared assembly trims it to the run's
     /// context byte budget exactly as it trims chat's, so a job can never
     /// bound history by a rule of its own.
     pub(in crate::commands::coding::parent) fn replay(&self) -> Vec<ChatMessage> {
-        self.lock()
+        self.seed
             .iter()
+            .chain(self.lock().iter())
             .flat_map(|turn: &CompletedTurn| {
                 [
                     ChatMessage::text("user", turn.prompt.clone()),
