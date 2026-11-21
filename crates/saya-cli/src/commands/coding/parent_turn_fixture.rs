@@ -20,18 +20,18 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(super) struct Fixture {
-    pub(super) root: PathBuf,
-    pub(super) job: Arc<NativeCodingJob>,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
+    pub(crate) job: Arc<NativeCodingJob>,
     /// Declared after the job, so the folder lease is released before the
     /// directory goes. A field rather than `Drop` on the fixture: a test that
     /// must give the job up (a resume takes the lease only once the ended run's
     /// handle is gone) destructures the fixture instead.
-    pub(super) _root: RootGuard,
+    pub(crate) _root: RootGuard,
 }
 
 /// Removes the throwaway root when it drops.
-pub(super) struct RootGuard(PathBuf);
+pub(crate) struct RootGuard(PathBuf);
 
 impl Drop for RootGuard {
     fn drop(&mut self) {
@@ -40,21 +40,21 @@ impl Drop for RootGuard {
 }
 
 /// An in-place job over a plain folder, wired to `endpoint`.
-pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
+pub(crate) async fn in_place(case: &str, endpoint: &str) -> Fixture {
     in_place_with(case, endpoint, None, false).await
 }
 
 /// The same, with a whole-folder write scope: the root is offered the
 /// workspace write tools, so a turn can change a file of the folder every
 /// turn of the run is checkpointed from.
-pub(super) async fn in_place_writing(case: &str, endpoint: &str) -> Fixture {
+pub(crate) async fn in_place_writing(case: &str, endpoint: &str) -> Fixture {
     in_place_with(case, endpoint, None, true).await
 }
 
 /// The same, with the run's context byte budget stated by the test — the one
 /// bound the shared history assembly reads, so a test can make a run's
 /// history outgrow it and see which turns the bound drops.
-pub(super) async fn in_place_with_budget(
+pub(crate) async fn in_place_with_budget(
     case: &str,
     endpoint: &str,
     context_byte_budget: usize,
@@ -146,7 +146,7 @@ async fn in_place_with(
 }
 
 /// A managed-checkout job: the shape this release runs one turn per run.
-pub(super) async fn managed(case: &str) -> Fixture {
+pub(crate) async fn managed(case: &str) -> Fixture {
     let base = direct_root_fixture::fixture(case, vec!["tracked.txt".into()]).await;
     let root = base.root.clone();
     let job = Arc::clone(&base.job);
@@ -162,7 +162,7 @@ pub(super) async fn managed(case: &str) -> Fixture {
 
 /// Ends the scripted job so a rewind is admitted: only a `Running` job
 /// refuses one, and an open run between its turns is still running.
-pub(super) async fn pause(job: &NativeCodingJob) {
+pub(crate) async fn pause(job: &NativeCodingJob) {
     let mut cursor = None;
     let mut last = 0;
     loop {

@@ -169,11 +169,11 @@ pub(crate) use parent_turn_limits::TurnInputs;
 
 #[cfg(all(test, unix))]
 #[path = "parent_turn_fixture.rs"]
-mod parent_turn_fixture;
+pub(crate) mod parent_turn_fixture;
 
 #[cfg(all(test, unix))]
 #[path = "parent_turn_provider.rs"]
-mod parent_turn_provider;
+pub(crate) mod parent_turn_provider;
 
 #[cfg(all(test, unix))]
 #[path = "parent_turn_tests.rs"]
