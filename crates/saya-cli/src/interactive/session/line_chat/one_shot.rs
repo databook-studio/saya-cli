@@ -21,12 +21,14 @@
 //!   in-place job is not a place a job can be rooted, but it is still a place a
 //!   question can be asked: the question runs there without a workspace — the
 //!   database tools it resolved and nothing else — instead of being refused.
+//!   That rule is the folder's shape's, not this surface's
+//!   ([`WorkspaceShape::workspace`](crate::chat::WorkspaceShape)), because a
+//!   line session's folder is read the same way.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::LineSession;
-use crate::chat::WorkspaceShape;
 use crate::commands::coding::{CodingApplication, root_mode::session_state_root};
 
 /// Whether the composition is a surface's one-shot question: one message, one
@@ -36,20 +38,6 @@ use crate::commands::coding::{CodingApplication, root_mode::session_state_root};
 pub(super) enum OneShot {
     Yes,
     No,
-}
-
-/// The workspace a one-turn ask states: the folder roots the run when it can
-/// root an in-place job, and there is no workspace at all when it cannot — the
-/// home directory, the filesystem root, saya's own state directory.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Workspace {
-    /// The folder roots the run: its files are readable and searchable, and a
-    /// write path is the folder's own `[tools] allow` decision.
-    Here,
-    /// The folder cannot root an in-place job, so the question runs with no
-    /// workspace: the database tools it resolved are its whole surface, and no
-    /// file, shell or write tool is offered.
-    None,
 }
 
 /// The state root a one-turn ask records under: `None` when the configured one
@@ -64,16 +52,6 @@ pub(super) fn state_root(parts: &LineSession) -> Result<Option<PathBuf>, String>
     Ok(Some(
         std::env::temp_dir().join(format!("saya-ask-{}", parts.session)),
     ))
-}
-
-/// The workspace a one-turn ask has, read from the folder it was asked in: a
-/// shape that states no workspace is a folder no in-place job can be rooted in,
-/// and the question is asked there without one rather than refused.
-pub(super) fn workspace(shape: &WorkspaceShape) -> Workspace {
-    match shape {
-        WorkspaceShape::NoWorkspace { .. } => Workspace::None,
-        WorkspaceShape::Writable | WorkspaceShape::ReadOnlyFiles { .. } => Workspace::Here,
-    }
 }
 
 /// The facts a one-turn run states on the host it is composed over: no

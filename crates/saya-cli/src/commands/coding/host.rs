@@ -77,8 +77,9 @@ pub struct CodingApplication {
     /// Whether this host's runs have a workspace at all: whether the folder they
     /// were opened over is one they may read and search. `true` — every surface
     /// whose folder can root an in-place job — and `false` only where a session
-    /// states it: a one-turn question asked in a folder that cannot root a job
-    /// reads no file and is offered no file, shell or write tool.
+    /// states it: a run over a folder that cannot root a job (the home
+    /// directory, a dangerous root, a folder that would hold the job's private
+    /// state root) is offered no file, shell or write tool.
     pub(super) workspace: std::sync::atomic::AtomicBool,
     /// Whether this host composes one-turn runs: one question, one turn, one
     /// answer, and no outcome view recorded afterwards. `false` for every
@@ -159,7 +160,11 @@ impl CodingApplication {
             CodingError::owner(io_context("resolve repository", repository, error))
         })?;
         let state_root = private_directory(state_root)?;
-        if state_root.starts_with(&canonical) {
+        // A run over a folder that cannot root an in-place job keeps its private
+        // state where it was configured even when that is inside the folder:
+        // the folder is only the run's label there, and no file, shell or write
+        // tool is composed over it, so nothing can reach the state.
+        if mode != RootMode::NoWorkspace && state_root.starts_with(&canonical) {
             return Err(CodingError::StateDirectory);
         }
         let service = GitService::new(git, &state_root).map_err(CodingError::owner)?;

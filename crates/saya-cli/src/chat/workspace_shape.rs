@@ -33,6 +33,37 @@ pub(crate) enum WorkspaceShape {
     },
 }
 
+/// The workspace a run over a folder has.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Workspace {
+    /// The folder roots the run: its files are readable and searchable, and a
+    /// write path is the folder's own `[tools] allow` decision.
+    Here,
+    /// The folder cannot root an in-place job, so the run has no workspace at
+    /// all: the database tools it resolved are its whole surface, and no file,
+    /// shell or write tool is offered.
+    None,
+}
+
+impl WorkspaceShape {
+    /// The workspace a run over this shape states — the *one* rule every
+    /// composition reads, whoever drives it.
+    ///
+    /// A folder that can root an in-place job roots the run. A folder that
+    /// cannot — the home directory, a dangerous root, a folder that would hold
+    /// the job's private state root — is still a place a run can answer from,
+    /// so the run is composed there without a workspace rather than refused
+    /// before its first turn. A session bound to a `--workspace` has a folder
+    /// whose own shape is `Writable`, so it keeps its files: the rule reads the
+    /// folder, never the surface driving it.
+    pub(crate) fn workspace(&self) -> Workspace {
+        match self {
+            Self::NoWorkspace { .. } => Workspace::None,
+            Self::Writable | Self::ReadOnlyFiles { .. } => Workspace::Here,
+        }
+    }
+}
+
 /// The shape of a run over `folder`, whose own records live under `state_root`.
 pub(crate) fn decide(folder: &Path, state_root: &Path) -> WorkspaceShape {
     let Ok(canonical) = fs::canonicalize(folder) else {

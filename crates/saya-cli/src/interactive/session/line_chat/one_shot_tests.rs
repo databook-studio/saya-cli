@@ -22,12 +22,12 @@ use saya_types::JobId;
 
 use crate::GlobalOptions;
 use crate::agent::tools::coding::RootTools;
-use crate::chat::{WorkspaceShape, workspace_shape};
+use crate::chat::{Workspace, WorkspaceShape, workspace_shape};
 use crate::cli::RootMode;
 use crate::commands::coding::{CodingApplication, CodingAuthorization, CodingJobRequest};
 use crate::config::runtime::load_with_sources;
 
-use super::{Workspace, state_on, workspace};
+use super::state_on;
 
 /// The workspace tools a run with no workspace must never offer: the read and
 /// search family, the write family, the shell, and the helper lane.
@@ -112,7 +112,7 @@ async fn ask_from_home_advertises_no_workspace_tool() {
         "the home directory cannot root an in-place job: {shape:?}"
     );
     assert_eq!(
-        workspace(&shape),
+        shape.workspace(),
         Workspace::None,
         "the question is asked there without a workspace"
     );
@@ -147,7 +147,7 @@ async fn ask_from_a_plain_folder_keeps_its_workspace() {
     // session's records live elsewhere, never inside it.
     let plain_shape = workspace_shape(&plain, &records);
     assert_eq!(
-        workspace(&plain_shape),
+        plain_shape.workspace(),
         Workspace::Here,
         "a plain folder roots the run: {plain_shape:?}"
     );

@@ -27,6 +27,7 @@ mod line;
 mod one_shot;
 mod open;
 mod run;
+mod session_host;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -47,6 +48,10 @@ mod boundary_tests;
 #[cfg(all(test, unix))]
 #[path = "boundary_fixture.rs"]
 mod boundary_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "workspace_tests.rs"]
+mod workspace_tests;
 
 /// One line session's open run.
 pub(crate) struct LineChat {

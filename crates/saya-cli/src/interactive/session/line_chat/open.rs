@@ -28,8 +28,7 @@ use crate::agent::runtime::PromptOverrides;
 use crate::agent::system_prompt::memory_reachable;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::turn_inputs::prepare_turn;
-use crate::chat::{ChatFront, RunComposition, SessionRun, WorkspaceShape, workspace_shape};
-use crate::commands::coding::CodingApplication;
+use crate::chat::{ChatFront, RunComposition, SessionRun, WorkspaceShape};
 use crate::config::runtime::RuntimeConfig;
 use crate::front::LineFront;
 use crate::interactive::turn_summary::tally_handle;
@@ -123,65 +122,11 @@ pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
     assemble(parts, super::one_shot::OneShot::Yes).await
 }
 
-/// Builds the application over the session's folder, states the run's facts,
-/// composes it and opens it — asking nobody: the session's mode is the consent.
+/// Builds the host the session's run is composed over, and states the run's
+/// facts — asking nobody: the session's mode is the consent.
 async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
     let config: &RuntimeConfig = &parts.runtime;
-    let token = CancellationToken::new();
-    // Where this session's records live, and what its folder may be: both are
-    // read before the application opens, because the shape decides which root
-    // the application opens over.
-    let state_root = match parts.state_root.clone() {
-        Some(root) => root,
-        None => coding_state_root(config)?,
-    };
-    // The folder is writable for this session or it is not: the fact is taken
-    // before the first run holds the lease, and every run a rollover prepares
-    // states it again.
-    let shape = workspace_shape(&parts.folder, &state_root);
-    // A one-turn question asked in a folder that cannot root an in-place job
-    // runs there without a workspace: the database tools it resolved are its
-    // whole surface. Every other composition asks its folder to be the root.
-    let workspace = match one_shot {
-        super::one_shot::OneShot::Yes => super::one_shot::workspace(&shape),
-        super::one_shot::OneShot::No => super::one_shot::Workspace::Here,
-    };
-    let root_mode = crate::cli::RootMode::InPlace;
-    let application = match (parts.state_root.clone(), workspace) {
-        (_, super::one_shot::Workspace::None) => {
-            CodingApplication::session_without_workspace(
-                config.clone(),
-                parts.store.clone(),
-                &parts.folder,
-                crate::cli::RootMode::NoWorkspace,
-                &state_root,
-                &token,
-            )
-            .await
-        }
-        (Some(root), super::one_shot::Workspace::Here) => {
-            CodingApplication::session_over(
-                config.clone(),
-                parts.store.clone(),
-                &parts.folder,
-                root_mode,
-                &root,
-                &token,
-            )
-            .await
-        }
-        (None, super::one_shot::Workspace::Here) => {
-            CodingApplication::session(
-                config.clone(),
-                parts.store.clone(),
-                &parts.folder,
-                root_mode,
-                &token,
-            )
-            .await
-        }
-    }
-    .map_err(|error| error.to_string())?;
+    let (application, shape) = super::session_host::open_host(&parts).await?;
     if one_shot == super::one_shot::OneShot::Yes {
         super::one_shot::state_on(&application);
     }
@@ -276,12 +221,4 @@ pub(super) async fn session_run(
         tasks: parts.tasks.clone(),
         facts: parts.facts.clone(),
     })
-}
-
-/// The coding state root the session's runs record themselves under — the same
-/// root a `saya run` over this folder uses, read from the one resolver so a
-/// folder's lease is looked for where it is held.
-fn coding_state_root(config: &RuntimeConfig) -> Result<PathBuf, String> {
-    crate::commands::coding::root_mode::session_state_root(config)
-        .map_err(|error| error.to_string())
 }

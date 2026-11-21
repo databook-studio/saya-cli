@@ -3,14 +3,14 @@
 //! workspace tool's advertisement reads.
 //!
 //! A folder that cannot root an in-place job — the filesystem root, the home
-//! directory, saya's own state directory, each refused by
+//! directory, saya's own state directory, a folder that would hold the job's
+//! private state root, each refused by
 //! [`resolve_in_place`](super::host_root::resolve_in_place) — is still a place a
-//! question can be asked. The one-turn `ask` asking there composes no workspace
-//! at all: the run is offered the database tools it resolved, and no file,
-//! shell or write tool. What the surface decides (`line_chat::one_shot`), this
-//! file states on the host: the folder is taken as the run's own identity,
-//! nothing is captured or inventoried for it, and the cell says the run has no
-//! workspace.
+//! run can answer from. A session over one composes no workspace at all: the run
+//! is offered the database tools it resolved, and no file, shell or write tool.
+//! What the folder's shape decides (`WorkspaceShape::workspace`), this file
+//! states on the host: the folder is taken as the run's own identity, nothing is
+//! captured or inventoried for it, and the cell says the run has no workspace.
 
 use super::CodingApplication;
 use crate::cli::RootMode;
