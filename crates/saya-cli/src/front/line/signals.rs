@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 
+use saya_agent::CancellationToken;
+
 use crate::agent::question_scope::QuestionScope;
 use crate::local_metrics::LocalMetrics;
 use crate::local_metrics_format::print_metrics_section;
@@ -45,7 +47,16 @@ impl Signals {
         print_metrics_section(&self.metrics());
     }
 
-    fn metrics(&self) -> Option<Arc<LocalMetrics>> {
+    /// The run's counters, when the session records a scope: the collector a
+    /// settled turn's section prints, and the one the question's wait samples
+    /// go to.
+    pub(crate) fn metrics(&self) -> Option<Arc<LocalMetrics>> {
         self.scope.as_ref().and_then(QuestionScope::metrics)
+    }
+
+    /// The answering source's own stop, when the run records a scope: the token
+    /// a question's elapsed budget cancels from inside the scope.
+    pub(crate) fn cancellation(&self) -> Option<CancellationToken> {
+        self.scope.as_ref().map(QuestionScope::cancellation)
     }
 }

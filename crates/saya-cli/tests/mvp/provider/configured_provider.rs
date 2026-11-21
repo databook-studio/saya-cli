@@ -58,9 +58,14 @@ fn ask_calls_configured_openai_compatible_provider() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("answer from mock"));
     assert!(!String::from_utf8_lossy(&output.stdout).contains("mock-secret"));
     assert!(output.stderr.is_empty());
+    // The behaviour the sentence names, not an internal detail of how it was
+    // reached: a provider-only ask records no agent-query audit. The ask does
+    // record its own job now, so the state database exists either way — what
+    // must not be there is an audit row for the question this run asked.
+    let audited = crate::common::audit_operations(&provider_state);
     assert!(
-        !provider_state.exists(),
-        "provider-only ask must not create an agent-query audit"
+        !audited.iter().any(|operation| operation == "agent_query"),
+        "provider-only ask must not create an agent-query audit: {audited:?}"
     );
     let _ = std::fs::remove_dir_all(root);
 }

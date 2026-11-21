@@ -61,16 +61,38 @@ fn a_guard_class_is_a_pause_and_a_backstop_is_a_failure() {
     assert_eq!(stop.dimension(), None, "no question budget stopped it");
 }
 
-/// A stop that carries no message still says which class it was, so a turn is
-/// never silent about what ended it.
+/// A stop that carries no message and no sentence of Saya's still says which
+/// class it was, so a turn is never silent about what ended it.
 #[test]
 fn a_message_less_failure_still_names_its_class() {
-    let stop = TurnStop::of_failure(&CodingRunFailure::root(Class::ProviderError));
+    let stop = TurnStop::of_failure(&CodingRunFailure::root(Class::Internal));
     assert!(!stop.paused(), "{stop:?}");
     assert!(
-        stop.message().contains("provider_error"),
+        stop.message().contains("internal"),
         "the fallback names the class: {}",
         stop.message()
+    );
+}
+
+/// A provider that could not be reached is said in Saya's own words, with the
+/// one next step. The run kept no text of the provider's, so nothing it sent
+/// can reach this line.
+#[test]
+fn an_unreachable_provider_is_said_in_sayas_own_words_with_the_next_command() {
+    let stop = TurnStop::of_failure(&CodingRunFailure::root(Class::ProviderError));
+    let message = stop.message();
+    assert!(!stop.paused(), "a provider failure is a failure: {stop:?}");
+    assert!(
+        message.contains("could not reach the provider"),
+        "the sentence names the failure: {message}"
+    );
+    assert!(
+        message.contains("saya config doctor"),
+        "the sentence names the next command: {message}"
+    );
+    assert!(
+        !message.contains("config init"),
+        "a down provider is not a missing config: {message}"
     );
 }
 

@@ -172,6 +172,9 @@ impl<'a> LiveAttemptRunner<'a> {
             // The one-turn composition states the root the attempt records
             // under, so an ask keeps no records inside the folder it asks about.
             state_root: None,
+            // The question's own stop: a deadline or a signal latched for this
+            // attempt must also end the call waiting at the terminal.
+            cancellation: Some(self.scope.cancellation()),
         }
     }
 

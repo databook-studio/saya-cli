@@ -33,6 +33,31 @@ pub(crate) fn sqlite_fixture(path: &Path, statements: &[&str]) {
     });
 }
 
+/// The operations the audit log at `path` records, oldest first. A store the
+/// child never opened keeps no audit, and a store opened for no audit at all
+/// has no `audit_log` table yet: both read as no operations.
+pub(crate) fn audit_operations(path: &Path) -> Vec<String> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false);
+        let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
+        let operations = sqlx::query_scalar::<_, String>("SELECT operation FROM audit_log")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+        pool.close().await;
+        operations
+    })
+}
+
 /// The host variables a spawned `saya` may inherit: operating-system plumbing
 /// only. Every other variable, above all each `SAYA_*` setting and API key a
 /// developer exports in their shell, is dropped so the host cannot change what

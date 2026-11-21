@@ -71,6 +71,11 @@ pub(crate) struct LineFront {
     /// Whether this surface may read an answer from stdin at all: the plain
     /// loop's live-terminal fact. A piped run denies every question unasked.
     can_prompt: bool,
+    /// Whether this front drives one turn and no more — the one-shot `ask`.
+    /// Such a turn is also ended by the question's own stop, which the scope
+    /// latches when its configured elapsed budget runs out: there is no next
+    /// line for that budget to leave open.
+    one_turn: bool,
     /// The tally every turn's sink records its tool events into, read by the
     /// scripted run's one terminal result.
     tally: TallyHandle,
@@ -89,6 +94,7 @@ impl LineFront {
             surface: Surface::Terminal(format),
             wording: Some(format),
             can_prompt,
+            one_turn: false,
             tally,
             signals: Signals::new(None),
             stream: Arc::new(TurnStream::default()),
@@ -111,6 +117,8 @@ impl LineFront {
         Self {
             surface: Surface::Given(sink),
             wording: None,
+            // The ask's job is one question: its turn ends with the question.
+            one_turn: true,
             ..Self::new(RenderFormat::Text, can_prompt, tally)
         }
     }
@@ -126,6 +134,14 @@ impl LineFront {
     /// The turn now running: a pending question ends when its turn does.
     pub(crate) fn set_turn(&self, turn: CancellationToken) {
         self.lock().turn = turn;
+    }
+
+    /// The question's own stop, on a surface whose turn ends with its question:
+    /// the scope's token, which its configured elapsed budget latches. A line
+    /// session that takes further turns states none — its budget leaves the run
+    /// open for the next line.
+    pub(crate) fn one_turn_stop(&self) -> Option<CancellationToken> {
+        self.one_turn.then(|| self.signals.cancellation()).flatten()
     }
 
     /// The operator's stop: this turn's own token and the accepted stop
@@ -214,7 +230,13 @@ impl ChatFront for LineFront {
 
     async fn ask(&self, question: &Question) -> Answer {
         let turn = self.lock().turn.clone();
-        ask::put(self.can_prompt, &turn, question).await
+        ask::put(
+            self.can_prompt,
+            &turn,
+            question,
+            self.signals.metrics().as_ref(),
+        )
+        .await
     }
 
     /// The line's live-terminal fact: a person is on the other end of the ask,

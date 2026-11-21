@@ -136,11 +136,16 @@ impl NativeCodingJob {
                 std::env::var_os("PATH").as_deref(),
             ),
         );
-        let mut system_prompt = super::super::prompts::system_with_file_sources(
-            self.request.plan,
-            self.is_read_only_root(),
-            file_sources,
-        );
+        let mut system_prompt = match self.has_workspace() {
+            true => super::super::prompts::system_with_file_sources(
+                self.request.plan,
+                self.is_read_only_root(),
+                file_sources,
+            ),
+            // A run with no workspace reads no file and has no shell, so it is
+            // told that rather than told to read a workspace it does not have.
+            false => super::super::prompts::NO_WORKSPACE.to_owned(),
+        };
         // The active plugins' sections ride after the core prompt, composed
         // here with the rest of the run's one-time setup: every turn of the run
         // sends these exact bytes, so the request prefix never moves. A run

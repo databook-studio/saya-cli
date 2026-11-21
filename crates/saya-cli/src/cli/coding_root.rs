@@ -7,10 +7,17 @@ use std::path::Path;
 
 /// The one root a coding application opens: the folder itself, or a managed
 /// checkout copied from a Git repository.
+///
+/// `NoWorkspace` is not a launch choice: it is what the one-turn `ask` states
+/// for a folder that cannot root an in-place job (the home directory, the
+/// filesystem root, saya's own state directory). The question is asked there
+/// with no workspace at all — the folder is the run's label, and the run is
+/// offered no file, shell or write tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootMode {
     InPlace,
     Managed,
+    NoWorkspace,
 }
 
 impl CodingCommand {

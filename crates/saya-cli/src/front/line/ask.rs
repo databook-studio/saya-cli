@@ -10,16 +10,29 @@
 //! A surface with nobody to ask — a pipe, a front with no terminal — denies
 //! without waiting, which is what the terminal prompt itself does when stdin is
 //! not a terminal.
+//!
+//! The wait is the one the terminal approval's own decider makes, measured the
+//! same way: one `approval_wait` sample per answered question, and none for a
+//! mode that answered without asking.
+
+use std::sync::Arc;
 
 use saya_agent::CancellationToken;
 
 use crate::agent::tools::consent::Answer;
 use crate::chat::Question;
 use crate::grant_token::session_answers_line;
+use crate::local_metrics::LocalMetrics;
 use crate::prompt_approval::terminal_choice;
 
-/// Puts one call to the person at the terminal and returns their answer.
-pub(super) async fn put(can_prompt: bool, turn: &CancellationToken, question: &Question) -> Answer {
+/// Puts one call to the person at the terminal and returns their answer, with
+/// the wait the metrics section reports.
+pub(super) async fn put(
+    can_prompt: bool,
+    turn: &CancellationToken,
+    question: &Question,
+    metrics: Option<&Arc<LocalMetrics>>,
+) -> Answer {
     if !can_prompt {
         return Answer::Deny;
     }
@@ -29,7 +42,8 @@ pub(super) async fn put(can_prompt: bool, turn: &CancellationToken, question: &Q
         session_answers_line(question.grant.as_deref())
     );
     let _ = std::io::Write::flush(&mut std::io::stderr());
-    let Ok(Some(answer)) = crate::terminal_input::approval_line(turn).await else {
+    let Ok(Some(answer)) = crate::prompt_approval_metrics::wait_and_record(metrics, turn).await
+    else {
         return Answer::Deny;
     };
     // The turn may have stopped while the answer was being typed: the call it

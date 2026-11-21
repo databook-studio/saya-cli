@@ -22,6 +22,21 @@ pub(crate) fn resolve_in_place(
     })
 }
 
+/// Resolves the root a session over a folder that cannot root an in-place job
+/// opens over: the folder's own canonical identity, taken without the
+/// dangerous-root refusal because nothing here is a job root — no baseline is
+/// inventoried and no file is reached. What it still refuses is everything
+/// [`LocalRoot::open`] refuses about the folder itself (a symlink, a file, a
+/// missing path, either direction of state overlap).
+pub(crate) fn resolve_session_root(
+    stated: &Path,
+    state_root: &Path,
+) -> Result<LocalRoot, CodingError> {
+    LocalRoot::open(stated, state_root).map_err(|error| CodingError::InPlaceRoot {
+        detail: error.to_string(),
+    })
+}
+
 /// Refuses the roots an in-place job must never adopt: the filesystem root,
 /// the user's home directory, and saya's own state root. A folder below home
 /// — a container workdir on a volume, a project directory — is admitted.

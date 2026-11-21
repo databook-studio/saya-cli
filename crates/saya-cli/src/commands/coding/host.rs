@@ -1,5 +1,5 @@
 use super::CodingError;
-use super::host_root::resolve_in_place;
+use super::host_root::{resolve_in_place, resolve_session_root};
 use crate::agent::tools::consent::Operator;
 use crate::agent::tools::shell_policy::ModeCell;
 use crate::cli::RootMode;
@@ -18,7 +18,11 @@ use std::{
 };
 
 pub(super) mod mode;
+mod private;
 mod root;
+mod workspace;
+use private::io_context;
+pub(super) use private::private_directory;
 use root::CodingRoot;
 
 /// Trusted host composition. Program directory and state are selected by the
@@ -70,6 +74,16 @@ pub struct CodingApplication {
     /// the proposal and approval phases are measured; `create` takes it into
     /// the job and leaves a fresh one for the next job.
     pub(super) lifecycle: std::sync::Mutex<Arc<super::lifecycle::LifecycleTimeline>>,
+    /// Whether this host's runs have a workspace at all: whether the folder they
+    /// were opened over is one they may read and search. `true` — every surface
+    /// whose folder can root an in-place job — and `false` only where a session
+    /// states it: a one-turn question asked in a folder that cannot root a job
+    /// reads no file and is offered no file, shell or write tool.
+    pub(super) workspace: std::sync::atomic::AtomicBool,
+    /// Whether this host composes one-turn runs: one question, one turn, one
+    /// answer, and no outcome view recorded afterwards. `false` for every
+    /// surface whose job outlives its turn.
+    pub(super) one_turn: std::sync::atomic::AtomicBool,
 }
 impl CodingApplication {
     /// Opens the application over `repository`, falling back to an in-place
@@ -125,7 +139,10 @@ impl CodingApplication {
 
     /// Opens the application over `mode`. `InPlace` never asks Git to open the
     /// repository; `Managed` falls back to an in-place root only when the path
-    /// is not a repository at all.
+    /// is not a repository at all. `NoWorkspace` is a session over a folder that
+    /// cannot root an in-place job: the folder is the run's label and its own
+    /// identity, nothing is captured for it, and the run it composes is offered
+    /// no workspace tool.
     #[allow(clippy::too_many_arguments)]
     pub async fn open_with_mode(
         mut runtime: RuntimeConfig,
@@ -146,16 +163,20 @@ impl CodingApplication {
             return Err(CodingError::StateDirectory);
         }
         let service = GitService::new(git, &state_root).map_err(CodingError::owner)?;
-        let root = if mode == RootMode::InPlace {
-            CodingRoot::InPlace(resolve_in_place(repository, &canonical, &state_root)?)
-        } else {
-            match service.open_repository(&canonical, token).await {
+        let root = match mode {
+            RootMode::InPlace => {
+                CodingRoot::InPlace(resolve_in_place(repository, &canonical, &state_root)?)
+            }
+            RootMode::NoWorkspace => {
+                CodingRoot::InPlace(resolve_session_root(repository, &state_root)?)
+            }
+            RootMode::Managed => match service.open_repository(&canonical, token).await {
                 Ok(repository) => CodingRoot::Git(repository),
                 Err(GitError::NotRepository) => {
                     CodingRoot::InPlace(resolve_in_place(repository, &canonical, &state_root)?)
                 }
                 Err(error) => return Err(CodingError::owner(error)),
-            }
+            },
         };
         let artifacts = SnapshotArtifacts::open(&private_directory(&state_root.join("snapshots"))?)
             .map_err(CodingError::owner)?;
@@ -182,6 +203,8 @@ impl CodingApplication {
             mode: ModeCell::new(ApprovalPolicy::Ask),
             launch_grants: std::sync::Mutex::new(saya_agent::SessionGrants::default()),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
+            workspace: std::sync::atomic::AtomicBool::new(mode != RootMode::NoWorkspace),
+            one_turn: std::sync::atomic::AtomicBool::new(false),
         }))
     }
     pub async fn open_default(
@@ -288,52 +311,6 @@ impl CodingApplication {
     }
 }
 
-pub(super) fn private_directory(path: &Path) -> Result<PathBuf, CodingError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-        // Missing ancestors are created too (private, like the leaf): on a
-        // fresh machine saya's own state directory does not exist yet. An
-        // existing directory is never altered; only the leaf is then checked.
-        let mut builder = fs::DirBuilder::new();
-        builder.recursive(true).mode(0o700);
-        match builder.create(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(CodingError::owner(error)),
-        }
-        let metadata = fs::symlink_metadata(path).map_err(CodingError::owner)?;
-        // SAFETY: geteuid reads the process identity and has no pointer arguments.
-        let owner_uid = unsafe { libc::geteuid() };
-        if !metadata.is_dir() || metadata.mode() & 0o077 != 0 || metadata.uid() != owner_uid {
-            return Err(CodingError::StateDirectory);
-        }
-        fs::canonicalize(path).map_err(CodingError::owner)
-    }
-    #[cfg(windows)]
-    {
-        // Windows has no owner-only mode bits: the state directory is
-        // created under the user's profile, whose ACL is the privacy
-        // boundary. What can be proved here is that the leaf is a real
-        // directory and not a link or junction that would redirect job
-        // records elsewhere.
-        fs::create_dir_all(path).map_err(CodingError::owner)?;
-        let metadata = fs::symlink_metadata(path).map_err(CodingError::owner)?;
-        if !metadata.is_dir()
-            || saya_harness::workspace::windows_identity::path_is_reparse_point(path)
-                .map_err(CodingError::owner)?
-        {
-            return Err(CodingError::StateDirectory);
-        }
-        fs::canonicalize(path).map_err(CodingError::owner)
-    }
-    #[cfg(all(not(unix), not(windows)))]
-    {
-        let _ = path;
-        Err(CodingError::StateDirectory)
-    }
-}
-
 impl CodingApplication {
     pub(crate) async fn session(
         runtime: RuntimeConfig,
@@ -380,16 +357,6 @@ impl CodingApplication {
         )
         .await
     }
-}
-
-/// Names the operation and the path in a filesystem error. The OS message
-/// alone ("The system cannot find the path specified") does not say which
-/// path a launch failed to resolve.
-fn io_context(operation: &str, path: &Path, error: std::io::Error) -> std::io::Error {
-    std::io::Error::new(
-        error.kind(),
-        format!("{operation} {}: {error}", path.display()),
-    )
 }
 
 #[cfg(all(test, unix))]
