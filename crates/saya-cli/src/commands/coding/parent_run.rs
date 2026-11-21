@@ -8,7 +8,7 @@
 use super::CodingError;
 use super::parent_turn_limits::{TurnState, TurnToken};
 use crate::commands::coding::TurnStop;
-use saya_agent::{CancellationToken, TurnPolicy};
+use saya_agent::{CancellationReason, CancellationToken, TurnPolicy};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -75,6 +75,17 @@ impl RootRun {
     /// The stop signal of the turn running now, or `None` between turns.
     pub(super) fn turn_cancellation(&self) -> Option<CancellationToken> {
         self.inputs.turn_cancellation()
+    }
+
+    /// Why the turn running now stopped, when its own token latched a reason.
+    pub(crate) fn live_stop(&self) -> Option<CancellationReason> {
+        self.inputs.live_stop()
+    }
+
+    /// Why the turn that ended most recently stopped, or `None` for one that
+    /// simply finished.
+    pub(crate) fn ended_stop(&self) -> Option<CancellationReason> {
+        self.inputs.ended_stop()
     }
 
     /// The fresh, monotonic number this turn's boundary record carries: 1 for
