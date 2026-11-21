@@ -79,6 +79,14 @@ impl LocalRoot {
             path: canonical.to_path_buf(),
         })
     }
+
+    pub fn id(&self) -> &LocalRootId {
+        &self.id
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 /// A path that can be an in-place folder at all: it exists, is not a symlink,
@@ -95,16 +103,6 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, LocalRootError> {
         return Err(LocalRootError::NotDirectory);
     }
     fs::canonicalize(path).map_err(|_| LocalRootError::Io)
-}
-
-impl LocalRoot {
-    pub fn id(&self) -> &LocalRootId {
-        &self.id
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
 }
 
 fn identity(canonical: &Path) -> Result<LocalRootId, LocalRootError> {
