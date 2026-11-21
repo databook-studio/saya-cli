@@ -177,15 +177,7 @@ impl ActivePlugins {
                 continue;
             };
             policy = Some(match policy {
-                Some(tightest) => TurnPolicy {
-                    max_requests: tightest_of(tightest.max_requests, asked.max_requests),
-                    max_tool_calls: tightest_of(tightest.max_tool_calls, asked.max_tool_calls),
-                    max_known_tokens: tightest_of(
-                        tightest.max_known_tokens,
-                        asked.max_known_tokens,
-                    ),
-                    max_elapsed: tightest_of(tightest.max_elapsed, asked.max_elapsed),
-                },
+                Some(tightest) => tightest.tightest(asked),
                 None => asked,
             });
         }
@@ -218,16 +210,6 @@ impl ActivePlugins {
             }
         }
         total
-    }
-}
-
-/// The tighter of two optional limits: the smaller value, and the one that is
-/// set when only one side is.
-fn tightest_of<T: Ord + Copy>(limit: Option<T>, other: Option<T>) -> Option<T> {
-    match (limit, other) {
-        (Some(limit), Some(other)) => Some(limit.min(other)),
-        (Some(limit), None) => Some(limit),
-        (None, other) => other,
     }
 }
 

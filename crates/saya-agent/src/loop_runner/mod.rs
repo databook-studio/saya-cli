@@ -7,6 +7,7 @@ mod clarification_feed;
 mod coding_checkpoint;
 mod compaction;
 mod control;
+mod deferred_scope;
 mod designation;
 mod failed_statements;
 mod failure_key;
@@ -47,6 +48,7 @@ use crate::{
 pub use coding_checkpoint::AuthorityRefusalContext;
 use control::AgentRunInvocation;
 pub use control::{AgentRunControl, AnsweringLimits, AnsweringScope};
+pub use deferred_scope::{DeferredAnsweringScope, DeferredCounts};
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
