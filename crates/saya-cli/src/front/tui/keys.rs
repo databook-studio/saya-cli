@@ -28,6 +28,9 @@ pub(crate) enum Intent {
     Backspace,
     /// Send the composer's text as a turn.
     Submit,
+    /// Drop the line held behind the running turn: Ctrl+G drops, never sends
+    /// (`02` §7).
+    DropQueued,
     /// Stop the turn in flight; the run stays open.
     CancelTurn,
     /// Deny the call the open card asks about.
@@ -69,6 +72,9 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     match key.code {
         KeyCode::Enter if alt => Some(Intent::Newline),
         KeyCode::Enter if !ctrl => Some(Intent::Submit),
+        // Only a held line can be dropped; with nothing queued the press is
+        // not a request at all.
+        KeyCode::Char('g') if ctrl && model.queued().is_some() => Some(Intent::DropQueued),
         KeyCode::BackTab => Some(Intent::CycleMode),
         KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => Some(Intent::CycleMode),
         KeyCode::Esc if model.is_busy() => Some(Intent::CancelTurn),

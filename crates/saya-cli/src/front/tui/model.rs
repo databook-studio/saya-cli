@@ -27,6 +27,14 @@ pub(crate) struct Model {
     pub(crate) allow_bypass: bool,
     /// Whether a turn is running.
     pub(crate) busy: bool,
+    /// The database the run is connected to, if one is: the composer's idle
+    /// placeholder asks about it by name (`02` §7, §9.3).
+    pub(crate) database: Option<String>,
+    /// Whether the run is paused at a stop the operator can continue from.
+    pub(crate) paused: bool,
+    /// Whether this surface is a read-only record of an older (0.5.0) session:
+    /// the transcript is shown, and the next message starts a new run.
+    pub(crate) read_only_record: bool,
     /// The one message a running turn holds behind it. One deep: the
     /// operator's last word wins, and a message it displaces is reported.
     pub(crate) queued: Option<String>,
@@ -71,6 +79,22 @@ impl Model {
         self.busy
     }
 
+    /// The database the run is connected to, named as the status line and the
+    /// composer name it.
+    pub(crate) fn database_name(&self) -> Option<&str> {
+        self.database.as_deref()
+    }
+
+    /// Whether the run is paused at a stop the operator can continue from.
+    pub(crate) const fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Whether this surface is a read-only record of an older session.
+    pub(crate) const fn is_read_only_record(&self) -> bool {
+        self.read_only_record
+    }
+
     /// Puts one typed character at the composer's end.
     pub(crate) fn push(&mut self, character: char) {
         self.composer.push(character);
@@ -101,6 +125,12 @@ impl Model {
     /// Takes the held line, if there is one.
     pub(crate) fn take_queued(&mut self) -> Option<String> {
         self.queued.take()
+    }
+
+    /// Drops the line held behind the running turn, if there is one: Ctrl+G's
+    /// whole effect (`02` §7). Nothing is sent, and the turn keeps running.
+    pub(crate) fn drop_queued(&mut self) {
+        self.queued = None;
     }
 
     /// Opens a turn with the operator's own words.

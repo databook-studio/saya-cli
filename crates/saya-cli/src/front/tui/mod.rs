@@ -12,6 +12,7 @@ pub(crate) mod model;
 pub(crate) mod msg;
 pub(crate) mod theme;
 pub(crate) mod update;
+pub(crate) mod view;
 
 // This `pub(crate)` surface is the surface's boundary: the runtime above it
 // reads the model, feeds it messages and performs the commands it answers

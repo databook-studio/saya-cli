@@ -75,3 +75,11 @@ mod worker_permits_tests;
 pub(crate) mod wrap;
 
 pub(crate) use session::{TrustOutcome, TuiSession, run};
+
+// The new front reuses today's input buffer and completion instead of a
+// second copy of either: the composer (`front::tui::view`) calls these, and
+// one definition of the wrap and the popup's candidates serves both surfaces.
+#[allow(unused_imports)]
+pub(crate) use complete::{Candidate, slash_candidates};
+#[allow(unused_imports)]
+pub(crate) use input::InputBuffer;
