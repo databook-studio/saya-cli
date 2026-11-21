@@ -105,7 +105,7 @@ pub(crate) use sessions_rows::rows as sessions_rows;
 #[allow(unused_imports)]
 pub(crate) use status::{ActivityState, StatusFacts, status_line};
 #[allow(unused_imports)]
-pub(crate) use toast::Toast;
+pub(crate) use toast::{TICK, Toast};
 #[allow(unused_imports)]
 pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
 
