@@ -1,6 +1,14 @@
 //! The session deny list: a user-stated refusal of bare program names,
 //! session-wide, evaluated deny-first at every door that execs a program by
-//! name — the host-command lane (`run_command`), the session's one door.
+//! name — the host-command lane (`run_command`), which reads the list itself,
+//! and the `shell` tool, whose command is decided by the trusted rule set the
+//! list is converted into at launch ([`shell_rules`]).
+//!
+//! The two doors reach the same program by different means. `run_command`
+//! names its `program` outright, so the list compares that name. A `shell`
+//! call names a whole command line, so each denied program becomes a deny rule
+//! in the same `[permissions]` rule set the shell policy decides first in
+//! every mode, `bypass` included — the one matcher, never a second parser.
 //!
 //! Deny is launch-only (`--deny`, user-layer `[session_commands] deny`) —
 //! never mid-session — because a mid-session deny over a held grant would
@@ -102,6 +110,28 @@ pub(crate) fn denied_call_program(
         .any(|denied| denied == &program)
         .then_some(program)
 }
+/// The shell rule set this session's deny list binds: every denied program
+/// becomes a deny rule in the trusted rules the `shell` policy decides first
+/// in every mode, `bypass` included.
+///
+/// The rule's text is the bare program name, so the one matcher
+/// (`saya_config::decide`) decides it — no second parser. A name the rule
+/// parser refuses is an error rather than a rule that quietly binds nothing,
+/// so the launch refuses instead of promising a bound it does not hold.
+pub(crate) fn shell_rules(
+    rules: &saya_config::CommandRules,
+    deny: &SessionDeny,
+) -> Result<saya_config::CommandRules, String> {
+    let mut bound = rules.clone();
+    for program in deny.programs() {
+        let rule = saya_config::CommandRule::parse(&program).map_err(|error| {
+            format!("deny entry `{program}` cannot be a shell deny rule: {error}")
+        })?;
+        bound.deny.push(rule);
+    }
+    Ok(bound)
+}
+
 /// The door a tool call execs through, for the journal's per-firing payload:
 /// the tool's own name — the journal names the door the ask entered, not the
 /// family the name belongs to.

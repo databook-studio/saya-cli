@@ -19,9 +19,12 @@
 //!   statement the rules cannot widen, and it matches an absolute program by
 //!   its basename (`/bin/rm` matches deny `rm`).
 //! - A leading `cd <dir> &&` (a directory inside the workspace, or a relative
-//!   one with no `..`, `$`, or `~`) is stripped for matching only. Leading
-//!   `NAME=value` assignments are stripped for the deny side only: on the
-//!   allow side they make the segment match nothing.
+//!   one with no `..`, `$`, or `~`) is stripped for matching only. On the deny
+//!   side, and only there, the shapes a program can hide behind are stripped
+//!   too: leading `NAME=value` assignments, a bare `env`, and the openers of a
+//!   subshell or a command substitution (`(`, `$(`, a backtick) on the program
+//!   token itself. On the allow side an assignment or `env` makes the segment
+//!   match nothing, because it can change what the program does.
 //!
 //! The rules are trusted-layer configuration. A project `.saya/config.toml`
 //! cannot state them, and a violation of the bounds below is a diagnostic —
@@ -31,7 +34,7 @@ use std::{fmt, path::Path};
 
 mod scan;
 
-use scan::{scan, strip_env, strip_leading_cd, tokens};
+use scan::{scan, strip_leading_cd, strip_wrappers, tokens};
 
 /// At most this many rules per list (`allow`, `deny`).
 pub const MAX_COMMAND_RULES: usize = 64;
@@ -167,7 +170,7 @@ pub fn decide<'a>(
     // assignment can change what the program does, so it is not covered by
     // the prefix the operator stated.
     let raw: Vec<Vec<String>> = segments.iter().map(|segment| tokens(segment)).collect();
-    let deny: Vec<Vec<String>> = raw.iter().map(|tokens| strip_env(tokens)).collect();
+    let deny: Vec<Vec<String>> = raw.iter().map(|tokens| strip_wrappers(tokens)).collect();
     // Deny first, and regardless of substitution or readability: the refusal
     // does not depend on the allow side being parseable.
     for rule in &rules.deny {
@@ -197,6 +200,10 @@ pub fn decide<'a>(
 fn is_absolute_program(program: &str) -> bool {
     Path::new(program).is_absolute() || program.starts_with('/')
 }
+
+#[cfg(test)]
+#[path = "rules_deny_tests.rs"]
+mod rules_deny_tests;
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
