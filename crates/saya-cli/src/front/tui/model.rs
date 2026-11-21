@@ -9,6 +9,7 @@
 use saya_agent::PermissionMode;
 
 use crate::chat::Question;
+use crate::front::tui::view::Toast;
 use crate::front::{TranscriptView, TurnView};
 
 /// The surface's whole state between two messages.
@@ -39,8 +40,10 @@ pub(crate) struct Model {
     /// operator's last word wins, and a message it displaces is reported.
     pub(crate) queued: Option<String>,
     /// The last thing the surface said on its own — a refused key, a worker's
-    /// word — until it expires or the next one replaces it.
-    pub(crate) toast: Option<String>,
+    /// word — until it expires or the next one replaces it. It lives on the
+    /// tick ([`Toast`]): `02` §4 gives it four seconds, and a tick is the only
+    /// clock the model has.
+    pub(crate) toast: Option<Toast>,
     /// Whether the open card shows its whole body (`v`), and how far that body
     /// is scrolled. Both are the card's own reading of a press, and both reset
     /// with it: a new call opens folded, at its first row.
@@ -71,7 +74,12 @@ impl Model {
 
     /// The last thing the surface said on its own, if it still says it.
     pub(crate) fn toast(&self) -> Option<&str> {
-        self.toast.as_deref()
+        self.toast.as_ref().map(Toast::text)
+    }
+
+    /// The last thing the surface said, with the ticks it has left.
+    pub(crate) fn toast_value(&self) -> Option<&Toast> {
+        self.toast.as_ref()
     }
 
     /// Whether the open card's whole body is shown, or only the rows the
@@ -198,8 +206,19 @@ impl Model {
     }
 
     /// Says something in the surface's own voice, replacing the last thing it
-    /// said.
+    /// said and restarting its clock: the newer words get the whole four
+    /// seconds (`02` §4).
     pub(crate) fn say(&mut self, message: impl Into<String>) {
-        self.toast = Some(message.into());
+        self.toast = Some(Toast::new(message));
+    }
+
+    /// One tick of the toast's clock. A toast spends `02` §4's four seconds of
+    /// ticks and is then gone; with nothing said, the tick changes nothing.
+    pub(crate) fn tick_toast(&mut self) {
+        if let Some(toast) = &mut self.toast
+            && !toast.tick()
+        {
+            self.toast = None;
+        }
     }
 }

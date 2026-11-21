@@ -21,10 +21,17 @@
 //! T10 lands the command palette (`02` §11): the catalogue rows a query fuzzy-matches
 //! through their names and their aliases, the selected row's usage, and the box they
 //! are painted in. The list is `slash/catalog`'s, read rather than copied.
+//!
+//! T11 lands the two things the surface says about itself: the contextual help sheet
+//! (`02` §11) — the keys valid in the state the operator is in, read from one table
+//! `help_keys` holds — and the toast (`02` §4), whose four seconds are counted in the
+//! runtime's ticks.
 
 pub(crate) mod cards;
 mod composer;
 mod composer_frame;
+mod help;
+mod help_keys;
 mod palette;
 mod palette_frame;
 mod palette_match;
@@ -32,6 +39,7 @@ mod palette_rows;
 mod status;
 mod status_fit;
 mod status_segments;
+mod toast;
 mod transcript;
 mod turn;
 mod turn_activity;
@@ -52,11 +60,15 @@ pub(crate) use composer::{
 #[allow(unused_imports)]
 pub(crate) use composer_frame::rows;
 #[allow(unused_imports)]
+pub(crate) use help::{Context, rows as help_rows};
+#[allow(unused_imports)]
 pub(crate) use palette::Palette;
 #[allow(unused_imports)]
 pub(crate) use palette_rows::rows as palette_rows;
 #[allow(unused_imports)]
 pub(crate) use status::{ActivityState, StatusFacts, status_line};
+#[allow(unused_imports)]
+pub(crate) use toast::Toast;
 #[allow(unused_imports)]
 pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
 
@@ -71,6 +83,14 @@ mod cards_tests;
 #[cfg(test)]
 #[path = "composer_tests.rs"]
 mod composer_tests;
+
+#[cfg(test)]
+#[path = "help_fixture.rs"]
+mod help_fixture;
+
+#[cfg(test)]
+#[path = "help_tests.rs"]
+mod help_tests;
 
 #[cfg(test)]
 #[path = "palette_fixture.rs"]
@@ -95,6 +115,10 @@ mod status_fit_tests;
 #[cfg(test)]
 #[path = "status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "toast_tests.rs"]
+mod toast_tests;
 
 #[cfg(test)]
 #[path = "transcript_fixture.rs"]
