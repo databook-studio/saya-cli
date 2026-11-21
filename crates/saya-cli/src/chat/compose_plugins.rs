@@ -25,7 +25,9 @@ use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::commands::coding::{CodingApplication, CodingError, NativeCodingJob, RunPlugins};
 use crate::connection::ConnectionRegistry;
 use crate::plugins::database::prompt::ChatPrompt;
-use crate::plugins::database::{ChatDatabaseFlags, DatabaseBudget, DatabasePlugin};
+use crate::plugins::database::{
+    ChatDatabaseFlags, DatabaseBudget, DatabasePlugin, LearningSource as DatabasePluginLearning,
+};
 
 /// What a session hands the database plugin once, at composition.
 pub(super) struct PluginSetup {
@@ -38,6 +40,10 @@ pub(super) struct PluginSetup {
     pub(super) memory_reachable: bool,
     /// The session's query-capture hook.
     pub(super) capture: Option<CaptureHook>,
+    /// The provider the run's post-turn learning pass calls. `None` for a run
+    /// that learns nothing: the plugin then attaches no learning source and
+    /// `on_turn_finish` announces nothing.
+    pub(super) learning: Option<Arc<dyn saya_agent::ChatProvider>>,
 }
 
 /// The registry a session's run activates its plugins out of, and the context
@@ -53,6 +59,7 @@ pub(super) fn run_plugins(
         memory,
         memory_reachable,
         capture,
+        learning,
     } = setup;
     let runtime = job.runtime_config();
     // The section is composed from the connection set the run resolved, once,
@@ -63,26 +70,48 @@ pub(super) fn run_plugins(
     let prompt = ChatPrompt::of(&connections, memory, memory_reachable);
     let context = run_context(&connections);
     let primary = connections.primary().map(str::to_owned);
-    let tools = Arc::new(DatabaseTools::with_learning(
-        connections,
-        runtime.resolved.max_rows,
-        allow_query_data,
-        Some(application.store().clone()),
-        None,
-    ));
-    let plugin = Arc::new(DatabasePlugin::for_chat(
-        tools,
+    // What this session's memory mode attaches: the write permission and the
+    // observation log the learning pass reads, both absent with memory off.
+    let setup_learning = crate::agent::learning::LearningSetup::from(memory);
+    // The log the tools record the model's own overrides into; the learning
+    // pass reads the same one, so an override of a recalled claim is seen.
+    let override_log = Arc::new(crate::agent::tools::OverrideLog::new());
+    let tools = Arc::new(
+        DatabaseTools::with_learning(
+            connections,
+            runtime.resolved.max_rows,
+            allow_query_data,
+            Some(application.store().clone()),
+            setup_learning.observations.clone(),
+        )
+        .with_recall_receipt(None, Some(Arc::clone(&override_log))),
+    );
+    let mut plugin = DatabasePlugin::for_chat(
+        Arc::clone(&tools),
         ChatDatabaseFlags {
             allow_query_data,
             // The session keeps the state store the contract tools read and
             // write; no tool of this surface proposes a candidate write.
             has_state_store: true,
-            permit_candidate_writes: false,
+            permit_candidate_writes: setup_learning.permit_candidate_writes,
         },
         DatabaseBudget::of(runtime),
         prompt,
         capture,
-    )) as Arc<dyn RunPlugin>;
+    );
+    // A turn that produced an answer learns after it, through the one function
+    // the chat's turn calls — the same policy the TUI and the plain loop used.
+    if let Some(provider) = learning {
+        plugin = plugin.with_learning(DatabasePluginLearning::new(
+            setup_learning.permit_candidate_writes,
+            Arc::clone(&tools),
+            setup_learning.observations,
+            override_log,
+            provider,
+            runtime.resolved.ai.model.clone(),
+        ));
+    }
+    let plugin = Arc::new(plugin) as Arc<dyn RunPlugin>;
     // The chat's plugin declares database names only, and the core root's own
     // names are composed after this point by the run itself; the plugin filters
     // the core's workspace names out of its own definitions, so no core name can

@@ -62,6 +62,7 @@ impl Fixture {
                 memory: MemoryMode::Off,
                 memory_reachable: false,
                 capture: None,
+                learning: None,
             },
             root,
         }

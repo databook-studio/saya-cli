@@ -63,6 +63,10 @@ pub(crate) struct SessionRun {
     pub(crate) memory_reachable: bool,
     /// The session's query-capture hook, when the front previews what it runs.
     pub(crate) capture: Option<CaptureHook>,
+    /// The provider the run's post-turn learning pass calls, for a session whose
+    /// memory mode is on. `None` means the run learns nothing: nothing is
+    /// extracted after a turn and nothing is announced.
+    pub(crate) learning: Option<Arc<dyn saya_agent::ChatProvider>>,
 }
 
 /// One session's composed run: the job that runs it, what its one open is given,
@@ -109,6 +113,7 @@ impl RunComposition {
             memory,
             memory_reachable,
             capture,
+            learning,
         } = run;
         let operator = Arc::new(SessionOperator::new(front));
         let application = Launch::Attached(mode).compose(application);
@@ -130,6 +135,7 @@ impl RunComposition {
                 memory,
                 memory_reachable,
                 capture,
+                learning,
             },
         )?;
         let mode = job.approval_mode();

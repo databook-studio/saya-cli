@@ -95,6 +95,11 @@ impl TerminalApproval {
     /// facts — what this decider's prompts may state about the session. The
     /// session's journal rides along: a `[s]` answer's new grant is written
     /// there before this call is allowed to run.
+    /// The session turn's decider. The plain REPL asks through the line
+    /// front's `ask` now (`front/line/ask.rs`, over the same
+    /// `terminal_choice` and answers line); the one-shot `ask` path's decider
+    /// is `frozen`. Kept until the deletion unit removes the old turn body.
+    #[allow(dead_code)]
     pub(crate) fn from_session_with_cancellation(
         policy: SessionPolicy,
         can_prompt: bool,
