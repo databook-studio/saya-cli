@@ -9,10 +9,12 @@
 
 mod event;
 mod front;
+mod link;
 mod operator;
 mod port;
 mod queue;
 mod session;
+mod transcript;
 mod workspace_shape;
 
 // This `pub(crate)` surface is the chat layer's boundary: the composition, the
@@ -24,12 +26,16 @@ pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
 pub(crate) use front::ChatFront;
 #[allow(unused_imports)]
+pub(crate) use link::{Resume, RunFacts};
+#[allow(unused_imports)]
 pub(crate) use operator::SessionOperator;
 #[allow(unused_imports)]
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
 pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
+#[allow(unused_imports)]
+pub(crate) use transcript::{SettledTurn, Transcript};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]
