@@ -109,11 +109,3 @@ fn export_paths_may_contain_spaces() {
         ))))
     );
 }
-
-fn report_request(path: &str, rows: Option<usize>, overwrite: bool) -> SlashCommand {
-    SlashCommand::Report(ReportRequest {
-        path: path.into(),
-        rows,
-        overwrite,
-    })
-}

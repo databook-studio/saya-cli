@@ -131,9 +131,9 @@ fn test_parse_runs() {
 
 /// `/allow` carries the scopes as stated, whitespace-separated, and
 /// `/allow` alone is not a listing — it is a usage error pointing at
-/// the listing (`/grants`), which parses bare.
+/// the one view (`/permissions`), and its alias `/grants` parses bare.
 #[test]
-fn test_parse_allow_and_grants() {
+fn test_parse_allow_and_permissions() {
     assert_eq!(
         parse_slash_command("/allow sql:analytics"),
         Ok(Some(SlashCommand::Allow(vec!["sql:analytics".into()])))
@@ -146,18 +146,30 @@ fn test_parse_allow_and_grants() {
         ])))
     );
     assert_eq!(
+        parse_slash_command("/permissions"),
+        Ok(Some(SlashCommand::Permissions(
+            PermissionsRequest::permissions()
+        )))
+    );
+    assert_eq!(
         parse_slash_command("/grants"),
-        Ok(Some(SlashCommand::Grants))
+        Ok(Some(SlashCommand::Permissions(PermissionsRequest::grants())))
     );
     // Trailing arguments are ignored, like /doctor's.
     assert_eq!(
         parse_slash_command("/grants now"),
-        Ok(Some(SlashCommand::Grants))
+        Ok(Some(SlashCommand::Permissions(PermissionsRequest::grants())))
+    );
+    assert_eq!(
+        parse_slash_command("/permissions now"),
+        Ok(Some(SlashCommand::Permissions(
+            PermissionsRequest::permissions()
+        )))
     );
     let error = parse_slash_command("/allow").unwrap_err();
     assert!(
-        error.0.contains("not a listing") && error.0.contains("/grants"),
-        "the error points at the listing, got: {error}"
+        error.0.contains("not a listing") && error.0.contains("/permissions"),
+        "the error points at the view, got: {error}"
     );
 }
 

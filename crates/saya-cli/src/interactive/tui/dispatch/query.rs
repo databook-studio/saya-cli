@@ -1,6 +1,7 @@
 //! Query follow-ups: `/export`, `/chart`, and `/explain` re-run the last
-//! query on a worker task with the matching follow-up. The export snapshot
-//! is the exception: it writes the captured result itself, with no query.
+//! query on a worker task with the matching follow-up. Two forms write the
+//! capture itself, with no query: the export snapshot, and the Markdown
+//! report (a `.md` destination or `--format md`, which `/report` spells).
 
 use super::super::capture_agent::CaptureGap;
 use super::super::transcript::{BlockKind, Transcript};
@@ -17,7 +18,8 @@ use saya_types::ResultScope;
 /// One entry for every caller: before any re-run entry (`--refresh`/legacy
 /// refresh, `/chart`, bare `/explain`) spawns its task, the source guard
 /// refuses when the stored alias now resolves to a different source.
-/// Snapshot and report read the capture only and never consult the guard.
+/// The snapshot and the Markdown report read the capture only and never
+/// consult the guard.
 pub(super) fn apply_query_actions(
     action: &mut Option<SessionAction>,
     transcript: &mut Transcript,
@@ -31,12 +33,7 @@ pub(super) fn apply_query_actions(
     // next helper in the chain.
     if !matches!(
         action,
-        Some(
-            SessionAction::Export(_)
-                | SessionAction::Report(_)
-                | SessionAction::Chart(_)
-                | SessionAction::Explain(_)
-        )
+        Some(SessionAction::Export(_) | SessionAction::Chart(_) | SessionAction::Explain(_))
     ) {
         return None;
     }
@@ -57,10 +54,6 @@ pub(super) fn apply_query_actions(
             captured,
             capture_gap,
         ),
-        SessionAction::Report(request) => {
-            report::apply_report(&request, transcript, captured);
-            Some(Dispatch::Handled)
-        }
         SessionAction::Chart(args) => apply_chart(args, transcript, state, last_query),
         SessionAction::Explain(arg) => apply_explain(arg, transcript, state, last_query),
         // The guard decided ownership; if it ever drifts, put the action
@@ -80,6 +73,13 @@ fn apply_export(
     captured: &Option<super::super::capture::CapturedResult>,
     capture_gap: Option<CaptureGap>,
 ) -> Option<Dispatch> {
+    // `.md` (or `--format md`) writes today's Markdown report from the
+    // capture: no query, no task. `/report` is this form's one-release alias,
+    // so its note rides the one message.
+    if request.is_report() {
+        report::apply_report(&request, transcript, state, captured);
+        return Some(Dispatch::Handled);
+    }
     // The snapshot is the result the user already inspected: written here
     // from the capture, with no query dispatched at all.
     if request.mode == Some(ExportMode::Snapshot) {
@@ -124,8 +124,7 @@ fn export_snapshot(
         transcript.push(BlockKind::Error, message);
         return;
     };
-    let path = std::path::Path::new(&request.path);
-    match super::super::export::write_result_overwrite(&capture.result, path, request.overwrite) {
+    match super::super::export::write_result_for(&capture.result, request) {
         Ok(n) => {
             // A model-limited capture is labelled as what it is — the rows the
             // agent saw, not the full result.

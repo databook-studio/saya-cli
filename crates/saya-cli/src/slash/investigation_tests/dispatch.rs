@@ -1,11 +1,15 @@
-/// Bare `/investigation` and an unknown subcommand are usage errors naming
-/// the subcommands — never `None` (which would send the line to the agent).
+/// Bare `/investigation` is the listing, and an unknown subcommand is a usage
+/// error naming the subcommands — never `None` (which would send the line to
+/// the agent).
 #[test]
-fn bare_investigation_and_unknown_subcommand_are_usage_errors() {
-    let bare = parsed("investigation", "").unwrap_err();
-    assert!(
-        bare.0.contains("save") && bare.0.contains("run"),
-        "the usage error names the subcommands: {bare}"
+fn bare_investigation_lists_and_an_unknown_subcommand_is_a_usage_error() {
+    assert_eq!(
+        parsed("investigation", "").unwrap(),
+        InvestigationCommand::List {
+            limit: None,
+            offset: None
+        },
+        "row 156: bare /investigation lists in the line REPL"
     );
     let unknown = parsed("investigation", "bogus").unwrap_err();
     assert!(
@@ -13,7 +17,15 @@ fn bare_investigation_and_unknown_subcommand_are_usage_errors() {
         "an unknown subcommand is a usage error: {unknown}"
     );
     // Through the full parser too.
-    assert!(parse_slash_command("/investigation").is_err());
+    assert_eq!(
+        parse_slash_command("/investigation").unwrap(),
+        Some(crate::slash::SlashCommand::Investigation(
+            InvestigationCommand::List {
+                limit: None,
+                offset: None
+            }
+        ))
+    );
     assert!(parse_slash_command("/investigation bogus").is_err());
 }
 

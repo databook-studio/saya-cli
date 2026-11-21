@@ -10,7 +10,7 @@ use crate::interactive::tui::application::tests_support::unused_runtime;
 use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
 use crate::interactive::tui::types::LastQuery;
-use crate::slash::ReportRequest;
+use crate::slash::{ExportFormat, ExportRequest};
 use saya_types::{
     EvidenceSource, ExecutionEvidence, ExecutionEvidenceArgs, QueryResult, SqlDialect,
 };
@@ -51,19 +51,24 @@ fn captured_of(result: QueryResult) -> Option<CapturedResult> {
     Some(CapturedResult { result, evidence })
 }
 
-fn report_request(path: &str, rows: Option<usize>, overwrite: bool) -> ReportRequest {
-    ReportRequest {
-        path: path.to_string(),
+/// The one request `/export --format md` and its `/report` alias both make:
+/// a Markdown destination, the report's row bound, and the alias spelling.
+fn report_request(path: &str, rows: Option<usize>, overwrite: bool) -> ExportRequest {
+    ExportRequest {
         rows,
         overwrite,
+        format: Some(ExportFormat::Markdown),
+        path: path.to_string(),
+        via_report_alias: true,
+        ..ExportRequest::default()
     }
 }
 
-/// Dispatches a `Report` action through the real query-follower arm and
+/// Dispatches the report request through the real query-follower arm and
 /// returns the outcome.
 #[allow(clippy::too_many_arguments)]
 fn apply_report_action(
-    request: ReportRequest,
+    request: ExportRequest,
     transcript: &mut Transcript,
     state: &mut SessionState,
     last_query: &mut Option<LastQuery>,
@@ -71,7 +76,7 @@ fn apply_report_action(
 ) -> Option<Dispatch> {
     let rt = unused_runtime();
     apply_query_actions(
-        &mut Some(SessionAction::Report(request)),
+        &mut Some(SessionAction::Export(request)),
         transcript,
         state,
         last_query,

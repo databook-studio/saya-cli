@@ -71,14 +71,14 @@ fn sample_line(name: &str) -> String {
     format!("/{name}{tail}")
 }
 
-/// Both directions, counted: the parser answers 62 command names, the
-/// catalogue lists the same 62, and every catalogued name parses.
+/// Both directions, counted: the parser answers 63 command names, the
+/// catalogue lists the same 63, and every catalogued name parses.
 #[test]
 fn catalogue_and_parser_name_the_same_commands() {
     let arms = parser_arm_names();
-    assert_eq!(arms.len(), 62, "the parser's match has 62 command arms");
+    assert_eq!(arms.len(), 63, "the parser's match has 63 command arms");
     let catalogued: Vec<&str> = catalog::names().collect();
-    assert_eq!(catalogued.len(), 62, "the catalogue has 62 names");
+    assert_eq!(catalogued.len(), 63, "the catalogue has 63 names");
 
     let missing: Vec<&String> = arms
         .iter()
@@ -139,6 +139,7 @@ fn every_alias_resolves_to_its_command() {
         aliases,
         vec![
             ("approvals", "mode"),
+            ("report", "export"),
             ("investigations", "investigation"),
             ("rotate", "compact"),
             ("history", "sessions"),
@@ -147,6 +148,7 @@ fn every_alias_resolves_to_its_command() {
             ("confirm", "contracts"),
             ("reject", "contracts"),
             ("approve-all", "contracts"),
+            ("grants", "permissions"),
             ("usage", "status"),
             ("workspace", "status"),
             ("context", "status"),
@@ -244,11 +246,11 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         );
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 49, "the listing shows 49 of today's 62 names");
+    assert_eq!(ranks.len(), 48, "the listing shows 48 of today's 63 names");
     assert_eq!(
         catalog::names().count(),
-        62,
-        "with the folded aliases, the parser answers 62 names"
+        63,
+        "with the folded aliases, the parser answers 63 names"
     );
     ranks.sort_unstable();
     let mut unique = ranks.clone();

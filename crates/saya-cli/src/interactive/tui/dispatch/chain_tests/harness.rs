@@ -219,6 +219,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
         "allow" => "/allow none",
         "context" => "/context",
         "grants" => "/grants",
+        "permissions" => "/permissions",
         "doctor" => "/doctor",
         "usage" => "/usage",
         "workspace" => "/workspace",

@@ -56,6 +56,7 @@ const TABLE: &[(&str, Fate)] = &[
     ("/run cancel abc123", Fate::Unavailable),
     ("/runs", Fate::ReadOnly),
     ("/allow sql:analytics", Fate::Session),
+    ("/permissions", Fate::ReadOnly),
     ("/grants", Fate::ReadOnly),
     ("/context", Fate::ReadOnly),
     ("/doctor", Fate::ReadOnly),
@@ -94,8 +95,31 @@ fn every_slash_command_maps_to_exactly_one_fate() {
     );
     assert_eq!(
         TABLE.len(),
-        55,
+        56,
         "the table names every spelling this unit pins"
+    );
+}
+
+/// `/grants` is `/permissions`'s alias: one read-only view, two spellings,
+/// and the alias carries its own flag so the note can ride the answer.
+#[test]
+fn permissions_and_grants_are_one_read_operation() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    let canonical = harness.ops.operation(&command("/permissions"));
+    let alias = harness.ops.operation(&command("/grants"));
+    assert_eq!(
+        canonical,
+        Op::Read(ReadOp::Permissions(
+            crate::slash::PermissionsRequest::permissions()
+        )),
+        "the canonical spelling reads the view"
+    );
+    assert_eq!(
+        alias,
+        Op::Read(ReadOp::Permissions(
+            crate::slash::PermissionsRequest::grants()
+        )),
+        "the alias reads the same view, its spelling recorded"
     );
 }
 

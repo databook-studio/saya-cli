@@ -41,22 +41,34 @@ fn handle_allow(
     Ok(outcome)
 }
 
-fn handle_grants(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+fn handle_permissions(
+    request: crate::slash::PermissionsRequest,
+    ctx: &mut TurnContext,
+) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let ActionParts {
         state,
+        runtime,
         session,
         format,
         store,
         save_refused,
         ..
     } = action_parts(ctx);
-    // `/grants` lists the store verbatim: the words are the record, and
-    // the mode the store sits under is the engine's own — under bypass
-    // it is stated first, so the count never reads "nothing runs".
+    let runtime: &RuntimeConfig = &runtime;
+    // `/permissions` — one read-only view through the shared
+    // `chat::ops_permissions` renderer the TUI prints too: the mode and the
+    // grant store are the engine's own, the deny list is the runtime's, and
+    // nothing here probes a provider, a database or the network. `/grants`
+    // states the same request with its alias spelling, so its note rides the
+    // one view.
+    let denied = session.universe().approval_facts(runtime).denied_programs;
     session_emit::emit_action(
-        SessionAction::Message(crate::interactive::session::permissions::grants::listing(
+        SessionAction::Message(crate::chat::ops_permissions::answer(
+            state,
+            request,
             session.policy().mode(),
             session.policy().grants(),
+            &denied,
         )),
         format,
         state,

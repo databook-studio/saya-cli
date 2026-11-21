@@ -137,7 +137,6 @@ impl ChatOps {
             SlashCommand::Schema(refresh) => Op::Read(ReadOp::Schema { refresh: *refresh }),
             SlashCommand::Sql(query) => Op::Read(ReadOp::Sql(query.clone())),
             SlashCommand::Export(request) => Op::Read(ReadOp::Export(request.clone())),
-            SlashCommand::Report(request) => Op::Read(ReadOp::Report(request.clone())),
             SlashCommand::Chart(kind) => Op::Read(ReadOp::Chart(kind.clone())),
             SlashCommand::Explain(sql) => Op::Read(ReadOp::Explain(sql.clone())),
             // The conversation itself: emptying or shrinking it is a new epoch.
@@ -167,7 +166,9 @@ impl ChatOps {
             // The run engine is separate, and a chat session does not drive it.
             SlashCommand::Run(_) | SlashCommand::RunCancel(_) => Op::Unavailable(RUN_ELSEWHERE),
             SlashCommand::Allow(tokens) => Op::Session(SessionOp::Allow(tokens.clone())),
-            SlashCommand::Grants => Op::Read(ReadOp::Grants),
+            // One read-only view of the session's permissions, and the alias
+            // that states the same read.
+            SlashCommand::Permissions(request) => Op::Read(ReadOp::Permissions(*request)),
             // The one panel, and the three aliases that open one of its
             // sections: one operation, one set of facts, one rendering.
             SlashCommand::Status => Op::Read(ReadOp::Status),

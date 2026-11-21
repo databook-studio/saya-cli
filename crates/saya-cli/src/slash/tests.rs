@@ -3,6 +3,7 @@ include!("tests/catalog.rs");
 include!("tests/commands.rs");
 include!("tests/coding.rs");
 include!("tests/export.rs");
+include!("tests/export_report.rs");
 include!("tests/report.rs");
 include!("tests/simple_commands.rs");
 include!("tests/mode_tasks.rs");

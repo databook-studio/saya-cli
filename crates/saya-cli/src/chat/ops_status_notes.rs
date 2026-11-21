@@ -64,16 +64,22 @@ pub(crate) enum Note {
     History,
     /// `/rotate` — `/compact --new-session`.
     Rotate,
+    /// `/grants` — the `/permissions` view.
+    Grants,
+    /// `/report` — `/export … --format md`.
+    Report,
 }
 
 impl Note {
     /// Every note, in the order the enum declares them.
-    pub(crate) const ALL: [Note; 5] = [
+    pub(crate) const ALL: [Note; 7] = [
         Note::Usage,
         Note::Workspace,
         Note::Context,
         Note::History,
         Note::Rotate,
+        Note::Grants,
+        Note::Report,
     ];
 
     /// The note's own sentence, mentioning the canonical spelling and naming
@@ -99,6 +105,12 @@ impl Note {
                 "note: /rotate is now /compact --new-session — this release is the last to answer \
                  it"
             }
+            Note::Grants => {
+                "note: /grants is now /permissions — this release is the last to answer it"
+            }
+            Note::Report => {
+                "note: /report is now /export --format md — this release is the last to answer it"
+            }
         }
     }
 
@@ -111,6 +123,8 @@ impl Note {
             Note::Context => 2,
             Note::History => 3,
             Note::Rotate => 4,
+            Note::Grants => 5,
+            Note::Report => 6,
         }
     }
 }

@@ -60,9 +60,11 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             let tail = trimmed.strip_prefix("/export").unwrap_or("").trim_start();
             SlashCommand::Export(parse_export(tail)?)
         }
+        // `/report` is `/export --format md`'s one-release alias, not a
+        // second command: one variant, one writer, one document.
         "report" => {
             let tail = trimmed.strip_prefix("/report").unwrap_or("").trim_start();
-            SlashCommand::Report(parse_report(tail)?)
+            SlashCommand::Export(parse_report(tail)?)
         }
         "chart" => SlashCommand::Chart(arg.trim().to_string()),
         "explain" => SlashCommand::Explain(arg.trim().to_string()),
@@ -244,20 +246,23 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "runs" => SlashCommand::Runs((!arg.is_empty()).then_some(arg)),
         "allow" => {
             // `/allow <scopes…>` seeds the session's grant store; `/allow`
-            // alone is not a listing — `/grants` is the listing, and the
+            // alone is not a listing — `/permissions` is the view, and the
             // error says where to find it.
             if arg.is_empty() {
                 return Err(SlashParseError(
                     "allow requires scopes to seed, e.g. /allow sql:analytics \
                      (or `/allow none` for the empty approval); /allow alone is \
-                     not a listing — use /grants to list"
+                     not a listing — use /permissions to see the grants"
                         .into(),
                 ));
             }
             SlashCommand::Allow(arg.split_whitespace().map(str::to_string).collect())
         }
         "context" => SlashCommand::Context,
-        "grants" => SlashCommand::Grants,
+        // `/grants` is `/permissions`'s one-release alias, not a second
+        // command: one variant, one view, one rendering.
+        "grants" => SlashCommand::Permissions(PermissionsRequest::grants()),
+        "permissions" => SlashCommand::Permissions(PermissionsRequest::permissions()),
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "tasks" => match arg.as_str() {
             "" => SlashCommand::Tasks(None),
