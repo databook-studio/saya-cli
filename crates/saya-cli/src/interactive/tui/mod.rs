@@ -98,3 +98,10 @@ pub(crate) use ui::surface::markdown_spans_fenced;
 pub(crate) use table::{clip_table_block, format_table};
 #[allow(unused_imports)]
 pub(crate) use types::WideTableView;
+
+// The new front enters and leaves the terminal through today's guard rather
+// than a second raw-mode setup, and its panic hook restores through the same
+// sequence the guard does: one teardown, three callers. A build of this module
+// alone references neither, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use terminal::{TerminalGuard, restore_terminal};
