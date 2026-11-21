@@ -3,12 +3,12 @@
 //!
 //! The operator's message is a quoted block, the activity group shows its live
 //! steps while a turn runs and folds to one summary line when it settles, the
-//! answer is markdown, and the SQL line and the result's one-line stub sit
+//! answer is markdown, and the SQL line and the result's preview sit
 //! under the block the answer rests on. No block carries a role label: `02` §3
 //! takes `YOU`, `SAYA` and `ACTIVITY` away.
 //!
 //! What one block paints is its own module's business — [`super::turn_activity`]
-//! the group, [`super::turn_preview`] the query and its result,
+//! the group, [`super::result`] the query and its result,
 //! [`super::turn_rows`] the cells every block shares.
 
 use std::time::Duration;
@@ -17,7 +17,7 @@ use ratatui::text::{Line, Span};
 
 use super::transcript::TranscriptFacts;
 use super::turn_rows::{GUTTER, indented, wrapped};
-use super::{blocks, blocks_question, blocks_stop, turn_activity, turn_preview};
+use super::{blocks, blocks_question, blocks_stop, result, turn_activity};
 use crate::front::tui::theme::{Glyph, Token, glyph, style};
 use crate::front::view::{Entry, TurnView};
 use crate::interactive::tui::markdown_spans_fenced;
@@ -73,7 +73,7 @@ fn block(
         Entry::UserMessage(message) => quoted(&message.text, facts, content),
         Entry::Activity(activity) => turn_activity::rows(activity, elapsed, facts, content),
         Entry::Answer(answer) => answer_rows(&answer.text, content),
-        Entry::ResultPreview(preview) => turn_preview::rows(preview, facts, content),
+        Entry::ResultPreview(preview) => result::rows(preview, facts, content),
         Entry::Notice(notice) => blocks::system_line(notice, facts, content),
         Entry::Edit(edit) => blocks::edit_rows(edit, facts, content),
         Entry::Command(command) => blocks::command_rows(command, facts, content),

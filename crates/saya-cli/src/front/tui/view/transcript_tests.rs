@@ -33,6 +33,8 @@ fn the_hundred_column_turn_reads_as_02_section_2() {
             "",
             "  SELECT COUNT(*) AS orders_since_december FROM orders",
             "  result · demo · 1 row",
+            "  │ orders_since_december │",
+            "  │                   110 │",
         ]
     );
 }
@@ -65,6 +67,8 @@ fn the_eighty_column_turn_reads_as_02_section_2() {
             "",
             "  SELECT COUNT(*) AS orders_since_december FROM orders",
             "  result · demo · 1 row",
+            "  │ orders_since_december │",
+            "  │                   110 │",
         ]
     );
 }
