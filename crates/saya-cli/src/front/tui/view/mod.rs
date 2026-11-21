@@ -56,6 +56,8 @@ mod palette;
 mod palette_frame;
 mod palette_match;
 mod palette_rows;
+mod result;
+mod result_table;
 mod sessions;
 mod sessions_cells;
 mod sessions_row;
@@ -67,7 +69,6 @@ mod toast;
 mod transcript;
 mod turn;
 mod turn_activity;
-mod turn_preview;
 mod turn_rows;
 
 // This `pub(crate)` surface is the pane layer's boundary: the runtime and the
@@ -91,6 +92,10 @@ pub(crate) use help::{Context, rows as help_rows};
 pub(crate) use palette::Palette;
 #[allow(unused_imports)]
 pub(crate) use palette_rows::rows as palette_rows;
+#[allow(unused_imports)]
+pub(crate) use result::rows as result_rows;
+#[allow(unused_imports)]
+pub(crate) use result_table::{Key as TableKey, PREVIEW_ROWS, TableView, full_rows};
 #[allow(unused_imports)]
 pub(crate) use sessions::{Command as SessionCommand, Picker};
 #[allow(unused_imports)]
@@ -159,6 +164,15 @@ mod palette_match_tests;
 #[cfg(test)]
 #[path = "palette_tests.rs"]
 mod palette_tests;
+
+#[cfg(test)]
+mod result_fixture;
+
+#[cfg(test)]
+mod result_tests;
+
+#[cfg(test)]
+mod result_view_tests;
 
 #[cfg(test)]
 #[path = "sessions_fixture.rs"]

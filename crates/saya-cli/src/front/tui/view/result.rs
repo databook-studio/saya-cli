@@ -1,37 +1,42 @@
-//! The SQL line and the result's one-line stub, under the block the answer
-//! rests on (`02` §3.3).
+//! The SQL line, the result's header and its preview table, under the block
+//! the answer rests on (`02` §3.3).
 //!
-//! The preview table itself is T6's. What stands here is the line naming the
-//! query that ran and the line saying what came back; a capture that was
-//! refused says why instead, in the sentence `02` §3.3 fixes.
+//! A preview shows the first columns that fit and at most five rows; the table
+//! itself is [`result_table`]'s, which paints today's table rendering in the
+//! transcript's tokens. A capture that was refused has no rows to preview, so
+//! the block says why in the one dim line the spec fixes.
 
 use ratatui::text::Line;
 
+use super::result_table;
 use super::transcript::TranscriptFacts;
 use super::turn_rows::{GUTTER, plain};
 use crate::agent::tools::CaptureRefusalReason;
 use crate::front::tui::theme::Token;
 use crate::front::view::{ResultPreview, sql_one_line};
 
-/// The query and the result, as two rows.
-pub(super) fn rows(
+/// The query, the result's header and the preview's rows.
+pub(crate) fn rows(
     preview: &ResultPreview,
     facts: &TranscriptFacts,
     content: usize,
 ) -> Vec<Line<'static>> {
     let sql = sql_one_line(&preview.sql, content.saturating_sub(GUTTER));
-    let result = match preview.refusal {
-        Some(reason) => format!("result · {} · {}", preview.connection, refusal(reason)),
-        None => format!(
-            "result · {} · {}",
-            preview.connection,
-            rows_text(preview.result.row_count)
-        ),
-    };
-    vec![
-        plain(GUTTER, &sql, Token::Code, facts, content),
-        plain(GUTTER, &result, Token::Dim, facts, content),
-    ]
+    let mut out = vec![plain(GUTTER, &sql, Token::Code, facts, content)];
+    match preview.refusal {
+        // A refused capture has no rows to preview: the one line says why.
+        Some(reason) => out.push(plain(GUTTER, refusal(reason), Token::Dim, facts, content)),
+        None => {
+            let head = format!(
+                "result · {} · {}",
+                preview.connection,
+                rows_text(preview.result.row_count)
+            );
+            out.push(plain(GUTTER, &head, Token::Dim, facts, content));
+            out.extend(result_table::preview(preview, facts, content));
+        }
+    }
+    out
 }
 
 /// Why the preview holds no rows: `02` §3.3's one dim line, which never

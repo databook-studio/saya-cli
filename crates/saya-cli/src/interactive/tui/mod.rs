@@ -89,3 +89,12 @@ pub(crate) use fuzzy::fuzzy_score;
 pub(crate) use input::InputBuffer;
 #[allow(unused_imports)]
 pub(crate) use ui::surface::markdown_spans_fenced;
+
+// The new front paints its result tables from today's rendering rather than a
+// second copy of it: the box table and its alignment, the wide-table scroller,
+// the column fitting and the view state that scroller reads. A build of this
+// module alone references none of it, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use table::{clip_table_block, format_table};
+#[allow(unused_imports)]
+pub(crate) use types::WideTableView;
