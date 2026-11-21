@@ -93,14 +93,9 @@ impl NativeCodingJob {
         // arrives while the first turn is still being set up is refused `Busy`
         // rather than starting a second turn beside it.
         let turn = self.root_run.claim()?;
-        // The policy the surface states at open bounds the first turn exactly as
-        // it bounds every turn after it. Stating none leaves the run's slot as a
-        // surface set it, which is how a caller states one before opening.
-        if inputs.policy.is_some() {
-            self.root_run.set_turn_policy(inputs.policy);
-        }
-        let session = Arc::new(self.compose_root(mailbox, &inputs).await?);
-        self.root_run.hold(Arc::clone(&session));
+        // The open the prepared run also takes: the surface's per-turn inputs,
+        // the run's one-time setup and the hold that keeps it.
+        let session = self.open_root_session(mailbox, &inputs).await?;
         let result = self
             .run_turn(&session, sink, self.request.task.clone())
             .await;

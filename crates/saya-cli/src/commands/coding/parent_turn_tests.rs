@@ -231,3 +231,7 @@ mod open_run;
 /// The stale-approval cleanup refuses a live owner in its own path.
 #[path = "parent_turn_stale_approval_tests.rs"]
 mod stale_approval;
+
+/// A run opened without a turn: its first message is its first turn.
+#[path = "parent_turn_prepare_tests.rs"]
+mod prepare;

@@ -150,6 +150,8 @@ mod parent_control;
 mod parent_loop;
 #[path = "parent_plugins.rs"]
 mod parent_plugins;
+#[path = "parent_prepare.rs"]
+mod parent_prepare;
 #[path = "parent_progress.rs"]
 mod parent_progress;
 #[path = "parent_run.rs"]
