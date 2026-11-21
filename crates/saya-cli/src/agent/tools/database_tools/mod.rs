@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
@@ -106,9 +107,11 @@ pub(crate) struct DatabaseTools {
     /// The TUI's capture hook: after one successful single-connection
     /// `bounded_sql_query` it receives the typed result the model saw (or the
     /// over-budget refusal), before the tool's result returns to the loop.
-    /// `None` — every headless path — leaves behaviour identical: no hook, no
-    /// capture, no message.
-    pub(super) capture_hook: Option<CaptureHook>,
+    /// Empty — every headless path — leaves behaviour identical: no hook, no
+    /// capture, no message. A cell rather than a plain field because the
+    /// plugin holds its chat toolset behind an `Arc` and installs the run's
+    /// hook on exactly those tools.
+    pub(super) capture_hook: Mutex<Option<CaptureHook>>,
     /// Default result cap for direct executor calls. Agent-loop calls receive
     /// their exact per-call share through `ToolExecutor::execute_with_result_cap`.
     pub(super) context_byte_budget: usize,

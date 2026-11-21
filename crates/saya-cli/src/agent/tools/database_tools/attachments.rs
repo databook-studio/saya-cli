@@ -43,9 +43,24 @@ impl DatabaseTools {
         capture_hook: Option<CaptureHook>,
         context_byte_budget: usize,
     ) -> Self {
-        self.capture_hook = capture_hook;
+        self.capture_hook = Mutex::new(capture_hook);
         self.context_byte_budget = context_byte_budget;
         self
+    }
+
+    /// Installs the run's capture hook on a toolset that is already shared.
+    /// The plugin owns the chat surface's tools behind an `Arc`, so it cannot
+    /// rebuild them to attach a hook; this cell is that attachment point.
+    /// Nothing else on the tools changes, so a plugin given no hook leaves
+    /// them exactly as built.
+    pub(crate) fn set_capture_hook(&self, capture_hook: CaptureHook) {
+        let mut slot = match self.capture_hook.lock() {
+            Ok(slot) => slot,
+            // A poisoned lock still holds the slot: the hook is a plain value,
+            // so write it rather than lose it to an unrelated panic.
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *slot = Some(capture_hook);
     }
 
     /// Attaches an already-built checkpoint recorder for direct file-tool
@@ -147,7 +162,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]
@@ -180,7 +195,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]

@@ -48,12 +48,13 @@ pub(super) fn chat_plugin_over(session: SessionBudget) -> DatabasePlugin {
             permit_candidate_writes: true,
         },
         session,
+        None,
     )
 }
 
 /// A scratch directory under the workspace's own `target/` — never the system
 /// temp directory.
-fn scratch(name: &str) -> PathBuf {
+pub(super) fn scratch(name: &str) -> PathBuf {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
         .join(format!("tmp-plugins-database-{name}"));
@@ -76,7 +77,7 @@ fn runtime(root: &Path) -> RuntimeConfig {
 }
 
 /// A coding job's database tools over exactly one selected SQLite profile.
-fn job_tools(root: &Path, clarification: bool) -> CodingDatabaseTools {
+pub(super) fn job_tools(root: &Path, clarification: bool) -> CodingDatabaseTools {
     let path = root.join("main.sqlite3");
     std::fs::File::create(&path).expect("the profile's file exists");
     let profile = DatabaseProfile::Sqlite {

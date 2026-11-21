@@ -43,7 +43,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]
@@ -77,7 +77,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]
@@ -111,7 +111,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]
@@ -139,7 +139,7 @@ impl DatabaseTools {
             recall_receipt: None,
             override_log: None,
             workspace: Some(workspace),
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]
