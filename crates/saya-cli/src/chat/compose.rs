@@ -36,8 +36,8 @@ use crate::agent::tools::CaptureHook;
 use crate::agent::tools::consent::Operator;
 use crate::agent::tools::shell_policy::ModeCell;
 use crate::commands::coding::{
-    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, Launch, NativeCodingJob,
-    TurnInputs,
+    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, JobOrigin, Launch,
+    NativeCodingJob, TurnInputs,
 };
 use crate::connection::ConnectionRegistry;
 
@@ -182,10 +182,14 @@ impl RunComposition {
 /// `request.task` is a real, stable label — every helper brief and the tool
 /// advertisement read it — and never the first message: a prepared run's first
 /// message is `run_next_turn`.
+///
+/// The request states the origin `session`: a chat session and every `saya ask`
+/// open a job, and this is the one place either builds its request, so a
+/// `saya job list` can tell them from the CLI's own without asking anybody.
 fn request(session: &str, shape: &WorkspaceShape) -> Result<CodingJobRequest, CodingError> {
     let job = JobId::parse(session).map_err(CodingError::owner)?;
     let task = format!("session {session}");
-    CodingJobRequest::new(job, task, write_scope(shape))
+    CodingJobRequest::new(job, task, write_scope(shape))?.with_origin(JobOrigin::Session)
 }
 
 /// The paths a run of this shape may write: the folder itself when nothing holds

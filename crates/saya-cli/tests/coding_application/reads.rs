@@ -32,6 +32,7 @@ async fn list_page(fixture: &Fixture, after: Option<&str>) -> serde_json::Value 
         &fixture.application,
         CodingCommand::List {
             after: after.map(str::to_owned),
+            all: false,
         },
     )
     .await
@@ -48,8 +49,8 @@ async fn list_returns_each_created_job_with_its_state() {
     assert_eq!(
         listed["jobs"],
         serde_json::json!([
-            {"job_id": first.as_str(), "state": "running"},
-            {"job_id": second.as_str(), "state": "running"},
+            {"job_id": first.as_str(), "state": "running", "origin": "cli"},
+            {"job_id": second.as_str(), "state": "running", "origin": "cli"},
         ])
     );
 }
@@ -65,8 +66,8 @@ async fn list_after_cursor_returns_only_later_jobs_and_an_empty_page_after_the_l
     assert_eq!(
         listed["jobs"],
         serde_json::json!([
-            {"job_id": second.as_str(), "state": "running"},
-            {"job_id": last.as_str(), "state": "running"},
+            {"job_id": second.as_str(), "state": "running", "origin": "cli"},
+            {"job_id": last.as_str(), "state": "running", "origin": "cli"},
         ])
     );
     let exhausted = list_page(&fixture, Some(last.as_str())).await;
@@ -78,6 +79,7 @@ async fn list_after_cursor_returns_only_later_jobs_and_an_empty_page_after_the_l
         &fixture.application,
         CodingCommand::List {
             after: Some("job page".into()),
+            all: false,
         },
     )
     .await
@@ -125,7 +127,7 @@ async fn show_of_a_malformed_job_id_is_refused_and_leaves_the_listing_unchanged(
     let listed = list_page(&fixture, None).await;
     assert_eq!(
         listed["jobs"],
-        serde_json::json!([{"job_id": job.as_str(), "state": "running"}])
+        serde_json::json!([{"job_id": job.as_str(), "state": "running", "origin": "cli"}])
     );
     let shown = dispatch_coding(
         &fixture.application,

@@ -167,13 +167,13 @@ pub async fn dispatch(
                 .cancel(&JobId::parse(&id).map_err(CodingError::owner)?)
                 .await
         }
-        CodingCommand::List { after } => {
+        CodingCommand::List { after, all } => {
             let after = after
                 .as_deref()
                 .map(JobId::parse)
                 .transpose()
                 .map_err(CodingError::owner)?;
-            application.list(after.as_ref()).await
+            application.list(after.as_ref(), all).await
         }
         CodingCommand::Doctor { probe } => application.doctor(probe).await,
         CodingCommand::Setup { probe } => application.setup(probe).await,
