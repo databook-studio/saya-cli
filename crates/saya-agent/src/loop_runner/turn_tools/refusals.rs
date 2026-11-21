@@ -48,6 +48,7 @@ pub(super) async fn handle(
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
                 effect,
+                caller: None,
             },
         )
         .await;
@@ -92,6 +93,7 @@ pub(super) async fn handle(
             AgentEvent::ToolCompleted {
                 name: call.name.clone(),
                 summary: output::completion_summary(&completed.summary, completed.truncated),
+                caller: None,
             },
         )
         .await;

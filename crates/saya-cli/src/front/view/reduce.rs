@@ -36,7 +36,7 @@ fn apply_agent(turn: &mut TurnView, event: &AgentEvent) {
         AgentEvent::ToolRequested {
             name, arguments, ..
         } => requested(turn, name, arguments),
-        AgentEvent::ToolCompleted { name, summary } => completed(turn, name, summary),
+        AgentEvent::ToolCompleted { name, summary, .. } => completed(turn, name, summary),
         AgentEvent::ToolDenied { name, reason, .. } => denied(turn, name, reason),
         AgentEvent::AssistantText { text } => answer(turn).text.push_str(text),
         // The model stopped to ask instead of assuming: the question is a block

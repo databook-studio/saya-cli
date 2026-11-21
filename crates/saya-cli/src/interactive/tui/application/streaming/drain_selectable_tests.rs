@@ -53,6 +53,7 @@ fn completed(summary: &str) -> StreamMsg {
     StreamMsg::Event(AgentEvent::ToolCompleted {
         name: "bounded_sql_query".into(),
         summary: summary.into(),
+        caller: None,
     })
 }
 
@@ -61,6 +62,7 @@ fn fanout_completed(summary: &str) -> StreamMsg {
     StreamMsg::Event(AgentEvent::ToolCompleted {
         name: "bounded_sql_query_all".into(),
         summary: summary.into(),
+        caller: None,
     })
 }
 
@@ -70,6 +72,7 @@ fn denied() -> StreamMsg {
         name: "bounded_sql_query".into(),
         arguments: serde_json::Value::Null,
         reason: "user denied the call".into(),
+        caller: None,
     })
 }
 

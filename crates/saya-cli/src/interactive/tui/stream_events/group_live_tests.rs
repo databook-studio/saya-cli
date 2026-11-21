@@ -25,6 +25,7 @@ fn two_write_calls() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "write",
@@ -34,6 +35,7 @@ fn two_write_calls() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "other.md written".into(),
+            caller: None,
         },
     ]
 }
@@ -101,6 +103,7 @@ fn approvals_are_untouched() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "a.md written".into(),
+            caller: None,
         },
         false,
     );
@@ -110,6 +113,7 @@ fn approvals_are_untouched() {
             name: "run_command".into(),
             arguments: serde_json::Value::Null,
             reason: "denied".into(),
+            caller: None,
         },
         false,
     );

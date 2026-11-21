@@ -82,6 +82,7 @@ pub(super) async fn run_batch(
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
                 effect: Some(definition.effect),
+                caller: None,
             },
         )
         .await;
@@ -181,6 +182,7 @@ pub(super) async fn run_batch(
                 AgentEvent::ToolCompleted {
                     name: call.name.clone(),
                     summary: output::completion_summary(&completed.summary, completed.truncated),
+                    caller: None,
                 },
             )
             .await;

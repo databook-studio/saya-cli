@@ -12,6 +12,7 @@ fn piped_text_summary_keeps_position_relative_to_surrounding_text() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "write",
@@ -21,6 +22,7 @@ fn piped_text_summary_keeps_position_relative_to_surrounding_text() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "other.md written".into(),
+            caller: None,
         },
         AgentEvent::assistant_text("after"),
         AgentEvent::complete(),
@@ -49,6 +51,7 @@ fn piped_text_group_exceeding_the_bound_flushes_in_chunks() {
         events.push(AgentEvent::ToolCompleted {
             name: "schema_discovery".into(),
             summary: "discovered".into(),
+            caller: None,
         });
     }
     events.push(AgentEvent::complete());

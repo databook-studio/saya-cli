@@ -13,10 +13,11 @@ pub(crate) fn group_tool_events(events: &[AgentEvent]) -> Vec<ToolGroup> {
                 name,
                 arguments,
                 effect,
+                ..
             } => {
                 pending.push((name.clone(), arguments.clone(), *effect));
             }
-            AgentEvent::ToolCompleted { name, summary } => {
+            AgentEvent::ToolCompleted { name, summary, .. } => {
                 let failed = is_failure_summary(summary);
                 let nonzero_exit = !failed && is_nonzero_exit_summary(summary);
                 let position = pending

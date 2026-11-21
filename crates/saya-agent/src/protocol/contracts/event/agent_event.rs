@@ -113,14 +113,27 @@ pub enum AgentEvent {
         arguments: serde_json::Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effect: Option<ToolEffect>,
+        /// The helper whose loop made this call, or `None` for the root's own
+        /// calls (`02` §3.6 groups a helper's work by it). Absent on the wire
+        /// when `None`, so a root event keeps the bytes it always had.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caller: Option<String>,
     },
     ToolCompleted {
         name: String,
         summary: String,
+        /// See [`Self::ToolRequested`]'s `caller`: the helper that ran the
+        /// call, `None` for the root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caller: Option<String>,
     },
     ToolDenied {
         name: String,
         reason: String,
+        /// See [`Self::ToolRequested`]'s `caller`: the helper whose call was
+        /// refused, `None` for the root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caller: Option<String>,
         /// The call's own payload, carried for the same reason
         /// [`Self::ToolRequested`] carries it: the denial line names *what* was
         /// refused (the command), and only the renderer knows how to project

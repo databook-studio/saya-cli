@@ -120,6 +120,7 @@ fn final_summary_keeps_the_tally_through_the_reclassification() {
         name: "edit".to_owned(),
         arguments: serde_json::json!({"path": "src/lib.rs"}),
         effect: None,
+        caller: None,
     });
     let summary = TurnSummary {
         status: TurnStatus::Completed,

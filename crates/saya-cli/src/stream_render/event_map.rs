@@ -15,6 +15,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             name,
             arguments,
             effect,
+            ..
         } => {
             let detail = crate::agent::tools::tool_call_detail(&name, &arguments);
             TerminalEvent::ToolRequested {
@@ -23,7 +24,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
                 effect,
             }
         }
-        AgentEvent::ToolCompleted { name, summary } => {
+        AgentEvent::ToolCompleted { name, summary, .. } => {
             TerminalEvent::ToolCompleted { name, summary }
         }
         // A refusal names what was refused the same way the request did: the
@@ -34,6 +35,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             name,
             reason,
             arguments,
+            ..
         } => TerminalEvent::ToolDenied {
             detail: crate::agent::tools::tool_call_detail(&name, &arguments),
             name,

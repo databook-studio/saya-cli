@@ -17,6 +17,7 @@ fn piped_text_run_of_successful_calls_emits_one_summary_line() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "write",
@@ -26,6 +27,7 @@ fn piped_text_run_of_successful_calls_emits_one_summary_line() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "other.md written".into(),
+            caller: None,
         },
     ];
     let stdout = drain_text_stream(events);
@@ -53,6 +55,7 @@ fn piped_text_group_with_failure_emits_header_plus_full_pair() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "run_command",
@@ -62,6 +65,7 @@ fn piped_text_group_with_failure_emits_header_plus_full_pair() {
         AgentEvent::ToolCompleted {
             name: "run_command".into(),
             summary: "failed pytest".into(),
+            caller: None,
         },
         AgentEvent::complete(),
     ];
@@ -88,6 +92,7 @@ fn piped_text_single_call_matches_todays_lines_byte_for_byte() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::complete(),
     ];
@@ -109,6 +114,7 @@ fn piped_text_single_call_matches_todays_lines_byte_for_byte() {
             AgentEvent::ToolCompleted {
                 name: "write".into(),
                 summary: "notes.md written".into(),
+                caller: None,
             },
             RenderFormat::Text,
             &mut open,

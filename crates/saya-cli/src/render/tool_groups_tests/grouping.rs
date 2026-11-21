@@ -130,6 +130,7 @@ fn approval_request_and_resolution_are_boundaries() {
             name: "run_command".into(),
             arguments: serde_json::Value::Null,
             reason: "denied".into(),
+            caller: None,
         },
         requested("write", serde_json::json!({"path": "b.md"}), write_effect()),
         completed("write", "b.md written"),

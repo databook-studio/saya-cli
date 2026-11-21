@@ -33,11 +33,12 @@ pub(crate) fn buffer_tool_event(
             name,
             arguments,
             effect,
+            ..
         } => {
             transcript.buffer_tool_request(name, arguments, effect);
             None
         }
-        AgentEvent::ToolCompleted { name, summary } => {
+        AgentEvent::ToolCompleted { name, summary, .. } => {
             if transcript.buffer_tool_completion(&name, &summary) {
                 None
             } else {
@@ -123,7 +124,7 @@ pub(crate) fn apply_tool_edge(transcript: &mut Transcript, event: AgentEvent) ->
             transcript.push(BlockKind::Tool, request_line(&name, &arguments));
             true
         }
-        AgentEvent::ToolCompleted { name, summary } => {
+        AgentEvent::ToolCompleted { name, summary, .. } => {
             transcript.push(
                 BlockKind::Tool,
                 crate::render::tool_groups::live_completion_line(&name, &summary),
