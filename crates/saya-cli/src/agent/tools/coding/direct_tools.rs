@@ -217,6 +217,7 @@ impl DirectCodingTools {
                 && (!shell_policy::reaches_background(name)
                     || self.background_started.load(Ordering::Acquire))
                 && self.plan_permits(definition)
+                && self.mode_permits(definition)
                 && crate::agent::tools::advertisement::advertised(&self.evidence, &self.tools, name)
         })
     }

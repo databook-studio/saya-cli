@@ -195,7 +195,7 @@ fn width(mode: ApprovalPolicy) -> u8 {
 }
 
 pub(crate) use compose::{
-    Background, advertised, compose, compose_host_only, compose_sandboxed, prove,
+    Background, HostLane, advertised, compose, compose_host_only, compose_sandboxed, prove,
 };
 pub(crate) use placement::ShellPlacement;
 pub(crate) use poll::WallClock;

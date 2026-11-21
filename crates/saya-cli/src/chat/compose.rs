@@ -17,6 +17,11 @@
 //! `shell` and the database lane read on every call: a mode switched between two
 //! calls decides the second.
 //!
+//! **The mode is the surface.** The run's mode and the front's own answer to
+//! "can this surface obtain a per-call approval at all" are stated at
+//! composition, so the root's tool advertisement offers exactly what the mode
+//! reaches: a session with nobody to ask carries no write-shaped tool.
+//!
 //! **The database is the plugin's.** With a database resolved the registry holds
 //! the database plugin's chat surface, which states the database section of the
 //! run's prompt, offers the SQL tools, and — through its lane — decides them;
@@ -115,8 +120,13 @@ impl RunComposition {
             capture,
             learning,
         } = run;
+        // The surface's own fact, stated beside the operator that answers its
+        // asks: a front with nobody to ask cannot reach a write-shaped call, so
+        // the run advertises none of them (see `saya_agent::mode_advertises`).
+        let can_obtain_approval = front.can_obtain_approval();
         let operator = Arc::new(SessionOperator::new(front));
         let application = Launch::Attached(mode).compose(application);
+        application.with_approval_surface(can_obtain_approval);
         let application = application.with_operator(Arc::clone(&operator) as Arc<dyn Operator>);
         let request = request(&session, &shape)?;
         // The session's mode is the consent to open: the approval is scoped to

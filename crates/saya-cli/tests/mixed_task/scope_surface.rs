@@ -125,48 +125,32 @@ fn shell_sandbox_proves(root: &std::path::Path, read_only: bool) -> bool {
 
 /// Scenario 5: switching the approval scope changes the advertised surface
 /// exactly as documented — pinned from the REAL lists. Every mode carries the
-/// same 15 read-shaped tools; `bypass` adds the 5 write/egress-shaped ones;
-/// and `shell` (the one
+/// same read-shaped tools; `bypass` adds the write/egress-shaped ones; and
+/// `shell` (the one
 /// command door) rides wherever the mode keeps a route for it — always under
 /// `bypass`, and under `read-only`/headless `ask` only where this host's
 /// sandbox proves. There is no `run_program` tool on the surface.
+///
+/// This run is composed with NO database profile, and a session with no
+/// database advertises no database tool (F2: the plugin activates only on a
+/// resolved profile), so the pinned lists carry none of `schema_discovery`,
+/// `request_clarification`, `bounded_sql_query`, `bounded_sql_query_all`,
+/// `result_shape`, `column_health`, `join_check`, `designate_answer`,
+/// `contract_search` or `contract_read` — the environment's answer, not a
+/// weakening of what the modes withhold.
 #[test]
 fn scope_switching_changes_the_advertised_surface_exactly() {
-    let readonly = [
-        "bounded_sql_query",
-        "bounded_sql_query_all",
-        "checklist",
-        "column_health",
-        "contract_read",
-        "contract_search",
-        "designate_answer",
-        "glob",
-        "grep",
-        "join_check",
-        "list",
-        "read",
-        "result_shape",
-        "schema_discovery",
-    ];
+    let readonly = ["checklist", "glob", "grep", "list", "read"];
     let bypass = [
-        "bounded_sql_query",
-        "bounded_sql_query_all",
         "checklist",
-        "column_health",
-        "contract_read",
-        "contract_search",
-        "designate_answer",
         "edit",
         "glob",
         "grep",
         "http_download",
         "http_fetch",
-        "join_check",
         "list",
         "read",
-        "result_shape",
         "run_command",
-        "schema_discovery",
         "write",
     ];
     let mut observed = Vec::new();

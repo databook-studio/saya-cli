@@ -192,5 +192,11 @@ impl ChatFront for FakeFront {
         answer.await.unwrap_or(Answer::Deny)
     }
 
+    /// The front with a person attached can obtain a per-call approval; the
+    /// non-interactive one cannot. It is the fact the run's advertisement reads.
+    fn can_obtain_approval(&self) -> bool {
+        self.interactive
+    }
+
     fn emit(&self, _event: ChatEvent) {}
 }

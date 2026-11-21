@@ -175,6 +175,13 @@ impl ChatFront for LineFront {
         ask::put(self.can_prompt, &turn, question).await
     }
 
+    /// The line's live-terminal fact: a person is on the other end of the ask,
+    /// or nobody is. It is exactly the fact `ask` denies on, so the tools the
+    /// run offers and the calls it can put to somebody cannot disagree.
+    fn can_obtain_approval(&self) -> bool {
+        self.can_prompt
+    }
+
     fn emit(&self, event: ChatEvent) {
         match event {
             ChatEvent::TurnEnded(outcome) => {

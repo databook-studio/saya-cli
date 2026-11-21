@@ -60,6 +60,15 @@ pub(crate) fn build(
     if !shell_policy::advertised(policy) {
         return None;
     }
+    // The host lane is a call somebody answers, so a surface that cannot obtain
+    // an approval keeps none: it gets a shell only where a sandbox proves. That
+    // is the same shape `read-only` already has — and `bypass` is its own
+    // consent, so it keeps the host lane whatever the surface can obtain.
+    let host_lane = if job.can_obtain_approval() || policy == saya_agent::ApprovalPolicy::Bypass {
+        shell_policy::HostLane::Allowed
+    } else {
+        shell_policy::HostLane::ProvenOnly
+    };
     // The mode the shell resolves is the job's, read from its cell at every
     // call: a mode stated during the run decides the next call, not this build.
     let mode = job.approval_mode();
@@ -95,6 +104,7 @@ pub(crate) fn build(
             cancellation,
             Background::Owned,
             rules,
+            host_lane,
         )
         .map(|tool| tool.following_mode(mode))
         .map(|tool| match wall_clock {
@@ -111,7 +121,14 @@ pub(crate) fn build(
         lifecycle.note_elapsed("shell_probe", started.elapsed());
         tool
     };
-    if policy == saya_agent::ApprovalPolicy::ReadOnly {
+    // The composition is taken here — not deferred — wherever whether a shell
+    // exists at all depends on the probe: `read-only`, which only a write-denied
+    // sandbox opens, and a surface with no host lane, which only a proven
+    // sandbox opens. Everything else advertises the tool now and composes it
+    // once the run starts it.
+    if policy == saya_agent::ApprovalPolicy::ReadOnly
+        || host_lane == shell_policy::HostLane::ProvenOnly
+    {
         compose().map(RootShell::new)
     } else {
         Some(RootShell::deferred(compose))

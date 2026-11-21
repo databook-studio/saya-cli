@@ -26,6 +26,15 @@ pub(crate) trait ChatFront: Send + Sync {
     /// without waiting.
     async fn ask(&self, question: &Question) -> Answer;
 
+    /// Whether this front can obtain a per-call approval at all: an ask this
+    /// surface can put to somebody, not merely a reader it may take answers
+    /// from. It is the fact a write-shaped tool's advertisement is decided
+    /// from, so the closed shape — a front with nobody to ask — is the
+    /// default: such a front offers nothing whose call it could not ask about.
+    fn can_obtain_approval(&self) -> bool {
+        false
+    }
+
     /// Delivers one session event to the surface.
     fn emit(&self, event: ChatEvent);
 }
