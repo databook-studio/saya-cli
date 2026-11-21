@@ -17,12 +17,18 @@ use saya_agent::{
 
 /// The definitions a turn advertises: the core's own list first, then every
 /// active plugin's, which is the order the helper factory composes them in.
+///
+/// The one `[tools] allow` list governs the whole list, the plugins' names
+/// included: a list that leaves `request_clarification` out leaves it out of
+/// the advertisement exactly as it leaves out the core's own governed tools.
 pub(super) fn definitions(
     core: Vec<ToolDefinition>,
     plugins: &ActivePlugins,
+    tools: &saya_config::ResolvedTools,
 ) -> Vec<ToolDefinition> {
     let mut definitions = core;
     definitions.extend(plugins.definitions());
+    crate::agent::tools::narrow(&mut definitions, tools);
     definitions
 }
 
@@ -51,6 +57,9 @@ pub(super) async fn turn_finished(
 /// executor. A call that routes to a plugin is the turn's use of it, so the
 /// turn's plugin budget arms there, before the call executes.
 pub(super) struct Routed {
+    /// The run's one `[tools] allow` list, applied to the whole advertised
+    /// list after the plugins' names join it.
+    tools: saya_config::ResolvedTools,
     plugins: Arc<ActivePlugins>,
     core: Arc<dyn ToolExecutor>,
     arming: super::parent_arming::TurnArming,
@@ -61,11 +70,13 @@ impl Routed {
         plugins: Arc<ActivePlugins>,
         core: Arc<dyn ToolExecutor>,
         arming: super::parent_arming::TurnArming,
+        tools: saya_config::ResolvedTools,
     ) -> Self {
         Self {
             plugins,
             core,
             arming,
+            tools,
         }
     }
 
@@ -89,11 +100,12 @@ impl ToolExecutor for Routed {
 
     /// A plugin's definitions are appended to whatever the core advertises, so
     /// the list the loop re-reads before each request keeps the core's order
-    /// and grows only where a plugin added a name.
+    /// and grows only where a plugin added a name — and the run's one
+    /// `[tools] allow` list then narrows the whole list.
     fn advertised_definitions(&self) -> Option<Vec<ToolDefinition>> {
         self.core
             .advertised_definitions()
-            .map(|core| definitions(core, &self.plugins))
+            .map(|core| definitions(core, &self.plugins, &self.tools))
     }
 
     fn take_background_exits(&self) -> Vec<BackgroundExit> {

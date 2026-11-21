@@ -131,6 +131,7 @@ impl NativeCodingJob {
                 Arc::clone(plugins),
                 Arc::clone(&session.executor),
                 arming.clone(),
+                self.tools().clone(),
             )
         });
         let executor: &dyn ToolExecutor = match &routed {
@@ -140,9 +141,11 @@ impl NativeCodingJob {
         // The core tools first, then the active plugins', as a helper composes
         // them; with no plugins this is the list the core advertises.
         let definitions = match session.plugins.as_ref() {
-            Some(plugins) => {
-                super::parent_plugins::definitions(session.tools.definitions(), plugins)
-            }
+            Some(plugins) => super::parent_plugins::definitions(
+                session.tools.definitions(),
+                plugins,
+                self.tools(),
+            ),
             None => session.tools.definitions(),
         };
         let work = run_agent_with_control(
