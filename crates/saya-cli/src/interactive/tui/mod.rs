@@ -79,7 +79,11 @@ pub(crate) use session::{TrustOutcome, TuiSession, run};
 // The new front reuses today's input buffer and completion instead of a
 // second copy of either: the composer (`front::tui::view`) calls these, and
 // one definition of the wrap and the popup's candidates serves both surfaces.
+// The palette ranks names with the popup's own matcher, so no second fuzzy
+// rule has to agree with this one.
 #[allow(unused_imports)]
 pub(crate) use complete::{Candidate, slash_candidates};
+#[allow(unused_imports)]
+pub(crate) use fuzzy::fuzzy_score;
 #[allow(unused_imports)]
 pub(crate) use input::InputBuffer;
