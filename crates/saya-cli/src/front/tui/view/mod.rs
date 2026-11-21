@@ -31,6 +31,10 @@
 //! (`02` §11) — the keys valid in the state the operator is in, read from one table
 //! `help_keys` holds — and the toast (`02` §4), whose four seconds are counted in the
 //! runtime's ticks.
+//!
+//! T13 lands the empty transcript (`02` §9): one screen per way a session can have
+//! nothing to show yet, with the examples a connected database suggests read from
+//! today's `starter_questions`.
 
 mod blocks;
 mod blocks_question;
@@ -38,6 +42,9 @@ mod blocks_stop;
 pub(crate) mod cards;
 mod composer;
 mod composer_frame;
+mod empty;
+mod empty_lines;
+mod empty_welcome;
 mod help;
 mod help_keys;
 mod palette;
@@ -67,6 +74,8 @@ pub(crate) use composer::{
 };
 #[allow(unused_imports)]
 pub(crate) use composer_frame::rows;
+#[allow(unused_imports)]
+pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]
 pub(crate) use help::{Context, rows as help_rows};
 #[allow(unused_imports)]
@@ -103,6 +112,18 @@ mod cards_tests;
 #[cfg(test)]
 #[path = "composer_tests.rs"]
 mod composer_tests;
+
+#[cfg(test)]
+#[path = "empty_fixture.rs"]
+mod empty_fixture;
+
+#[cfg(test)]
+#[path = "empty_snapshots.rs"]
+mod empty_snapshots;
+
+#[cfg(test)]
+#[path = "empty_tests.rs"]
+mod empty_tests;
 
 #[cfg(test)]
 #[path = "help_fixture.rs"]
