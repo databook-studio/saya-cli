@@ -1,5 +1,6 @@
 impl SessionState {
     pub fn apply(&mut self, command: SlashCommand, available: &[String]) -> SessionAction {
+        use crate::chat::ops_status::{Note, Section};
         match command {
             SlashCommand::Coding(command) => SessionAction::Coding(command),
             SlashCommand::Connect(name) => {
@@ -100,7 +101,13 @@ impl SessionState {
             SlashCommand::Report(request) => SessionAction::Report(request),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
-            SlashCommand::Compact => SessionAction::Compact,
+            SlashCommand::Compact(request) => {
+                if request.new_session {
+                    SessionAction::Rotate(request)
+                } else {
+                    SessionAction::Compact
+                }
+            }
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
@@ -128,14 +135,9 @@ impl SessionState {
                         .into(),
                 )
             }
-            SlashCommand::History => SessionAction::History,
             SlashCommand::Doctor => SessionAction::Doctor,
-            SlashCommand::Usage => SessionAction::Message(self.usage.render()),
-            SlashCommand::Workspace => SessionAction::Message(match self.workspace_root.as_deref() {
-                Some(root) => format!("workspace: {root}"),
-                None => "no workspace is bound: writes and downloads are unavailable — launch                          inside a git worktree or with --workspace <dir>"
-                    .to_string(),
-            }),
+            SlashCommand::Usage => section_answer(self, Note::Usage, Section::Model),
+            SlashCommand::Workspace => section_answer(self, Note::Workspace, Section::Workspace),
             SlashCommand::Thinking(value) => {
                 if let Some(value) = value {
                     self.show_thinking = value;
@@ -151,9 +153,8 @@ impl SessionState {
                     if self.show_thinking { "on" } else { "off" }
                 ))
             }
-            SlashCommand::Sessions => SessionAction::History,
+            SlashCommand::Sessions(request) => SessionAction::History(request.via_history_alias),
             SlashCommand::Resume(id) => SessionAction::Resume(id),
-            SlashCommand::Rotate => SessionAction::Rotate,
             SlashCommand::Tasks(subcommand) => match subcommand.as_deref() {
                 // `/tasks clear` empties the stored list, so the next turn
                 // injects no task block. Nothing else edits from here: the
@@ -213,6 +214,7 @@ impl SessionState {
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
             SlashCommand::Grants => SessionAction::Grants,
+            SlashCommand::Status => SessionAction::Status,
             SlashCommand::Context => SessionAction::Context,
             SlashCommand::SessionsList => SessionAction::SessionsList,
             SlashCommand::SessionsDelete(id) => SessionAction::SessionsDelete(id),
@@ -220,6 +222,13 @@ impl SessionState {
             SlashCommand::Recovery(command) => SessionAction::Recovery(command),
             SlashCommand::Setup => SessionAction::Setup,
             SlashCommand::Reload => SessionAction::Reload,
+            // `/undo` and `/rewind` restore a job run's own checkpoints. This
+            // session runs no job, and its recorded edits are the per-edit
+            // store `/recovery` operates, so the answer names that store
+            // instead of pretending to undo something it never checkpointed.
+            SlashCommand::Undo | SlashCommand::Rewind(_) => {
+                SessionAction::Message(UNDO_NEEDS_A_RUN.into())
+            }
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

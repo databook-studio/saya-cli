@@ -23,7 +23,7 @@ pub(super) fn absorb_checks(
             AgentEvent::ToolRequested {
                 name, arguments, ..
             } if name == "run_command" => requested.push(arguments),
-            AgentEvent::ToolCompleted { name, summary } if name == "run_command" => {
+            AgentEvent::ToolCompleted { name, summary, .. } if name == "run_command" => {
                 let arguments = pending(&mut requested);
                 if let Some(observation) = check_observation(summary, arguments, now_unix_ms) {
                     checks.push(observation);

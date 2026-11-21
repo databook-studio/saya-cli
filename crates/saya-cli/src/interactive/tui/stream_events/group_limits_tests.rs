@@ -26,6 +26,7 @@ fn two_write_calls() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "write",
@@ -35,6 +36,7 @@ fn two_write_calls() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "other.md written".into(),
+            caller: None,
         },
     ]
 }
@@ -54,6 +56,7 @@ fn group_with_a_failure_renders_the_full_pair() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "run_command",
@@ -68,6 +71,7 @@ fn group_with_a_failure_renders_the_full_pair() {
         AgentEvent::ToolCompleted {
             name: "run_command".into(),
             summary: "failed pytest".into(),
+            caller: None,
         },
     ];
     let groups = crate::render::tool_groups::group_tool_events(&events);

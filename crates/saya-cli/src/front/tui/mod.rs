@@ -8,11 +8,33 @@
 //! status line, the first pane: one pure function from the session's facts and a
 //! width to the row a terminal paints. No terminal I/O, no widgets beyond the
 //! line the pane builds itself, no drawing loop — the panes come later.
+//!
+//! T14 lands the runtime: the queue the producers fill (the input thread, the
+//! session's front, the tick), the loop that folds every message waiting in it
+//! through the pure update, the executor that performs the commands, and the
+//! frame painted only when the model changed and at most thirty times a second
+//! — the panes T4-T13 built, composed into one screen.
 
 pub(crate) mod cards_keys;
+pub(crate) mod direct;
+pub(crate) mod direct_run;
+pub(crate) mod direct_trust;
+pub(crate) mod focus;
+mod focus_text;
 pub(crate) mod keys;
 pub(crate) mod model;
+pub(crate) mod model_overlay;
 pub(crate) mod msg;
+pub(crate) mod run;
+pub(crate) mod run_clock;
+pub(crate) mod run_cmd;
+pub(crate) mod run_draw;
+pub(crate) mod run_draw_card;
+pub(crate) mod run_draw_overlay;
+pub(crate) mod run_front;
+pub(crate) mod run_input;
+pub(crate) mod run_panic;
+pub(crate) mod run_screen;
 pub(crate) mod theme;
 pub(crate) mod update;
 pub(crate) mod view;
@@ -24,11 +46,35 @@ pub(crate) mod view;
 #[allow(unused_imports)]
 pub(crate) use cards_keys::{CARD_PAGE_ROWS, CardIntent, card_intent};
 #[allow(unused_imports)]
+pub(crate) use direct::{Direct, DirectOutcome};
+#[allow(unused_imports)]
+pub(crate) use direct_run::DirectDeps;
+#[allow(unused_imports)]
+pub(crate) use direct_trust::{TrustStore, press as trust_press};
+#[allow(unused_imports)]
+pub(crate) use focus::EntryPath;
+#[allow(unused_imports)]
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
 pub(crate) use model::Model;
 #[allow(unused_imports)]
+pub(crate) use model_overlay::Overlay;
+#[allow(unused_imports)]
 pub(crate) use msg::{Cmd, Msg, Worker};
+#[allow(unused_imports)]
+pub(crate) use run::Runtime;
+#[allow(unused_imports)]
+pub(crate) use run::run;
+#[allow(unused_imports)]
+pub(crate) use run_clock::{Clock, SystemClock};
+#[allow(unused_imports)]
+pub(crate) use run_cmd::{CmdPort, SessionPort, perform};
+#[allow(unused_imports)]
+pub(crate) use run_draw::{Facts, Regions};
+#[allow(unused_imports)]
+pub(crate) use run_front::Forward;
+#[allow(unused_imports)]
+pub(crate) use run_screen::{Screen, TtyScreen};
 #[allow(unused_imports)]
 pub(crate) use theme::{Charset, Glyph, Scheme, Token, bypass_chip, charset, form, glyph, style};
 #[allow(unused_imports)]
@@ -45,3 +91,59 @@ mod update_fixture;
 #[cfg(test)]
 #[path = "update_tests.rs"]
 mod update_tests;
+
+#[cfg(test)]
+#[path = "focus_fixture.rs"]
+mod focus_fixture;
+
+#[cfg(test)]
+#[path = "focus_tests.rs"]
+mod focus_tests;
+
+#[cfg(test)]
+#[path = "update_mode_tests.rs"]
+mod update_mode_tests;
+
+#[cfg(test)]
+#[path = "update_cycle_tests.rs"]
+mod update_cycle_tests;
+
+#[cfg(test)]
+#[path = "run_fixture.rs"]
+pub(crate) mod run_fixture;
+
+#[cfg(test)]
+#[path = "run_fixture_port.rs"]
+pub(crate) mod run_fixture_port;
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod run_tests;
+
+#[cfg(test)]
+#[path = "run_mode_tests.rs"]
+mod run_mode_tests;
+
+#[cfg(test)]
+#[path = "run_draw_tests.rs"]
+mod run_draw_tests;
+
+#[cfg(test)]
+#[path = "run_input_tests.rs"]
+mod run_input_tests;
+
+#[cfg(test)]
+#[path = "run_front_tests.rs"]
+mod run_front_tests;
+
+#[cfg(test)]
+#[path = "direct_fixture.rs"]
+mod direct_fixture;
+
+#[cfg(test)]
+#[path = "direct_tests.rs"]
+mod direct_tests;
+
+#[cfg(test)]
+#[path = "direct_trust_tests.rs"]
+mod direct_trust_tests;

@@ -168,6 +168,7 @@ pub(super) async fn handle(
                     name: REQUEST_CLARIFICATION_TOOL.into(),
                     arguments: asked_call.arguments.clone(),
                     reason: reason.clone(),
+                    caller: None,
                 },
             )
             .await;
@@ -216,6 +217,7 @@ pub(super) async fn handle(
         AgentEvent::ToolCompleted {
             name: REQUEST_CLARIFICATION_TOOL.into(),
             summary: output::completion_summary(&summary, truncated),
+            caller: None,
         },
     )
     .await;

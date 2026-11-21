@@ -80,6 +80,7 @@ fn a_running_run_shows_its_steps_status_and_episode() {
             AgentEvent::ToolCompleted {
                 name: "bounded_sql_query".into(),
                 summary: "4 rows".into(),
+                caller: None,
             },
             AgentEvent::assistant_text("Step one profiled the tables; counts look even."),
         ],

@@ -35,7 +35,7 @@ async fn the_session_surface_records_previews_and_restores_real_edits() {
     );
     let (ok, text) = run_recovery(RecoveryCommand::List, &handle, ws.as_deref(), NOW);
     assert!(ok, "{text}");
-    assert!(text.contains("No recorded edits"), "{text}");
+    assert_eq!(text, "no recorded edits — use /undo or /rewind", "{text}");
 
     // Turning it on says the retention text verbatim.
     let (ok, text) = run_recovery(RecoveryCommand::On, &handle, ws.as_deref(), NOW);
@@ -150,7 +150,7 @@ async fn the_session_surface_records_previews_and_restores_real_edits() {
     );
     let (ok, text) = run_recovery(RecoveryCommand::List, &handle, ws.as_deref(), NOW);
     assert!(ok, "{text}");
-    assert!(text.contains("No recorded edits"), "{text}");
+    assert_eq!(text, "no recorded edits — use /undo or /rewind", "{text}");
 
     // On again, record one edit, then off: the recorded edit survives and a
     // restore still works with the flag off — restoring is the user's own act.

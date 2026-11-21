@@ -54,6 +54,7 @@ fn completed(summary: &str) -> StreamMsg {
     StreamMsg::Event(AgentEvent::ToolCompleted {
         name: "bounded_sql_query".into(),
         summary: summary.into(),
+        caller: None,
     })
 }
 

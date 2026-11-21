@@ -24,6 +24,7 @@ pub(super) fn requested(tool: &str, arguments: serde_json::Value) -> ChatEvent {
         name: tool.to_owned(),
         arguments,
         effect: None,
+        caller: None,
     })
 }
 
@@ -32,6 +33,7 @@ pub(super) fn completed(tool: &str, summary: &str) -> ChatEvent {
     ChatEvent::Agent(AgentEvent::ToolCompleted {
         name: tool.to_owned(),
         summary: summary.to_owned(),
+        caller: None,
     })
 }
 

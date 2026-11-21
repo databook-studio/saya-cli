@@ -75,3 +75,74 @@ mod worker_permits_tests;
 pub(crate) mod wrap;
 
 pub(crate) use session::{TrustOutcome, TuiSession, run};
+
+// The new front reuses today's input buffer and completion instead of a
+// second copy of either: the composer (`front::tui::view`) calls these, and
+// one definition of the wrap and the popup's candidates serves both surfaces.
+// The palette ranks names with the popup's own matcher, so no second fuzzy
+// rule has to agree with this one.
+#[allow(unused_imports)]
+pub(crate) use complete::{Candidate, slash_candidates};
+#[allow(unused_imports)]
+pub(crate) use fuzzy::fuzzy_score;
+#[allow(unused_imports)]
+pub(crate) use input::InputBuffer;
+#[allow(unused_imports)]
+pub(crate) use ui::surface::markdown_spans_fenced;
+
+// The new front paints its result tables from today's rendering rather than a
+// second copy of it: the box table and its alignment, the wide-table scroller,
+// the column fitting and the view state that scroller reads. A build of this
+// module alone references none of it, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use table::{clip_table_block, format_table};
+#[allow(unused_imports)]
+pub(crate) use types::WideTableView;
+
+// The new front enters and leaves the terminal through today's guard rather
+// than a second raw-mode setup, and its panic hook restores through the same
+// sequence the guard does: one teardown, three callers. A build of this module
+// alone references neither, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use terminal::{TerminalGuard, restore_terminal};
+
+// A copy tries the OS clipboard tool and then the terminal's own OSC 52, and
+// the new front's `c` goes through this one attempt rather than a second copy
+// of it (T14's rule for the terminal). A build of this module alone references
+// neither, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use clipboard::{copy_to_native_clipboard, osc52_copy};
+
+// The new front's `/sql` is today's direct query, not a second one: the bounded
+// worker task (which goes through the read-only safety layer), the permit whose
+// cap it holds, and the process-wide refusal when all four are taken. A build
+// of this module alone references none of it, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use sql_task::{Followup, SqlTask, spawn as spawn_sql_task};
+#[allow(unused_imports)]
+pub(crate) use worker_permits::{CAP_REFUSAL, try_acquire_worker_permit};
+
+// `/export` writes with today's two-phase export (encode under a ceiling, then
+// publish atomically) rather than a second writer, so the bytes a new-surface
+// export writes are the bytes today's writes.
+#[allow(unused_imports)]
+pub(crate) use export::write_result_overwrite;
+
+// `/chart [kind] [path]` is parsed once, by the grammar the old TUI reads.
+#[allow(unused_imports)]
+pub(crate) use dispatch::parse_chart_args;
+
+// `/investigation save` keeps the TUI's save-without-SQL fill — the latest
+// query the surface shows, on the connection that ran it — as one function.
+#[allow(unused_imports)]
+pub(crate) use dispatch_investigation::fill_save_from_last_query;
+
+// The query a bare `save` is filled from is today's `LastQuery`.
+#[allow(unused_imports)]
+pub(crate) use types::LastQuery;
+
+// The trust question's answer is today's own type — the one the old modal's
+// keys produce — so the new surface states the same answer, not a second
+// spelling of it.
+#[allow(unused_imports)]
+pub(crate) use trust::{TrustResolution, trust_key};

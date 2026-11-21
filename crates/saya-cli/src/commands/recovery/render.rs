@@ -8,14 +8,16 @@ use super::{BeforeSummary, ChangesView, RestoreRefusal, StatusNow};
 use crate::interactive::tui::replay::relative_time;
 use saya_types::{CheckpointState, EditSource, FileVersion, RestoreEligibility};
 
+/// The sentence an empty listing prints, byte for byte: a session whose run
+/// records its edits in the run's own checkpoints has nothing here, so the
+/// words point at the two commands that do restore them.
+pub(crate) const NO_RECORDED_EDITS: &str = "no recorded edits — use /undo or /rewind";
+
 /// Renders the listing: a quota header, then one line per recorded edit.
 /// An empty session renders the opt-in explanation instead.
 pub(crate) fn render_changes(view: &ChangesView, now_ms: i64) -> String {
     if view.items.is_empty() {
-        return "No recorded edits. Recovery records file edits only while it is on (opt-in); \
-                it covers write/edit — never commands, downloads, \
-                or database effects."
-            .to_owned();
+        return NO_RECORDED_EDITS.to_owned();
     }
     let mut lines = vec![format!(
         "Recorded edits this session ({} of {} · {} KiB of {} MiB):",

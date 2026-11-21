@@ -36,7 +36,7 @@ pub(crate) struct SessionSave {
 
 /// The most recent query the app ran (via /sql or an agent tool), so /export
 /// (and later /chart) can re-run it. Re-running a SELECT stays read-only.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LastQuery {
     pub(crate) sql: String,
     pub(crate) connection: Option<String>,

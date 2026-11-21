@@ -27,6 +27,9 @@ mod chain_tests;
 mod query_source_tests;
 
 pub(crate) use outcome::Dispatch;
+// `/chart [kind] [path]` is one grammar, read here by both surfaces: the new
+// front's `/chart` parses with the same function the old TUI's does.
+pub(crate) use chart::parse_chart_args;
 
 use super::transcript::{BlockKind, Transcript};
 use super::types::{CapturedResult, LastQuery};

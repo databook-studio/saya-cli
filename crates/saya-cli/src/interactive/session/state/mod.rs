@@ -163,6 +163,13 @@ pub struct SessionState {
     /// command only ever expands to a user message (`slash::user_commands`).
     #[serde(skip)]
     pub(crate) user_commands: crate::slash::user_commands::UserCommands,
+    /// The one-release alias notes this session has already said: `/usage`,
+    /// `/workspace`, `/context`, `/history`, `/rotate` each say theirs once
+    /// (`chat::ops_status`). In-memory only (`#[serde(skip)]`, the
+    /// `user_commands` precedent): a resumed session is a new process whose
+    /// answers nobody has read yet, so every note is owed again.
+    #[serde(skip)]
+    pub(crate) status_notes: crate::chat::ops_status::StatusNotes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

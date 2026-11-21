@@ -1,5 +1,6 @@
 use super::*;
 use crate::interactive::session::lifecycle::resume::block_on;
+use crate::slash::{CompactRequest, SessionsRequest};
 use saya_store::{RedactedMessage, RedactedSession, SessionStore};
 
 fn scratch(label: &str) -> std::path::PathBuf {

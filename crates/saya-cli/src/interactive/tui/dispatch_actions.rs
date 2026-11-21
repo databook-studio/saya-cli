@@ -9,17 +9,21 @@ use crate::interactive::session::lifecycle::resume::{SessionDefaults, block_on, 
 use crate::interactive::session::runtime::SessionRuntime;
 use crate::interactive::session::state::SessionState;
 
-/// Lists saved sessions (shared with the `/history` command).
-pub(super) fn list_sessions(transcript: &mut Transcript, store: &FsSessionStore) {
-    match block_on(
+/// Lists saved sessions: the one listing `/sessions` prints, plus the
+/// one-release `/history` alias's note the first time that spelling is used.
+pub(super) fn list_sessions(
+    transcript: &mut Transcript,
+    state: &mut SessionState,
+    store: &FsSessionStore,
+    via_alias: bool,
+) {
+    let text = match block_on(
         store.history(
             SessionHistoryQuery::first_page(MAX_SESSION_HISTORY_PAGE_SIZE)
                 .expect("history page bound is valid"),
         ),
     ) {
-        Ok(page) if page.entries.is_empty() => {
-            transcript.push(BlockKind::System, "No saved sessions.")
-        }
+        Ok(page) if page.entries.is_empty() => "No saved sessions.".to_owned(),
         Ok(page) => {
             let more = page.next_cursor.is_some();
             let mut body = page
@@ -31,10 +35,19 @@ pub(super) fn list_sessions(transcript: &mut Transcript, store: &FsSessionStore)
             if more {
                 body.push_str("\n(more saved sessions available)");
             }
-            transcript.push(BlockKind::System, body);
+            body
         }
-        Err(error) => transcript.push(BlockKind::Error, error.to_string()),
-    }
+        Err(error) => {
+            transcript.push(BlockKind::Error, error.to_string());
+            return;
+        }
+    };
+    let text = if via_alias {
+        crate::chat::ops_status::with_note(state, crate::chat::ops_status::Note::History, text)
+    } else {
+        text
+    };
+    transcript.push(BlockKind::System, text);
 }
 
 /// Loads a saved session by id and makes it active, falling back to the current
@@ -105,6 +118,7 @@ pub(super) fn resume(
 /// through the loop's id-change check once this returns.
 pub(super) fn rotate(
     transcript: &mut Transcript,
+    request: crate::slash::CompactRequest,
     state: &mut SessionState,
     runtime: &RuntimeConfig,
     store: &FsSessionStore,
@@ -115,7 +129,17 @@ pub(super) fn rotate(
     };
     match rotate_session(store, runtime, state, session) {
         RotateResult::Rotated { old, new } => {
-            transcript.push(BlockKind::System, rotated_message(&old, &new));
+            let message = rotated_message(&old, &new);
+            let message = if request.via_rotate_alias {
+                crate::chat::ops_status::with_note(
+                    state,
+                    crate::chat::ops_status::Note::Rotate,
+                    message,
+                )
+            } else {
+                message
+            };
+            transcript.push(BlockKind::System, message);
             if let Some(notice) = session.notice() {
                 transcript.push(BlockKind::System, notice.to_string());
             }

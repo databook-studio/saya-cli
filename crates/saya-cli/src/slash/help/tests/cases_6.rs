@@ -4,7 +4,11 @@
 /// since — the knowledge store is one command, `/contracts <verb>`: the
 /// `/contracts` row widens to its eight verbs and the four rows `/queue`,
 /// `/confirm`, `/reject`, `/approve-all` are gone (they are catalogue aliases
-/// now, folded out of the listing). Any other difference is a regression.
+/// now, folded out of the listing). `/undo` and `/rewind` then join the Session
+/// section after `/clear`, where the run's checkpoints are undone. K5 folds
+/// `/history` into `/sessions`, `/rotate` into `/compact [--new-session]`, and
+/// `/usage`, `/workspace`, `/context` into the one `/status` row (all five are
+/// catalogue aliases now). Any other difference is a regression.
 #[test]
 fn help_listing_is_byte_identical() {
     assert_eq!(help_text(), LISTING);
@@ -49,17 +53,15 @@ Query & data
 
 Session
   /clear — Clear current session context
-  /compact — Summarise older turns to shrink working memory
-  /history — List saved sessions as text
+  /undo — Undo the last turn's file edits: restore the run's checkpoint taken before that turn
+  /rewind [<id>] — List the run's checkpoints, newest first, or restore the one you name
+  /compact [--new-session] — Summarise older turns to shrink working memory; --new-session continues in a smaller successor
   /sessions [list|delete <id>] — Browse saved sessions: list or delete; bare opens a picker in the TUI
   /resume <id> — Resume a saved session by id
-  /rotate — Continue in a new, smaller session that keeps your summary and notes (run /compact first)
   /setup — Run the guided setup (full-screen terminal only)
   /reload — Re-read the configuration between turns: applies what is safe now, says what needs a new session. Data sharing and host commands never change in a running session.
-  /context — Show the instruction sources loaded into requests, never their text
   /doctor — Diagnose config: secrets, provider endpoint
-  /usage — Show session token usage and cache hit rate
-  /workspace — Show the session's bound workspace root
+  /status — One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks
   /thinking [on|off] — Toggle display of the model's chain-of-thought
   /tasks [clear] — Show the session's task list, or clear it with /tasks clear
   /notes [set <text>|clear] — Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember

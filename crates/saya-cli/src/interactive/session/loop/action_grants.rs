@@ -79,14 +79,15 @@ fn handle_context(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::err
         ..
     } = action_parts(ctx);
     let runtime: &RuntimeConfig = &runtime;
-    // `/context` shows the instruction sources the next request would
-    // load — names, sizes, short digests, truncation and redaction
-    // flags, and skip/omit reasons — through the one shared renderer
-    // the TUI prints too. Never the file text. The view needs the
-    // runtime's settings and the session's workspace root, so it is
-    // intercepted here like /grants.
+    // `/context` opens the panel's Instructions section — the instruction
+    // sources the next request would load: names, sizes, short digests,
+    // truncation and redaction flags, and skip/omit reasons — through the one
+    // shared renderer the TUI prints too, under the one heading and with the
+    // alias's note. Never the file text. The view needs the runtime's settings
+    // and the session's workspace root, so it is intercepted here like /grants.
     session_emit::emit_action(
-        SessionAction::Message(crate::interactive::session::context_view::context_view(
+        SessionAction::Message(crate::chat::ops_status::instructions_answer(
+            state,
             runtime,
             session.root(),
         )),

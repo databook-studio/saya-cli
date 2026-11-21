@@ -7,8 +7,8 @@
 //! `/provider`, `/privacy`).
 
 use super::fixture::{command, harness};
-use super::{Fate, OpResult};
-use crate::chat::ops_context::ReadOp;
+use super::{Fate, Op, OpResult};
+use crate::chat::ops_context::{ContextChange, ReadOp};
 use saya_agent::ApprovalPolicy;
 
 /// Every spelling of every command variant, and the fate it has.
@@ -36,6 +36,7 @@ const TABLE: &[(&str, Fate)] = &[
     ("/explain", Fate::ReadOnly),
     ("/clear", Fate::Rollover),
     ("/compact", Fate::Rollover),
+    ("/compact --new-session", Fate::Rollover),
     ("/history", Fate::ReadOnly),
     ("/sessions", Fate::ReadOnly),
     ("/sessions list", Fate::ReadOnly),
@@ -58,6 +59,7 @@ const TABLE: &[(&str, Fate)] = &[
     ("/grants", Fate::ReadOnly),
     ("/context", Fate::ReadOnly),
     ("/doctor", Fate::ReadOnly),
+    ("/status", Fate::ReadOnly),
     ("/usage", Fate::ReadOnly),
     ("/thinking on", Fate::Session),
     ("/workspace", Fate::ReadOnly),
@@ -65,6 +67,9 @@ const TABLE: &[(&str, Fate)] = &[
     ("/tasks", Fate::ReadOnly),
     ("/notes", Fate::ReadOnly),
     ("/recovery", Fate::ReadOnly),
+    ("/undo", Fate::Session),
+    ("/rewind", Fate::Session),
+    ("/rewind 3", Fate::Session),
     ("/exit", Fate::Session),
 ];
 
@@ -89,8 +94,25 @@ fn every_slash_command_maps_to_exactly_one_fate() {
     );
     assert_eq!(
         TABLE.len(),
-        50,
+        55,
         "the table names every spelling this unit pins"
+    );
+}
+
+#[test]
+fn rotate_and_compact_new_session_are_one_operation() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    let rotate = harness.ops.operation(&command("/rotate"));
+    let compact = harness.ops.operation(&command("/compact --new-session"));
+    assert_eq!(
+        rotate, compact,
+        "one operation, two spellings: the dispatcher produces the same fate for both"
+    );
+    assert_eq!(rotate, Op::Rollover(ContextChange::Rotate, None));
+    assert_eq!(
+        harness.ops.operation(&command("/compact")),
+        Op::Rollover(ContextChange::Compact, None),
+        "bare /compact stays the compaction of this session"
     );
 }
 

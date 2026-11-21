@@ -154,6 +154,7 @@ fn long_content_at_real_width() {
         AgentEvent::ToolCompleted {
             name: "bounded_sql_query".into(),
             summary: "50 rows".into(),
+            caller: None,
         },
         false,
     );
@@ -176,6 +177,7 @@ fn long_content_at_real_width() {
         AgentEvent::ToolCompleted {
             name: "bounded_sql_query".into(),
             summary: "25 rows".into(),
+            caller: None,
         },
         false,
     );

@@ -76,6 +76,7 @@ async fn a_truncated_model_view_is_refused_from_tool_execution_to_the_drain_pair
     let _ = events_tx.send(StreamMsg::Event(AgentEvent::ToolCompleted {
         name: "bounded_sql_query".into(),
         summary: "2 rows".into(),
+        caller: None,
     }));
 
     // The shaping step: the loop's own shaping, at the loop's own budget,

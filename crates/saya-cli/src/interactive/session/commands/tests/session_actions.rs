@@ -6,8 +6,8 @@
 fn sessions_subforms_map_to_their_actions() {
     let mut state = SessionState::new("test", None, "gpt-4o");
     assert_eq!(
-        state.apply(SlashCommand::Sessions, &[]),
-        SessionAction::History,
+        state.apply(SlashCommand::Sessions(SessionsRequest::default()), &[]),
+        SessionAction::History(false),
         "bare /sessions keeps today's meaning"
     );
     assert_eq!(
@@ -35,15 +35,26 @@ fn preferences_command_maps_to_the_same_action() {
     assert_eq!(action, SessionAction::Preferences(command));
 }
 
-/// `/rotate` carries through as its own action — the loops own the
-/// behaviour through the shared `session_rotate_run` runner; the
-/// adapter owns nothing but the mapping.
+/// `/compact --new-session` (and its one-release alias `/rotate`) carries
+/// through as the rotation action — the loops own the behaviour through the
+/// shared `session_rotate_run` runner; the adapter owns nothing but the
+/// mapping, and the request says which spelling stated it.
 #[test]
 fn rotate_maps_to_its_action() {
     let mut state = SessionState::new("test", None, "gpt-4o");
     assert_eq!(
-        state.apply(SlashCommand::Rotate, &[]),
-        SessionAction::Rotate
+        state.apply(SlashCommand::Compact(CompactRequest::rotate()), &[]),
+        SessionAction::Rotate(CompactRequest::rotate())
+    );
+    assert_eq!(
+        state.apply(SlashCommand::Compact(CompactRequest::new_session()), &[]),
+        SessionAction::Rotate(CompactRequest::new_session()),
+        "the canonical spelling runs the same operation"
+    );
+    assert_eq!(
+        state.apply(SlashCommand::Compact(CompactRequest::compact()), &[]),
+        SessionAction::Compact,
+        "bare /compact stays the compaction of this session"
     );
 }
 

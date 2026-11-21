@@ -1,13 +1,17 @@
-/// `/rotate` parses bare and refuses any argument: the rotation is one
-/// command, and a trailing word is a mistake worth naming.
+/// `/rotate` is `/compact --new-session`'s one-release alias: bare, it parses
+/// to the same command and refuses any argument — a trailing word is a mistake
+/// worth naming.
 #[test]
 fn rotate_parses_bare_and_refuses_arguments() {
     assert_eq!(
         parse_slash_command("/rotate"),
-        Ok(Some(SlashCommand::Rotate))
+        Ok(Some(SlashCommand::Compact(CompactRequest::rotate())))
     );
     let error = parse_slash_command("/rotate now").unwrap_err();
-    assert_eq!(error.0, "rotate takes no argument: /rotate");
+    assert_eq!(
+        error.0,
+        "rotate takes no argument: /rotate (alias of /compact --new-session)"
+    );
 }
 
 /// `/tasks` shows the list bare and clears it on `clear`; anything else

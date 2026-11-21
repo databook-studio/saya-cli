@@ -39,6 +39,8 @@ include!("slash/report_parser.rs");
 include!("slash/preferences_parser.rs");
 include!("slash/notes_parser.rs");
 include!("slash/recovery_parser.rs");
+include!("slash/compact_parser.rs");
+include!("slash/rewind_parser.rs");
 include!("slash/dispatch.rs");
 include!("slash/value_parsers.rs");
 #[cfg(test)]

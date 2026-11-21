@@ -9,9 +9,9 @@ fn descriptions_cover_exactly_the_catalogue() {
     // the popup reads its rows from the catalogue — one table, no local
     // copy — so this asserts the catalogue's names and descriptions are the
     // popup's: every name is unique, every name carries a description, and
-    // the count is today's 59 (56 commands and their 3 alias spellings).
+    // the count is today's 62 (49 commands and their 13 alias spellings).
     let entries: Vec<_> = crate::slash::catalog::entries().collect();
-    assert_eq!(entries.len(), 59);
+    assert_eq!(entries.len(), 62);
     for entry in &entries {
         assert!(
             entry.surfaces.covers(crate::slash::catalog::Surface::Tui),
@@ -40,7 +40,7 @@ fn test_non_slash_line() {
 fn test_slash_only() {
     let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
     assert_eq!((start, end), (0, 1));
-    assert_eq!(candidates.len(), 59); // registry size: every known command with a description
+    assert_eq!(candidates.len(), 62); // registry size: every known command with a description
     // An empty query scores every command equally, so the stable sort keeps
     // registry order and the registry's first entry leads.
     assert_eq!(candidates[0].value, "/start");

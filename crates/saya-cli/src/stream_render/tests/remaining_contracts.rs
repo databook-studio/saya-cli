@@ -18,6 +18,7 @@ fn approvals_are_untouched() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "a.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "write",
@@ -27,11 +28,13 @@ fn approvals_are_untouched() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "b.md written".into(),
+            caller: None,
         },
         AgentEvent::ToolDenied {
             name: "run_command".into(),
             arguments: serde_json::Value::Null,
             reason: "denied".into(),
+            caller: None,
         },
         AgentEvent::complete(),
     ];
@@ -44,6 +47,7 @@ fn approvals_are_untouched() {
         name: "run_command".into(),
         arguments: serde_json::Value::Null,
         reason: "denied".into(),
+        caller: None,
     };
     let mut open = false;
     let ungrouped = render_agent(denied, RenderFormat::Text, &mut open).stdout;
@@ -131,6 +135,7 @@ fn the_piped_text_surface_flushes_the_ask_group_before_the_question() {
         AgentEvent::ToolCompleted {
             name: "request_clarification".into(),
             summary: "question asked — the turn pauses for the user's answer".into(),
+            caller: None,
         },
         AgentEvent::clarification_needed("which metric?", Vec::new()),
     ];

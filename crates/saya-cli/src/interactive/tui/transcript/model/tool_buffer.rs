@@ -177,10 +177,12 @@ impl Transcript {
                             name: name.clone(),
                             arguments: arguments.clone(),
                             effect: *effect,
+                            caller: None,
                         },
                         saya_agent::AgentEvent::ToolCompleted {
                             name: name.clone(),
                             summary: summary.clone(),
+                            caller: None,
                         },
                     ]
                 })

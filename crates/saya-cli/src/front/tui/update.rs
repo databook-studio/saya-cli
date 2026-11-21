@@ -15,9 +15,12 @@
 
 use ratatui::crossterm::event::KeyEvent;
 
+use super::direct;
+use super::focus_text;
 use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
+use super::view::ModePicker;
 use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 use crate::front::apply;
@@ -25,6 +28,10 @@ use crate::interactive::session::permissions::mode::next_in_cycle;
 
 /// What the surface says when a queued line is replaced by a newer one.
 const QUEUED_REPLACED: &str = "queued line replaced — the earlier one was dropped";
+
+/// The one slash command the surface answers itself: bare `/mode` opens the
+/// picker (`02` §8). K2 gives `/mode <name>` its argument.
+const SLASH_MODE: &str = "/mode";
 
 /// Folds one message into the model, and answers what the runtime must do.
 pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -39,13 +46,19 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::Resize { .. } => {}
         Msg::Chat(event) => session(model, event, &mut cmds),
         Msg::Worker(worker) => {
+            // A direct command's answer is filed where it belongs — the rows as
+            // a result entry, a command's sentence as a notice or an error — and
+            // what is left is the worker's own word about itself (`02` §4).
+            if let Some(outcome) = worker.direct {
+                direct::land(model, outcome);
+            }
             if !worker.message.is_empty() {
                 model.say(worker.message);
             }
         }
-        // The spinner and the toast's expiry both read this tick; neither has
-        // landed yet, and nothing the model holds changes on it.
-        Msg::Tick => {}
+        // The spinner reads this tick, and so does the toast's clock: four
+        // seconds of ticks spend it (`02` §4).
+        Msg::Tick => model.tick_toast(),
     }
     cmds
 }
@@ -59,20 +72,80 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             model.backspace();
         }
         Some(Intent::Submit) => submit(model, cmds),
+        // The queue is one deep, and Ctrl+G is how the operator takes the held
+        // line back: it is dropped, never sent (`02` §7).
+        Some(Intent::DropQueued) => model.drop_queued(),
         Some(Intent::CancelTurn) => cmds.push(Cmd::CancelTurn),
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),
         Some(Intent::ScrollCard(rows)) => model.scroll_card(rows),
         Some(Intent::CycleMode) => cycle(model, cmds),
+        Some(Intent::ModeUp) => {
+            if let Some(picker) = model.mode_picker_mut() {
+                picker.up();
+            }
+        }
+        Some(Intent::ModeDown) => {
+            if let Some(picker) = model.mode_picker_mut() {
+                picker.down();
+            }
+        }
+        Some(Intent::ModeSet) => choose(model, cmds),
+        Some(Intent::ModeCancel) => model.close_overlay(),
+        Some(Intent::FocusUp) => model.move_focus(false),
+        Some(Intent::FocusDown) => model.move_focus(true),
+        Some(Intent::FocusExpand) => model.fold_focus(None),
+        Some(Intent::FocusFold) => model.fold_focus(Some(true)),
+        Some(Intent::FocusCopy) => copy(model, cmds),
+        Some(Intent::FocusInspector) => model.toggle_inspector(),
+        Some(Intent::FocusLeave) => model.clear_focus(),
+        Some(Intent::TrustAccept) => {
+            model.close_overlay();
+            cmds.push(Cmd::Trust);
+        }
+        Some(Intent::TrustDecline) => model.close_overlay(),
         Some(Intent::Refused(reason)) => model.say(reason),
         None => {}
     }
+}
+
+/// `c`: copy the focused entry's source text, and say what was copied (`02`
+/// §4). An entry with no text of its own — the activity group, whose words are
+/// its steps' — copies nothing and claims nothing.
+fn copy(model: &mut Model, cmds: &mut Vec<Cmd>) {
+    let Some((word, text)) = model.focused_entry().and_then(focus_text::plain) else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    model.say(focus_text::toast(word, &text));
+    cmds.push(Cmd::Copy(text));
 }
 
 /// Enter: send the composer, or hold it behind the turn already running.
 fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     let text = model.take_composer();
     if text.trim().is_empty() {
+        return;
+    }
+    // A line the surface answers itself — `/sql`, `/export`, `/chart`,
+    // `/investigation` — is one command, never a turn (`03` §4.1). So is
+    // bare `/mode`, which opens the picker instead of sending anything
+    // (`02` §8). Every other line is a turn's.
+    match direct::read(model, &text) {
+        direct::Read::Cmd(cmd) => {
+            cmds.push(cmd);
+            return;
+        }
+        direct::Read::Said(words) => {
+            model.say(words);
+            return;
+        }
+        direct::Read::Turn => {}
+    }
+    if text.trim() == SLASH_MODE {
+        model.open_mode_picker();
         return;
     }
     if model.is_busy() {
@@ -101,11 +174,29 @@ fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
     }
 }
 
-/// Shift+Tab: the mode cycle's next member, skipping a withheld `bypass`.
+/// Shift+Tab: the mode cycle's next member, skipping a withheld `bypass`. The
+/// cycle is `02` §8's four interactive modes — `read-only` and `never` are
+/// reachable only by naming them — and only a change is said (J6).
 fn cycle(model: &mut Model, cmds: &mut Vec<Cmd>) {
     let next = next_in_cycle(model.mode(), model.allow_bypass);
     model.set_mode(next);
+    model.note_mode(next);
     cmds.push(Cmd::SwitchMode(next));
+}
+
+/// Enter on the mode picker: the selected row's mode is stated, once, and
+/// exactly a change is said where it happened (J6).
+fn choose(model: &mut Model, cmds: &mut Vec<Cmd>) {
+    let Some(chosen) = model.mode_picker().map(ModePicker::chosen) else {
+        return;
+    };
+    model.close_overlay();
+    if chosen == model.mode() {
+        return;
+    }
+    model.set_mode(chosen);
+    model.note_mode(chosen);
+    cmds.push(Cmd::SetMode(chosen));
 }
 
 /// One session event: folded into the transcript and, when it ends a turn,

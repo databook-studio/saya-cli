@@ -10,3 +10,4 @@ include!("tests/mode_axis.rs");
 include!("tests/contracts_verbs.rs");
 include!("tests/preferences.rs");
 include!("tests/notes_recovery.rs");
+include!("tests/rewind.rs");

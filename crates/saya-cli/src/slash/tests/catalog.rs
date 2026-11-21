@@ -71,14 +71,14 @@ fn sample_line(name: &str) -> String {
     format!("/{name}{tail}")
 }
 
-/// Both directions, counted: the parser answers 59 command names, the
-/// catalogue lists the same 59, and every catalogued name parses.
+/// Both directions, counted: the parser answers 62 command names, the
+/// catalogue lists the same 62, and every catalogued name parses.
 #[test]
 fn catalogue_and_parser_name_the_same_commands() {
     let arms = parser_arm_names();
-    assert_eq!(arms.len(), 59, "the parser's match has 59 command arms");
+    assert_eq!(arms.len(), 62, "the parser's match has 62 command arms");
     let catalogued: Vec<&str> = catalog::names().collect();
-    assert_eq!(catalogued.len(), 59, "the catalogue has 59 names");
+    assert_eq!(catalogued.len(), 62, "the catalogue has 62 names");
 
     let missing: Vec<&String> = arms
         .iter()
@@ -140,11 +140,16 @@ fn every_alias_resolves_to_its_command() {
         vec![
             ("approvals", "mode"),
             ("investigations", "investigation"),
+            ("rotate", "compact"),
+            ("history", "sessions"),
             ("contract", "contracts"),
             ("queue", "contracts"),
             ("confirm", "contracts"),
             ("reject", "contracts"),
             ("approve-all", "contracts"),
+            ("usage", "status"),
+            ("workspace", "status"),
+            ("context", "status"),
             ("quit", "exit"),
         ],
         "today's aliases, and only these"
@@ -239,11 +244,11 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         );
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 51, "the listing shows 51 of today's 59 names");
+    assert_eq!(ranks.len(), 49, "the listing shows 49 of today's 62 names");
     assert_eq!(
         catalog::names().count(),
-        59,
-        "with the four folded aliases, the parser answers 59 names"
+        62,
+        "with the folded aliases, the parser answers 62 names"
     );
     ranks.sort_unstable();
     let mut unique = ranks.clone();

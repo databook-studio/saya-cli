@@ -1,12 +1,13 @@
 //! The transcript's entries: the presentation-free data one turn's event
 //! stream folds into — a turn reads as the operator's message, one activity
-//! block with a line per tool step, the answer and the result preview.
+//! block with a line per tool step, the answer and the result preview, and the
+//! other blocks of `02` §3.4-§3.9 in [`super::entry_blocks`].
 //! Nothing here names a glyph, a colour or a widget.
 
-use saya_types::QueryResult;
 use serde_json::Value;
 
-use crate::agent::tools::{CaptureEvent, CaptureRefusalReason};
+use super::entry_blocks::{Clarification, Command, Edit, Error, Helper, Stop};
+use super::entry_result::ResultPreview;
 
 /// The conversation as its front holds it: one view per turn, oldest first.
 #[derive(Debug, Default, PartialEq)]
@@ -48,6 +49,13 @@ impl TranscriptView {
     fn push_turn(&mut self) {
         self.turns.push(TurnView::default());
     }
+
+    /// The turn at `index`, to be changed. This is the one write that reaches
+    /// back into an older turn, which is what the block cursor's fold needs: a
+    /// group in *any* turn opens, not only the newest (`02` §6).
+    pub(crate) fn turn_mut(&mut self, index: usize) -> Option<&mut TurnView> {
+        self.turns.get_mut(index)
+    }
 }
 
 /// One turn of the conversation.
@@ -82,6 +90,11 @@ impl TurnView {
     pub(crate) fn answer_mut(&mut self) -> Option<&mut Answer> {
         self.entries.iter_mut().find_map(Entry::answer_mut)
     }
+
+    /// The block at `index`, to be changed.
+    pub(crate) fn entry_mut(&mut self, index: usize) -> Option<&mut Entry> {
+        self.entries.get_mut(index)
+    }
 }
 
 /// One block of a turn.
@@ -97,18 +110,30 @@ pub(crate) enum Entry {
     ResultPreview(ResultPreview),
     /// Something the session itself has to say.
     Notice(Notice),
+    /// An edit of one file, and the diff of it (`02` §3.4).
+    Edit(Edit),
+    /// A command the turn ran, and how it ended (`02` §3.5).
+    Command(Command),
+    /// A helper's work, as one block (`02` §3.6).
+    Helper(Helper),
+    /// What ended the turn in failure (`02` §3.7).
+    Error(Error),
+    /// What stopped the turn, or the operator's cancel (`02` §3.8).
+    Stop(Stop),
+    /// The model's clarifying question (`02` §3.9).
+    Question(Clarification),
 }
 
 impl Entry {
-    /// The block's place in the turn: message, activity, answer, preview, then
-    /// whatever the session says after it.
+    /// The block's place in the turn: message, the work the turn did, answer,
+    /// preview, then what the session says or what ended the turn.
     const fn rank(&self) -> u8 {
         match self {
             Self::UserMessage(_) => 0,
-            Self::Activity(_) => 1,
+            Self::Activity(_) | Self::Edit(_) | Self::Command(_) | Self::Helper(_) => 1,
             Self::Answer(_) => 2,
             Self::ResultPreview(_) => 3,
-            Self::Notice(_) => 4,
+            Self::Notice(_) | Self::Error(_) | Self::Stop(_) | Self::Question(_) => 4,
         }
     }
 
@@ -200,43 +225,6 @@ impl StepState {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Answer {
     pub(crate) text: String,
-}
-
-/// The result one successful query handed the front: the rows the model saw,
-/// or the refusal that kept them from it.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ResultPreview {
-    /// The connection that actually ran the query.
-    pub(crate) connection: String,
-    pub(crate) sql: String,
-    pub(crate) result: QueryResult,
-    /// Why the capture was refused: a preview with no rows says so, and never
-    /// pretends the result was empty.
-    pub(crate) refusal: Option<CaptureRefusalReason>,
-}
-
-impl ResultPreview {
-    /// The preview of one capture event, held or refused.
-    pub(crate) fn from_capture(event: &CaptureEvent) -> Self {
-        match event {
-            CaptureEvent::Captured(capture) => Self {
-                connection: capture.connection.clone(),
-                sql: capture.sql.clone(),
-                result: capture.result.clone(),
-                refusal: None,
-            },
-            CaptureEvent::Refused {
-                sql,
-                connection,
-                reason,
-            } => Self {
-                connection: connection.clone(),
-                sql: sql.clone(),
-                result: QueryResult::empty(sql),
-                refusal: Some(*reason),
-            },
-        }
-    }
 }
 
 /// Something the session itself has to say, in its own words.

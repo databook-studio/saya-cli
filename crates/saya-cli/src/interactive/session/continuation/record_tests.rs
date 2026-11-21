@@ -44,6 +44,7 @@ fn requested_run_command(arguments: serde_json::Value) -> AgentEvent {
         name: "run_command".into(),
         arguments,
         effect: None,
+        caller: None,
     }
 }
 
@@ -51,6 +52,7 @@ fn completed_run_command(summary: impl Into<String>) -> AgentEvent {
     AgentEvent::ToolCompleted {
         name: "run_command".into(),
         summary: summary.into(),
+        caller: None,
     }
 }
 

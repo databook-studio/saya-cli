@@ -41,6 +41,7 @@ fn completed(name: &str, summary: &str) -> AgentEvent {
     AgentEvent::ToolCompleted {
         name: name.into(),
         summary: summary.into(),
+        caller: None,
     }
 }
 

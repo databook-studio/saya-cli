@@ -9,6 +9,7 @@
 use ratatui::crossterm::event::KeyEvent;
 use saya_agent::PermissionMode;
 
+use super::direct::{Direct, DirectOutcome};
 use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 
@@ -18,10 +19,14 @@ use crate::chat::ChatEvent;
 /// what the surface has to say for itself — a worker that could not finish —
 /// is what lands here. A struct rather than a bare sentence, so the units that
 /// add a field do not have to rewrite every construction of it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Worker {
     /// The worker's own words about itself, said to the operator.
     pub(crate) message: String,
+    /// What a direct command handed back, when it handed something back: the
+    /// rows a query returned, or the sentence a command ends in. The units
+    /// that ask a worker for something else add their field beside it.
+    pub(crate) direct: Option<DirectOutcome>,
 }
 
 /// One thing the surface has to react to.
@@ -51,7 +56,7 @@ pub(crate) enum Msg {
 ///
 /// The model never performs these itself: that is what keeps a whole session
 /// — sending, queueing, cancelling, answering — testable without a terminal.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Cmd {
     /// Run one message as a turn.
     Send(String),
@@ -61,4 +66,19 @@ pub(crate) enum Cmd {
     Answer(u64, Answer),
     /// State a mode on the run's cell.
     SwitchMode(PermissionMode),
+    /// State the mode an operator chose in the picker (`02` §8). Performers
+    /// route it to the same switch as [`Cmd::SwitchMode`]: the cycle and the
+    /// picker differ only in how the mode was chosen.
+    SetMode(PermissionMode),
+    /// Put this text on the clipboard (`02` §6's `c`): the entry's source, as
+    /// the view model holds it, never its painted rows.
+    Copy(String),
+    /// Run one command the surface answers itself (`03` §4.1): `/sql`,
+    /// `/export`, `/chart`, `/investigation`. Performed off the loop's thread;
+    /// its answer comes back as [`Msg::Worker`].
+    Direct(Direct),
+    /// Bind the launch folder as this session's workspace (`02` §9.4): the
+    /// trust question's `y`, carried out through today's trust store, exactly
+    /// like an explicit `--workspace`.
+    Trust,
 }

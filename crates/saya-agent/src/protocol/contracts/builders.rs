@@ -101,6 +101,7 @@ impl AgentEvent {
             name: name.into(),
             arguments,
             effect,
+            caller: None,
         }
     }
 

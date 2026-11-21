@@ -51,6 +51,7 @@ fn mixed_sequence() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "run_command",
@@ -60,6 +61,7 @@ fn mixed_sequence() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "run_command".into(),
             summary: "failed pytest".into(),
+            caller: None,
         },
         AgentEvent::assistant_text("done"),
         AgentEvent::complete(),

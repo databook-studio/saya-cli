@@ -95,8 +95,13 @@ fn slash_commands_parse_and_state_transitions_are_deterministic() {
         "the state moves in the switch, not in the pure apply"
     );
     assert!(matches!(
-        state.apply(SlashCommand::History, &[]),
-        SessionAction::History
+        state.apply(
+            SlashCommand::Sessions(saya_cli::SessionsRequest {
+                via_history_alias: true,
+            }),
+            &[]
+        ),
+        SessionAction::History(true)
     ));
     assert!(matches!(
         state.apply(SlashCommand::Schema(false), &[]),

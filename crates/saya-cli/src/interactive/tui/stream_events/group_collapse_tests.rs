@@ -26,6 +26,7 @@ fn two_write_calls() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "write",
@@ -35,6 +36,7 @@ fn two_write_calls() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "other.md written".into(),
+            caller: None,
         },
     ]
 }
@@ -170,6 +172,7 @@ fn one_member_group_renders_as_today_with_no_toggle() {
         AgentEvent::ToolCompleted {
             name: "write".into(),
             summary: "notes.md written".into(),
+            caller: None,
         },
     ];
     let mut grouped = Transcript::new();

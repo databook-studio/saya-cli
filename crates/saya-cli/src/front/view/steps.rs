@@ -99,7 +99,11 @@ fn helper_id(arguments: &Value) -> Option<&str> {
 
 /// A command as the operator reads it: the `cd` that only exists to reach the
 /// workspace root is not part of the command.
-fn own_words<'a>(command: Option<&'a str>, root: Option<&Path>) -> Option<&'a str> {
+///
+/// `pub(crate)` so the command block of the transcript pane (`02` §3.5) reads a
+/// command the same way a `Run` step line does, instead of stripping the root
+/// twice.
+pub(crate) fn own_words<'a>(command: Option<&'a str>, root: Option<&Path>) -> Option<&'a str> {
     let command = command?;
     Some(strip_root_cd(command, root).unwrap_or(command))
 }
@@ -165,7 +169,11 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 }
 
 /// The block's time: seconds under a minute, minutes and seconds above it.
-fn elapsed_text(elapsed: Duration) -> String {
+///
+/// `pub(crate)` so the live header of the transcript pane (`02` §3.2's
+/// `● Working · 41s`) reads the block's time in the same units as its folded
+/// line, instead of a second time formatter beside it.
+pub(crate) fn elapsed_text(elapsed: Duration) -> String {
     let seconds = elapsed.as_secs();
     if seconds < 60 {
         format!("{seconds}s")

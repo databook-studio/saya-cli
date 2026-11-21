@@ -44,6 +44,7 @@ fn a_clarification_renders_a_distinct_question_block_with_numbered_options() {
         AgentEvent::ToolCompleted {
             name: "request_clarification".into(),
             summary: "question asked — the turn pauses for the user's answer".into(),
+            caller: None,
         },
         false,
     );
