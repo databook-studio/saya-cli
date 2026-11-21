@@ -81,6 +81,18 @@ pub(crate) struct LineSession {
     /// the call waiting at the terminal. The plain loop states none: its turns
     /// are its own.
     pub(crate) cancellation: Option<CancellationToken>,
+    /// The session's live task list: the cell the run's `checklist` writes
+    /// through, synced back into the session record after every turn.
+    pub(crate) tasks: Option<crate::interactive::session::tasks::SessionTasks>,
+    /// The session facts the run's requests carry: the compaction narrative and
+    /// the continuation record the session's loop holds. Written at this
+    /// front's compaction boundary, read where a request is assembled.
+    pub(crate) facts: Option<Arc<crate::chat::SessionFacts>>,
+    /// The conversation the run begins with, oldest pair first: the pairs the
+    /// session's record keeps ahead of the compaction boundary, so a resumed
+    /// session replays its kept tail exactly as the run before it did. Empty —
+    /// a session that has said nothing yet — is a run with no history.
+    pub(crate) seed: Vec<(String, String)>,
 }
 
 /// Opens the session: composes and opens its run, and hands back the session
@@ -202,7 +214,7 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
         &shape,
     )
     .await?;
-    let composed = RunComposition::compose(application, stated)
+    let composed = RunComposition::compose_seeded(application, stated, parts.seed.clone())
         .await
         .map_err(|error| error.to_string())?;
     // The composition states the operator on the host, which only the host's one
@@ -261,6 +273,8 @@ pub(super) async fn session_run(
         // Memory off learns nothing; with memory on, the run learns through the
         // plugin's post-turn hook, on its own provider and model.
         learning,
+        tasks: parts.tasks.clone(),
+        facts: parts.facts.clone(),
     })
 }
 

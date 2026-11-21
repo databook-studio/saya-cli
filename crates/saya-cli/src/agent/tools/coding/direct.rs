@@ -7,9 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use saya_agent::{
-    ApprovalDecider, ImmutableAuthorityRefusal, ToolDefinition, ToolError, ToolExecutor,
-};
+use saya_agent::{ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::worktree::VerifiedCheckout;
 use serde_json::Value;
 
@@ -19,8 +17,6 @@ use super::direct_tools::DirectCodingTools;
 use super::parent::CodingTools;
 use super::readonly::ReadOnlyTools;
 use super::root_shell::RootShell;
-use super::routes::routes_to_root_owned;
-use crate::agent::tools::write_ask::{self, hidden_write};
 
 /// The root loop's tool surface, keyed on the job's working checkout:
 /// `ReadOnly` reads the job's own folder; `WorkingCheckout` is the composed
@@ -63,6 +59,34 @@ impl RootTools {
         }
     }
 
+    /// Gives the run the session's own task cell: the `checklist` tool writes
+    /// through it, and the run's turns render the list at the turn's start —
+    /// the session's own place — instead of this surface rendering it mid-turn.
+    /// A run given none (every job surface) keeps a list of its own.
+    pub(crate) fn attach_session_tasks(
+        &mut self,
+        tasks: crate::interactive::session::tasks::SessionTasks,
+    ) {
+        if let RootTools::WorkingCheckout(direct) = self {
+            direct.attach_session_tasks(tasks);
+        }
+    }
+
+    /// The session task list this request must carry, when the run works
+    /// through a session's own list and the list changed since the last
+    /// request carried it. Rendered once, at the turn's start: what the
+    /// release's turn body did, so a list that changed mid-turn rides the turn
+    /// after it.
+    pub(crate) fn take_session_tasks(&self) -> Option<saya_agent::ContextBlock> {
+        let RootTools::WorkingCheckout(direct) = self else {
+            return None;
+        };
+        direct.session_tasks.as_ref()?;
+        crate::interactive::session::tasks::render::render_tasks_block(
+            &direct.tasks.take_changed()?,
+        )
+    }
+
     /// Builds the root tool surface from the job. A job with no working
     /// checkout (no approved write path, or in place) gets the read-only
     /// workspace toolset over its own folder; a job with one gets the composed
@@ -102,8 +126,11 @@ impl RootTools {
             denials: super::owner_denial::DenialTally::default(),
         };
         // The root writes the shared working checkout, so the exact
-        // write admission over W is the whole write decision.
-        let decider = workspace.approval;
+        // write admission over W is the whole write decision — with the
+        // session's own grant store beside it: a family the session already
+        // holds a grant for is pre-answered, and the workspace tool's
+        // containment stays the last word on the path.
+        let decider = workspace.approval.with_grants(job.launch_grants());
         // The root's shell: built over the working checkout's own root, and
         // only when the config is on, the mode is not `never`, and the sandbox
         // (or, without one, the host lane) allows it.
@@ -128,7 +155,7 @@ impl RootTools {
         let plan = job.plan_gate();
         let mut direct = DirectCodingTools::new(
             coordinator,
-            workspace.tools,
+            workspace.tools.with_grants(job.launch_grants()),
             workspace.definitions,
             decider,
             shell,
@@ -184,6 +211,12 @@ impl ToolExecutor for RootTools {
         let RootTools::WorkingCheckout(direct) = self else {
             return None;
         };
+        // A session's list is rendered at the turn's start, where the release's
+        // turn body rendered it: a list that changed mid-turn rides the next
+        // turn, never the request already in flight.
+        if direct.session_tasks.is_some() {
+            return None;
+        }
         let block = crate::interactive::session::tasks::render::render_tasks_block(
             &direct.tasks.take_changed()?,
         )?;
@@ -287,108 +320,6 @@ impl ToolExecutor for RootTools {
                 Some(shell) => shell.wait_background_exit(deadline, cancellation).await,
                 None => false,
             },
-        }
-    }
-}
-
-#[async_trait]
-impl ApprovalDecider for RootTools {
-    async fn approve(&self, tool: &ToolDefinition, arguments: &Value) -> bool {
-        // A chat-surface run decides its database tools in the plugin's lane,
-        // before the variant split: the read-only surface allows every name it
-        // advertises unasked, so the lane has to come first to be the ask it is.
-        if let Some(allowed) = self.db_lane_approve(tool, arguments).await {
-            return allowed;
-        }
-        match self {
-            RootTools::ReadOnly(read_only) => read_only.approve(tool, arguments).await,
-            RootTools::WorkingCheckout(direct) => {
-                // Coordinator-routed tools are approved against the advertised
-                // definitions; hidden first-ship names are not advertised. The
-                // exact-write decider handles workspace tools, and the root
-                // shell and the fetch tool each decide a call the way their own
-                // mode says.
-                if routes_to_root_owned(&tool.name) {
-                    return direct.approves_coordinator(tool);
-                }
-                if DirectCodingTools::is_shell(&tool.name) {
-                    return match &direct.shell {
-                        Some(shell) => shell.approve(tool, arguments).await,
-                        None => false,
-                    };
-                }
-                if crate::agent::tools::web::is_web_tool(&tool.name) {
-                    return match &direct.web {
-                        Some(web) => web.approve(tool, arguments).await,
-                        None => false,
-                    };
-                }
-                // An MCP tool is a call to a program saya cannot bound, so it
-                // is decided the way the root shell is: by its own lane.
-                if crate::mcp::client::McpTools::owns(&tool.name) {
-                    return match &direct.mcp {
-                        Some(mcp) => mcp.approve(tool, arguments).await,
-                        None => false,
-                    };
-                }
-                // The exact-write admission decides what this call may
-                // touch, and the job's mode then decides whether its consent
-                // covers a write: only an `ask` job with an operator asks. A
-                // write this surface does not offer at all is refused before
-                // the question, because the executor would refuse it too.
-                match write_ask::for_root(&direct.coordinator.job) {
-                    Some(_) if hidden_write(tool, |name| direct.advertises(name)) => false,
-                    Some(ask) => ask.approve(&direct.decider, tool, arguments).await,
-                    None => direct.decider.approve(tool, arguments).await,
-                }
-            }
-        }
-    }
-
-    fn would_ask(&self, tool: &ToolDefinition, arguments: &Value) -> Option<bool> {
-        // The lane's ask is the ask a `PermissionRequest` hook may pre-empt, so
-        // the gate reads the same table the call is decided by.
-        if let Some(asked) = self.db_lane_would_ask(tool, arguments) {
-            return Some(asked);
-        }
-        match self {
-            RootTools::ReadOnly(read_only) => read_only.would_ask(tool, arguments),
-            RootTools::WorkingCheckout(direct) => {
-                // A coordinator-routed tool is approved by its advertised
-                // definition, not by an operator: no ask to pre-empt.
-                if routes_to_root_owned(&tool.name) {
-                    return Some(false);
-                }
-                match write_ask::for_root(&direct.coordinator.job) {
-                    Some(_) if hidden_write(tool, |name| direct.advertises(name)) => Some(false),
-                    Some(ask) => ask.would_ask(direct.decider_for(tool), tool, arguments),
-                    None => direct.decider_for(tool).would_ask(tool, arguments),
-                }
-            }
-        }
-    }
-
-    fn refusal_detail(&self, tool: &ToolDefinition, arguments: &Value) -> Option<String> {
-        match self {
-            RootTools::ReadOnly(read_only) => read_only.refusal_detail(tool, arguments),
-            RootTools::WorkingCheckout(direct) => {
-                direct.decider_for(tool).refusal_detail(tool, arguments)
-            }
-        }
-    }
-
-    fn immutable_authority_refusal(
-        &self,
-        tool: &ToolDefinition,
-        arguments: &Value,
-    ) -> Option<ImmutableAuthorityRefusal> {
-        match self {
-            RootTools::ReadOnly(read_only) => {
-                read_only.immutable_authority_refusal(tool, arguments)
-            }
-            RootTools::WorkingCheckout(direct) => direct
-                .decider_for(tool)
-                .immutable_authority_refusal(tool, arguments),
         }
     }
 }

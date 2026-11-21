@@ -104,6 +104,17 @@ impl NativeCodingJob {
             )
             .await;
         }
+        // The session's own facts join it: the task list the run holds, the
+        // compaction narrative and the continuation record its loop holds now,
+        // each through the builder the interactive turn already renders them
+        // with. A run no session stated them for (every job surface) carries
+        // none of them.
+        if let Some(block) = session.tools.take_session_tasks() {
+            context_blocks.push(block);
+        }
+        if let Some(facts) = session.facts.as_ref() {
+            context_blocks.extend(facts.blocks(config.ai.context_byte_budget));
+        }
         // The active plugins' context joins it, bounded by the same byte
         // budget; plugin context in this turn's prompt is a use of the plugin,
         // so its policy arms here, before request 1.

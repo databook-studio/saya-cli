@@ -110,6 +110,15 @@ impl SessionState {
             output.used_bounded_sql_query,
             output.tool_metadata.clone(),
         );
+        self.observe_agent_output(output);
+    }
+
+    /// The live half of a completed turn's recording: what its tools observed,
+    /// kept for the session's continuation and for the next request's recall.
+    /// The turn body settles a turn through this, whichever surface ran it, so
+    /// the record a compaction saves states the same file and check facts
+    /// however the turn was driven.
+    pub(crate) fn observe_agent_output(&mut self, output: &AgentOutput) {
         self.prior_tool_outcomes = Some(
             crate::interactive::session::continuation::PriorToolOutcomes::from_live_output(output),
         );
@@ -117,6 +126,22 @@ impl SessionState {
             output,
             crate::interactive::session::continuation::now_unix_ms(),
         );
+    }
+
+    /// The conversation a run of this session replays, as the record states it:
+    /// the settled pairs behind the compaction boundary, oldest first. The
+    /// narrative rides the request's own block, never this history, so a
+    /// compaction's fold is applied here exactly once.
+    pub(crate) fn replayed_pairs(&self) -> Vec<(String, String)> {
+        let folded = match self.compaction_narrative() {
+            Some(_) => self.compacted_turns,
+            None => 0,
+        };
+        self.turns
+            .iter()
+            .skip(folded.min(self.turns.len()))
+            .map(|turn| (turn.user.clone(), turn.assistant.clone()))
+            .collect()
     }
 
     pub fn provider_history(&self) -> Vec<ChatMessage> {

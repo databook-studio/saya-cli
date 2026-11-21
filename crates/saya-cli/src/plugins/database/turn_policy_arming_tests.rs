@@ -70,6 +70,7 @@ fn inputs(budget: DatabaseBudget) -> TurnInputs {
             primary: None,
         }),
         seed: Vec::new(),
+        ..TurnInputs::default()
     }
 }
 

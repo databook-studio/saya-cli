@@ -64,6 +64,10 @@ pub(super) struct RootSession {
     /// surface does, as the line session's turn did on release; a job surface
     /// states its own context and carries none of it.
     pub(super) project_context: bool,
+    /// The session facts this run's requests carry, when a session states them:
+    /// the compaction narrative and the continuation record its loop holds.
+    /// `None` is a job surface, which carries neither.
+    pub(super) facts: Option<Arc<crate::chat::SessionFacts>>,
 }
 
 impl NativeCodingJob {

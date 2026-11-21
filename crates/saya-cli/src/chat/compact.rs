@@ -26,6 +26,7 @@
 //! this is the session's own boundary, after a turn settled, between the runs a
 //! session composes.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use saya_agent::{CONTEXT_COMPACT_PERCENT, context_utilisation_percent};
@@ -63,12 +64,25 @@ pub(crate) struct Compaction {
     /// Set when an automatic compaction failed: the trigger stays silent until
     /// `/clear` or an explicit `/compact` re-arms it.
     latched: AtomicBool,
+    /// The session facts a summarising compaction states, when the surface
+    /// keeps them: the plan it validated and the summary it saved are the
+    /// facts the loop applies to its own session state, so there is one writer
+    /// and no second compaction.
+    facts: Option<Arc<super::SessionFacts>>,
 }
 
 impl Compaction {
     /// The compaction of one session's conversation.
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// The session facts this compaction states its summary into, when the
+    /// surface keeps them: the line front's own cell, so a compaction the
+    /// boundary runs is the one the loop's session state records.
+    pub(crate) fn stating(mut self, facts: Option<Arc<super::SessionFacts>>) -> Self {
+        self.facts = facts;
+        self
     }
 
     /// Whether the trigger is latched: a failed compaction is never retried on
@@ -136,12 +150,18 @@ impl Compaction {
         )
         .await;
         match result {
-            Pass::Summarised { summary, .. } => {
+            Pass::Summarised { plan, summary, .. } => {
                 transcript.save_summary(&summary);
                 // A summary that survived validation re-arms the trigger: the
                 // working memory it leaves behind is smaller than the one it
                 // replaced.
                 self.latched.store(false, Ordering::Release);
+                // The session's own facts, stated by the boundary that ran the
+                // compaction: the loop applies them to its state through the
+                // one writer every compaction already used.
+                if let Some(facts) = self.facts.as_ref() {
+                    facts.note_compaction(&plan, &summary);
+                }
                 Compacted::Summarised(summary)
             }
             Pass::Failed { reason, .. } => {

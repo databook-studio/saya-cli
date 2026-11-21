@@ -175,6 +175,12 @@ impl<'a> LiveAttemptRunner<'a> {
             // The question's own stop: a deadline or a signal latched for this
             // attempt must also end the call waiting at the terminal.
             cancellation: Some(self.scope.cancellation()),
+            // An attempt is one turn of a job, not a session: no live task list
+            // and none of a session's facts ride it.
+            tasks: None,
+            facts: None,
+            // The attempt says what it was asked and nothing else.
+            seed: Vec::new(),
         }
     }
 

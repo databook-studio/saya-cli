@@ -8,6 +8,7 @@ mod owner_denial;
 mod parent;
 pub(crate) mod plan_gate;
 mod readonly;
+mod root_approval;
 mod root_db_lane;
 mod root_mcp;
 pub(crate) use root_mcp::build_for_helper;

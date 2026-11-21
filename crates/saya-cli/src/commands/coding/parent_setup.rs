@@ -69,6 +69,13 @@ impl NativeCodingJob {
         {
             tools.attach_db_lane(Arc::new(lane));
         }
+        // A run a session opens works through the session's own task cell: its
+        // `checklist` writes there, so the record can keep what the run left,
+        // and its turns render the list at the turn's start rather than the
+        // root rendering it mid-turn.
+        if let Some(tasks) = inputs.tasks.clone() {
+            tools.attach_session_tasks(tasks);
+        }
         let tools = Arc::new(tools);
         // The run's own working checkout, resolved once: `RootTools::build` has
         // just ensured it and returns the use-time verification it composed the
@@ -175,6 +182,10 @@ impl NativeCodingJob {
             history: TurnHistory::seeded(inputs.seed.clone()),
             plugins,
             project_context,
+            // The session facts a chat run's requests carry, when the session
+            // states them: the compaction narrative and the continuation
+            // record its loop holds.
+            facts: inputs.facts.clone(),
         })
     }
 }
