@@ -111,7 +111,7 @@ fn provider_message(error: &saya_agent::ProviderError) -> String {
 /// connection failure is left untouched rather than given advice that might
 /// not fit. Applied at the `prepare_turn` seam so both the `ask` and the
 /// interactive paths surface it.
-fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
+pub(crate) fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
     match error {
         AgentRuntimeError::Database(message)
             if message.contains("secret reference")

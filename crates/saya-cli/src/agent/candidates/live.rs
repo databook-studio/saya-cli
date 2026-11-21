@@ -169,6 +169,9 @@ impl<'a> LiveAttemptRunner<'a> {
             can_prompt: self.can_prompt,
             // `saya ask` takes no `--allow`: an attempt starts with no grant.
             grants: saya_agent::SessionGrants::default(),
+            // The one-turn composition states the root the attempt records
+            // under, so an ask keeps no records inside the folder it asks about.
+            state_root: None,
         }
     }
 

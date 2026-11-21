@@ -50,6 +50,9 @@ fn handle_message(
                 // holds them: a resumed session restarts unstated, and its store
                 // is empty because nothing was seeded into it.
                 grants: session.policy().grants().clone(),
+                // The plain loop takes the configured root: it works in the
+                // folder, so its records are the folder's.
+                state_root: None,
             })?;
             // The record names the run the session belongs to: lineage only.
             state.run = chat.run_link();

@@ -348,6 +348,31 @@ impl CodingApplication {
         )
         .await
     }
+
+    /// The same session over a state root the surface stated: a one-shot ask
+    /// keeps its job's records outside the folder it asks about, so it names the
+    /// root they go under instead of taking the configured one.
+    pub(crate) async fn session_over(
+        runtime: RuntimeConfig,
+        store: SqliteStateStore,
+        repository: &Path,
+        mode: RootMode,
+        state_root: &Path,
+        token: &CancellationToken,
+    ) -> Result<Arc<Self>, CodingError> {
+        let (root, program_dir) = super::root_mode::session_inputs_over(&runtime, state_root)?;
+        Self::open_default_with_mode(
+            runtime,
+            store,
+            repository,
+            &root,
+            &super::cli::find_git()?,
+            &program_dir,
+            mode,
+            token,
+        )
+        .await
+    }
 }
 
 /// Names the operation and the path in a filesystem error. The OS message
