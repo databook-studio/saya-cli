@@ -15,10 +15,10 @@ async fn pre_stopped_question_never_opens_candidate_setup_connection() {
         cancellation.cancel();
         let scope =
             crate::agent::question_scope::QuestionScope::session(&runtime, cancellation.clone());
-        let sink = RecordingSink {
+        let sink = Arc::new(RecordingSink {
             events: Arc::new(Mutex::new(Vec::new())),
             knowledge_log: Arc::new(Mutex::new(Vec::new())),
-        };
+        });
         let result = tokio::time::timeout(
             Duration::from_secs(4),
             crate::agent::candidates::run_with_candidates(
@@ -26,16 +26,12 @@ async fn pre_stopped_question_never_opens_candidate_setup_connection() {
                 "do not start a stopped question",
                 ApprovalPolicy::ReadOnly,
                 false,
-                false,
                 PromptOverrides::default(),
-                Vec::new(),
-                &sink,
+                root.clone(),
+                crate::render::RenderFormat::Text,
+                Arc::clone(&sink) as Arc<dyn saya_agent::AgentEventSink>,
                 scope,
                 None,
-                None,
-                None,
-                None,
-                AgentMode::Build,
                 candidates,
             ),
         )

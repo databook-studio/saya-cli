@@ -95,7 +95,8 @@ async fn a_budget_stopped_vote_stays_owned_until_its_real_source_settles() {
     let task = local.spawn_local({
         let sink = Arc::clone(&sink);
         async move {
-            let receipts = AnsweringReceiptSink::new(sink.as_ref());
+            let receipts =
+                AnsweringReceiptSink::new(Arc::clone(&sink) as Arc<dyn saya_agent::AgentEventSink>);
             orchestrate(
                 2,
                 &runner,

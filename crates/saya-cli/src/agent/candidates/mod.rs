@@ -1,27 +1,30 @@
 //! Runs the agent multiple times and decides which answer to believe.
 //!
 //! Wires [`crate::agent::decide`] into the `ask` path: when `candidates > 1`,
-//! the agent runs `candidates` times in sequence (each with a fresh empty
-//! history), the nominated SQL of each attempt is collected, and [`decide`]
-//! votes on result-set fingerprints — emitting one `ConsensusDecided` event
-//! and returning the winning attempt's output.
+//! the question is asked `candidates` times in sequence — each attempt one
+//! turn of its own chat session, on a fresh history — the nominated SQL of each
+//! attempt is collected, and [`decide`] votes on result-set fingerprints,
+//! emitting one `ConsensusDecided` event and returning the winning attempt's
+//! output.
 //!
-//! [`run_with_candidates`] is the production entry: `candidates <= 1` returns
-//! [`run_prompt_with_sink`] unchanged so the overwhelmingly common case keeps
-//! today's exact code path — no loop, no extra connector, no new event. The
-//! loop, the decision, and the emit live in [`orchestrate`], which is injectable
-//! for tests via the [`AttemptRunner`] trait (mirroring [`CandidateExecutor`]).
+//! [`run_with_candidates`] is the production entry: every attempt, including
+//! the overwhelmingly common single one, runs as a one-turn chat session — the
+//! same composition `saya ask` opens — so there is no second turn body beside
+//! it. The loop, the decision and the emit live in [`orchestrate`], which is
+//! injectable for tests via the [`AttemptRunner`] trait (mirroring
+//! [`CandidateExecutor`]).
 
 mod live;
 mod orchestrate;
 mod stop;
 
 use super::question_scope::QuestionScope;
-use super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
+use super::runtime::{AgentRuntimeError, PromptOverrides};
 use crate::answering_receipts::AnsweringReceiptSink;
-use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy, ChatMessage};
+use saya_agent::{AgentEventSink, AgentOutput, ApprovalPolicy};
 use saya_store::SqliteStateStore;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -33,72 +36,59 @@ use self::orchestrate::orchestrate;
 /// [`CandidateExecutor`] lets the decision logic be tested against a fake.
 ///
 /// Uses a manually-boxed future with a lifetime tied to `&self` rather than
-/// `async_trait`: the production runner delegates to [`run_prompt_with_sink`],
+/// `async_trait`: the production runner holds a chat session's composition,
 /// whose future captures borrowed connection-build state that does not satisfy
 /// `async_trait`'s higher-ranked `Send`/lifetime bounds.
 pub(crate) trait AttemptRunner: Sync {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<AgentOutput, AgentRuntimeError>> + '_>>;
 }
 
-/// The `ask` entry for candidate runs. Takes the same arguments as
-/// [`run_prompt_with_sink`] plus `candidates`.
+/// The `ask` entry for candidate runs: `candidates` one-turn sessions over the
+/// ask's own facts.
 ///
-/// `candidates <= 1` returns [`run_prompt_with_sink`] unchanged: no loop, no
-/// extra connector, no consensus event — today's single-run path, byte for
-/// byte. `candidates > 1` builds a live [`CandidateExecutor`] for the active
-/// profile, then hands the loop to [`orchestrate`].
+/// `candidates <= 1` runs the one attempt and returns it — no loop, no extra
+/// connector, no consensus event. `candidates > 1` builds a live
+/// [`CandidateExecutor`] for the active profile, then hands the loop to
+/// [`orchestrate`].
 ///
-/// `can_prompt` means "may read stdin" (the connector's secret prompt);
-/// `can_obtain_approval` means "can obtain a per-call approval at all" (the
-/// advertisement gate). The one-shot `ask` path passes the same value for
-/// both — unchanged behaviour.
+/// Every attempt renders its answer through `sink`, the surface's own answer
+/// sink, and the calls it paid are counted beside it: the receipts the
+/// consensus sums ride the same sink. `folder` is the folder each attempt's
+/// session opens over, and `format` is the rendering a session falls back to.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_with_candidates(
     runtime: &crate::config::runtime::RuntimeConfig,
     prompt: &str,
     approval: ApprovalPolicy,
     can_prompt: bool,
-    can_obtain_approval: bool,
     overrides: PromptOverrides,
-    history: Vec<ChatMessage>,
-    sink: &dyn saya_agent::AgentEventSink,
+    folder: PathBuf,
+    format: crate::render::RenderFormat,
+    sink: Arc<dyn AgentEventSink>,
     scope: QuestionScope,
     state_db: Option<SqliteStateStore>,
-    decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
-    last_sql: Option<String>,
-    // The run's contained session, when a run engine opened one. `None`
-    // leaves `read` denying with a typed error.
-    session: Option<Arc<crate::interactive::session::universe::SessionUniverse>>,
-    // The agent's task posture, threaded like `approval`.
-    agent_mode: AgentMode,
     candidates: usize,
 ) -> Result<AgentOutput, AgentRuntimeError> {
-    if candidates <= 1 {
-        let result = run_prompt_with_sink(
-            runtime,
-            prompt,
-            approval,
-            can_prompt,
-            can_obtain_approval,
-            overrides,
-            history,
-            sink,
-            scope.cancellation(),
-            Some(scope.clone()),
-            state_db,
-            decider,
-            last_sql,
-            session,
-            agent_mode,
-            // Headless: no stream channel, no capture hook.
-            None,
-        )
-        .await;
-        return result;
-    }
     let cancellation = scope.cancellation();
     if cancellation.is_cancelled() {
         return Err(AgentRuntimeError::Agent("request cancelled".into()));
+    }
+    let receipts = Arc::new(AnsweringReceiptSink::new(sink));
+    let build_overrides = overrides.clone();
+    let runner = LiveAttemptRunner::new(
+        runtime,
+        prompt,
+        approval,
+        can_prompt,
+        overrides,
+        Arc::clone(&receipts) as Arc<dyn AgentEventSink>,
+        scope.clone(),
+        state_db,
+        folder,
+        format,
+    );
+    if candidates <= 1 {
+        return runner.run().await;
     }
     let (executor, dialect) = {
         let deadline = scope.begin_segment();
@@ -106,7 +96,7 @@ pub(crate) async fn run_with_candidates(
             scope.finish_segment();
             return Err(AgentRuntimeError::Agent("request cancelled".into()));
         }
-        let build = live::build_executor(runtime, &overrides, can_prompt, &scope);
+        let build = live::build_executor(runtime, &build_overrides, can_prompt, &scope);
         tokio::pin!(build);
         let result = match deadline {
             Some(duration) => tokio::select! {
@@ -128,28 +118,12 @@ pub(crate) async fn run_with_candidates(
         }
         result?
     };
-    let receipt_sink = AnsweringReceiptSink::new(sink);
-    let runner = LiveAttemptRunner::new(
-        runtime,
-        prompt,
-        approval,
-        can_prompt,
-        can_obtain_approval,
-        overrides,
-        &receipt_sink,
-        scope.clone(),
-        state_db,
-        decider,
-        last_sql,
-        session,
-        agent_mode,
-    );
     orchestrate(
         candidates,
         &runner,
         &executor,
         dialect,
-        &receipt_sink,
+        &receipts,
         &cancellation,
         &scope,
     )

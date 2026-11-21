@@ -1,19 +1,27 @@
 //! The production [`CandidateExecutor`] and [`AttemptRunner`] — built over a
 //! live connector for the active profile.
+//!
+//! An attempt is one turn of one chat session: the runner states the session's
+//! facts (the folder, the mode, the profiles, the ask's own database budget) and
+//! sends the question as that session's one turn, exactly as `saya ask` sends it
+//! for a single candidate. The turn's reading is carried onto the question's own
+//! stop token, which is what the ask's exit-code table classifies from.
 
 use super::super::decide::CandidateExecutor;
 use super::super::profile;
 use super::super::question_scope::QuestionScope;
-use super::super::runtime::{AgentRuntimeError, PromptOverrides, run_prompt_with_sink};
+use super::super::runtime::{AgentRuntimeError, PromptOverrides};
 use super::AttemptRunner;
 use async_trait::async_trait;
-use saya_agent::{AgentMode, AgentOutput, ApprovalPolicy};
+use saya_agent::{AgentEventSink, AgentOutput, ApprovalPolicy, CancellationReason};
 use saya_connectors::{ConnectorOptions, DatabaseConnector, build_connector_with_prompt};
 use saya_store::SqliteStateStore;
 use saya_types::{QueryRequest, QueryResult, SqlDialect};
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Builds a connected [`LiveCandidateExecutor`] for the active profile and
 /// returns it with the profile's dialect. Mirrors how
@@ -60,12 +68,6 @@ pub(super) async fn build_executor(
 /// *different* profile will fail against this connection and return `None` —
 /// that attempt simply does not vote. Safe degradation: a wrong result would be
 /// far worse than a missing one, but multi-profile sessions get less from this.
-/// Runs a nominated statement against the active profile's connection.
-///
-/// Limitation: with `--include-profile`, a statement the agent ran against a
-/// *different* profile will fail against this connection and return `None` —
-/// that attempt simply does not vote. Safe degradation: a wrong result would be
-/// far worse than a missing one, but multi-profile sessions get less from this.
 pub(super) struct LiveCandidateExecutor {
     connector: Box<dyn DatabaseConnector>,
     max_rows: usize,
@@ -92,24 +94,32 @@ impl CandidateExecutor for LiveCandidateExecutor {
     }
 }
 
-/// The production [`AttemptRunner`]: each call runs one full agent attempt via
-/// [`run_prompt_with_sink`] with a fresh empty history — attempts that share
-/// context make the same mistakes, and then agreement between them proves
-/// nothing.
+/// The production [`AttemptRunner`]: each call opens one session's run, sends
+/// the question as its one turn on a fresh history — attempts that share context
+/// make the same mistakes, and then agreement between them proves nothing — and
+/// closes it.
+///
+/// A turn's outcome reaches the question's own stop token the way the engines
+/// before it stated one: a budget stop latches the dimension it stopped on, the
+/// operator's cancel latches the user's stop, and a failure is the run's own
+/// error. Everything else (an answer, a settled clarification) is the output's
+/// own report.
 pub(crate) struct LiveAttemptRunner<'a> {
     runtime: &'a crate::config::runtime::RuntimeConfig,
     prompt: &'a str,
     approval: ApprovalPolicy,
     can_prompt: bool,
-    can_obtain_approval: bool,
     overrides: PromptOverrides,
-    sink: &'a dyn saya_agent::AgentEventSink,
+    /// The run's stream: every attempt's session renders through it, so the
+    /// answer goes where the ask's sink goes and the receipts count the calls.
+    sink: Arc<dyn AgentEventSink>,
     scope: QuestionScope,
     state_db: Option<SqliteStateStore>,
-    decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
-    last_sql: Option<String>,
-    session: Option<Arc<crate::interactive::session::universe::SessionUniverse>>,
-    agent_mode: AgentMode,
+    /// The folder each attempt's session opens over.
+    folder: PathBuf,
+    format: crate::render::RenderFormat,
+    /// How many attempts this runner started: the next session's job name.
+    attempts: AtomicUsize,
 }
 
 impl<'a> LiveAttemptRunner<'a> {
@@ -119,56 +129,97 @@ impl<'a> LiveAttemptRunner<'a> {
         prompt: &'a str,
         approval: ApprovalPolicy,
         can_prompt: bool,
-        can_obtain_approval: bool,
         overrides: PromptOverrides,
-        sink: &'a dyn saya_agent::AgentEventSink,
+        sink: Arc<dyn AgentEventSink>,
         scope: QuestionScope,
         state_db: Option<SqliteStateStore>,
-        decider: Option<Arc<dyn saya_agent::ApprovalDecider>>,
-        last_sql: Option<String>,
-        session: Option<Arc<crate::interactive::session::universe::SessionUniverse>>,
-        agent_mode: AgentMode,
+        folder: PathBuf,
+        format: crate::render::RenderFormat,
     ) -> Self {
         Self {
             runtime,
             prompt,
             approval,
             can_prompt,
-            can_obtain_approval,
             overrides,
             sink,
             scope,
             state_db,
-            decider,
-            last_sql,
-            session,
-            agent_mode,
+            folder,
+            format,
+            attempts: AtomicUsize::new(0),
         }
+    }
+
+    /// The facts one attempt's session is stated: the same folder, mode and
+    /// profiles every attempt gets, under the attempt's own job name, spending
+    /// the one-shot ask's database budget.
+    fn session(&self) -> crate::interactive::session::line_chat::LineSession {
+        let attempt = self.attempts.fetch_add(1, Ordering::Relaxed) + 1;
+        crate::interactive::session::line_chat::LineSession {
+            session: format!("ask-{}-{attempt}", std::process::id()),
+            folder: self.folder.clone(),
+            runtime: Arc::new(self.runtime.clone()),
+            store: self.store(),
+            mode: self.approval,
+            overrides: self.overrides.clone(),
+            format: self.format,
+            sink: Some(Arc::clone(&self.sink)),
+            budget: crate::plugins::database::DatabaseBudget::ask(self.runtime),
+            can_prompt: self.can_prompt,
+        }
+    }
+
+    fn store(&self) -> SqliteStateStore {
+        self.state_db
+            .clone()
+            .unwrap_or_else(|| SqliteStateStore::new(crate::state_path::state_db_path()))
     }
 }
 
 #[async_trait]
 impl AttemptRunner for LiveAttemptRunner<'_> {
     fn run(&self) -> Pin<Box<dyn Future<Output = Result<AgentOutput, AgentRuntimeError>> + '_>> {
-        Box::pin(run_prompt_with_sink(
-            self.runtime,
-            self.prompt,
-            self.approval,
-            self.can_prompt,
-            self.can_obtain_approval,
-            self.overrides.clone(),
-            Vec::new(),
-            self.sink,
-            self.scope.cancellation(),
-            Some(self.scope.clone()),
-            self.state_db.clone(),
-            self.decider.clone(),
-            self.last_sql.clone(),
-            self.session.clone(),
-            self.agent_mode,
-            // Headless: no stream channel, no capture hook.
-            None,
-        ))
+        Box::pin(async move {
+            let sent = crate::interactive::session::line_chat::LineChat::one_turn(
+                self.session(),
+                self.prompt.to_owned(),
+            )
+            .await
+            .map_err(AgentRuntimeError::Agent)?;
+            let Some(sent) = sent else {
+                return Err(AgentRuntimeError::Agent(
+                    "the session refused the question".to_owned(),
+                ));
+            };
+            match &sent.turn.outcome {
+                crate::chat::ChatOutcome::Answered => sent.output.ok_or_else(|| {
+                    AgentRuntimeError::Agent("the turn ended without a report".to_owned())
+                }),
+                crate::chat::ChatOutcome::Stopped(budget) => {
+                    // The turn's own budget stopped it: the question's stop
+                    // token names the dimension, so the ask classifies the same
+                    // class and says the same partial sentence.
+                    self.scope
+                        .cancellation()
+                        .cancel_with_reason(CancellationReason::Budget(budget.dimension));
+                    sent.output.ok_or_else(|| {
+                        AgentRuntimeError::Agent(crate::budget_wording::budget_partial_message(
+                            budget.dimension,
+                        ))
+                    })
+                }
+                crate::chat::ChatOutcome::Cancelled => {
+                    self.scope.cancellation().cancel();
+                    sent.output
+                        .ok_or_else(|| AgentRuntimeError::Agent("request cancelled".to_owned()))
+                }
+                crate::chat::ChatOutcome::Failed { message }
+                | crate::chat::ChatOutcome::Paused { message } => {
+                    Err(AgentRuntimeError::Agent(message.clone()))
+                }
+            }
+        })
     }
 }
 

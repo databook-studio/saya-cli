@@ -40,6 +40,7 @@ use crate::commands::coding::{
     TurnInputs,
 };
 use crate::connection::ConnectionRegistry;
+use crate::plugins::database::DatabaseBudget;
 
 /// A session's run, as the session states it: the facts the composition builds
 /// the run's request, inputs, mode cell and operator from.
@@ -51,6 +52,9 @@ pub(crate) struct SessionRun {
     /// The session's approval mode — the consent to open, and the mode the
     /// run's one cell starts in.
     pub(crate) mode: ApprovalPolicy,
+    /// The database budget a turn of this run spends once it uses the database:
+    /// the chat's `[limits.database]`, or the one-shot ask's override of it.
+    pub(crate) budget: DatabaseBudget,
     /// What a run may do with the folder the session opened over.
     pub(crate) shape: WorkspaceShape,
     /// The databases the session resolved, primary first: the plugin's
@@ -107,6 +111,7 @@ impl RunComposition {
             front,
             session,
             mode,
+            budget,
             shape,
             connections,
             allow_query_data,
@@ -136,6 +141,7 @@ impl RunComposition {
                 memory_reachable,
                 capture,
                 learning,
+                budget,
             },
         )?;
         let mode = job.approval_mode();

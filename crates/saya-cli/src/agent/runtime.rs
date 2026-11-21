@@ -70,7 +70,6 @@ pub(crate) struct TurnPrompt<'a> {
     pub(crate) compaction_summary: Option<String>,
 }
 
-include!("runtime/entrypoint.rs");
 include!("runtime/sink_outcomes.rs");
 include!("runtime/question_start.rs");
 include!("runtime/injected_inputs.rs");

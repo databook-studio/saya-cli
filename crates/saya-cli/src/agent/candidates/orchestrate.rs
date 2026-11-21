@@ -34,7 +34,7 @@ pub(crate) async fn orchestrate(
     runner: &dyn AttemptRunner,
     executor: &dyn CandidateExecutor,
     dialect: SqlDialect,
-    receipts: &AnsweringReceiptSink<'_>,
+    receipts: &AnsweringReceiptSink,
     cancellation: &CancellationToken,
     scope: &QuestionScope,
 ) -> Result<AgentOutput, AgentRuntimeError> {

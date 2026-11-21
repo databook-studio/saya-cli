@@ -62,10 +62,19 @@ impl DatabaseBudget {
 
     /// The `ask` surface's budget: `[limits.ask]` as an override of the database
     /// table, every key it leaves unset already fallen back at resolve time.
-    #[allow(dead_code)] // the ask front is its caller (ref/06, unit L3)
     pub(crate) fn ask(runtime: &RuntimeConfig) -> Self {
         Self {
             ceilings: Ceilings::of(runtime.resolved.limits.ask_override),
+        }
+    }
+
+    /// The budget of a composition that states no table of its own — the
+    /// resolved defaults, for a fixture that drives the composition without a
+    /// loaded runtime.
+    #[cfg(test)]
+    pub(crate) fn defaults() -> Self {
+        Self {
+            ceilings: Ceilings::of(ResolvedAnsweringLimits::default()),
         }
     }
 

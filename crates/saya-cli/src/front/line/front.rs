@@ -47,9 +47,27 @@ struct Shared {
     ended: Option<ChatOutcome>,
 }
 
+/// Where one turn's stream goes: the terminal's own renderer, or the sink the
+/// surface above brought with it.
+#[derive(Clone)]
+enum Surface {
+    /// The terminal: one renderer for this format, a fresh sink per turn.
+    Terminal(RenderFormat),
+    /// A sink the surface brought: the one-shot `ask` prints its answer through
+    /// the very sink the old turn body printed on, so text and JSON stay the
+    /// output they were.
+    Given(Arc<dyn AgentEventSink>),
+}
+
 /// One line front over one session.
 pub(crate) struct LineFront {
-    format: RenderFormat,
+    /// Where a turn's stream goes.
+    surface: Surface,
+    /// How a settled turn's own line is rendered, or `None` for a surface that
+    /// words the class itself: `saya ask` states its own exit-code wording
+    /// (`commands/query.rs`), so a turn that said its line here would say it
+    /// twice.
+    wording: Option<RenderFormat>,
     /// Whether this surface may read an answer from stdin at all: the plain
     /// loop's live-terminal fact. A piped run denies every question unasked.
     can_prompt: bool,
@@ -68,7 +86,8 @@ pub(crate) struct LineFront {
 impl LineFront {
     pub(crate) fn new(format: RenderFormat, can_prompt: bool, tally: TallyHandle) -> Self {
         Self {
-            format,
+            surface: Surface::Terminal(format),
+            wording: Some(format),
             can_prompt,
             tally,
             signals: Signals::new(None),
@@ -77,6 +96,22 @@ impl LineFront {
                 turn: CancellationToken::new(),
                 ended: None,
             }),
+        }
+    }
+
+    /// The one-shot `ask` surface's front: the run's stream over the answer sink
+    /// the surface brought, and none of a settled turn's own wording — the ask
+    /// states the class and says the line for it, once, from the exit-code
+    /// table.
+    pub(crate) fn over(
+        sink: Arc<dyn AgentEventSink>,
+        can_prompt: bool,
+        tally: TallyHandle,
+    ) -> Self {
+        Self {
+            surface: Surface::Given(sink),
+            wording: None,
+            ..Self::new(RenderFormat::Text, can_prompt, tally)
         }
     }
 
@@ -124,8 +159,11 @@ impl LineFront {
         // The settle records the one cancellation sample a Ctrl-C was waiting
         // for, then prints the section — the order the old turn body used.
         self.signals.settle();
+        let Some(format) = self.wording else {
+            return;
+        };
         if let Some(event) = wording(outcome) {
-            let rendered = render_event(&event, self.format);
+            let rendered = render_event(&event, format);
             print!("{}", rendered.stdout);
             eprint!("{}", rendered.stderr);
         }
@@ -163,8 +201,12 @@ pub(crate) fn wording(outcome: &ChatOutcome) -> Option<TerminalEvent> {
 impl ChatFront for LineFront {
     fn sink(&self) -> Arc<dyn AgentEventSink> {
         // A sink per turn: the terminal renderer's bracket state is one turn's.
-        let terminal: Arc<dyn AgentEventSink> =
-            Arc::new(TerminalSink::new(self.format).with_tally(Arc::clone(&self.tally)));
+        let terminal: Arc<dyn AgentEventSink> = match &self.surface {
+            Surface::Terminal(format) => {
+                Arc::new(TerminalSink::new(*format).with_tally(Arc::clone(&self.tally)))
+            }
+            Surface::Given(sink) => Arc::clone(sink),
+        };
         // The same stream, read for the session before it is rendered: the
         // turn's usage and the words it says.
         Arc::new(StreamSink::new(terminal, Arc::clone(&self.stream)))
@@ -185,7 +227,8 @@ impl ChatFront for LineFront {
             // prepare that failed. Said as an error line: it is a fact the
             // operator must read, and stderr is the loop's diagnostic channel.
             ChatEvent::Notice { message } => {
-                let rendered = render_event(&TerminalEvent::Error { message }, self.format);
+                let format = self.wording.unwrap_or(RenderFormat::Text);
+                let rendered = render_event(&TerminalEvent::Error { message }, format);
                 print!("{}", rendered.stdout);
                 eprint!("{}", rendered.stderr);
             }

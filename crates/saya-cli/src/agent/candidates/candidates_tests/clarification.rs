@@ -72,7 +72,7 @@ async fn a_settled_clarification_after_an_errored_attempt_returns_the_paused_out
 
     let cancellation = CancellationToken::new();
     let scope = test_scope(cancellation.clone());
-    let receipts = AnsweringReceiptSink::new(&sink);
+    let receipts = AnsweringReceiptSink::new(Arc::new(sink.clone()));
     receipts
         .emit(AgentEvent::usage(
             saya_agent::UsageCall::Answer,

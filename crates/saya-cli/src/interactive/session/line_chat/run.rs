@@ -104,11 +104,16 @@ fn port(job: &Arc<NativeCodingJob>, metrics: Option<Arc<LocalMetrics>>) -> JobPo
     }
 }
 
-/// What one line handed back: the turn as it settled, and what its boundary
-/// said.
+/// What one line handed back: the turn as it settled, the engine's own report of
+/// it, and what its boundary said.
 pub(crate) struct Sent {
     /// How the turn ended and what its stream reported.
     pub(crate) turn: SettledTurn,
+    /// The typed output the turn's engine stated, taken once here: a surface
+    /// that reads the turn's own report — the ask's exit-code table, a
+    /// candidate attempt's designation — reads it off this, never off a
+    /// rendering of it.
+    pub(crate) output: Option<saya_agent::AgentOutput>,
     /// The compaction's own line, when one fired.
     pub(crate) said: Said,
 }

@@ -18,7 +18,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use saya_agent::{ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentEventSink, ApprovalPolicy, CancellationToken};
 use saya_store::SqliteStateStore;
 
 use super::LineChat;
@@ -33,6 +33,7 @@ use crate::commands::coding::CodingApplication;
 use crate::config::runtime::RuntimeConfig;
 use crate::front::LineFront;
 use crate::interactive::turn_summary::tally_handle;
+use crate::plugins::database::DatabaseBudget;
 use crate::render::RenderFormat;
 
 /// The facts a line session resolves before its run can be composed.
@@ -52,6 +53,15 @@ pub(crate) struct LineSession {
     /// connections the run's database plugin activates on.
     pub(crate) overrides: PromptOverrides,
     pub(crate) format: RenderFormat,
+    /// The sink this surface renders a turn through, when it brings its own
+    /// instead of the terminal's. The one-shot `ask` brings the answer sink the
+    /// old turn body printed on, so its text and JSON stay byte-identical; the
+    /// plain loop brings none and renders on the terminal.
+    pub(crate) sink: Option<Arc<dyn AgentEventSink>>,
+    /// The database budget a turn of this session spends once it uses the
+    /// database: the chat's `[limits.database]`, or the one-shot ask's override
+    /// of it (`[limits.ask]`, mapped for one release).
+    pub(crate) budget: DatabaseBudget,
     /// Whether this surface may put a question to somebody (the loop's
     /// live-terminal fact).
     pub(crate) can_prompt: bool,
@@ -68,6 +78,13 @@ impl LineChat {
         let line = runtime.block_on(assemble(parts))?;
         Ok(LineChat::new(line, runtime))
     }
+}
+
+/// The same composition, driven by a surface that already runs on a runtime:
+/// one line session, composed and prepared exactly as the plain loop's first
+/// message prepares it, owned by that runtime instead of one of its own.
+pub(super) async fn one(parts: LineSession) -> Result<Line, String> {
+    assemble(parts).await
 }
 
 /// Builds the application over the session's folder, states the run's facts,
@@ -91,8 +108,11 @@ async fn assemble(parts: LineSession) -> Result<Line, String> {
     let scope =
         crate::agent::question_scope::QuestionScope::session(config, CancellationToken::new());
     let metrics = scope.metrics();
-    let front =
-        Arc::new(LineFront::new(parts.format, parts.can_prompt, tally_handle()).with_scope(scope));
+    let front = match parts.sink.clone() {
+        Some(sink) => LineFront::over(sink, parts.can_prompt, tally_handle()),
+        None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
+    };
+    let front = Arc::new(front.with_scope(scope));
     // The folder is writable for this session or it is not: the fact is taken
     // before the first run holds the lease, and every run a rollover prepares
     // states it again.
@@ -147,6 +167,7 @@ pub(super) async fn session_run(
         front,
         session: name,
         mode: parts.mode,
+        budget: parts.budget,
         shape: shape.clone(),
         connections: inputs.registry,
         allow_query_data,

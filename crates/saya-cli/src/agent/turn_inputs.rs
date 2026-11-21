@@ -35,7 +35,7 @@ pub(crate) struct TurnInputs {
 /// production caller of `provider::build` and `build_registry`; splitting it
 /// out leaves [`super::run_prompt_with_inputs`] provider- and
 /// registry-injectable for tests. Cancellation covers the whole turn because
-/// [`super::run_prompt_with_sink`] awaits this inside its pinned future.
+/// [`super::run_prompt_with_sink_and_outcomes`] awaits this inside its pinned future.
 pub(crate) async fn prepare_turn(
     runtime: &RuntimeConfig,
     overrides: &super::runtime::PromptOverrides,
