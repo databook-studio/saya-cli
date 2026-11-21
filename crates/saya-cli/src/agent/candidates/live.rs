@@ -167,6 +167,8 @@ impl<'a> LiveAttemptRunner<'a> {
             sink: Some(Arc::clone(&self.sink)),
             budget: crate::plugins::database::DatabaseBudget::ask(self.runtime),
             can_prompt: self.can_prompt,
+            // `saya ask` takes no `--allow`: an attempt starts with no grant.
+            grants: saya_agent::SessionGrants::default(),
         }
     }
 
