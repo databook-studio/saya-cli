@@ -14,6 +14,11 @@
 //! through the pure update, the executor that performs the commands, and the
 //! frame painted only when the model changed and at most thirty times a second
 //! — the panes T4-T13 built, composed into one screen.
+//!
+//! T17 lands the background jobs drawer (`02` §8): `Ctrl+J` or bare `/job`
+//! lists the run's jobs over the transcript, a job's call enters the session's
+//! own card slot, and `x` asks before it cancels. The plumbing is today's
+//! (`interactive::tui::coding`), re-exported rather than copied.
 
 pub(crate) mod cards_keys;
 pub(crate) mod direct;

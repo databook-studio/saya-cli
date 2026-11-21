@@ -9,6 +9,11 @@
 //! key press and resumed when the press happens, possibly many messages later.
 //! The front therefore keeps the waiting ends by the question's own id, and
 //! [`Cmd::Answer`](super::msg::Cmd::Answer) resolves the one it names.
+//!
+//! A job's calls are answered here too (`02` §5, §8): its worker reports with
+//! today's `CodingMessage`, `super::jobs_desk` reads it as a row or as a
+//! question, and the waiting end is the plumbing's own — so one card answers
+//! the session's calls and a job's alike.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
