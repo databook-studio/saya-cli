@@ -22,6 +22,10 @@ use super::view::mode_words;
 pub(crate) enum Overlay {
     /// `/mode` with no argument: the six modes on one screen (`02` §8).
     Mode(ModePicker),
+    /// The background jobs drawer (`02` §8): `Ctrl+J` or `/job`. Its rows and
+    /// its selection live on the model, because they are the run's jobs and
+    /// stay current while the drawer is closed.
+    Jobs,
     /// The startup workspace-trust question (`02` §9.4, T16): opened once when
     /// the session bound no workspace, answered `y`/`n`.
     Trust,
@@ -42,7 +46,7 @@ impl Model {
     pub(crate) fn mode_picker(&self) -> Option<&ModePicker> {
         match self.overlay.as_ref()? {
             Overlay::Mode(picker) => Some(picker),
-            Overlay::Trust => None,
+            Overlay::Jobs | Overlay::Trust => None,
         }
     }
 
@@ -50,7 +54,7 @@ impl Model {
     pub(crate) fn mode_picker_mut(&mut self) -> Option<&mut ModePicker> {
         match self.overlay.as_mut()? {
             Overlay::Mode(picker) => Some(picker),
-            Overlay::Trust => None,
+            Overlay::Jobs | Overlay::Trust => None,
         }
     }
 

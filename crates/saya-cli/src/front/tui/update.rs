@@ -17,6 +17,7 @@ use ratatui::crossterm::event::KeyEvent;
 
 use super::direct;
 use super::focus_text;
+use super::jobs;
 use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
@@ -32,6 +33,9 @@ const QUEUED_REPLACED: &str = "queued line replaced — the earlier one was drop
 /// The one slash command the surface answers itself: bare `/mode` opens the
 /// picker (`02` §8). K2 gives `/mode <name>` its argument.
 const SLASH_MODE: &str = "/mode";
+
+/// The other one: bare `/job` opens the background jobs drawer (`02` §8).
+const SLASH_JOB: &str = "/job";
 
 /// Folds one message into the model, and answers what the runtime must do.
 pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -51,6 +55,11 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             // what is left is the worker's own word about itself (`02` §4).
             if let Some(outcome) = worker.direct {
                 direct::land(model, outcome);
+            }
+            // A job's word is the run's job list, or one call it puts to the
+            // operator: the call takes the same card slot as the session's.
+            if let Some(report) = worker.job {
+                model.note_jobs(report);
             }
             if !worker.message.is_empty() {
                 model.say(worker.message);
@@ -104,6 +113,19 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             cmds.push(Cmd::Trust);
         }
         Some(Intent::TrustDecline) => model.close_overlay(),
+        Some(Intent::OpenJobs) => model.open_jobs(),
+        // The drawer's own keys: walking it, opening a job's call on the card,
+        // asking before a cancel, and closing it (`02` §8).
+        Some(
+            intent @ (Intent::JobsUp
+            | Intent::JobsDown
+            | Intent::JobsOpen
+            | Intent::JobsApprove
+            | Intent::JobsCancelAsk
+            | Intent::JobsCancelYes
+            | Intent::JobsCancelNo
+            | Intent::JobsClose),
+        ) => jobs::press(model, intent, cmds),
         Some(Intent::Refused(reason)) => model.say(reason),
         None => {}
     }
@@ -129,10 +151,22 @@ fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     if text.trim().is_empty() {
         return;
     }
+    // A line the surface answers itself: bare `/mode` opens the picker and bare
+    // `/job` opens the jobs drawer, neither of them sending anything
+    // (`02` §8). Both are read before the slash dispatch, because the crate's
+    // parser answers `/job` with its verbs — and bare `/job` has none.
+    let line = text.trim();
+    if line == SLASH_MODE {
+        model.open_mode_picker();
+        return;
+    }
+    if line == SLASH_JOB {
+        model.open_jobs();
+        return;
+    }
     // A line the surface answers itself — `/sql`, `/export`, `/chart`,
-    // `/investigation` — is one command, never a turn (`03` §4.1). So is
-    // bare `/mode`, which opens the picker instead of sending anything
-    // (`02` §8). Every other line is a turn's.
+    // `/investigation` — is one command, never a turn (`03` §4.1). Every other
+    // line is a turn's.
     match direct::read(model, &text) {
         direct::Read::Cmd(cmd) => {
             cmds.push(cmd);
@@ -143,10 +177,6 @@ fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
             return;
         }
         direct::Read::Turn => {}
-    }
-    if text.trim() == SLASH_MODE {
-        model.open_mode_picker();
-        return;
     }
     if model.is_busy() {
         if model.queue(text).is_some() {
@@ -171,6 +201,9 @@ fn send(model: &mut Model, text: String, cmds: &mut Vec<Cmd>) {
 fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
     if let Some(card) = model.take_card() {
         cmds.push(Cmd::Answer(card.id, given));
+        // One card at a time: the job that owed this call no longer waits, and
+        // the ask behind it takes the slot it left (`02` §5, T9/A5).
+        model.answered(card.id);
     }
 }
 
@@ -204,7 +237,9 @@ fn choose(model: &mut Model, cmds: &mut Vec<Cmd>) {
 fn session(model: &mut Model, event: ChatEvent, cmds: &mut Vec<Cmd>) {
     let ended = matches!(&event, ChatEvent::TurnEnded(_));
     if let ChatEvent::Question(question) = &event {
-        model.show_card(question.clone());
+        // The session's ask and a job's ask enter the same slot by the same
+        // rule: on the card when it is free, behind it otherwise.
+        model.ask(question.clone());
     }
     apply(&mut model.transcript, &event);
     if ended {

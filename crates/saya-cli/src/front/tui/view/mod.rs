@@ -44,6 +44,10 @@
 //! T18 lands the mode picker (`02` §8): the six modes of the one consent axis on
 //! one screen, each with the one line it means, and the words a change says —
 //! §3.10's transcript line and §4's toast.
+//!
+//! T17 lands the background jobs drawer (`02` §8): one row per job with its
+//! state's mark and its facts, where a job's call enters the same card slot as
+//! the session's, and where `x` asks before it cancels.
 
 mod blocks;
 mod blocks_question;
@@ -57,6 +61,8 @@ mod empty_welcome;
 mod help;
 mod help_keys;
 mod inspector;
+pub(crate) mod jobs;
+pub(crate) mod jobs_rows;
 pub(crate) mod mode_picker;
 pub(crate) mod mode_words;
 mod palette;
@@ -97,6 +103,13 @@ pub(crate) use composer_frame::rows;
 pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]
 pub(crate) use help::{Context, rows as help_rows};
+#[allow(unused_imports)]
+pub(crate) use jobs::{CARD_FIRST, DETAIL_UNIT, Drawer, Job, NO_JOBS, State as JobState, TITLE};
+#[allow(unused_imports)]
+pub(crate) use jobs_rows::{
+    Placement as JobsPlacement, SHEET_ROWS, SIDE_FROM, SIDE_WIDTH, placement as jobs_placement,
+    rows as jobs_rows, side_width,
+};
 #[allow(unused_imports)]
 pub(crate) use mode_picker::{ModePicker, ROWS as MODE_PICKER_ROWS, rows as mode_picker_rows};
 #[allow(unused_imports)]
@@ -171,6 +184,18 @@ mod help_tests;
 #[cfg(test)]
 #[path = "mode_picker_tests.rs"]
 mod mode_picker_tests;
+
+#[cfg(test)]
+#[path = "jobs_fixture.rs"]
+pub(crate) mod jobs_fixture;
+
+#[cfg(test)]
+#[path = "jobs_rows_tests.rs"]
+mod jobs_rows_tests;
+
+#[cfg(test)]
+#[path = "jobs_tests.rs"]
+mod jobs_tests;
 
 #[cfg(test)]
 #[path = "palette_fixture.rs"]

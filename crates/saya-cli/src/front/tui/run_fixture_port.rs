@@ -53,6 +53,8 @@ pub(crate) enum Call {
     Direct(Direct),
     /// The trust question answered by binding the launch folder.
     Trust(TrustResolution),
+    /// The job this id names, cancelled through the job plumbing.
+    CancelJob(String),
 }
 
 /// A port that records instead of performing, and panics on request.
@@ -120,5 +122,9 @@ impl CmdPort for FakePort {
 
     fn trust(&self) {
         self.record(Call::Trust(TrustResolution::TrustCwd));
+    }
+
+    fn cancel_job(&self, id: String) {
+        self.record(Call::CancelJob(id));
     }
 }

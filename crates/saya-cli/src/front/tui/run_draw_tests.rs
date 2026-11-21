@@ -9,6 +9,8 @@ use ratatui::backend::TestBackend;
 
 use super::model::Model;
 use super::run_draw::{Facts, frame};
+use super::theme::Scheme;
+use super::view::jobs_fixture;
 use crate::chat::Question;
 
 /// The screen `model` paints at `width × height`, one row per line.
@@ -118,6 +120,37 @@ fn no_row_is_painted_past_the_terminal_edge() {
         rows.iter().all(|row| row.chars().count() <= 60),
         "{rows:#?}"
     );
+}
+
+#[test]
+fn the_jobs_drawer_says_the_same_words_with_colour_off() {
+    let mut model = Model::default();
+    model.begin_turn(String::from("how many orders did we get?"));
+    model.note_jobs(super::jobs::JobReport::Listed(jobs_fixture::jobs()));
+    model.open_jobs();
+
+    let dark = painted(&model, &Facts::default(), 100, 30);
+    let plain = painted(
+        &model,
+        &Facts {
+            scheme: Scheme::NoColour,
+            ..Facts::default()
+        },
+        100,
+        30,
+    );
+    assert_eq!(dark, plain, "02 §12: the same words, colour or not");
+    let body = plain.join("\n");
+    for word in [
+        "╭ Background jobs",
+        "● fix-flaky",
+        "running 3m · 2 helpers",
+        "⏸ docs-pass",
+        "✓ bump-deps",
+        "↵ open · a approve · x cancel · Esc close",
+    ] {
+        assert!(body.contains(word), "the drawer says {word}: {body}");
+    }
 }
 
 #[test]

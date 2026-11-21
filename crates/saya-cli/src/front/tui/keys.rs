@@ -76,12 +76,30 @@ pub(crate) enum Intent {
     TrustDecline,
     /// Say this instead of doing anything: the state the press met refuses it.
     Refused(&'static str),
+    /// Open the background jobs drawer (`02` §8's `Ctrl+J`).
+    OpenJobs,
+    /// Move the drawer's selection one row up.
+    JobsUp,
+    /// Move the drawer's selection one row down.
+    JobsDown,
+    /// Show the selected job's detail.
+    JobsOpen,
+    /// Approve the selected job's call through the card it belongs on.
+    JobsApprove,
+    /// Ask before cancelling the selected job (`02` §8's `x`).
+    JobsCancelAsk,
+    /// Answer the confirm: the selected job is cancelled.
+    JobsCancelYes,
+    /// Answer the confirm: nothing is cancelled.
+    JobsCancelNo,
+    /// Close the drawer without stating anything.
+    JobsClose,
 }
 
 /// What `key` means to `model` now, or nothing at all.
 pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
     if let Some(overlay) = model.overlay() {
-        return overlay_key(overlay, key);
+        return overlay_key(model, overlay, key);
     }
     if model.card().is_some() {
         return card_key(model, key);
@@ -94,10 +112,39 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
 
 /// The open pane's keys: while one is up it owns the keyboard, so no press can
 /// reach the composer behind it.
-fn overlay_key(overlay: &Overlay, key: KeyEvent) -> Option<Intent> {
+fn overlay_key(model: &Model, overlay: &Overlay, key: KeyEvent) -> Option<Intent> {
     match overlay {
         Overlay::Mode(_) => mode_key(key),
+        Overlay::Jobs => jobs_key(model.jobs().is_confirming(), key),
         Overlay::Trust => trust_key(key),
+    }
+}
+
+/// The jobs drawer's keys (`02` §8): `↑↓` walk its rows, `↵` opens the selected
+/// job, `a` opens the card for the call it is waiting on, `x` asks before it
+/// cancels, and Esc closes the drawer. While the confirm asks, only `y`, `n` and
+/// Esc are read — the ask owns the keyboard, exactly as T12's `d` does.
+fn jobs_key(confirming: bool, key: KeyEvent) -> Option<Intent> {
+    if confirming {
+        return match key.code {
+            KeyCode::Char('y') => Some(Intent::JobsCancelYes),
+            KeyCode::Char('n') => Some(Intent::JobsCancelNo),
+            KeyCode::Esc => Some(Intent::JobsCancelNo),
+            _ => None,
+        };
+    }
+    match key.code {
+        KeyCode::Up => Some(Intent::JobsUp),
+        KeyCode::Down => Some(Intent::JobsDown),
+        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::ALT) => Some(Intent::JobsOpen),
+        KeyCode::Char('a') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(Intent::JobsApprove)
+        }
+        KeyCode::Char('x') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Some(Intent::JobsCancelAsk)
+        }
+        KeyCode::Esc => Some(Intent::JobsClose),
+        _ => None,
     }
 }
 
@@ -177,6 +224,9 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
         KeyCode::Char('g') if ctrl && model.queued().is_some() => Some(Intent::DropQueued),
         KeyCode::BackTab => Some(Intent::CycleMode),
         KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => Some(Intent::CycleMode),
+        // The jobs drawer has a chord of its own, so no word of a message has to
+        // give up its `j` (`02` §8).
+        KeyCode::Char('j') if ctrl => Some(Intent::OpenJobs),
         KeyCode::Esc if model.is_busy() => Some(Intent::CancelTurn),
         KeyCode::Backspace => Some(Intent::Backspace),
         KeyCode::Char(character) if !ctrl && !alt => Some(Intent::Insert(character)),

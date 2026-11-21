@@ -84,7 +84,9 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
     paint(frame, regions.transcript, transcript);
     // A pane that is open takes the transcript's rows: nothing else on the
     // frame gives way, so the operator keeps the mode in force and their draft.
-    if let Some((area, rows)) = run_draw_overlay::overlay(model, facts, regions.transcript) {
+    if let Some((area, rows)) =
+        run_draw_overlay::overlay(model, facts, regions.transcript, frame.area().width)
+    {
         paint(frame, area, rows);
     }
     let width = regions.status.width as usize;

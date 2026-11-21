@@ -38,6 +38,9 @@ pub(crate) trait CmdPort: Send + Sync {
     /// Answer the workspace-trust question by binding the launch folder
     /// (`02` §9.4): today's `bind_trusted`, exactly like `--workspace`.
     fn trust(&self);
+    /// Cancel the job this id names, through today's job plumbing (`02` §8's
+    /// `x`, once its confirm has been answered).
+    fn cancel_job(&self, id: String);
 }
 
 /// Performs one command on the port that can.
@@ -51,6 +54,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::Copy(text) => port.copy(text),
         Cmd::Direct(command) => port.direct(command),
         Cmd::Trust => port.trust(),
+        Cmd::CancelJob(id) => port.cancel_job(id),
     }
 }
 
@@ -149,5 +153,12 @@ impl CmdPort for SessionPort {
                 TrustResolution::TrustCwd,
             ));
         });
+    }
+
+    fn cancel_job(&self, id: String) {
+        // The panel's own cancellation, exactly as the old TUI's `App` does it:
+        // a job of this run is one of the front's workers, and cancelling it is a
+        // token or a control message, never a second job runner (`02` §8).
+        self.front.cancel_job(&id);
     }
 }
