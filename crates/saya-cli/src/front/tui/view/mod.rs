@@ -17,7 +17,15 @@
 //! T5 lands the transcript: the conversation as the rows a terminal paints,
 //! with the newest turn at the live edge. What one turn reads as is `turn`;
 //! how the turns sit under each other is `transcript`.
+//!
+//! T7 lands the transcript's other blocks (`02` §3.4-§3.10): the turn's work —
+//! an edit's diff in `blocks`, a command, a helper — and what ends it, in
+//! `blocks_stop` (an error, a budget, a pause, a cancel) and `blocks_question`
+//! (the model's question and the cue that answers it in the composer).
 
+mod blocks;
+mod blocks_question;
+mod blocks_stop;
 pub(crate) mod cards;
 mod composer;
 mod composer_frame;
@@ -51,6 +59,18 @@ pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
 #[cfg(test)]
 #[path = "cards_fixture.rs"]
 pub(crate) mod cards_fixture;
+
+#[cfg(test)]
+#[path = "blocks_fixture.rs"]
+mod blocks_fixture;
+
+#[cfg(test)]
+#[path = "blocks_stop_tests.rs"]
+mod blocks_stop_tests;
+
+#[cfg(test)]
+#[path = "blocks_tests.rs"]
+mod blocks_tests;
 
 #[cfg(test)]
 #[path = "cards_tests.rs"]

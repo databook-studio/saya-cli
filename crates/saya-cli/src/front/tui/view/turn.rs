@@ -16,8 +16,8 @@ use std::time::Duration;
 use ratatui::text::{Line, Span};
 
 use super::transcript::TranscriptFacts;
-use super::turn_rows::{GUTTER, indented, plain, wrapped};
-use super::{turn_activity, turn_preview};
+use super::turn_rows::{GUTTER, indented, wrapped};
+use super::{blocks, blocks_question, blocks_stop, turn_activity, turn_preview};
 use crate::front::tui::theme::{Glyph, Token, glyph, style};
 use crate::front::view::{Entry, TurnView};
 use crate::interactive::tui::markdown_spans_fenced;
@@ -74,7 +74,13 @@ fn block(
         Entry::Activity(activity) => turn_activity::rows(activity, elapsed, facts, content),
         Entry::Answer(answer) => answer_rows(&answer.text, content),
         Entry::ResultPreview(preview) => turn_preview::rows(preview, facts, content),
-        Entry::Notice(notice) => vec![plain(GUTTER, &notice.message, Token::Dim, facts, content)],
+        Entry::Notice(notice) => blocks::system_line(notice, facts, content),
+        Entry::Edit(edit) => blocks::edit_rows(edit, facts, content),
+        Entry::Command(command) => blocks::command_rows(command, facts, content),
+        Entry::Helper(helper) => blocks::helper_rows(helper, facts, content),
+        Entry::Error(error) => blocks_stop::error_rows(error, facts, content),
+        Entry::Stop(stop) => blocks_stop::stop_rows(stop, facts, content),
+        Entry::Question(question) => blocks_question::question_rows(question, facts, content),
     }
 }
 

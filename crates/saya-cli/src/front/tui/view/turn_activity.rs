@@ -11,10 +11,10 @@ use std::time::Duration;
 use ratatui::text::{Line, Span};
 
 use super::transcript::TranscriptFacts;
-use super::turn_rows::{GUTTER, STEP_INDENT, marked};
+use super::turn_rows::{GUTTER, STEP_INDENT, marked, truncate_to};
 use crate::front::tui::theme::{Glyph, Token, glyph, style};
 use crate::front::view::{Activity, Step, StepState, elapsed_text, folded_summary, step_line};
-use crate::interactive::tui::wrap::{cell_width, truncate_cells};
+use crate::interactive::tui::wrap::cell_width;
 
 /// The steps `02` §3.2 keeps visible while the turn runs; older ones counted.
 const LIVE_STEPS: usize = 4;
@@ -133,15 +133,4 @@ fn headed(
         ));
     }
     Line::from(spans)
-}
-
-/// `words` cut to `room` cells, marked with an ellipsis when it was cut.
-fn truncate_to(words: &str, room: usize) -> String {
-    if cell_width(words) <= room {
-        return words.to_owned();
-    }
-    match room {
-        0 => String::new(),
-        room => format!("{}…", truncate_cells(words, room - 1)),
-    }
 }
