@@ -32,6 +32,11 @@
 //! `help_keys` holds — and the toast (`02` §4), whose four seconds are counted in the
 //! runtime's ticks.
 //!
+//! T12 lands the sessions picker (`02` §10): the saved sessions an operator
+//! chooses from, each row's state read from the resume decision the chat layer
+//! already makes, a filter over the title and the database, and a delete that
+//! asks before it acts.
+//!
 //! T13 lands the empty transcript (`02` §9): one screen per way a session can have
 //! nothing to show yet, with the examples a connected database suggests read from
 //! today's `starter_questions`.
@@ -51,6 +56,10 @@ mod palette;
 mod palette_frame;
 mod palette_match;
 mod palette_rows;
+mod sessions;
+mod sessions_cells;
+mod sessions_row;
+mod sessions_rows;
 mod status;
 mod status_fit;
 mod status_segments;
@@ -82,6 +91,12 @@ pub(crate) use help::{Context, rows as help_rows};
 pub(crate) use palette::Palette;
 #[allow(unused_imports)]
 pub(crate) use palette_rows::rows as palette_rows;
+#[allow(unused_imports)]
+pub(crate) use sessions::{Command as SessionCommand, Picker};
+#[allow(unused_imports)]
+pub(crate) use sessions_row::{SessionRow, State as SessionState};
+#[allow(unused_imports)]
+pub(crate) use sessions_rows::rows as sessions_rows;
 #[allow(unused_imports)]
 pub(crate) use status::{ActivityState, StatusFacts, status_line};
 #[allow(unused_imports)]
@@ -144,6 +159,22 @@ mod palette_match_tests;
 #[cfg(test)]
 #[path = "palette_tests.rs"]
 mod palette_tests;
+
+#[cfg(test)]
+#[path = "sessions_fixture.rs"]
+mod sessions_fixture;
+
+#[cfg(test)]
+#[path = "sessions_pane_tests.rs"]
+mod sessions_pane_tests;
+
+#[cfg(test)]
+#[path = "sessions_rows_tests.rs"]
+mod sessions_rows_tests;
+
+#[cfg(test)]
+#[path = "sessions_tests.rs"]
+mod sessions_tests;
 
 #[cfg(test)]
 #[path = "status_fixture.rs"]

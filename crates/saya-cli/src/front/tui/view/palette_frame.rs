@@ -114,7 +114,7 @@ pub(super) const fn sep(charset: Charset) -> &'static str {
 }
 
 /// The Enter mark, in the glyph set in force.
-const fn enter(charset: Charset) -> &'static str {
+pub(super) const fn enter(charset: Charset) -> &'static str {
     match charset {
         Charset::Utf8 => ENTER,
         Charset::Ascii => ENTER_ASCII,
@@ -122,8 +122,15 @@ const fn enter(charset: Charset) -> &'static str {
 }
 
 /// A border row: a corner, the label runs, the rule that fills the rest, and
-/// the other corner.
-fn frame(left: Glyph, right: Glyph, label: Vec<Run>, width: usize, charset: Charset) -> Row {
+/// the other corner. Shared with the panes beside this one, so a border row has
+/// one definition rather than one per pane.
+pub(super) fn frame(
+    left: Glyph,
+    right: Glyph,
+    label: Vec<Run>,
+    width: usize,
+    charset: Charset,
+) -> Row {
     let room = width.saturating_sub(4);
     let label = fit_runs(label, room);
     let used: usize = label.iter().map(|run| cell_width(&run.text)).sum();
