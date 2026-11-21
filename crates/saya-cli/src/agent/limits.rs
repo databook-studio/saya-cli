@@ -30,6 +30,18 @@ impl AnsweringSurface {
     }
 }
 
+/// A retired `[limits.session]`/`[limits.ask]` table is still honoured this
+/// release, so a table the operator wrote is worth one line naming what to
+/// write instead: a bound silently moved to another table is a bound nobody
+/// trusts. Said by the surface that reads the retired table — `saya ask` — and
+/// not by every run: a per-run line on every stderr would rewrite every
+/// scripted expectation for a table that is merely old.
+pub(crate) fn warn_retired_tables(runtime: &RuntimeConfig) {
+    for diagnostic in &runtime.resolved.limits.diagnostics {
+        eprintln!("warning: {diagnostic}");
+    }
+}
+
 /// The engine's admission ceilings for one surface: requests, tool calls, and
 /// known reported tokens, each `None` when the dimension is unlimited.
 pub(crate) fn answering_limits(

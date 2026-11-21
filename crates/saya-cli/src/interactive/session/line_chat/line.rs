@@ -121,10 +121,11 @@ impl Line {
         let record = self.front.take_record();
         let output = self.run.as_ref().and_then(Run::take_output);
         let said = self
-            .boundary(&outcome, output, &message, &record.answer)
+            .boundary(&outcome, output.clone(), &message, &record.answer)
             .await;
         Ok(Some(Sent {
             turn: crate::front::SettledTurn { outcome, record },
+            output,
             said,
         }))
     }

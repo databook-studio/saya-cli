@@ -32,6 +32,8 @@ fn handle_message(
                 .map(std::path::Path::to_path_buf)
                 .or_else(|| std::env::current_dir().ok())
                 .ok_or("the session has no folder to open a run over")?;
+            // The session's turns spend `[limits.database]` once they use it.
+            let budget = crate::plugins::database::DatabaseBudget::of(&runtime);
             let chat = LineChat::open(LineSession {
                 session: state.id.clone(),
                 folder,
@@ -40,6 +42,9 @@ fn handle_message(
                 mode: approval,
                 overrides: state.prompt_overrides(),
                 format,
+                // The plain loop renders its turns on the terminal itself.
+                sink: None,
+                budget,
                 can_prompt: terminal,
                 // The launch statement's seeds, as the session that stated them
                 // holds them: a resumed session restarts unstated, and its store

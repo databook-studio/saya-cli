@@ -27,6 +27,7 @@ use crate::agent::tools::consent::Answer;
 use crate::commands::coding::CodingApplication;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use crate::load_with_sources;
+use crate::plugins::database::DatabaseBudget;
 
 /// The in-place folder, the application over it, and the databases the session
 /// resolved — primary first.
@@ -56,6 +57,7 @@ impl Fixture {
                 front,
                 session: session.to_owned(),
                 mode,
+                budget: DatabaseBudget::defaults(),
                 shape: WorkspaceShape::Writable,
                 connections,
                 allow_query_data: true,

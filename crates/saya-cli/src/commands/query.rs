@@ -6,17 +6,13 @@ use crate::{
     budget_wording::budget_partial_message,
     config::runtime::RuntimeConfig,
     interactive::sql_operation::{self, SqlOperationPhase},
-    local_metrics_format::print_metrics_section,
-    metrics_sink::MetricsSink,
     render::{RenderFormat, TerminalEvent},
     stream_render::TerminalSink,
 };
-use saya_agent::{
-    AgentEvent, AgentMode, AgentOutput, ApprovalPolicy, CancellationReason, CancellationToken,
-};
+use saya_agent::{AgentEvent, AgentOutput, ApprovalPolicy, CancellationToken};
 use saya_store::{AuditOperation, AuditStatus, SqliteStateStore};
 use saya_types::ConnectionError;
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use super::{
     output::{emit, failure, failure_message},
@@ -27,6 +23,13 @@ use super::{
 #[path = "query_tests.rs"]
 mod tests;
 
+/// The one-shot `ask`, as one turn of one chat session: the question is opened
+/// as the session's run, sent as its single turn, and the session closes. What
+/// the turn prints is the answer sink's — the same renderer the old turn body
+/// printed on, so text and JSON stay the output they were.
+///
+/// What stays here is the exit-code table below: the session's turn is one
+/// answer, and the process says which class it was.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn ask(
     prompt: Option<String>,
@@ -42,91 +45,63 @@ pub(super) async fn ask(
     if prompt.trim().is_empty() {
         return Err("ask requires a prompt or --file".into());
     }
+    // The one surface that reads `[limits.ask]`: a retired table it still
+    // honours is said once here, naming what to write instead.
+    crate::agent::limits::warn_retired_tables(runtime);
     let cancellation = CancellationToken::new();
+    // The question's own scope: the vote's elapsed bound, and the stop the ask
+    // classifies from. The turn's database budget is the plugin's — the same
+    // `[limits.database]` table, through the ask's override of it.
     let scope = QuestionScope::ask(runtime, cancellation.clone());
-    // A stop-owner clone: the scope moves into the run, but the Ctrl-C
-    // branch must still capture the application-side stop instant.
-    let stop_scope = scope.clone();
-    // The collector arc is taken before the scope moves into the run: the
-    // settled boundary below reads the snapshot the run just finished filling.
-    let metrics = scope.metrics();
-    let sink = TerminalSink::new(format);
-    let sink = MetricsSink::new(&sink, scope.metrics());
-    // The one-shot `ask` path composes no session universe at all — writes
-    // stay hidden, reads deny — so both capabilities ride the same
-    // live-terminal fact: stdin readability and approval obtainability are
-    // the same fact here. Unchanged behaviour.
+    let folder = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let work = crate::agent::candidates::run_with_candidates(
         runtime,
         &prompt,
         approval,
         can_prompt,
-        can_prompt,
         PromptOverrides {
             included_profiles,
             ..Default::default()
         },
-        Vec::new(),
-        &sink,
+        folder,
+        format,
+        Arc::new(TerminalSink::new(format)),
         scope,
         Some(state_db.clone()),
-        None,
-        None,
-        None,
-        // The real source arrives with `/mode`.
-        AgentMode::Build,
         runtime.resolved.candidates,
     );
+    // The operator's stop, for the phases the turn's own listener cannot reach
+    // (the vote's real statements): the question's own token, latched once. A
+    // turn in flight hears the signal on its own listener, says nothing, and
+    // settles as the cancelled class.
     tokio::pin!(work);
-    let outcome = tokio::select! {
+    let settled = tokio::select! {
         result = &mut work => result,
         _ = tokio::signal::ctrl_c() => {
-            stop_scope.request_stop();
-            let outcome = work.await;
-            stop_scope.record_stop_settlement();
-            print_metrics_section(&metrics);
-            return interrupted_exit(outcome, &cancellation, format);
+            cancellation.cancel();
+            work.await
         }
     };
-    print_metrics_section(&metrics);
-    settle_ask(outcome, &cancellation, format)
+    settle_ask(settled, &cancellation, format)
 }
 
-/// The exit of an `ask` the user interrupted with Ctrl-C: a plain interrupt
-/// (the token carries the user's stop, or no reason) is the quiet 130; a
-/// budget or owner-failure stop that latched FIRST keeps its own class and
-/// wording through `settle_ask` — the first stop reason decides.
-fn interrupted_exit(
-    outcome: Result<AgentOutput, AgentRuntimeError>,
-    cancellation: &CancellationToken,
-    format: RenderFormat,
-) -> Result<i32, Box<dyn std::error::Error>> {
-    match cancellation.reason() {
-        None | Some(CancellationReason::User) => Ok(130),
-        Some(_) => settle_ask(outcome, cancellation, format),
-    }
-}
-
-/// The one classification for a settled `ask`, shared by the work-ready and
-/// setup-error branches and independent of which `select` branch won: the
-/// question token's first stop reason decides — User 130, Budget 6 with
-/// truthful partial wording, OwnerFailure 5 — and only a run that stopped for
-/// no typed reason falls through to the outcome itself (clarification 6,
-/// natural 0, setup error 5). A ready-work/ready-signal race classifies the
-/// same either way, because the signal branch latches User before returning.
+/// The one classification for a settled `ask`: the question token's first stop
+/// reason decides — User 130 quiet, Budget 6 with truthful partial wording,
+/// OwnerFailure 5 — and a run that stopped for no typed reason falls through to
+/// the attempt's own turn, as [`turn_exit_code`] reads it.
 fn settle_ask(
     outcome: Result<AgentOutput, AgentRuntimeError>,
     cancellation: &CancellationToken,
     format: RenderFormat,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match cancellation.reason() {
-        Some(CancellationReason::User) => {
-            failure_message(130, "request cancelled".to_string(), format)
-        }
-        Some(CancellationReason::Budget(dimension)) => {
+        // The turn said `Request cancelled.` when the operator stopped it; a
+        // quiet 130 is the class itself.
+        Some(saya_agent::CancellationReason::User) => Ok(130),
+        Some(saya_agent::CancellationReason::Budget(dimension)) => {
             failure_message(6, budget_partial_message(dimension), format)
         }
-        Some(CancellationReason::OwnerFailure) => match outcome {
+        Some(saya_agent::CancellationReason::OwnerFailure) => match outcome {
             // The run's own error is the truth the owner failure interrupted;
             // say that rather than a generic line.
             Err(error) => failure_message(5, error.to_string(), format),
@@ -135,10 +110,6 @@ fn settle_ask(
                 "the run was stopped by an owner failure: its sink could not record answering observations".to_string(),
                 format,
             ),
-        },
-        None => match outcome {
-            Ok(output) => Ok(ask_exit_code(&output)),
-            Err(error) => failure_message(5, error.to_string(), format),
         },
         // A future stop reason is still a stop: report the run's own error
         // when it has one, otherwise the unclassified stop, as a failure —
@@ -151,12 +122,16 @@ fn settle_ask(
                 format,
             ),
         },
+        None => match outcome {
+            Ok(output) => Ok(ask_exit_code(&output)),
+            Err(error) => failure_message(5, error.to_string(), format),
+        },
     }
 }
 
-/// The exit code a finished `ask` run returns: 6 — the paused class — when
-/// the turn ended on a clarification ("paused, needs input"), 0 when the
-/// model answered. The run never fails here: an ask that asked IS a finished
+/// The exit code a finished `ask` run returns: 6 — the paused class — when the
+/// turn ended on a clarification ("paused, needs input"), 0 when the model
+/// answered. The run never fails here: an ask that asked IS a finished
 /// outcome, just not an answered one.
 pub(super) fn ask_exit_code(output: &AgentOutput) -> i32 {
     if ended_on_clarification(output) { 6 } else { 0 }

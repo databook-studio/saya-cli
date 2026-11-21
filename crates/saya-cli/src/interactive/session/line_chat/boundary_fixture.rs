@@ -32,6 +32,7 @@ pub(super) fn next_run(name: &str) -> SessionRun {
         front: Arc::new(Front),
         session: name.to_owned(),
         mode: ApprovalPolicy::Ask,
+        budget: crate::plugins::database::DatabaseBudget::defaults(),
         shape: WorkspaceShape::Writable,
         connections: ConnectionRegistry::new(""),
         allow_query_data: true,

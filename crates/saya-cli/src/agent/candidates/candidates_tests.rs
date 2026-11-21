@@ -7,10 +7,11 @@
 //!
 //! The orchestration is injectable via [`AttemptRunner`] the way the runtime
 //! is injectable via `run_prompt_with_inputs` / `TurnInputs`: the production
-//! runner delegates to `run_prompt_with_sink` (which builds `TurnInputs` from
-//! config), and these tests inject a scripted runner so the loop, the
-//! nomination, the decision, and the `ConsensusDecided` event are assertable in
-//! isolation from the runtime (which has its own tests in `runtime_tests.rs`).
+//! runner opens one chat session per attempt and sends the question as its one
+//! turn (which builds `TurnInputs` from config), and these tests inject a
+//! scripted runner so the loop, the nomination, the decision, and the
+//! `ConsensusDecided` event are assertable in isolation from the runtime (which
+//! has its own tests in `runtime_tests.rs`).
 
 use super::super::decide::CandidateExecutor;
 use super::super::question_scope::QuestionScope;
@@ -61,7 +62,7 @@ async fn orchestrate_test(
     cancellation: &CancellationToken,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let scope = test_scope(cancellation.clone());
-    let receipts = AnsweringReceiptSink::new(sink);
+    let receipts = AnsweringReceiptSink::new(Arc::new(sink.clone()));
     orchestrate(
         candidates,
         runner,

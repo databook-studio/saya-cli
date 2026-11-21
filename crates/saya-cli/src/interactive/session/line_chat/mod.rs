@@ -67,6 +67,24 @@ impl LineChat {
         }
     }
 
+    /// One turn of one session, for a surface that has no line loop to drive
+    /// it: the same composition the plain loop opens on its first message
+    /// ([`open`]), the question sent as that session's one turn, and the
+    /// session closed. The caller drives it on the runtime it is already on, so
+    /// the run lives and ends inside that runtime — `saya ask` and each
+    /// candidate attempt are its callers.
+    ///
+    /// `None` means the message never ran (the session refused it).
+    pub(crate) async fn one_turn(
+        parts: LineSession,
+        message: String,
+    ) -> Result<Option<Sent>, String> {
+        let mut line = open::one(parts).await?;
+        let sent = line.send(message).await;
+        line.quit().await;
+        sent
+    }
+
     /// The link a saved record carries to the run this session belongs to: a
     /// rollover moves it to the job that follows.
     pub(crate) fn run_link(&self) -> Option<saya_store::RunLink> {

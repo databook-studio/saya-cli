@@ -52,7 +52,7 @@ async fn selected_candidate_retains_all_settled_attempt_usage() {
 
     let cancellation = CancellationToken::new();
     let scope = test_scope(cancellation.clone());
-    let receipts = AnsweringReceiptSink::new(&sink);
+    let receipts = AnsweringReceiptSink::new(Arc::new(sink.clone()));
     receipts
         .emit(AgentEvent::usage(
             saya_agent::UsageCall::Answer,

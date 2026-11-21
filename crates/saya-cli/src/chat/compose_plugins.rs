@@ -41,6 +41,9 @@ pub(super) struct PluginSetup {
     pub(super) memory_reachable: bool,
     /// The session's query-capture hook.
     pub(super) capture: Option<CaptureHook>,
+    /// The database budget a turn of this run spends once it uses the database:
+    /// the chat's `[limits.database]`, or the one-shot ask's override of it.
+    pub(super) budget: DatabaseBudget,
     /// The provider the run's post-turn learning pass calls. `None` for a run
     /// that learns nothing: the plugin then attaches no learning source and
     /// `on_turn_finish` announces nothing.
@@ -61,6 +64,7 @@ pub(super) fn run_plugins(
         memory_reachable,
         capture,
         learning,
+        budget,
     } = setup;
     let runtime = job.runtime_config();
     // The section is composed from the connection set the run resolved, once,
@@ -99,7 +103,7 @@ pub(super) fn run_plugins(
             has_state_store: true,
             permit_candidate_writes: setup_learning.permit_candidate_writes,
         },
-        DatabaseBudget::of(runtime),
+        budget,
         prompt,
         capture,
     );
