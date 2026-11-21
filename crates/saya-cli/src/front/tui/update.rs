@@ -59,6 +59,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             model.backspace();
         }
         Some(Intent::Submit) => submit(model, cmds),
+        // The queue is one deep, and Ctrl+G is how the operator takes the held
+        // line back: it is dropped, never sent (`02` §7).
+        Some(Intent::DropQueued) => model.drop_queued(),
         Some(Intent::CancelTurn) => cmds.push(Cmd::CancelTurn),
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),
