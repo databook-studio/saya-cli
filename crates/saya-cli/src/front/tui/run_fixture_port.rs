@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 
 use saya_agent::PermissionMode;
 
+use super::direct::Direct;
 use super::run_clock::Clock;
 use super::run_cmd::CmdPort;
 use crate::agent::tools::consent::Answer;
+use crate::interactive::tui::TrustResolution;
 
 /// A clock a test turns by hand: the rate limit is the one thing that reads it,
 /// so a test that wants "no frame before 33 ms" never waits for one.
@@ -39,7 +41,7 @@ impl Clock for FakeClock {
 }
 
 /// What a fake port was asked to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Call {
     Send(String),
     Cancel,
@@ -47,6 +49,10 @@ pub(crate) enum Call {
     SwitchMode(PermissionMode),
     /// The text handed to the clipboard (`02` §6's `c`).
     Copy(String),
+    /// One command the surface answers itself (`03` §4.1).
+    Direct(Direct),
+    /// The trust question answered by binding the launch folder.
+    Trust(TrustResolution),
 }
 
 /// A port that records instead of performing, and panics on request.
@@ -106,5 +112,13 @@ impl CmdPort for FakePort {
 
     fn copy(&self, text: String) {
         self.record(Call::Copy(text));
+    }
+
+    fn direct(&self, command: Direct) {
+        self.record(Call::Direct(command));
+    }
+
+    fn trust(&self) {
+        self.record(Call::Trust(TrustResolution::TrustCwd));
     }
 }

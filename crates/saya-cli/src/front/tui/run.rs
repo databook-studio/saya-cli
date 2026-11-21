@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
+use super::direct_run::DirectDeps;
 use super::model::Model;
 use super::msg::Msg;
 use super::run_clock::{Clock, SystemClock};
@@ -78,8 +79,12 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
     }
 
     /// The facts every frame is painted with: the launch's token column, glyph
-    /// set, provider and workspace.
+    /// set, provider and workspace. A session that bound no workspace is asked
+    /// the trust question here, once, before the loop reads a key (`02` §9.4).
     pub(crate) fn with_facts(mut self, facts: Facts) -> Self {
+        if facts.untrusted {
+            self.model.open_trust();
+        }
         self.facts = facts;
         self
     }
@@ -227,11 +232,12 @@ pub(crate) async fn run(
     model: Model,
     session: Arc<ChatSession>,
     ops: OpsContext,
+    direct: Arc<DirectDeps>,
     facts: Facts,
 ) -> io::Result<()> {
     let (msgs, queue) = mpsc::unbounded_channel();
     let front = Arc::new(Forward::new(msgs.clone()));
-    let port = Arc::new(SessionPort::new(session, front, ops));
+    let port = Arc::new(SessionPort::new(session, front, ops, direct));
     let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port).with_facts(facts);
     run_input::spawn_input(msgs.clone());
     run_input::spawn_ticker(runtime.animating_flag(), msgs, super::view::TICK);

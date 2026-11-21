@@ -22,6 +22,9 @@ use super::view::mode_words;
 pub(crate) enum Overlay {
     /// `/mode` with no argument: the six modes on one screen (`02` §8).
     Mode(ModePicker),
+    /// The startup workspace-trust question (`02` §9.4, T16): opened once when
+    /// the session bound no workspace, answered `y`/`n`.
+    Trust,
 }
 
 impl Model {
@@ -39,6 +42,7 @@ impl Model {
     pub(crate) fn mode_picker(&self) -> Option<&ModePicker> {
         match self.overlay.as_ref()? {
             Overlay::Mode(picker) => Some(picker),
+            Overlay::Trust => None,
         }
     }
 
@@ -46,7 +50,19 @@ impl Model {
     pub(crate) fn mode_picker_mut(&mut self) -> Option<&mut ModePicker> {
         match self.overlay.as_mut()? {
             Overlay::Mode(picker) => Some(picker),
+            Overlay::Trust => None,
         }
+    }
+
+    /// Opens the workspace-trust question (`02` §9.4): the one decision a
+    /// session that bound no workspace is asked, once, on its own screen.
+    pub(crate) fn open_trust(&mut self) {
+        self.overlay = Some(Overlay::Trust);
+    }
+
+    /// Whether the trust question is the pane that is open.
+    pub(crate) fn trust_open(&self) -> bool {
+        matches!(self.overlay, Some(Overlay::Trust))
     }
 
     /// Opens `/mode`'s picker on the mode in force (`02` §8).

@@ -13,7 +13,8 @@ use ratatui::text::Line;
 use super::model::Model;
 use super::model_overlay::Overlay;
 use super::run_draw::{Facts, lines};
-use super::view::{MODE_PICKER_ROWS, mode_picker};
+use super::view::trust;
+use super::view::{MODE_PICKER_ROWS, TRUST_ROWS, mode_picker};
 
 /// The overlay the model has open, as the rows it covers and the lines it
 /// paints there, or nothing when no pane is open.
@@ -23,7 +24,11 @@ pub(crate) fn overlay(
     area: Rect,
 ) -> Option<(Rect, Vec<Line<'static>>)> {
     let overlay = model.overlay()?;
-    let height = (MODE_PICKER_ROWS as u16).min(area.height);
+    let rows_wanted = match overlay {
+        Overlay::Mode(_) => MODE_PICKER_ROWS,
+        Overlay::Trust => TRUST_ROWS,
+    };
+    let height = (rows_wanted as u16).min(area.height);
     // A pane sits at the bottom of the region it covers, nearest the composer:
     // it is opened by a key press and read on the way out.
     let at = Rect::new(area.x, area.y + area.height - height, area.width, height);
@@ -31,6 +36,7 @@ pub(crate) fn overlay(
         Overlay::Mode(picker) => {
             mode_picker::rows(picker, area.width as usize, height as usize, facts.charset)
         }
+        Overlay::Trust => trust::rows(area.width as usize, height as usize, facts.charset),
     };
     Some((at, lines(rows, facts.scheme)))
 }

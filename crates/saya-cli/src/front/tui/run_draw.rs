@@ -45,6 +45,9 @@ pub(crate) struct Facts {
     pub(crate) provider: bool,
     /// The workspace root, abbreviated, or `None` when no project is bound.
     pub(crate) workspace: Option<String>,
+    /// Whether the session bound no workspace and has not answered the trust
+    /// question yet: the runtime opens the question on it (`02` §9.4).
+    pub(crate) untrusted: bool,
 }
 
 impl Default for Facts {
@@ -58,6 +61,7 @@ impl Default for Facts {
             // states that itself.
             provider: true,
             workspace: None,
+            untrusted: false,
         }
     }
 }

@@ -211,6 +211,7 @@ fn a_workers_word_is_said_without_touching_the_composer() {
         &mut model,
         Msg::Worker(Worker {
             message: "the export could not be written".to_owned(),
+            ..Worker::default()
         }),
     );
 

@@ -6,6 +6,7 @@ use ratatui::crossterm::event::KeyCode;
 
 /// The modal's answer once a key resolves to one: bind this folder, bind
 /// the typed directory, or close unbound.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TrustResolution {
     /// Bind exactly the launch cwd, canonicalised — no parent, no walk.
     TrustCwd,

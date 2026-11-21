@@ -16,6 +16,9 @@
 //! — the panes T4-T13 built, composed into one screen.
 
 pub(crate) mod cards_keys;
+pub(crate) mod direct;
+pub(crate) mod direct_run;
+pub(crate) mod direct_trust;
 pub(crate) mod focus;
 mod focus_text;
 pub(crate) mod keys;
@@ -42,6 +45,12 @@ pub(crate) mod view;
 // unused in a lib build — they are the boundary, not dead code.
 #[allow(unused_imports)]
 pub(crate) use cards_keys::{CARD_PAGE_ROWS, CardIntent, card_intent};
+#[allow(unused_imports)]
+pub(crate) use direct::{Direct, DirectOutcome};
+#[allow(unused_imports)]
+pub(crate) use direct_run::DirectDeps;
+#[allow(unused_imports)]
+pub(crate) use direct_trust::{TrustStore, press as trust_press};
 #[allow(unused_imports)]
 pub(crate) use focus::EntryPath;
 #[allow(unused_imports)]
@@ -126,3 +135,15 @@ mod run_input_tests;
 #[cfg(test)]
 #[path = "run_front_tests.rs"]
 mod run_front_tests;
+
+#[cfg(test)]
+#[path = "direct_fixture.rs"]
+mod direct_fixture;
+
+#[cfg(test)]
+#[path = "direct_tests.rs"]
+mod direct_tests;
+
+#[cfg(test)]
+#[path = "direct_trust_tests.rs"]
+mod direct_trust_tests;

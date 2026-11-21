@@ -12,9 +12,11 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::cards_keys::{self, CardIntent};
+use super::direct_trust;
 use super::model::Model;
 use super::model_overlay::Overlay;
 use crate::agent::tools::consent::Answer;
+use crate::interactive::tui::TrustResolution;
 
 /// What the surface says when a mode switch is asked for over an open card.
 /// The card asks for an answer first, and the wording says so.
@@ -67,6 +69,11 @@ pub(crate) enum Intent {
     FocusInspector,
     /// Leave cursor mode.
     FocusLeave,
+    /// Answer the workspace-trust question by binding the launch folder
+    /// (`02` §9.4's `y`).
+    TrustAccept,
+    /// Answer it by continuing without a workspace (`02` §9.4's `n`).
+    TrustDecline,
     /// Say this instead of doing anything: the state the press met refuses it.
     Refused(&'static str),
 }
@@ -90,6 +97,17 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
 fn overlay_key(overlay: &Overlay, key: KeyEvent) -> Option<Intent> {
     match overlay {
         Overlay::Mode(_) => mode_key(key),
+        Overlay::Trust => trust_key(key),
+    }
+}
+
+/// The workspace-trust question's keys (`02` §9.4): `y` binds the launch folder
+/// and `n` continues without one — the two answers today's modal gives through
+/// `t` and `c`, read through the same resolution (`direct_trust::press`).
+fn trust_key(key: KeyEvent) -> Option<Intent> {
+    match direct_trust::press(key.code)? {
+        TrustResolution::TrustCwd => Some(Intent::TrustAccept),
+        _ => Some(Intent::TrustDecline),
     }
 }
 

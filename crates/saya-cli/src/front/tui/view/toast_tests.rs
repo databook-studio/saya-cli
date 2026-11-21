@@ -64,6 +64,7 @@ fn a_toast_is_gone_after_four_seconds_of_ticks() {
         &mut model,
         Msg::Worker(Worker {
             message: "the export could not be written".to_owned(),
+            ..Worker::default()
         }),
     );
     assert!(model.toast().is_some(), "a worker's word is said");
@@ -91,6 +92,7 @@ fn a_second_toast_replaces_the_first_and_restarts_the_clock() {
         &mut model,
         Msg::Worker(Worker {
             message: "copied answer (1.2 kB)".to_owned(),
+            ..Worker::default()
         }),
     );
 

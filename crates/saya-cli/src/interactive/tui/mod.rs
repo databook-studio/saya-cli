@@ -112,3 +112,37 @@ pub(crate) use terminal::{TerminalGuard, restore_terminal};
 // neither, so the re-exports read as unused.
 #[allow(unused_imports)]
 pub(crate) use clipboard::{copy_to_native_clipboard, osc52_copy};
+
+// The new front's `/sql` is today's direct query, not a second one: the bounded
+// worker task (which goes through the read-only safety layer), the permit whose
+// cap it holds, and the process-wide refusal when all four are taken. A build
+// of this module alone references none of it, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use sql_task::{Followup, SqlTask, spawn as spawn_sql_task};
+#[allow(unused_imports)]
+pub(crate) use worker_permits::{CAP_REFUSAL, try_acquire_worker_permit};
+
+// `/export` writes with today's two-phase export (encode under a ceiling, then
+// publish atomically) rather than a second writer, so the bytes a new-surface
+// export writes are the bytes today's writes.
+#[allow(unused_imports)]
+pub(crate) use export::write_result_overwrite;
+
+// `/chart [kind] [path]` is parsed once, by the grammar the old TUI reads.
+#[allow(unused_imports)]
+pub(crate) use dispatch::parse_chart_args;
+
+// `/investigation save` keeps the TUI's save-without-SQL fill — the latest
+// query the surface shows, on the connection that ran it — as one function.
+#[allow(unused_imports)]
+pub(crate) use dispatch_investigation::fill_save_from_last_query;
+
+// The query a bare `save` is filled from is today's `LastQuery`.
+#[allow(unused_imports)]
+pub(crate) use types::LastQuery;
+
+// The trust question's answer is today's own type — the one the old modal's
+// keys produce — so the new surface states the same answer, not a second
+// spelling of it.
+#[allow(unused_imports)]
+pub(crate) use trust::{TrustResolution, trust_key};

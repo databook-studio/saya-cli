@@ -48,8 +48,18 @@ impl Forward {
     pub(crate) fn say(&self, message: impl Into<String>) {
         let message = message.into();
         if !message.is_empty() {
-            let _ = self.msgs.send(Msg::Worker(Worker { message }));
+            let _ = self.msgs.send(Msg::Worker(Worker {
+                message,
+                ..Worker::default()
+            }));
         }
+    }
+
+    /// Hands one finished worker's answer to the loop: the rows a direct
+    /// command returned, the sentence it ended in, or its own word about
+    /// itself — one `Msg::Worker`, so a slow command can never read as a key.
+    pub(crate) fn deliver(&self, worker: Worker) {
+        let _ = self.msgs.send(Msg::Worker(worker));
     }
 
     /// Answers the call asked under `id`, which resumes the ask that is waiting
