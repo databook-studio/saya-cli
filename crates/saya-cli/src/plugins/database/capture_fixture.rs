@@ -8,10 +8,12 @@ use async_trait::async_trait;
 use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 
+use super::prompt::ChatPrompt;
 use super::tests::{chat_session, scratch};
 use super::{ChatDatabaseFlags, DatabasePlugin};
 use crate::agent::tools::{CaptureEvent, CaptureHook, DatabaseTools};
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
+use saya_config::MemoryMode;
 
 /// The connection's opaque profile identity, so a capture can be told to have
 /// recorded the entry it ran on.
@@ -94,6 +96,7 @@ impl DatabaseConnector for OversizedCellConnector {
 pub(super) fn chat_plugin(entry: ConnectionEntry, capture: Option<CaptureHook>) -> DatabasePlugin {
     let mut registry = ConnectionRegistry::new("primary");
     registry.insert("primary", entry);
+    let prompt = ChatPrompt::of(&registry, MemoryMode::Off, false);
     DatabasePlugin::for_chat(
         Arc::new(DatabaseTools::with_registry(registry, 200, true, None)),
         ChatDatabaseFlags {
@@ -102,6 +105,7 @@ pub(super) fn chat_plugin(entry: ConnectionEntry, capture: Option<CaptureHook>) 
             permit_candidate_writes: false,
         },
         chat_session(),
+        prompt,
         capture,
     )
 }

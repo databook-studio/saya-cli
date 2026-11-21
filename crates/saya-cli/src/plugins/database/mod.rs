@@ -22,12 +22,15 @@ mod recall_fixture;
 #[cfg(test)]
 mod recall_tests;
 #[cfg(test)]
+mod section_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod turn_policy_tests;
 
 mod job_adapter;
 mod learning;
+pub(crate) mod prompt;
 mod recall;
 mod surface;
 mod turn_policy;
@@ -88,9 +91,24 @@ pub(crate) struct DatabasePlugin {
     /// the model. A mutex because `context()` takes `&self` and the executor
     /// reads it after the hook ran.
     last_receipt: Mutex<Option<Arc<RecallReceipt>>>,
+    /// The most recent SQL this run executed, as the run last stated it. A
+    /// mutex for the same reason as the receipt: `context()` reads it through
+    /// `&self` when the turn asks for its context blocks.
+    last_sql: Mutex<Option<String>>,
 }
 
 impl DatabasePlugin {
+    /// Records the SQL the run just executed, so `context()` can carry the
+    /// adapt-this-query hint the chat's turn carried. `None` clears it — a turn
+    /// that ran no SQL states nothing about one.
+    pub(crate) fn record_last_sql(&self, sql: Option<&str>) {
+        let mut slot = match self.last_sql.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *slot = sql.map(str::to_owned);
+    }
+
     /// Attaches the run's recall source: with one, `context()` recalls this
     /// turn's database contracts. Without one, it contributes nothing.
     pub(crate) fn with_recall(mut self, source: RecallSource) -> Self {
@@ -126,6 +144,18 @@ impl DatabasePlugin {
         };
         *slot = Some(Arc::new(receipt));
     }
+
+    /// The last-SQL hint block for this turn, or `None` when the run stated no
+    /// SQL — the same block the chat's turn appended, built by the same
+    /// function, so the two cannot word it differently.
+    fn last_sql_block(&self) -> Option<ContextBlock> {
+        let sql = match self.last_sql.lock() {
+            Ok(slot) => slot.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        sql.as_deref()
+            .and_then(crate::agent::turn_context::last_sql_hint_block)
+    }
 }
 
 #[async_trait]
@@ -157,13 +187,35 @@ impl RunPlugin for DatabasePlugin {
     /// one function the chat's turn calls — and the receipt of what reached the
     /// model, kept for the executor that reports it. No source attached means
     /// the run configured no memory: nothing to contribute, no receipt.
+    ///
+    /// The most recent SQL this run executed rides here too, as the same block
+    /// the chat's turn appended: the hint is per turn, so it never enters the
+    /// run's system prompt where it would move the prefix a provider caches.
     async fn context(&self, _ctx: &RunContext, prompt: &str) -> Vec<ContextBlock> {
-        let Some(source) = self.recall.as_ref() else {
-            return Vec::new();
-        };
-        let (blocks, receipt) = source.recall(prompt).await;
-        self.store_receipt(receipt);
+        let mut blocks = Vec::new();
+        if let Some(source) = self.recall.as_ref() {
+            let (recalled, receipt) = source.recall(prompt).await;
+            self.store_receipt(receipt);
+            blocks.extend(recalled);
+        }
+        if let Some(hint) = self.last_sql_block() {
+            blocks.push(hint);
+        }
         blocks
+    }
+
+    /// The plugin's own section of the run's system prompt: the database part of
+    /// it, stated on the chat surface.
+    ///
+    /// A chat run states the bytes `plugins::database::prompt` builds — the same
+    /// text the old chat prompt renders, from the same constants. A coding job
+    /// or a helper keeps its own prompt for now and states nothing here, so its
+    /// request bytes do not move.
+    fn system_section(&self, _ctx: &RunContext) -> Option<String> {
+        match &self.surface {
+            Surface::Chat(chat) => Some(chat.prompt.section()),
+            Surface::Job(_) => None,
+        }
     }
 
     fn definitions(&self, _ctx: &RunContext) -> Vec<ToolDefinition> {

@@ -12,11 +12,14 @@ use saya_agent::{
 use saya_store::SqliteStateStore;
 use saya_types::DatabaseProfile;
 
+use super::prompt::ChatPrompt;
 use super::{ChatDatabaseFlags, DatabasePlugin, SessionBudget};
 use crate::agent::tools::DatabaseTools;
 use crate::agent::tools::workspace::is_tool_name;
 use crate::commands::coding::database::CodingDatabaseTools;
 use crate::config::runtime::RuntimeConfig;
+use crate::connection::ConnectionRegistry;
+use saya_config::MemoryMode;
 
 /// The core tool names the plugin is registered beside. None is a database
 /// tool, so the registry accepts the plugin on a real run's tool list.
@@ -48,6 +51,7 @@ pub(super) fn chat_plugin_over(session: SessionBudget) -> DatabasePlugin {
             permit_candidate_writes: true,
         },
         session,
+        ChatPrompt::of(&ConnectionRegistry::new("local"), MemoryMode::Off, false),
         None,
     )
 }
