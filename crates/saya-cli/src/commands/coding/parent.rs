@@ -144,6 +144,8 @@ fn map_root_error(
 #[path = "parent_tests.rs"]
 mod parent_tests;
 
+#[path = "parent_arming.rs"]
+mod parent_arming;
 #[path = "parent_control.rs"]
 mod parent_control;
 #[path = "parent_loop.rs"]
@@ -178,6 +180,18 @@ pub(crate) mod parent_turn_provider;
 #[cfg(all(test, unix))]
 #[path = "parent_turn_tests.rs"]
 mod parent_turn_tests;
+
+#[cfg(all(test, unix))]
+#[path = "parent_turn_arming_tests.rs"]
+mod parent_turn_arming_tests;
+
+#[cfg(all(test, unix))]
+#[path = "parent_turn_arming_elapsed_tests.rs"]
+mod parent_turn_arming_elapsed_tests;
+
+#[cfg(all(test, unix))]
+#[path = "parent_arming_fixture.rs"]
+mod parent_arming_fixture;
 
 struct RunGuard {
     root: saya_agent::CancellationToken,

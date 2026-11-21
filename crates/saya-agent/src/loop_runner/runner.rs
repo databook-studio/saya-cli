@@ -5,9 +5,8 @@ use crate::{
 };
 
 use super::{
-    AgentError, AgentLimits, AgentOutput, PartialOutput, ProgressHandle, ProgressStop,
-    ProgressStopKind, admission, budget_output, control, progress::ProgressClassifier, salvage,
-    turn,
+    AgentError, AgentLimits, AgentOutput, PartialOutput, ProgressHandle, ProgressStop, admission,
+    budget_output, control, invocation, progress::ProgressClassifier, salvage, turn,
 };
 
 pub(super) mod background;
@@ -16,7 +15,7 @@ mod note;
 use note::refresh_turn_note;
 
 pub(super) async fn run_agent_inner(
-    invocation: control::AgentRunInvocation<'_>,
+    invocation: invocation::AgentRunInvocation<'_>,
 ) -> Result<AgentOutput, AgentError> {
     let conversation_correlation = invocation.answering.as_ref().map_or_else(
         CorrelationId::next,
@@ -46,12 +45,12 @@ pub(super) async fn run_agent_inner(
 }
 
 async fn run_agent_loop(
-    invocation: control::AgentRunInvocation<'_>,
+    invocation: invocation::AgentRunInvocation<'_>,
     admission: &mut admission::Admission,
     conversation_correlation: CorrelationId,
     invocation_correlation: CorrelationId,
 ) -> Result<AgentOutput, AgentError> {
-    let control::AgentRunInvocation {
+    let invocation::AgentRunInvocation {
         mut mailbox,
         provider,
         tools,
@@ -62,6 +61,7 @@ async fn run_agent_loop(
         sink,
         cancellation,
         answering,
+        deferred_budget,
         request_preflight,
         effect_admission,
         require_physical_effect_admission,
@@ -195,6 +195,7 @@ async fn run_agent_loop(
                 state.actor_correlation,
                 state.request_ordinal.saturating_add(1),
                 first_request,
+                deferred_budget.as_ref(),
             )
             .await;
         }
@@ -216,7 +217,7 @@ async fn run_agent_loop(
         {
             state.definitions = definitions;
         }
-        if let Some(output) = turn::run(&mut state, admission).await? {
+        if let Some(output) = turn::run(&mut state, admission, deferred_budget.as_ref()).await? {
             // The answering turn is a model turn too, so the report counts it;
             // any guard it would trip is ignored because the run is ending.
             state.finish_progress_turn();
@@ -365,8 +366,10 @@ impl RunState<'_> {
         });
         self.definitions
             .retain(|definition| definition.name == "checklist");
-        self.messages
-            .push(ChatMessage::text("user", final_turn_note(&stop)));
+        self.messages.push(ChatMessage::text(
+            "user",
+            super::progress::final_turn_note(&stop),
+        ));
     }
 
     /// The output a forced wind-down returns when the model did not produce a
@@ -383,18 +386,4 @@ impl RunState<'_> {
             answer_sql: self.designation.sql.clone(),
         }
     }
-}
-
-/// The model-facing instruction for the clean wind-down. It names the guard
-/// that fired in plain terms and the one tool that remains.
-fn final_turn_note(stop: &ProgressStop) -> String {
-    let reason = match stop.kind {
-        ProgressStopKind::NoProgress => "it stopped making progress",
-        ProgressStopKind::Repeating => "a tool call kept returning the same result",
-        ProgressStopKind::WallClock | ProgressStopKind::Cost => "a limit was reached",
-    };
-    format!(
-        "The job is stopping because {reason}. Only the checklist tool is available now. \
-         Write your best current state and a short summary now."
-    )
 }

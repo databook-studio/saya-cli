@@ -181,12 +181,26 @@ impl ActivePlugins {
     }
 
     /// The tightest turn policy across the active plugins, or `None` when none
-    /// asks for one. Absence is not a zero-request turn: a field no plugin sets
-    /// stays unset.
+    /// asks for one: a field no plugin sets stays unset.
     pub fn turn_policy(&self) -> Option<TurnPolicy> {
+        self.tightest_policy(|plugin, ctx| plugin.turn_policy(ctx))
+    }
+
+    /// The tightest policy the active plugins arm when a turn first uses them,
+    /// or `None` when none asks for one: read at the use, never at turn start.
+    pub fn policy_on_use(&self) -> Option<TurnPolicy> {
+        self.tightest_policy(|plugin, ctx| plugin.policy_on_use(ctx))
+    }
+
+    /// The tightest policy the active plugins state through `asked`: unset
+    /// stays unset, and a field several plugins set takes the smaller.
+    fn tightest_policy(
+        &self,
+        asked: impl Fn(&Arc<dyn RunPlugin>, &RunContext) -> Option<TurnPolicy>,
+    ) -> Option<TurnPolicy> {
         let mut policy: Option<TurnPolicy> = None;
         for plugin in &self.plugins {
-            let Some(asked) = plugin.turn_policy(&self.ctx) else {
+            let Some(asked) = asked(plugin, &self.ctx) else {
                 continue;
             };
             policy = Some(match policy {
