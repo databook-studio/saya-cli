@@ -279,6 +279,24 @@ impl CodingApplication {
     pub fn store(&self) -> &SqliteStateStore {
         &self.store
     }
+    /// Whether the artifacts root already holds a snapshot under `id`: a job id
+    /// a run has taken. A session that opens a run again — a resumed session's
+    /// next process — would otherwise be refused by the artifacts root for
+    /// naming the snapshot the run before it wrote.
+    pub(crate) fn snapshot_taken(&self, id: &str) -> bool {
+        let Ok(id) = saya_types::SnapshotId::parse(id) else {
+            // An id the snapshot grammar refuses is `create`'s to refuse, with
+            // its own error: this method only reports what is already there.
+            return false;
+        };
+        // Anything but "no snapshot under that id" is treated as taken: a
+        // second run under the same id is the failure worth avoiding, and an
+        // unreadable snapshot is not evidence that the id is free.
+        !matches!(
+            self.artifacts.read_snapshot(&id),
+            Err(saya_harness::coding::snapshot::SnapshotError::SnapshotNotFound)
+        )
+    }
 }
 
 pub(super) fn private_directory(path: &Path) -> Result<PathBuf, CodingError> {

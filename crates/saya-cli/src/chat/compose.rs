@@ -133,7 +133,7 @@ impl RunComposition {
         let application = Launch::Attached(mode).compose(application);
         application.with_approval_surface(can_obtain_approval);
         let application = application.with_operator(Arc::clone(&operator) as Arc<dyn Operator>);
-        let request = request(&session, &shape)?;
+        let request = request(&session, &shape, application.snapshot_taken(&session))?;
         // The session's mode is the consent to open: the approval is scoped to
         // the exact request built here, so no question is put to anybody.
         let proposal = application.propose(&request).await?;
@@ -199,15 +199,44 @@ impl RunComposition {
 }
 
 /// The job request a session's run is created with: the session's name as the
-/// job's id and its task label, and the write scope its folder's shape allows.
+/// job's label and — unless that name is already a run's — its id, and the
+/// write scope its folder's shape allows.
 ///
 /// `request.task` is a real, stable label — every helper brief and the tool
 /// advertisement read it — and never the first message: a prepared run's first
 /// message is `run_next_turn`.
-fn request(session: &str, shape: &WorkspaceShape) -> Result<CodingJobRequest, CodingError> {
-    let job = JobId::parse(session).map_err(CodingError::owner)?;
+///
+/// `taken` is the artifacts root's answer about the session's own name: a
+/// session opens a run more than once — a resumed session's next process says
+/// the same name the process before it did — and a run's private artifacts are
+/// keyed by its job id, so an id already used meets its own snapshot and the
+/// run is refused. Such a run states the session's name plus the instant and
+/// process that opened it; every other run keeps the plain name, so nothing
+/// else about a run's identity moves.
+fn request(
+    session: &str,
+    shape: &WorkspaceShape,
+    taken: bool,
+) -> Result<CodingJobRequest, CodingError> {
+    let id = if taken {
+        run_name(session)
+    } else {
+        session.to_owned()
+    };
+    let job = JobId::parse(&id).map_err(CodingError::owner)?;
     let task = format!("session {session}");
     CodingJobRequest::new(job, task, write_scope(shape))
+}
+
+/// The job id a run takes when the session's own name is already a run's: the
+/// name, cut to fit, plus the instant and process that opened this run.
+fn run_name(session: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let suffix = format!("-p{millis}-{}", std::process::id());
+    let keep = session.len().min(128 - suffix.len());
+    format!("{}{suffix}", &session[..keep])
 }
 
 /// The paths a run of this shape may write: the folder itself when nothing holds
