@@ -31,6 +31,7 @@ fn definition(name: &str) -> ToolDefinition {
 fn stated(names: &[&str]) -> ResolvedTools {
     ResolvedTools {
         allow: Some(ToolsAllow::parse(names).unwrap()),
+        ..ResolvedTools::default()
     }
 }
 

@@ -114,6 +114,7 @@ fn the_no_egress_modes_advertise_no_search() {
 fn the_allow_list_can_take_the_search_tool_away() {
     let keep = saya_config::ResolvedTools {
         allow: Some(saya_config::ToolsAllow::parse(["web_search"]).expect("a governed name")),
+        ..saya_config::ResolvedTools::default()
     };
     let mut definitions = vec![definition()];
     crate::agent::tools::narrow(&mut definitions, &keep);
@@ -121,6 +122,7 @@ fn the_allow_list_can_take_the_search_tool_away() {
 
     let drop_it = saya_config::ResolvedTools {
         allow: Some(saya_config::ToolsAllow::parse(["web_fetch"]).expect("a governed name")),
+        ..saya_config::ResolvedTools::default()
     };
     let mut definitions = vec![definition()];
     crate::agent::tools::narrow(&mut definitions, &drop_it);

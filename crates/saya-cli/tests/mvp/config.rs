@@ -61,3 +61,8 @@ include!("config/doctor_tasks.rs");
 include!("config/theme_precedence.rs");
 
 include!("config/layer_and_hints.rs");
+
+// A `[tools] allow` list may still spell an old tool name for one release: the
+// launch honours it, and `config doctor` is where the stale word — and the word
+// to write instead — is reported.
+include!("config/tools_deprecation.rs");

@@ -32,7 +32,7 @@ pub(crate) fn grant_token(
             .workspace_root
             .is_some()
             .then(|| WORKSPACE_WRITE_TOKEN.to_owned()),
-        "http_fetch" | "http_download" => facts
+        "http_fetch" | "http_download" | "web_fetch" => facts
             .fetch
             .is_some()
             .then(|| fetch_token(arguments))

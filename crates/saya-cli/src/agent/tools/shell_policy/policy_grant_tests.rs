@@ -255,6 +255,43 @@ async fn a_helper_of_the_same_job_sees_the_grant_and_another_job_does_not() {
     assert_eq!(other_job.asked(), 1, "it asks");
 }
 
+/// A `command:<program>` store entry is the token the old `run_command`
+/// spelling recorded, and it still authorises the core's `shell` for one
+/// release — the program it named, and only that: a second program, a
+/// compound command, or an output redirect still asks.
+#[tokio::test]
+async fn a_legacy_command_grant_still_authorises_the_shell() {
+    let operator = Remembering::holding(&["command:npm"]);
+    let shell = job_shell(ApprovalPolicy::Ask, &operator, true, no_rules());
+    for command in ["npm", "npm install", "npm run build"] {
+        let call = json!({ "command": command });
+        assert_eq!(
+            shell.lane(&call),
+            Lane::Host(true),
+            "the legacy program token pre-answers `{command}`"
+        );
+        assert!(
+            shell.approve(&call).await,
+            "`{command}` runs without a question"
+        );
+    }
+    let others = ["make check", "npm install && rm -rf x", "npm > out"];
+    for command in others {
+        let call = json!({ "command": command });
+        assert_eq!(
+            shell.lane(&call),
+            Lane::Host(false),
+            "`{command}` is not the program the grant named"
+        );
+        assert!(!shell.approve(&call).await, "`{command}` still asks");
+    }
+    assert_eq!(
+        operator.asked(),
+        others.len(),
+        "only the calls the grant does not name reach a person"
+    );
+}
+
 /// A session's store outlives its prompts: it is bound per turn by the
 /// surface, not held by an operator, so a shell with nobody to ask still
 /// pre-answers what the user granted — and refuses, rather than runs, every
