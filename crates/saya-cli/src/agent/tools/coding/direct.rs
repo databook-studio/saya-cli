@@ -157,10 +157,8 @@ impl RootTools {
     /// The definitions the loop advertises: the read-only workspace and
     /// database tools for a job with no working checkout; coordinator tools
     /// plus child workspace for a job with one. A working checkout's list is
-    /// what the run has reached so far: the
-    /// two background readers join it once a background run exists, and — for a
-    /// plan-first job — the write surface joins it once the operator approves a
-    /// submitted plan.
+    /// what the run has reached so far — the background readers, the plan
+    /// posture's write surface and the notebook edit join it as they exist.
     pub(crate) fn definitions(&self) -> Vec<ToolDefinition> {
         match self {
             RootTools::ReadOnly(read_only) => read_only.definitions(),
@@ -169,22 +167,12 @@ impl RootTools {
     }
 }
 
-/// The canonical name a call resolves to before the advertised check: `bash`
-/// is the model's spelling of `shell`; every other name is taken as advertised.
-fn canonical(name: &str) -> &str {
-    crate::agent::tools::workspace::canonical_name(name)
-}
-
 #[async_trait]
 impl ToolExecutor for RootTools {
-    /// The loop re-reads this before each request, so a background start made
-    /// in one turn puts `shell_output` and `shell_kill` in the next turn's
-    /// tool list. The list is otherwise stable from the first request: only a
-    /// cause that genuinely cannot be known earlier grows it, at most once —
-    /// a plan-first job's approved plan opens the write surface, a background
-    /// start adds the two readers, and a notebook created during the run makes
-    /// its edit appear. A job with no working checkout advertises the same
-    /// list for the whole run and keeps the list the loop was given.
+    /// The loop re-reads this before each request, so a cause that genuinely
+    /// cannot be known earlier grows the list at most once: an approved plan's
+    /// write surface, a background start's two readers, a notebook's edit. A
+    /// job with no working checkout keeps the list the loop was given.
     fn advertised_definitions(&self) -> Option<Vec<ToolDefinition>> {
         match self {
             RootTools::ReadOnly(_) => None,
@@ -222,7 +210,7 @@ impl ToolExecutor for RootTools {
                     .await
             }
             RootTools::WorkingCheckout(direct) => {
-                let name = canonical(name);
+                let name = crate::agent::tools::workspace::canonical_name(name);
                 if !direct.advertises(name) {
                     return Err(ToolError::UnsupportedTool);
                 }
@@ -243,7 +231,7 @@ impl ToolExecutor for RootTools {
         match self {
             RootTools::ReadOnly(read_only) => read_only.execute(name, arguments).await,
             RootTools::WorkingCheckout(direct) => {
-                let name = canonical(name);
+                let name = crate::agent::tools::workspace::canonical_name(name);
                 if !direct.advertises(name) {
                     return Err(ToolError::UnsupportedTool);
                 }
@@ -306,6 +294,12 @@ impl ToolExecutor for RootTools {
 #[async_trait]
 impl ApprovalDecider for RootTools {
     async fn approve(&self, tool: &ToolDefinition, arguments: &Value) -> bool {
+        // A chat-surface run decides its database tools in the plugin's lane,
+        // before the variant split: the read-only surface allows every name it
+        // advertises unasked, so the lane has to come first to be the ask it is.
+        if let Some(allowed) = self.db_lane_approve(tool, arguments).await {
+            return allowed;
+        }
         match self {
             RootTools::ReadOnly(read_only) => read_only.approve(tool, arguments).await,
             RootTools::WorkingCheckout(direct) => {
@@ -352,6 +346,11 @@ impl ApprovalDecider for RootTools {
     }
 
     fn would_ask(&self, tool: &ToolDefinition, arguments: &Value) -> Option<bool> {
+        // The lane's ask is the ask a `PermissionRequest` hook may pre-empt, so
+        // the gate reads the same table the call is decided by.
+        if let Some(asked) = self.db_lane_would_ask(tool, arguments) {
+            return Some(asked);
+        }
         match self {
             RootTools::ReadOnly(read_only) => read_only.would_ask(tool, arguments),
             RootTools::WorkingCheckout(direct) => {

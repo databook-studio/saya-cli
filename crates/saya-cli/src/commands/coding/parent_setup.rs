@@ -9,6 +9,7 @@ use super::{CodingError, NativeCodingJob};
 use crate::agent::hooks::{HookApprovalGate, HookCaller, HookGate, Hooks};
 use crate::agent::tools::child::plugins::active_plugins;
 use crate::agent::{provider, tools::coding::RootTools};
+use crate::plugins::database::approval::DbApprovalLane;
 use saya_agent::{AgentMailbox, ApprovalPolicy, ToolExecutor};
 use saya_types::CodingRunFailure;
 use std::sync::{Arc, Mutex};
@@ -48,6 +49,17 @@ impl NativeCodingJob {
             })?;
         self.lifecycle().enter("tools");
         let (tools, built_checkout) = RootTools::build(self).await?;
+        let mut tools = tools;
+        // A chat run's root runs the database plugin on the chat surface, so
+        // its database calls are the plugin lane's decision. Every job surface
+        // attaches none and keeps the decider it composes: the rule is the
+        // lane's own, stated once, so it cannot drift from the plugin's
+        // activation.
+        if let Some(supplied) = inputs.plugins.as_ref()
+            && let Some(lane) = DbApprovalLane::for_run(self, &supplied.context)
+        {
+            tools.attach_db_lane(Arc::new(lane));
+        }
         let tools = Arc::new(tools);
         // The run's own working checkout, resolved once: `RootTools::build` has
         // just ensured it and returns the use-time verification it composed the

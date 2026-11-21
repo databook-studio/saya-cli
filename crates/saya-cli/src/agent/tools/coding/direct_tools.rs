@@ -84,6 +84,10 @@ pub(crate) struct DirectCodingTools {
     /// The job's `[tools] allow` set. An explicit name re-advertises a tool the
     /// default set suppresses.
     pub(super) tools: saya_config::ResolvedTools,
+    /// The plugin's database lane, when this run put the plugin on the chat
+    /// surface: `None` — every job surface — decides database calls the way
+    /// this surface always did.
+    pub(super) db_lane: Option<Arc<crate::plugins::database::approval::DbApprovalLane>>,
 }
 
 impl DirectCodingTools {
@@ -186,6 +190,7 @@ impl DirectCodingTools {
             notebook_seen: AtomicBool::new(false),
             evidence,
             tools,
+            db_lane: None,
         }
     }
 
