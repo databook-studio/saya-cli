@@ -105,3 +105,10 @@ pub(crate) use types::WideTableView;
 // alone references neither, so the re-exports read as unused.
 #[allow(unused_imports)]
 pub(crate) use terminal::{TerminalGuard, restore_terminal};
+
+// A copy tries the OS clipboard tool and then the terminal's own OSC 52, and
+// the new front's `c` goes through this one attempt rather than a second copy
+// of it (T14's rule for the terminal). A build of this module alone references
+// neither, so the re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use clipboard::{copy_to_native_clipboard, osc52_copy};

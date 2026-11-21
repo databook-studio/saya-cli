@@ -17,14 +17,17 @@ use ratatui::text::{Line, Span};
 
 use super::transcript::TranscriptFacts;
 use super::turn_rows::{GUTTER, indented, wrapped};
-use super::{blocks, blocks_question, blocks_stop, result, turn_activity};
+use super::{blocks, blocks_question, blocks_stop, inspector, result, turn_activity, turn_focus};
+use crate::front::tui::focus::EntryPath;
 use crate::front::tui::theme::{Glyph, Token, glyph, style};
 use crate::front::view::{Entry, TurnView};
 use crate::interactive::tui::markdown_spans_fenced;
 use crate::interactive::tui::wrap::cell_width;
 
-/// One turn's rows, its blocks in reading order.
+/// One turn's rows, its blocks in reading order. `place` is the turn's place in
+/// the conversation: the block cursor's seat names it (`02` §6).
 pub(super) fn rows(
+    place: usize,
     turn: &TurnView,
     elapsed: Duration,
     facts: &TranscriptFacts,
@@ -33,10 +36,18 @@ pub(super) fn rows(
     let content = width.saturating_sub(2 * GUTTER).max(1);
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut above: Option<&Entry> = None;
-    for entry in turn.entries() {
-        let painted = block(entry, elapsed, facts, content);
+    for (index, entry) in turn.entries().iter().enumerate() {
+        let mut painted = block(entry, elapsed, facts, content);
         if painted.is_empty() {
             continue;
+        }
+        let focused = facts.focus == Some(EntryPath::new(place, index));
+        turn_focus::mark(&mut painted, focused, facts);
+        if focused
+            && facts.inspector
+            && let Some(line) = inspector::row(entry, facts, content)
+        {
+            painted.push(line);
         }
         let touched = match above {
             Some(above) => sits_directly_under(above, entry),

@@ -15,6 +15,7 @@
 
 use ratatui::crossterm::event::KeyEvent;
 
+use super::focus_text;
 use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
@@ -84,9 +85,30 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         }
         Some(Intent::ModeSet) => choose(model, cmds),
         Some(Intent::ModeCancel) => model.close_overlay(),
+        Some(Intent::FocusUp) => model.move_focus(false),
+        Some(Intent::FocusDown) => model.move_focus(true),
+        Some(Intent::FocusExpand) => model.fold_focus(None),
+        Some(Intent::FocusFold) => model.fold_focus(Some(true)),
+        Some(Intent::FocusCopy) => copy(model, cmds),
+        Some(Intent::FocusInspector) => model.toggle_inspector(),
+        Some(Intent::FocusLeave) => model.clear_focus(),
         Some(Intent::Refused(reason)) => model.say(reason),
         None => {}
     }
+}
+
+/// `c`: copy the focused entry's source text, and say what was copied (`02`
+/// §4). An entry with no text of its own — the activity group, whose words are
+/// its steps' — copies nothing and claims nothing.
+fn copy(model: &mut Model, cmds: &mut Vec<Cmd>) {
+    let Some((word, text)) = model.focused_entry().and_then(focus_text::plain) else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    model.say(focus_text::toast(word, &text));
+    cmds.push(Cmd::Copy(text));
 }
 
 /// Enter: send the composer, or hold it behind the turn already running.

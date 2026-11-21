@@ -45,6 +45,8 @@ pub(crate) enum Call {
     Cancel,
     Answer(u64, Answer),
     SwitchMode(PermissionMode),
+    /// The text handed to the clipboard (`02` §6's `c`).
+    Copy(String),
 }
 
 /// A port that records instead of performing, and panics on request.
@@ -100,5 +102,9 @@ impl CmdPort for FakePort {
 
     fn switch_mode(&self, mode: PermissionMode) {
         self.record(Call::SwitchMode(mode));
+    }
+
+    fn copy(&self, text: String) {
+        self.record(Call::Copy(text));
     }
 }

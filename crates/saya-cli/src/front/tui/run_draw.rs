@@ -154,6 +154,8 @@ fn transcript(model: &Model, facts: &Facts, area: Rect) -> Vec<Line<'static>> {
             workspace: facts.workspace.clone(),
             scheme: facts.scheme,
             charset: facts.charset,
+            focus: model.focus(),
+            inspector: model.inspector(),
             ..TranscriptFacts::default()
         },
         width,

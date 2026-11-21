@@ -49,6 +49,13 @@ impl TranscriptView {
     fn push_turn(&mut self) {
         self.turns.push(TurnView::default());
     }
+
+    /// The turn at `index`, to be changed. This is the one write that reaches
+    /// back into an older turn, which is what the block cursor's fold needs: a
+    /// group in *any* turn opens, not only the newest (`02` §6).
+    pub(crate) fn turn_mut(&mut self, index: usize) -> Option<&mut TurnView> {
+        self.turns.get_mut(index)
+    }
 }
 
 /// One turn of the conversation.
@@ -82,6 +89,11 @@ impl TurnView {
     /// The turn's answer, once the model has streamed text.
     pub(crate) fn answer_mut(&mut self) -> Option<&mut Answer> {
         self.entries.iter_mut().find_map(Entry::answer_mut)
+    }
+
+    /// The block at `index`, to be changed.
+    pub(crate) fn entry_mut(&mut self, index: usize) -> Option<&mut Entry> {
+        self.entries.get_mut(index)
     }
 }
 

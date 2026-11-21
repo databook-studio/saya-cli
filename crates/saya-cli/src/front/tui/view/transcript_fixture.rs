@@ -43,6 +43,7 @@ pub(super) fn facts(elapsed: Duration) -> TranscriptFacts {
         workspace: Some("~/shop".to_owned()),
         scheme: Scheme::Dark,
         charset: Charset::Utf8,
+        ..TranscriptFacts::default()
     }
 }
 
