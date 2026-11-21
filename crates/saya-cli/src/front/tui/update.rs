@@ -15,6 +15,7 @@
 
 use ratatui::crossterm::event::KeyEvent;
 
+use super::direct;
 use super::focus_text;
 use super::keys::{Intent, intent};
 use super::model::Model;
@@ -45,6 +46,12 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         Msg::Resize { .. } => {}
         Msg::Chat(event) => session(model, event, &mut cmds),
         Msg::Worker(worker) => {
+            // A direct command's answer is filed where it belongs — the rows as
+            // a result entry, a command's sentence as a notice or an error — and
+            // what is left is the worker's own word about itself (`02` §4).
+            if let Some(outcome) = worker.direct {
+                direct::land(model, outcome);
+            }
             if !worker.message.is_empty() {
                 model.say(worker.message);
             }
@@ -92,6 +99,11 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::FocusCopy) => copy(model, cmds),
         Some(Intent::FocusInspector) => model.toggle_inspector(),
         Some(Intent::FocusLeave) => model.clear_focus(),
+        Some(Intent::TrustAccept) => {
+            model.close_overlay();
+            cmds.push(Cmd::Trust);
+        }
+        Some(Intent::TrustDecline) => model.close_overlay(),
         Some(Intent::Refused(reason)) => model.say(reason),
         None => {}
     }
@@ -117,9 +129,21 @@ fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     if text.trim().is_empty() {
         return;
     }
-    // `/mode` with no argument is the surface's own command: it opens the
-    // picker instead of sending anything (`02` §8). Every other line — a
-    // message, and every command that is not this one — is a turn's.
+    // A line the surface answers itself — `/sql`, `/export`, `/chart`,
+    // `/investigation` — is one command, never a turn (`03` §4.1). So is
+    // bare `/mode`, which opens the picker instead of sending anything
+    // (`02` §8). Every other line is a turn's.
+    match direct::read(model, &text) {
+        direct::Read::Cmd(cmd) => {
+            cmds.push(cmd);
+            return;
+        }
+        direct::Read::Said(words) => {
+            model.say(words);
+            return;
+        }
+        direct::Read::Turn => {}
+    }
     if text.trim() == SLASH_MODE {
         model.open_mode_picker();
         return;

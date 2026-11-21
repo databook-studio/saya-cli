@@ -3,7 +3,7 @@
 
 /// Parses "/chart [type] [path]": a leading known kind is consumed; anything
 /// left is the output path.
-pub(super) fn parse_chart_args(args: &str) -> (Option<crate::chart::ChartKind>, Option<String>) {
+pub(crate) fn parse_chart_args(args: &str) -> (Option<crate::chart::ChartKind>, Option<String>) {
     let mut tokens = args.split_whitespace();
     match tokens.next() {
         Some(tok) => match crate::chart::ChartKind::parse(tok) {

@@ -40,7 +40,7 @@ pub(super) fn bare_investigations(line: &str) -> bool {
 /// Fills a save that carries neither `--sql` nor `--file` from the session's
 /// last selectable query: the SQL it ran and the connection that ran it.
 /// Everything else passes through unchanged.
-pub(super) fn fill_save_from_last_query(
+pub(crate) fn fill_save_from_last_query(
     command: InvestigationCommand,
     last_query: &Option<LastQuery>,
 ) -> Result<InvestigationCommand, String> {

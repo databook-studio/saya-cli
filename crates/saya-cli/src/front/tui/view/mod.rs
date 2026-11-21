@@ -74,6 +74,7 @@ mod status_fit;
 mod status_segments;
 mod toast;
 mod transcript;
+pub(crate) mod trust;
 mod turn;
 mod turn_activity;
 mod turn_focus;
@@ -118,6 +119,10 @@ pub(crate) use status::{ActivityState, StatusFacts, status_line};
 pub(crate) use toast::{TICK, Toast};
 #[allow(unused_imports)]
 pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
+#[allow(unused_imports)]
+pub(crate) use trust::ROWS as TRUST_ROWS;
+#[allow(unused_imports)]
+pub(crate) use trust::rows as trust_rows;
 
 #[cfg(test)]
 #[path = "cards_fixture.rs"]

@@ -10,11 +10,14 @@ use std::sync::Arc;
 
 use saya_agent::PermissionMode;
 
+use super::direct::Direct;
+use super::direct_run::{DirectDeps, perform as perform_direct};
+use super::direct_trust;
 use super::msg::Cmd;
 use super::run_front::Forward;
 use crate::agent::tools::consent::Answer;
 use crate::chat::{ChatSession, OpsContext};
-use crate::interactive::tui::{copy_to_native_clipboard, osc52_copy};
+use crate::interactive::tui::{TrustResolution, copy_to_native_clipboard, osc52_copy};
 
 /// What a command is performed on: the session that runs the turns, and the
 /// front that holds the operator's unanswered calls.
@@ -29,6 +32,12 @@ pub(crate) trait CmdPort: Send + Sync {
     fn switch_mode(&self, mode: PermissionMode);
     /// Put this text on the clipboard (`02` §6's `c`).
     fn copy(&self, text: String);
+    /// Run one command the surface answers itself (`03` §4.1): the query, the
+    /// export, the chart, the investigation.
+    fn direct(&self, command: Direct);
+    /// Answer the workspace-trust question by binding the launch folder
+    /// (`02` §9.4): today's `bind_trusted`, exactly like `--workspace`.
+    fn trust(&self);
 }
 
 /// Performs one command on the port that can.
@@ -40,25 +49,34 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::SwitchMode(mode) => port.switch_mode(mode),
         Cmd::SetMode(mode) => port.switch_mode(mode),
         Cmd::Copy(text) => port.copy(text),
+        Cmd::Direct(command) => port.direct(command),
+        Cmd::Trust => port.trust(),
     }
 }
 
-/// The real port: the session's API, the front's pending asks, and the chat
-/// layer's one author of a mode switch.
+/// The real port: the session's API, the front's pending asks, the chat
+/// layer's one author of a mode switch, and the launch's direct dependencies.
 pub(crate) struct SessionPort {
     session: Arc<ChatSession>,
     front: Arc<Forward>,
     ops: OpsContext,
+    direct: Arc<DirectDeps>,
 }
 
 impl SessionPort {
-    /// A port over one session, the front the session talks to, and the run's
-    /// operations context.
-    pub(crate) fn new(session: Arc<ChatSession>, front: Arc<Forward>, ops: OpsContext) -> Self {
+    /// A port over one session, the front the session talks to, the run's
+    /// operations context, and what its direct commands need from the launch.
+    pub(crate) fn new(
+        session: Arc<ChatSession>,
+        front: Arc<Forward>,
+        ops: OpsContext,
+        direct: Arc<DirectDeps>,
+    ) -> Self {
         Self {
             session,
             front,
             ops,
+            direct,
         }
     }
 }
@@ -105,6 +123,31 @@ impl CmdPort for SessionPort {
                 return;
             }
             let _ = osc52_copy(&mut std::io::stdout(), &text);
+        });
+    }
+
+    fn direct(&self, command: Direct) {
+        // A direct command is a query or a file write: it takes as long as it
+        // takes, so it runs on a blocking task and hands its answer back through
+        // the front — never on the loop's thread, which is painting the surface.
+        let deps = Arc::clone(&self.direct);
+        let front = Arc::clone(&self.front);
+        tokio::task::spawn_blocking(move || {
+            front.deliver(perform_direct(&deps, command));
+        });
+    }
+
+    fn trust(&self) {
+        // A `y` binds the launch folder through today's store — the live
+        // session runtime's `bind_trusted` — which recomposes the universe and
+        // canonicalises a path, so it runs off the loop's thread too.
+        let store = Arc::clone(&self.direct.trust);
+        let front = Arc::clone(&self.front);
+        tokio::task::spawn_blocking(move || {
+            front.deliver(direct_trust::answer(
+                store.as_ref(),
+                TrustResolution::TrustCwd,
+            ));
         });
     }
 }
