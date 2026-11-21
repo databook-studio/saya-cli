@@ -4,6 +4,7 @@ use crate::interactive::session::lifecycle::notes::NotesCommand;
 use saya_agent::{ApprovalPolicy, PermissionMode};
 use std::{fmt, str::FromStr};
 
+pub(crate) mod catalog;
 mod contracts;
 mod help;
 mod investigation;
@@ -18,14 +19,6 @@ pub(crate) use help::help_for;
 // The bypass-composition sentence is shared by the `/mode` help entry and the
 // `/mode` answers, so it is re-exported for the session command layer.
 pub(crate) use help::PLAN_BYPASS_SENTENCE;
-// the one-line description per command is the single source shared by the
-// `/help` listing and the completion popup (`interactive::tui::complete`), so
-// the two surfaces cannot drift. `description_for` is read by the popup in
-// production; `COMMAND_DESCRIPTIONS` is only needed by tests that assert the
-// shared table covers the registry, so it is re-exported under `cfg(test)`.
-#[cfg(test)]
-pub(crate) use help::COMMAND_DESCRIPTIONS;
-pub(crate) use help::description_for;
 // The run scope parser's equivalence tests read the `/run` help from
 // `commands/run/scopes.rs`, so the per-command help joins the re-exports.
 #[cfg(test)]

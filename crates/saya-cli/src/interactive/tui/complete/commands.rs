@@ -1,31 +1,24 @@
 use super::Candidate;
+use crate::slash::catalog::{self, Surface};
 
-/// One-line description per command, shown in the popup. The popup reads it
-/// from the single source in `slash::help` — see
-/// [`crate::slash::COMMAND_DESCRIPTIONS`] — so the popup and the `/help` listing
-/// share one copy and cannot drift. The thin local alias keeps the call site
-/// short; a test asserts the shared table still covers exactly the parser's
-/// registry.
-pub(super) fn description_for(name: &str) -> Option<&'static str> {
-    crate::slash::description_for(name)
-}
-
-/// Candidates for a bare command word (no space yet): every known command
-/// whose name fuzzy-matches the prefix, with its shared description.
+/// Candidates for a bare command word (no space yet): every catalogued name
+/// the popup's surface carries whose name fuzzy-matches the prefix, with the
+/// catalogue's one-line description. The catalogue is the only list — the
+/// popup, `/help` and the parser read it — so a command added there appears
+/// here without a second edit.
 pub(super) fn command_candidates(
     prefix: &str,
     total_chars: usize,
 ) -> Option<(usize, usize, Vec<Candidate>)> {
-    let mut scored: Vec<(i32, Candidate)> = crate::slash::registry::KNOWN_COMMANDS
-        .iter()
-        .filter_map(|name| {
-            let description = description_for(name)?;
-            super::super::fuzzy::fuzzy_score(name, prefix).map(|score| {
+    let mut scored: Vec<(i32, Candidate)> = catalog::entries()
+        .filter(|entry| entry.surfaces.covers(Surface::Tui))
+        .filter_map(|entry| {
+            super::super::fuzzy::fuzzy_score(entry.name, prefix).map(|score| {
                 (
                     score,
                     Candidate {
-                        value: format!("/{name}"),
-                        description: Some(description.to_string()),
+                        value: format!("/{}", entry.name),
+                        description: Some(entry.description.to_string()),
                     },
                 )
             })

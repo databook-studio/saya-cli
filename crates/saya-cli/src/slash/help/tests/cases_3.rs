@@ -1,13 +1,12 @@
-/// The `/run` family is wired at every hand-maintained touchpoint, not just
-/// the parser: the registry, the description table (the popup's single
-/// source), the `/help` listing, and the per-command help. A command that
-/// parses but is absent from help is exactly the defect this test exists to
-/// catch — a half-existing command.
+/// The `/run` family is wired at every touchpoint, not just the parser: the
+/// catalogue row (the popup's single source), the `/help` listing, and the
+/// per-command help. A command that parses but is absent from help is exactly
+/// the defect this test exists to catch — a half-existing command.
 #[test]
 fn run_and_runs_are_registered_listed_and_described() {
     for name in ["run", "runs"] {
         assert!(
-            registry::KNOWN_COMMANDS.contains(&name),
+            crate::slash::catalog::is_command(name),
             "{name} is registered"
         );
         assert!(
@@ -138,7 +137,7 @@ fn every_help_surface_names_bypass() {
 #[test]
 fn rotate_is_registered_listed_and_described() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"rotate"),
+        crate::slash::catalog::is_command("rotate"),
         "rotate is registered"
     );
     assert_eq!(

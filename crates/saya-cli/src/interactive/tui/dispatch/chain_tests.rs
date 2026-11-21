@@ -13,7 +13,7 @@ use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
 use crate::interactive::tui::types::{App, LastQuery};
 use crate::render::RenderFormat;
-use crate::slash::registry::KNOWN_COMMANDS;
+use crate::slash::catalog;
 use saya_agent::ApprovalPolicy;
 use saya_store::{FsSessionStore, SessionStore};
 use saya_types::{

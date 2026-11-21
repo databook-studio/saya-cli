@@ -2,9 +2,6 @@ mod arguments;
 mod commands;
 
 #[cfg(test)]
-use commands::description_for;
-
-#[cfg(test)]
 #[path = "complete_tests.rs"]
 mod tests;
 

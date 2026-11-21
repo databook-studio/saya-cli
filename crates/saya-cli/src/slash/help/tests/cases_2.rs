@@ -6,7 +6,7 @@
 #[test]
 fn columns_has_help_listing_and_copy_guarantee() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"columns"),
+        crate::slash::catalog::is_command("columns"),
         "columns is registered"
     );
     let listing = help_text();
@@ -39,7 +39,7 @@ fn columns_has_help_listing_and_copy_guarantee() {
 #[test]
 fn report_is_registered_listed_and_described() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"report"),
+        crate::slash::catalog::is_command("report"),
         "report is registered"
     );
     assert!(
