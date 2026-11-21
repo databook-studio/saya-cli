@@ -73,39 +73,17 @@ pub(super) async fn ask(
     // The operator's stop, for the phases the turn's own listener cannot reach
     // (the vote's real statements): the question's own token, latched once. A
     // turn in flight hears the signal on its own listener, says nothing, and
-    // settles as the cancelled class. The question's elapsed bound is raced
-    // here as well: the scope debits it between source segments, so a call that
-    // waits for an answer — a terminal question nobody answered — would
-    // otherwise outlive the budget it was asked under.
+    // settles as the cancelled class. The elapsed bound is not raced here: the
+    // scope debits it between source segments and the one-turn front bounds the
+    // answer's own wait by it, so a wall clock around the whole question would
+    // charge the attempts a budget their segments never spent.
     tokio::pin!(work);
-    let settled = match crate::agent::limits::answering_deadline(
-        runtime,
-        crate::agent::limits::AnsweringSurface::Ask,
-    ) {
-        Some(bound) => {
-            let deadline = tokio::time::sleep(bound);
-            tokio::pin!(deadline);
-            tokio::select! {
-                result = &mut work => result,
-                _ = &mut deadline => {
-                    cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(
-                        saya_agent::BudgetDimension::ElapsedTime,
-                    ));
-                    work.await
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    cancellation.cancel();
-                    work.await
-                }
-            }
+    let settled = tokio::select! {
+        result = &mut work => result,
+        _ = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            work.await
         }
-        None => tokio::select! {
-            result = &mut work => result,
-            _ = tokio::signal::ctrl_c() => {
-                cancellation.cancel();
-                work.await
-            }
-        },
     };
     settle_ask(settled, &cancellation, format)
 }

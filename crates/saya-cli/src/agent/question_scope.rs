@@ -101,6 +101,18 @@ impl QuestionScope {
         self.inner.answering.clone()
     }
 
+    /// The elapsed time this question still has to spend, when it has a bound.
+    /// Read, never debited: a surface bounds one wait for an answer by it — the
+    /// wait the accounting above cannot reach, because it debits only between
+    /// source segments.
+    pub(crate) fn remaining_elapsed(&self) -> Option<Duration> {
+        self.inner
+            .active_time
+            .lock()
+            .expect("active time lock")
+            .remaining
+    }
+
     /// Opens one exclusive charged source segment and returns its remaining
     /// deadline. No async runtime is required to construct the scope.
     pub(crate) fn begin_segment(&self) -> Option<Duration> {

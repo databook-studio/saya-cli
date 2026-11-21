@@ -230,13 +230,35 @@ impl ChatFront for LineFront {
 
     async fn ask(&self, question: &Question) -> Answer {
         let turn = self.lock().turn.clone();
-        ask::put(
-            self.can_prompt,
-            &turn,
-            question,
-            self.signals.metrics().as_ref(),
-        )
-        .await
+        let metrics = self.signals.metrics();
+        let wait = ask::put(self.can_prompt, &turn, question, metrics.as_ref());
+        // A one-turn surface's wait for an answer is the one wait its scope
+        // cannot end: the scope debits elapsed time between source segments, so
+        // a prompt nobody answers would hold the turn past the budget it was
+        // asked under. The wait is bounded here instead, and the stop it latches
+        // is the question's own elapsed class.
+        let bound = match self.one_turn {
+            true => self.signals.remaining_elapsed(),
+            false => None,
+        };
+        let Some(bound) = bound else {
+            return wait.await;
+        };
+        tokio::pin!(wait);
+        tokio::select! {
+            answer = &mut wait => answer,
+            _ = tokio::time::sleep(bound) => {
+                if let Some(scope) = self.signals.cancellation() {
+                    scope.cancel_with_reason(saya_agent::CancellationReason::Budget(
+                        saya_agent::BudgetDimension::ElapsedTime,
+                    ));
+                }
+                // The prompt is abandoned, not answered: the call it was asking
+                // about is refused, and the turn settles on the stop's class.
+                turn.cancel();
+                wait.await
+            }
+        }
     }
 
     /// The line's live-terminal fact: a person is on the other end of the ask,

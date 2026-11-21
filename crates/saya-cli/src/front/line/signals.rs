@@ -8,6 +8,7 @@
 //! per-turn metrics section prints.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use saya_agent::CancellationToken;
 
@@ -58,5 +59,14 @@ impl Signals {
     /// a question's elapsed budget cancels from inside the scope.
     pub(crate) fn cancellation(&self) -> Option<CancellationToken> {
         self.scope.as_ref().map(QuestionScope::cancellation)
+    }
+
+    /// The elapsed time the question has left, when it has a bound: the longest
+    /// one wait for an answer may take, since the scope debits only between the
+    /// source segments and cannot end a prompt nobody answers.
+    pub(crate) fn remaining_elapsed(&self) -> Option<Duration> {
+        self.scope
+            .as_ref()
+            .and_then(QuestionScope::remaining_elapsed)
     }
 }
