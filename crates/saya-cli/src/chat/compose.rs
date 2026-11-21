@@ -133,7 +133,12 @@ impl RunComposition {
         let application = Launch::Attached(mode).compose(application);
         application.with_approval_surface(can_obtain_approval);
         let application = application.with_operator(Arc::clone(&operator) as Arc<dyn Operator>);
-        let request = request(&session, &shape)?;
+        // The one `[tools] allow` list narrows this run exactly as it narrows
+        // every other surface's: the request states it, so the root advertises
+        // only the names the list keeps (minus the database plugin's, which
+        // follow their connection).
+        let request =
+            request(&session, &shape)?.with_tools_allow(application.stated_tools(&[])?)?;
         // The session's mode is the consent to open: the approval is scoped to
         // the exact request built here, so no question is put to anybody.
         let proposal = application.propose(&request).await?;

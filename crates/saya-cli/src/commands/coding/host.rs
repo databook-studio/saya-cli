@@ -49,6 +49,12 @@ pub struct CodingApplication {
     /// A cell rather than a plain flag because the surface states it through the
     /// shared host it already holds — the same way it states its mode.
     pub(super) can_obtain_approval: std::sync::atomic::AtomicBool,
+    /// Whether a run of this host inherits the job's continuation context: the
+    /// block that states what a *continuing* run already knows. `true` for
+    /// every surface whose job outlives its turn, and stated `false` by a
+    /// one-turn composition, whose run answers one question and inherits
+    /// nothing — a question asked twice must send the provider the same bytes.
+    pub(super) continuation_context: std::sync::atomic::AtomicBool,
     /// The job's one permission-mode cell: the root's `shell` reads it on every
     /// call, so the mode stated here is the mode the next call resolves. Shared
     /// by handle, so a host two `Arc`s hold still answers with its current mode.
@@ -172,6 +178,7 @@ impl CodingApplication {
             personal_instruction_dir: None,
             operator: None,
             can_obtain_approval: std::sync::atomic::AtomicBool::new(true),
+            continuation_context: std::sync::atomic::AtomicBool::new(true),
             mode: ModeCell::new(ApprovalPolicy::Ask),
             launch_grants: std::sync::Mutex::new(saya_agent::SessionGrants::default()),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
@@ -336,6 +343,31 @@ impl CodingApplication {
         token: &CancellationToken,
     ) -> Result<Arc<Self>, CodingError> {
         let (root, program_dir) = super::root_mode::session_inputs(&runtime)?;
+        Self::open_default_with_mode(
+            runtime,
+            store,
+            repository,
+            &root,
+            &super::cli::find_git()?,
+            &program_dir,
+            mode,
+            token,
+        )
+        .await
+    }
+
+    /// The same session over a state root the surface stated: a one-shot ask
+    /// keeps its job's records outside the folder it asks about, so it names the
+    /// root they go under instead of taking the configured one.
+    pub(crate) async fn session_over(
+        runtime: RuntimeConfig,
+        store: SqliteStateStore,
+        repository: &Path,
+        mode: RootMode,
+        state_root: &Path,
+        token: &CancellationToken,
+    ) -> Result<Arc<Self>, CodingError> {
+        let (root, program_dir) = super::root_mode::session_inputs_over(&runtime, state_root)?;
         Self::open_default_with_mode(
             runtime,
             store,

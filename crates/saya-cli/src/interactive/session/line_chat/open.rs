@@ -70,6 +70,11 @@ pub(crate) struct LineSession {
     /// host is told them, so the families they cover are advertised exactly as
     /// the session advertised them.
     pub(crate) grants: saya_agent::SessionGrants,
+    /// The coding state root this session's job records under, when the surface
+    /// states one instead of taking the configured root: a one-shot ask keeps no
+    /// records inside the folder it asks about, so its one-turn job records
+    /// elsewhere rather than refusing the question.
+    pub(crate) state_root: Option<PathBuf>,
 }
 
 /// Opens the session: composes and opens its run, and hands back the session
@@ -80,7 +85,7 @@ impl LineChat {
             .enable_all()
             .build()
             .map_err(|error| format!("the session's runtime could not be built: {error}"))?;
-        let line = runtime.block_on(assemble(parts))?;
+        let line = runtime.block_on(assemble(parts, super::one_shot::OneShot::No))?;
         Ok(LineChat::new(line, runtime))
     }
 }
@@ -88,24 +93,50 @@ impl LineChat {
 /// The same composition, driven by a surface that already runs on a runtime:
 /// one line session, composed and prepared exactly as the plain loop's first
 /// message prepares it, owned by that runtime instead of one of its own.
-pub(super) async fn one(parts: LineSession) -> Result<Line, String> {
-    assemble(parts).await
+///
+/// The one-turn surface states its own state root here: an ask records nothing
+/// inside the folder it asks about, so when the configured root would land
+/// there the session states a private root of its own instead — the question
+/// then reaches its provider and reports what it found, rather than being
+/// refused for where the job's records would have gone.
+///
+pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
+    parts.state_root = super::one_shot::state_root(&parts)?;
+    assemble(parts, super::one_shot::OneShot::Yes).await
 }
 
 /// Builds the application over the session's folder, states the run's facts,
 /// composes it and opens it — asking nobody: the session's mode is the consent.
-async fn assemble(parts: LineSession) -> Result<Line, String> {
+async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
     let config: &RuntimeConfig = &parts.runtime;
     let token = CancellationToken::new();
-    let application = CodingApplication::session(
-        config.clone(),
-        parts.store.clone(),
-        &parts.folder,
-        crate::cli::RootMode::InPlace,
-        &token,
-    )
-    .await
+    let application = match parts.state_root.clone() {
+        Some(root) => {
+            CodingApplication::session_over(
+                config.clone(),
+                parts.store.clone(),
+                &parts.folder,
+                crate::cli::RootMode::InPlace,
+                &root,
+                &token,
+            )
+            .await
+        }
+        None => {
+            CodingApplication::session(
+                config.clone(),
+                parts.store.clone(),
+                &parts.folder,
+                crate::cli::RootMode::InPlace,
+                &token,
+            )
+            .await
+        }
+    }
     .map_err(|error| error.to_string())?;
+    if one_shot == super::one_shot::OneShot::Yes {
+        application.with_continuation_context(false);
+    }
     // The launch's own seeds ride the host the run composes over: a held token
     // pre-answers the calls its family would have asked about, so the mode's
     // advertisement states the family the session stated.
@@ -125,7 +156,13 @@ async fn assemble(parts: LineSession) -> Result<Line, String> {
     // The folder is writable for this session or it is not: the fact is taken
     // before the first run holds the lease, and every run a rollover prepares
     // states it again.
-    let shape = workspace_shape(&parts.folder, &coding_state_root(config)?);
+    let shape = workspace_shape(
+        &parts.folder,
+        &match parts.state_root.clone() {
+            Some(root) => root,
+            None => coding_state_root(config)?,
+        },
+    );
     let name = parts.session.clone();
     let stated = session_run(
         &parts,
@@ -158,7 +195,10 @@ pub(super) async fn session_run(
     // and the privacy facts are resolved through the one composition path.
     let inputs = prepare_turn(config, &parts.overrides, parts.can_prompt, None)
         .await
-        .map_err(|error| error.to_string())?;
+        // A setup failure is worded the way the `ask` has always worded it: an
+        // unresolved secret names the step that resolves it, at the one seam
+        // both the question and the plain loop pass through.
+        .map_err(|error| crate::agent::runtime::with_next_step(error).to_string())?;
     let allow_query_data = query_data_allowed_for_endpoint(
         inputs.ai.provider,
         inputs.ai.base_url.as_deref(),

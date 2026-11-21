@@ -24,6 +24,7 @@
 
 mod boundary;
 mod line;
+mod one_shot;
 mod open;
 mod run;
 

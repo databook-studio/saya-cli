@@ -52,8 +52,34 @@ pub(crate) fn count_limits(config: &ResolvedConfig) -> Option<CountLimits> {
 
 /// The root loop's own ceilings. An uncapped mode resolves every dimension to
 /// `Unlimited`, which is the `None` this engine reads as "no ceiling".
+///
+/// The environment's runaway ceilings ride over the table's: the loop the one
+/// -shot `ask` runs is the same loop, and `SAYA_AGENT_MAX_TURNS`,
+/// `SAYA_AGENT_MAX_TOOL_CALLS` and `SAYA_AGENT_MAX_CONTINUATIONS` bound it the
+/// way they bounded the turn body before the ask became a chat turn.
 pub(crate) fn agent_limits(config: &ResolvedConfig) -> AgentLimits {
-    agent_limits_for(resolved(config), config.ai.context_byte_budget)
+    env_ceilings(
+        agent_limits_for(resolved(config), config.ai.context_byte_budget),
+        saya_agent::budgets_from_env(|name| std::env::var(name).ok()),
+    )
+}
+
+/// The environment's ceilings stated over the job table's: a dimension the
+/// environment names is the one the loop runs under, and one it leaves unset
+/// keeps the table's own answer. The continuation bound defaults to its own
+/// value when the variable is unset, so an operator who never heard of it still
+/// gets the bound.
+fn env_ceilings(mut limits: AgentLimits, env: saya_agent::EnvBudgets) -> AgentLimits {
+    if let Some(turns) = env.max_turns {
+        limits.max_turns = Some(turns);
+    }
+    if let Some(calls) = env.max_tool_calls {
+        limits.max_tool_calls = Some(calls);
+    }
+    if let Some(continuations) = env.max_continuations {
+        limits.max_continuations = Some(continuations);
+    }
+    limits
 }
 
 /// The same numbers bound a helper's answering loop, so a helper is never
