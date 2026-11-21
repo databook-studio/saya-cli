@@ -79,7 +79,11 @@ impl NativeCodingJob {
     /// working checkout W directly, so a finished child has nothing to
     /// merge and there is no lease to release — the join is the whole of the
     /// end-of-run settle. Nothing happens when no schedule was live.
-    async fn settle_implicit_join(&self) {
+    ///
+    /// `run_finish` states the same join for a prepared run whose turns are
+    /// done, so a session's rollover settles its children exactly as `run()`
+    /// does.
+    pub(super) async fn settle_implicit_join(&self) {
         if self.active.lock().await.is_none() {
             return;
         }

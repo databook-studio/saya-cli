@@ -87,6 +87,18 @@ impl RunComposition {
         application: Arc<CodingApplication>,
         run: SessionRun,
     ) -> Result<Self, CodingError> {
+        Self::compose_seeded(application, run, Vec::new()).await
+    }
+
+    /// The same, seeded with the conversation the run begins with: the settled
+    /// (prompt, answer) pairs a session hands the run that follows the one they
+    /// were said on, oldest first. The seed is the run's history and never its
+    /// `request.task`, which stays the job's stable label.
+    pub(crate) async fn compose_seeded(
+        application: Arc<CodingApplication>,
+        run: SessionRun,
+        seed: Vec<(String, String)>,
+    ) -> Result<Self, CodingError> {
         let SessionRun {
             front,
             session,
@@ -126,7 +138,7 @@ impl RunComposition {
             inputs: Mutex::new(Some(TurnInputs {
                 policy: None,
                 plugins: Some(plugins),
-                seed: Vec::new(),
+                seed,
             })),
             operator,
             mode,

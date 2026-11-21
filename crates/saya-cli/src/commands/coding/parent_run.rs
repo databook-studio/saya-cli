@@ -116,8 +116,20 @@ impl RootRun {
 
     /// The run is over: a further turn is refused as one on a finished run.
     pub(super) fn close(&self) {
-        *self.lock() = None;
+        let _ = self.close_once();
+    }
+
+    /// The same, reporting whether this call was the one that closed the run:
+    /// the close is stated once, so an end that is stated twice — a session's
+    /// close after the rollover that already ended the run — writes nothing.
+    pub(super) fn close_once(&self) -> bool {
+        let session = self.lock().take();
+        if session.is_none() {
+            return false;
+        }
+        drop(session);
         super::super::live_runs::run_closed(&self.job);
+        true
     }
 
     /// A guard that closes the run when it drops: the caller holds it for as
