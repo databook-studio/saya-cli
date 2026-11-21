@@ -105,6 +105,19 @@ impl TurnPolicy {
         }
     }
 
+    /// The tighter of two policies, dimension by dimension: a dimension only
+    /// one of them states is that one, and a dimension both state is the
+    /// smaller. A second arm therefore may only ever make a turn cheaper.
+    #[must_use]
+    pub fn tightest(self, other: Self) -> Self {
+        Self {
+            max_requests: tightest_of(self.max_requests, other.max_requests),
+            max_tool_calls: tightest_of(self.max_tool_calls, other.max_tool_calls),
+            max_known_tokens: tightest_of(self.max_known_tokens, other.max_known_tokens),
+            max_elapsed: tightest_of(self.max_elapsed, other.max_elapsed),
+        }
+    }
+
     /// The same four dimensions as the answering engine states them: the
     /// admission ceilings a turn-scoped scope is armed with, and the elapsed
     /// deadline its owner arms. The inverse of [`Self::from_answering`].
@@ -121,6 +134,16 @@ impl TurnPolicy {
 /// One answering ceiling as the policy ceiling that carries it.
 fn ceiling(limit: Option<u64>) -> Option<u32> {
     limit.map(|value| u32::try_from(value).unwrap_or(u32::MAX))
+}
+
+/// The tighter of two optional ceilings: unset means unbounded, so the set one
+/// wins, and two set ones take the smaller.
+fn tightest_of<T: Ord + Copy>(limit: Option<T>, other: Option<T>) -> Option<T> {
+    match (limit, other) {
+        (Some(limit), Some(other)) => Some(limit.min(other)),
+        (Some(limit), None) => Some(limit),
+        (None, other) => other,
+    }
 }
 
 /// A built-in plugin: definitions, an executor, untrusted context, turn hooks,
