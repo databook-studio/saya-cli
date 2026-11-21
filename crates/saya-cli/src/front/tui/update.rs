@@ -43,9 +43,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 model.say(worker.message);
             }
         }
-        // The spinner and the toast's expiry both read this tick; neither has
-        // landed yet, and nothing the model holds changes on it.
-        Msg::Tick => {}
+        // The spinner reads this tick, and so does the toast's clock: four
+        // seconds of ticks spend it (`02` §4).
+        Msg::Tick => model.tick_toast(),
     }
     cmds
 }
