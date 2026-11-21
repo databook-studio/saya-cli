@@ -128,6 +128,7 @@ fn an_unchanged_task_list_rides_one_turn_only() {
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.base_url = Some(endpoint);
     runtime.resolved.ai.retry_delays_ms.clear();
+    super::session_headless_receipt_tests::state_orchestrator_endpoint(&mut runtime);
     let store = FsSessionStore::new(root.join("sessions"));
     let state_db = SqliteStateStore::new(std::path::PathBuf::new());
     let mut state = SessionState::new("headless-checklist-delta", None, "test-model");
