@@ -13,6 +13,8 @@ mod connection;
 #[allow(dead_code)] // contract ops surface, not yet wired into an adapter
 mod contracts;
 mod demo;
+#[allow(dead_code)] // the transcript view model: the pane above it consumes it
+mod front;
 mod grant_token;
 #[cfg(test)]
 mod grant_token_tests;
