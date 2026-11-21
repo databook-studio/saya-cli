@@ -2,6 +2,8 @@ pub(crate) mod commands;
 pub(crate) mod context_view;
 pub(crate) mod continuation;
 pub(crate) mod lifecycle;
+#[path = "line_chat/mod.rs"]
+pub(crate) mod line_chat;
 pub(crate) mod permissions;
 pub(crate) mod run;
 pub(crate) mod runtime;

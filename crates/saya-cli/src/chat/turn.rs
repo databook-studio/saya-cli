@@ -55,6 +55,20 @@ impl JobPort {
         }
     }
 
+    /// A port over a run a composition has already opened: `prepare` reports
+    /// the run ready and opens nothing, because a second open of one run meets
+    /// the job's own `Busy`. This is the surface that composes and opens a run
+    /// itself (a `RunComposition`) and hands the session only its turns.
+    pub(crate) fn opened(job: Arc<NativeCodingJob>) -> Self {
+        Self {
+            job,
+            inputs: Mutex::new(None),
+            metrics: None,
+            cancelled: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+        }
+    }
+
     /// The same port, recording every metric its turns report into `metrics`:
     /// the run's own counters, so a surface reads the same names it always did.
     pub(crate) fn with_metrics(mut self, metrics: Arc<LocalMetrics>) -> Self {
@@ -72,7 +86,11 @@ impl RunPort for JobPort {
     async fn prepare(&self) -> Result<Prepared, String> {
         // The run's profile and workspace are the composition's to state; the
         // job states that it opened, which is what the session needs here.
-        let inputs = self.inputs().take().unwrap_or_default();
+        // `None` is a run the composition already opened: opening it a second
+        // time would meet the job's own `Busy`.
+        let Some(inputs) = self.inputs().take() else {
+            return Ok(Prepared::default());
+        };
         self.job
             .run_prepare(&NoopEventSink, inputs)
             .await

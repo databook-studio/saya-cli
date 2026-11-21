@@ -50,6 +50,13 @@ pub(super) fn session_inputs(runtime: &RuntimeConfig) -> Result<(PathBuf, PathBu
     Ok((root, program_dir))
 }
 
+/// The state root a folder's lease lives under, for a surface that asks whether
+/// another owner holds that folder: `saya run start` and the chat session look
+/// in the same place for the same lease.
+pub(crate) fn session_state_root(runtime: &RuntimeConfig) -> Result<PathBuf, CodingError> {
+    Ok(session_inputs(runtime)?.0)
+}
+
 /// The one stderr/activity line a fallback start states. Exact text: it is
 /// what the user and the session see.
 pub(crate) fn notice(reason: &str) -> String {

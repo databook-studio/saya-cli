@@ -32,6 +32,11 @@ pub(crate) fn budget_partial_message(dimension: BudgetDimension) -> String {
 
 /// Says the truthful partial wording for a settled budget stop as a
 /// terminal diagnostic. `None` (no budget stop) says nothing.
+///
+/// The line front words a budget stop through the same
+/// [`budget_partial_message`]; this printer's caller went with the old turn
+/// body, and the deletion unit removes it with that body.
+#[allow(dead_code)]
 pub(crate) fn emit_partial_diagnostic(budget: Option<BudgetDimension>, format: RenderFormat) {
     if let Some(dimension) = budget {
         let rendered = render_event(

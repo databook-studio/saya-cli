@@ -154,6 +154,7 @@ fn an_unchanged_task_list_rides_one_turn_only() {
         last_turn: None,
         save_refused: false,
         launch_options: GlobalOptions::default(),
+        chat: None,
     };
 
     // Turn 1 writes the list; turns 2 and 3 leave it alone.

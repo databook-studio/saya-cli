@@ -72,6 +72,7 @@ pub(super) fn next_run(front: Arc<dyn ChatFront>, session: &str) -> SessionRun {
         memory: MemoryMode::Off,
         memory_reachable: false,
         capture: None,
+        learning: None,
     }
 }
 

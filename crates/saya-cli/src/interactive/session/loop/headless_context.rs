@@ -76,4 +76,8 @@ struct TurnContext<'a> {
     /// configuration with the SAME launch options via
     /// `ReloadInputs::from_launch`.
     launch_options: GlobalOptions,
+    /// The session's run, from the first plain message on: composed and opened
+    /// once, then every message a turn of it. `None` until that message — a
+    /// session of slash commands only never opens a run.
+    chat: Option<LineChat>,
 }

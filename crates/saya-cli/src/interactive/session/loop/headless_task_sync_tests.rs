@@ -142,6 +142,7 @@ fn headless_failure_keeps_a_task_write_from_an_earlier_tool_call() {
         last_turn: None,
         save_refused: false,
         launch_options: GlobalOptions::default(),
+        chat: None,
     };
 
     let outcome = handle_line_verbatim("hello", &mut ctx).expect("the turn settles");
