@@ -5,7 +5,7 @@
 //! ended after it. Both belong to the run — it outlives its turns — and the run
 //! takes one turn at a time, so the two slots never describe different turns.
 
-use saya_agent::{CancellationToken, PluginRegistry, RunContext, TurnPolicy};
+use saya_agent::{CancellationReason, CancellationToken, PluginRegistry, RunContext, TurnPolicy};
 use std::sync::Mutex;
 
 use crate::commands::coding::TurnStop;
@@ -31,12 +31,17 @@ pub(crate) struct RunPlugins {
 }
 
 /// The run's live turn state: the policy a surface set, how the turn that just
-/// ended ended, and the stop signal of the turn running now.
+/// ended ended, the stop signal of the turn running now, and the reason that
+/// signal latched when the turn finished.
 #[derive(Default)]
 pub(crate) struct TurnState {
     policy: Mutex<Option<TurnPolicy>>,
     stop: Mutex<Option<TurnStop>>,
     turn: Mutex<Option<CancellationToken>>,
+    /// Why the turn that ended most recently stopped, kept after its token is
+    /// cleared: a budget stop latches there and never on the run, so this is
+    /// the only place the finished turn's cause survives for the job surface.
+    ended: Mutex<Option<CancellationReason>>,
 }
 
 impl TurnState {
@@ -82,7 +87,29 @@ impl TurnState {
             .turn
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(token.clone());
+        *self
+            .ended
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         TurnToken { state: self, token }
+    }
+
+    /// Why the turn running now stopped, when its own token latched a reason.
+    pub(super) fn live_stop(&self) -> Option<CancellationReason> {
+        self.turn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(CancellationToken::reason)
+    }
+
+    /// Why the turn that ended most recently stopped, or `None` for one that
+    /// simply finished. Cleared when the next turn begins.
+    pub(super) fn ended_stop(&self) -> Option<CancellationReason> {
+        *self
+            .ended
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The stop signal of the turn running now, for the surface that cancels it.
@@ -110,6 +137,13 @@ impl TurnToken<'_> {
 
 impl Drop for TurnToken<'_> {
     fn drop(&mut self) {
+        // Keep the reason the turn ended on before clearing its slot: a stop
+        // latched on the turn's token is the job's cause too.
+        *self
+            .state
+            .ended
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = self.token.reason();
         *self
             .state
             .turn

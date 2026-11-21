@@ -9,7 +9,7 @@
 //! `None` below is that mode or an unstated job-wide ceiling — never a missing
 //! bounded value.
 
-use saya_agent::{AgentLimits, AnsweringLimits, ProgressLimits};
+use saya_agent::{AgentLimits, AnsweringLimits, CancellationReason, ProgressLimits};
 use saya_config::{BudgetLimit, ResolvedConfig, ResolvedJobLimits};
 use saya_harness::coding::budget::CountLimits;
 use saya_types::{CodingBudgetMode, CodingFailureClass, CodingRunFailure};
@@ -119,11 +119,38 @@ pub(super) fn answering_limits_for(limits: &ResolvedJobLimits) -> AnsweringLimit
 }
 
 impl super::NativeCodingJob {
-    /// The backstop stop this job's own ledger recorded, if the run ended on
-    /// one. Backstops are runaway bounds, so the failure names the key, its
-    /// configured value, and the count the ledger admitted.
+    /// Why the job stopped: the run's own reason — a stop of the run is the
+    /// turn's too — else the reason the turn that finished latched on its own
+    /// token. A turn's budget stop never reaches the run, so the job surface
+    /// reads it here.
+    pub(super) fn stopped_reason(&self) -> Option<CancellationReason> {
+        self.cancellation
+            .reason()
+            .or_else(|| self.root_run.ended_stop())
+    }
+
+    /// The backstop stop this job's own ledger recorded, if the turn running
+    /// now ended on one.
     pub(super) async fn backstop_failure(&self) -> Option<CodingRunFailure> {
-        let saya_agent::CancellationReason::Budget(dimension) = self.cancellation.reason()? else {
+        let reason = self
+            .cancellation
+            .reason()
+            .or_else(|| self.root_run.live_stop());
+        self.backstop_for(reason).await
+    }
+
+    /// The same for the turn that already finished, so a run's classification
+    /// sees the stop its turn latched after that turn's token was cleared.
+    pub(super) async fn finished_backstop_failure(&self) -> Option<CodingRunFailure> {
+        let reason = self.stopped_reason();
+        self.backstop_for(reason).await
+    }
+
+    /// The failure naming a job-ceiling backstop. Backstops are runaway bounds,
+    /// so the failure names the key, its configured value, and the count the
+    /// ledger admitted.
+    async fn backstop_for(&self, reason: Option<CancellationReason>) -> Option<CodingRunFailure> {
+        let CancellationReason::Budget(dimension) = reason? else {
             return None;
         };
         let limits = self.ledger.limits().await;

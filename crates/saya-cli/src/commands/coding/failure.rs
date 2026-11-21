@@ -49,8 +49,7 @@ impl NativeCodingJob {
         };
         let failure = if failure.class == Class::Cancelled {
             root(
-                self.cancellation
-                    .reason()
+                self.stopped_reason()
                     .map_or(Class::Cancelled, cancellation_class),
             )
         } else {
@@ -118,18 +117,26 @@ impl NativeCodingJob {
         if let Err(error) = &result {
             self.latch_error(error);
         }
+        let truncated = result.as_ref().is_ok_and(|output| output.truncated);
         if self.failures().primary.is_none()
-            && let Some(reason) = self.cancellation.reason()
+            && let Some(reason) = self.stopped_reason()
         {
-            self.failures().latch(root(cancellation_class(reason)));
+            // A truncated `Ok` is a budget stop: name the job ceiling the
+            // ledger recorded when the stop is one, and its class otherwise.
+            let failure = if truncated {
+                self.finished_backstop_failure()
+                    .await
+                    .unwrap_or_else(|| root(cancellation_class(reason)))
+            } else {
+                root(cancellation_class(reason))
+            };
+            self.failures().latch(failure);
         }
-        if result.as_ref().is_ok_and(|output| output.truncated) && self.failures().primary.is_none()
-        {
-            // A truncated `Ok` is a budget stop: with the progress guards in
-            // force, the only remaining budget is a runaway backstop. Name it
-            // from the ledger when the cancellation reason carries it.
+        if truncated && self.failures().primary.is_none() {
+            // No stop reason at all: with the progress guards in force, the
+            // only remaining budget is a runaway backstop.
             let failure = self
-                .backstop_failure()
+                .finished_backstop_failure()
                 .await
                 .unwrap_or_else(|| root(Class::Backstop));
             self.failures().latch(failure);
