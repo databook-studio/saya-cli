@@ -7,6 +7,8 @@ mod support;
 #[path = "tests/declared_tools.rs"]
 mod declared_tools;
 
+#[path = "tests/system_section.rs"]
+mod system_section;
 #[path = "tests/turn_finish.rs"]
 mod turn_finish;
 #[path = "tests/turn_policy.rs"]

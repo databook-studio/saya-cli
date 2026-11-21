@@ -214,6 +214,11 @@ mod open_policy;
 #[path = "parent_turn_plugin_tests.rs"]
 mod plugin_turns;
 
+/// A plugin's section of the run's system prompt: once per run, after the core
+/// prompt, and zero bytes from an inactive plugin.
+#[path = "parent_turn_section_tests.rs"]
+mod plugin_section;
+
 /// A detached run still resumes: a finished job is continued, and a job whose
 /// root turn is running refuses without disturbing it.
 #[path = "parent_turn_resume_tests.rs"]

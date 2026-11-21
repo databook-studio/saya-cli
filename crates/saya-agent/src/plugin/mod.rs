@@ -180,6 +180,17 @@ pub trait RunPlugin: Send + Sync {
     /// that delivers only context and policy.
     fn executor(&self) -> Option<Arc<dyn ToolExecutor>>;
 
+    /// The plugin's own section of the run's system prompt, or `None` — the
+    /// default — for a plugin with nothing to state there.
+    ///
+    /// This is the run's prompt, not a turn's: the core appends it once, when it
+    /// composes the prompt a run sends on every turn, so a section that changed
+    /// between calls would make each turn's request prefix differ. State facts
+    /// that hold for the whole run; anything per-turn belongs in `context`.
+    fn system_section(&self, _ctx: &RunContext) -> Option<String> {
+        None
+    }
+
     /// Untrusted context blocks for this turn's prompt. The default contributes
     /// none — most plugins have nothing to recall.
     async fn context(&self, _ctx: &RunContext, _prompt: &str) -> Vec<ContextBlock> {

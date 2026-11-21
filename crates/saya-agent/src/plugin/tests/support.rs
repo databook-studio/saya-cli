@@ -50,6 +50,7 @@ pub(super) struct FakePlugin {
     profile_offered: &'static [&'static str],
     executor: Option<Arc<dyn ToolExecutor>>,
     blocks: Vec<ContextBlock>,
+    section: Option<String>,
     policy: Option<TurnPolicy>,
     usage: Option<TokenUsage>,
     calls: Arc<Mutex<Vec<String>>>,
@@ -65,6 +66,7 @@ impl FakePlugin {
             profile_offered: &[],
             executor: None,
             blocks: Vec::new(),
+            section: None,
             policy: None,
             usage: None,
             calls: Arc::default(),
@@ -107,6 +109,12 @@ impl FakePlugin {
 
     pub(super) fn blocks(mut self, blocks: Vec<ContextBlock>) -> Self {
         self.blocks = blocks;
+        self
+    }
+
+    /// States this section of the run's system prompt.
+    pub(super) fn section(mut self, body: &str) -> Self {
+        self.section = Some(body.to_owned());
         self
     }
 
@@ -164,6 +172,10 @@ impl RunPlugin for FakePlugin {
 
     async fn context(&self, _ctx: &RunContext, _prompt: &str) -> Vec<ContextBlock> {
         self.blocks.clone()
+    }
+
+    fn system_section(&self, _ctx: &RunContext) -> Option<String> {
+        self.section.clone()
     }
 
     async fn on_turn_start(&self, _ctx: &RunContext) {
