@@ -24,7 +24,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
     let universe = compose(&session_runtime(), &project, &state);
     let mut read_only_names = vec![
         "schema_discovery",
-        "request_clarification",
         "read",
         "list",
         "glob",
@@ -45,7 +44,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
     // absent rather than advertised-and-always-refused.
     let mut ask_headless_names = vec![
         "schema_discovery",
-        "request_clarification",
         "read",
         "list",
         "glob",
@@ -68,7 +66,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             true,
             vec![
                 "schema_discovery",
-                "request_clarification",
                 "read",
                 "list",
                 "glob",
@@ -93,7 +90,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             false,
             vec![
                 "schema_discovery",
-                "request_clarification",
                 "read",
                 "list",
                 "glob",
@@ -119,7 +115,6 @@ fn build_advertisement_is_pinned_for_every_approval_policy() {
             true,
             vec![
                 "schema_discovery",
-                "request_clarification",
                 "read",
                 "list",
                 "glob",

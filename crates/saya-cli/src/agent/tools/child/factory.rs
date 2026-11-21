@@ -217,13 +217,14 @@ impl CliChildFactory {
             super::super::workspace::canonicalize_tool_names(&mut definitions);
             definitions.extend(tools.attach_coding(Arc::clone(coding)));
         }
-        // Attached when it advertises anything at all: a profile this view
-        // admits, or the clarification ask an operator can answer — which
-        // needs no profile and so survives an empty selection. The registry is
-        // the one door: the definitions come from the active plugin, and the
-        // executor routes the same names back to it.
+        // Attached when it advertises anything at all, which is a profile this
+        // view admits: the ask rides the plugin with every other database name,
+        // so a job that selected no profile attaches no database plugin and is
+        // offered no ask. The registry is the one door: the definitions come
+        // from the active plugin, and the executor routes the same names back to
+        // it.
         if let Some(databases) = &self.databases
-            && (!view.database_profiles().is_empty() || databases.advertises_clarification())
+            && !view.database_profiles().is_empty()
         {
             // Every other name this surface can advertise, so the registry can
             // refuse a plugin tool that would take one: the names composed so

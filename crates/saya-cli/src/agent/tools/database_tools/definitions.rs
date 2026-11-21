@@ -45,11 +45,6 @@ impl DatabaseTools {
             concurrency: ToolConcurrency::Serial,
             completion: None,
         }];
-        // The ask is not a database tool: it needs no connection, so it is
-        // appended here only because this list is what a chat surface
-        // advertises (its definition lives in the shared `clarification`
-        // module, where the coding surfaces reach it too).
-        tools.push(crate::agent::tools::clarification::definition());
         super::super::workspace::append_definitions(&mut tools, permit_workspace_writes);
         append_query_tools(&mut tools, connection_prop.clone(), allow_query_data);
         append_answer_tools(&mut tools, allow_query_data);

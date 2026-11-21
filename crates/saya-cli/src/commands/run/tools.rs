@@ -150,6 +150,11 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
                 false,
                 step.capabilities.workspace_write,
             );
+            // The ask rides the database: a step of a run with no connection
+            // has no database question to put, and is offered none.
+            if database.has_connection() {
+                crate::agent::tools::clarification::advertise(&mut definitions);
+            }
             // The step's fetch member: its own policy built from the
             // destinations *this step* declared — never the run's union —
             // over the run's shared transport, workspace, and wallet.

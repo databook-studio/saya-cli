@@ -71,6 +71,10 @@ pub(crate) mod compose_fixture;
 mod compose_tests;
 
 #[cfg(all(test, unix))]
+#[path = "compose_ask_tests.rs"]
+mod compose_ask_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_sql_tests.rs"]
 mod compose_sql_tests;
 

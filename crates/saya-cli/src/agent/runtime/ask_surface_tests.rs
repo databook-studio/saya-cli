@@ -52,8 +52,14 @@ async fn ask_advertises_and_reaches_the_servers_tools_under_bypass() {
     let lane = ask_surface::lane(&runtime, ApprovalPolicy::Bypass, &cancellation)
         .await
         .expect("a lane is composed");
-    let definitions =
-        ask_surface::definitions(true, false, false, Some(&lane), &ResolvedTools::default());
+    let definitions = ask_surface::definitions(
+        true,
+        false,
+        false,
+        true,
+        Some(&lane),
+        &ResolvedTools::default(),
+    );
     assert!(
         names(&definitions).contains(&"mcp__fixture__echo"),
         "the surface advertises the server's tool: {:?}",
@@ -110,7 +116,7 @@ async fn the_tools_allow_list_removes_the_servers_tools_from_ask() {
         .await
         .expect("a lane is composed");
     let allow = ResolvedTools::from_stated(Some(&["read".to_owned()])).unwrap();
-    let definitions = ask_surface::definitions(true, false, false, Some(&lane), &allow);
+    let definitions = ask_surface::definitions(true, false, false, true, Some(&lane), &allow);
     assert!(
         !names(&definitions).contains(&"mcp__fixture__echo"),
         "the list removes the server's tool: {:?}",

@@ -14,9 +14,12 @@ use crate::agent::tools::consent::{Answer, Caller, Operator, Prompt};
 use crate::agent::tools::shell_policy::ModeCell;
 
 /// Every definition the chat surface can carry, so the lane is exercised over
-/// the real effects rather than a test's idea of them.
+/// the real effects rather than a test's idea of them. The ask is the plugin's
+/// own name, so it is placed the way the plugin places it.
 fn definitions() -> Vec<ToolDefinition> {
-    DatabaseTools::definitions(true, true, false, false)
+    let mut definitions = DatabaseTools::definitions(true, true, false, false);
+    crate::agent::tools::clarification::advertise(&mut definitions);
+    definitions
 }
 
 pub(super) fn tool(name: &str) -> ToolDefinition {
