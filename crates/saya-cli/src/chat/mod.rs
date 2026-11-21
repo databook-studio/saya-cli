@@ -90,6 +90,10 @@ mod compose_tests;
 mod compose_sql_tests;
 
 #[cfg(all(test, unix))]
+#[path = "compose_origin_tests.rs"]
+mod compose_origin_tests;
+
+#[cfg(all(test, unix))]
 #[path = "rollover_fixture.rs"]
 mod rollover_fixture;
 

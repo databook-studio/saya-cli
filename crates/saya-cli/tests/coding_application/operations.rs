@@ -194,9 +194,15 @@ async fn list_shows_only_jobs_of_this_repository() {
         })
         .await
         .unwrap();
-    let listed = dispatch_coding(&fixture.application, CodingCommand::List { after: None })
-        .await
-        .unwrap();
+    let listed = dispatch_coding(
+        &fixture.application,
+        CodingCommand::List {
+            after: None,
+            all: false,
+        },
+    )
+    .await
+    .unwrap();
     let jobs = listed["jobs"].as_array().unwrap();
     assert!(jobs.iter().any(|job| job["job_id"] == "job-owned"));
     assert!(!jobs.iter().any(|job| job["job_id"] == "job-foreign"));

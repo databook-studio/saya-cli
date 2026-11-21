@@ -1,4 +1,4 @@
-use super::{CodingApplication, CodingError, NativeCodingJob};
+use super::{CodingApplication, CodingError, CodingJobRequest, JobOrigin, NativeCodingJob};
 use saya_harness::coding::snapshot::{MAX_SNAPSHOT_MANIFEST_BYTES, SnapshotManifest};
 use saya_types::JobId;
 use serde_json::{Value, json};
@@ -164,7 +164,11 @@ impl CodingApplication {
         }
         Ok(record)
     }
-    pub async fn list(&self, after: Option<&JobId>) -> Result<Value, CodingError> {
+    /// Lists the repository's jobs one page deep, filtered by origin: unless
+    /// `all` asks for every job, the ones a chat session opened stay hidden — a
+    /// session opens one job, so they would otherwise bury the CLI's own. Each
+    /// listing states the job's origin.
+    pub async fn list(&self, after: Option<&JobId>, all: bool) -> Result<Value, CodingError> {
         let page = self
             .store
             .list_coding_jobs(after, 100)
@@ -172,9 +176,29 @@ impl CodingApplication {
             .map_err(CodingError::owner)?;
         let identity = self.root_identity().await?;
         let git_identity = self.git_identity_best_effort().await;
-        Ok(
-            json!({"jobs":page.items.iter().filter(|record| record.repository_id==identity||git_identity.as_ref()==Some(&record.repository_id)).map(|record|json!({"job_id":record.job_id,"state":record.state})).collect::<Vec<_>>(),"next_cursor":page.next_cursor}),
-        )
+        let mut jobs = Vec::new();
+        for record in page.items.iter().filter(|record| {
+            record.repository_id == identity || git_identity.as_ref() == Some(&record.repository_id)
+        }) {
+            let origin = self.persisted_origin(&record.job_id);
+            if all || origin.is_cli() {
+                jobs.push(
+                    json!({"job_id":record.job_id,"state":record.state,"origin":origin.as_str()}),
+                );
+            }
+        }
+        Ok(json!({"jobs":jobs,"next_cursor":page.next_cursor}))
+    }
+
+    /// The origin a job persisted, read from the request its own creation
+    /// wrote. A job whose request cannot be read is a CLI job: a listing shows
+    /// what it cannot classify rather than hiding it.
+    fn persisted_origin(&self, job: &JobId) -> JobOrigin {
+        let path = self.state_root.join(job.as_str()).join("request.json");
+        super::context::read(&path, 64 * 1024)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<CodingJobRequest>(&bytes).ok())
+            .map_or(JobOrigin::Cli, |request| request.origin())
     }
 
     /// The Git repository identity when an in-place root sits inside one, so a

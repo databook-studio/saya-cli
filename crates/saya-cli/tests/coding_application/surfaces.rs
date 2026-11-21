@@ -38,9 +38,15 @@ fn slash_parse(input: &str) -> CodingCommand {
 }
 
 async fn list_job_ids(fixture: &Fixture) -> Vec<String> {
-    let listed = dispatch_coding(&fixture.application, CodingCommand::List { after: None })
-        .await
-        .unwrap();
+    let listed = dispatch_coding(
+        &fixture.application,
+        CodingCommand::List {
+            after: None,
+            all: false,
+        },
+    )
+    .await
+    .unwrap();
     listed["jobs"]
         .as_array()
         .unwrap()

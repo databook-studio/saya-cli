@@ -3,6 +3,8 @@ use serde_json::Value;
 #[path = "status.rs"]
 mod status;
 use status::show;
+#[path = "list.rs"]
+mod list;
 
 /// Never print more than this many changed files; the diff itself stays in
 /// the structured result the owner persisted.
@@ -19,6 +21,7 @@ pub(crate) fn render_coding_result(command: &CodingCommand, value: &Value) -> St
         CodingCommand::Setup { .. } => setup(value),
         CodingCommand::Worktrees { id } => worktrees(id, value),
         CodingCommand::Show { .. } => show(value),
+        CodingCommand::List { all, .. } => list::list(*all, value),
         CodingCommand::Reconcile { .. } => reconcile(value),
         _ => None,
     };

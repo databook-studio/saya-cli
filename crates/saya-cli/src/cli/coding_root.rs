@@ -111,7 +111,11 @@ mod tests {
             "--managed forces a checkout over an in_place config"
         );
         assert_eq!(
-            CodingCommand::List { after: None }.root_mode_for(&root, JobRootMode::Managed),
+            CodingCommand::List {
+                after: None,
+                all: false,
+            }
+            .root_mode_for(&root, JobRootMode::Managed),
             RootMode::Managed
         );
         let _ = fs::remove_dir_all(&root);
