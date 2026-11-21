@@ -20,22 +20,24 @@ fn command_help_connection_provider(name: &str) -> Option<&'static str> {
             Some("privacy [on|off] — view or toggle cloud data sharing. Example: /privacy off")
         }
         "approvals" => Some(
-            "approvals [ask|read-only|never|bypass] — view or set tool execution approval policy. \
-             `bypass` runs every call without asking (a typed, global consent given at the flag or \
-             this command); every structural guard still applies. Example: /approvals ask",
+            "approvals [ask|accept-edits|plan|bypass|read-only|never] — deprecated alias of /mode, \
+             removed in the next release; it runs the same switch in the same words. \
+             Example: /approvals ask",
         ),
         "mode" => Some(
-            "mode [ask|accept-edits|plan|bypass] — view or set the session's permission mode. `ask` \
-             puts every call to you; `accept-edits` pre-answers the workspace file family (`write`, \
-             `edit`) and asks for everything else; `plan` is the task posture — write-shaped tools \
-             are hidden from the model and refuse before the approval match runs, so Plan still \
-             denies writes under `bypass` (bypass auto-allows reads; Plan refuses writes) — while \
-             `read-only` is the consent posture — what an approval answers; `bypass` runs every \
-             call without asking and is reachable only where `[permissions] allow_bypass` is true \
-             in your user configuration. What Plan guarantees is that a write attempt fails — \
-             hidden definitions, engine denial, derived write permits off; ending with a plan \
-             rather than a half-done edit is what the model is asked to do, not what Plan \
-             guarantees. `build` is an alias for `ask`. Example: /mode plan",
+            "mode [ask|accept-edits|plan|bypass|read-only|never] — view or set the session's consent \
+             mode: one axis, where `read-only` and `never` are modes like the rest. `ask` puts every \
+             call to you; `accept-edits` pre-answers the workspace file family (`write`, `edit`) and \
+             asks for everything else; `plan` is the task posture — write-shaped tools are hidden \
+             from the model and refuse before the approval match runs, so Plan still denies writes \
+             under `bypass` (bypass auto-allows reads; Plan refuses writes); `read-only` runs \
+             read-shaped calls and denies every call that would need approval; `never` denies every \
+             call that would need approval; `bypass` runs every call without asking and is \
+             reachable only where `[permissions] allow_bypass` is true in your user configuration. \
+             What Plan guarantees is that a write attempt fails — hidden definitions, engine denial, \
+             derived write permits off; ending with a plan rather than a half-done edit is what the \
+             model is asked to do, not what Plan guarantees. `build` is an alias for `ask`. \
+             Example: /mode plan",
         ),
         "schema" => Some(
             "schema [refresh] — display or refresh database schema context. Example: /schema refresh",

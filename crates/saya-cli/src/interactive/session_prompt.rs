@@ -224,7 +224,9 @@ mod tests {
         // it. `/mode plan` hands the switch back as an action rather than
         // editing the state here.
         let action = state.apply(
-            SlashCommand::Mode(Some(saya_agent::PermissionMode::Plan)),
+            SlashCommand::Mode(crate::slash::ModeRequest::mode(Some(
+                saya_agent::PermissionMode::Plan,
+            ))),
             &[],
         );
         assert!(

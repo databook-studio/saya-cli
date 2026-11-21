@@ -12,7 +12,7 @@ use crate::interactive::session::lifecycle::paths::default_session_dir;
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
     render::{TerminalEvent, TurnStatus},
-    slash::{SlashCommand, parse_slash_command},
+    slash::parse_slash_command,
 };
 use saya_store::{FsSessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};

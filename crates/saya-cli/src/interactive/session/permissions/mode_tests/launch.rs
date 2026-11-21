@@ -1,6 +1,6 @@
 use saya_agent::{AgentMode, ApprovalPolicy, PermissionMode};
 
-use super::super::{launch_posture, switch};
+use super::super::{launch_posture, switch_with_job};
 use super::support::Fixture;
 use crate::agent::tools::shell_policy::ModeCell;
 
@@ -130,10 +130,11 @@ fn an_allowed_launch_lands_on_the_same_pair_the_switch_sets() {
 fn the_launch_copy_of_the_gate_is_the_switches_own() {
     let mut fixture = Fixture::acquire("launch-gate", ApprovalPolicy::Ask, true);
     assert!(fixture.state.allow_bypass);
-    switch(
+    switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Bypass,
+        None,
     )
     .expect("the gate the launch copied is the one the switch reads");
     assert_eq!(fixture.state.approval_mode, "bypass");

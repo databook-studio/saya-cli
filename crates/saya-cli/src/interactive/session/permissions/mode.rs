@@ -35,6 +35,8 @@ use crate::interactive::session::runtime::SessionRuntime;
 use crate::interactive::session::state::SessionState;
 use saya_store::BypassSource;
 
+#[path = "mode/alias.rs"]
+mod alias;
 #[path = "mode/attached.rs"]
 mod attached;
 
@@ -42,6 +44,14 @@ mod attached;
 /// shared with the chat layer's `/mode`, so a mode cannot mean one posture on a
 /// job and another on a chat session's run.
 pub(crate) use attached::posture as stated_posture;
+
+/// The one switch every spelling of the consent axis runs, and the notes the
+/// deprecated spellings state — `/approvals` beside `/mode`, the two old launch
+/// flags beside `--mode`.
+pub(crate) use alias::{
+    APPROVAL_MODE_FLAG_NOTE, PERMISSION_MODE_FLAG_NOTE, stated_mode, switch_requested,
+    with_alias_note,
+};
 
 /// The mode's spelling — the one copy the switch answer, the refusal and the
 /// status bar read, so no surface invents a name of its own.
@@ -51,6 +61,8 @@ pub(crate) const fn name(mode: PermissionMode) -> &'static str {
         PermissionMode::AcceptEdits => "accept-edits",
         PermissionMode::Plan => "plan",
         PermissionMode::Bypass => "bypass",
+        PermissionMode::ReadOnly => "read-only",
+        PermissionMode::Never => "never",
     }
 }
 
@@ -64,16 +76,20 @@ const CYCLE: [PermissionMode; 4] = [
     PermissionMode::Bypass,
 ];
 
-/// The grammar `/mode` parses under: the four mode names, plus `build` as an
+/// The grammar `/mode` parses under: the six mode names, plus `build` as an
 /// alias for `ask` — the spelling the task-posture command used before the
-/// two axes became one mode, kept so a habit still works. Case-sensitive
-/// like `/approvals`; an unknown word is `None`, never a silent default.
+/// two axes became one mode, kept so a habit still works. `read-only` and
+/// `never` are here because they are modes of the one axis, not a second
+/// command's vocabulary. Case-sensitive; an unknown word is `None`, never a
+/// silent default.
 pub(crate) fn parse(value: &str) -> Option<PermissionMode> {
     match value {
         "ask" | "build" => Some(PermissionMode::Ask),
         "accept-edits" => Some(PermissionMode::AcceptEdits),
         "plan" => Some(PermissionMode::Plan),
         "bypass" => Some(PermissionMode::Bypass),
+        "read-only" => Some(PermissionMode::ReadOnly),
+        "never" => Some(PermissionMode::Never),
         _ => None,
     }
 }
@@ -99,29 +115,28 @@ pub(crate) fn next_in_cycle(current: PermissionMode, allow_bypass: bool) -> Perm
     PermissionMode::Ask
 }
 
-/// The session's permission mode: the pair the state carries, projected. A
-/// consent posture with no mode of its own (`read-only`, `never`, set by
-/// `/approvals`) projects to nothing — the surfaces that name a mode read
-/// this, never the two raw strings, so they cannot disagree about which pair
-/// is which mode.
+/// The session's permission mode: the pair the state carries, projected. Every
+/// consent posture is a mode of the one axis, so a pair projects to exactly
+/// one name.
 pub(crate) fn current(state: &SessionState) -> Option<PermissionMode> {
-    PermissionMode::of(
+    Some(PermissionMode::of(
         state.approval_mode_parsed().ok()?,
         state.agent_mode_parsed(),
-    )
+    ))
 }
 
 /// The mode the keyboard cycle moves to from the session's own pair — the
 /// next member of [`CYCLE`], `bypass` skipped where the configuration
 /// withholds it.
 ///
-/// A pair with no mode of its own has no place in the cycle: the press
-/// enters at the cycle's closed default, `ask`, which asks for every call,
-/// rather than jumping to a member the user never walked through.
+/// The key cycles the four interactive members only; a session under a mode
+/// outside that ring (`read-only`, `never`, reachable by typing `/mode`) enters
+/// at the cycle's closed default, `ask`, rather than jumping to a member the
+/// user never walked through.
 pub(crate) fn cycle_from(state: &SessionState) -> PermissionMode {
     match current(state) {
-        Some(mode) => next_in_cycle(mode, state.allow_bypass),
-        None => PermissionMode::Ask,
+        Some(mode) if CYCLE.contains(&mode) => next_in_cycle(mode, state.allow_bypass),
+        _ => PermissionMode::Ask,
     }
 }
 
@@ -136,27 +151,18 @@ pub(crate) const BYPASS_REFUSAL: &str = "bypass is off: `[permissions] allow_byp
 /// story about the same frozen policy.
 pub(crate) const FROZEN_REFUSAL: &str = "this session's approval policy is fixed for the run";
 
-/// Switches the session's permission mode. Sets the pair on the state and on
-/// the session's one policy, journals a fresh bypass activation (the moment
-/// of consent, the same seam the launch and `/approvals` use), and answers
-/// with the words the user reads — the mode, what it means, and, under
-/// `bypass`, the activation line.
+/// Switches the session's permission mode, and states it on the job a TUI
+/// session started when one is running (`job`; `None` is a session with no job
+/// under it and changes nothing). Sets the pair on the state and on the
+/// session's one policy, journals a fresh bypass activation (the moment of
+/// consent, the same seam the launch uses), and answers with the words the
+/// user reads — the mode, what it means, and, under `bypass`, the activation
+/// line.
 ///
 /// Refused for `bypass` while the session's configuration withholds it, and
 /// refused by a frozen policy (a run's — stated before it starts); a refusal
 /// changes nothing, so a refused switch never leaves half a posture behind.
-pub(crate) fn switch(
-    state: &mut SessionState,
-    session: &mut SessionRuntime,
-    next: PermissionMode,
-) -> Result<String, String> {
-    switch_with_job(state, session, next, None)
-}
-
-/// As [`switch`], and states the mode on the job a TUI session started when one
-/// is running: after the same checks, so a mode the switch itself refuses —
-/// a withheld `bypass`, a frozen session policy — never reaches the job. `None`
-/// is a session with no job under it, and changes nothing.
+/// The job hears the mode last, after every check, for the same reason.
 pub(crate) fn switch_with_job(
     state: &mut SessionState,
     session: &mut SessionRuntime,
@@ -198,22 +204,6 @@ pub(crate) fn switch_with_job(
         message.push_str(&attached::line(job, consent));
     }
     Ok(message)
-}
-
-/// The mode a launch's `--permission-mode` states, or the typed refusal: an
-/// unknown word, or `bypass` while this process's configuration withholds it.
-/// The refusal is [`BYPASS_REFUSAL`] — the switch's own wording — so the flag
-/// and `/mode` cannot refuse the same request in two different sentences.
-pub(crate) fn stated_mode(spelling: &str, allow_bypass: bool) -> Result<PermissionMode, String> {
-    let mode = parse(spelling).ok_or_else(|| {
-        format!(
-            "invalid --permission-mode `{spelling}`: expected ask, accept-edits, plan, or bypass"
-        )
-    })?;
-    if mode == PermissionMode::Bypass && !allow_bypass {
-        return Err(BYPASS_REFUSAL.to_owned());
-    }
-    Ok(mode)
 }
 
 /// The posture a launch runs under, from what the launch states and what the

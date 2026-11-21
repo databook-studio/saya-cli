@@ -84,18 +84,14 @@ impl SessionState {
                     if self.allow_data_sharing { "on" } else { "off" }
                 ))
             }
-            SlashCommand::Approvals(value) => {
-                if let Some(value) = value {
-                    self.approval_mode = approval_name(value);
-                }
-                SessionAction::Message(format!("Approval mode: {}", self.approval_mode))
-            }
-            SlashCommand::Mode(value) => match value {
-                // A switch needs the session's one policy, the journal and
-                // the launch's gate, none of which this pure state layer
-                // holds: it hands the mode to the loops, which run the one
-                // `permissions::mode::switch` the key cycle runs too.
-                Some(next) => SessionAction::Mode(next),
+            SlashCommand::Mode(request) => match request.value {
+                // A switch needs the session's one policy, the journal and the
+                // launch's gate, none of which this pure state layer holds: it
+                // hands the request to the loops, which run the one
+                // `permissions::mode::switch` the key cycle runs too. The
+                // request keeps the spelling, so the alias's note is said by
+                // that one switch.
+                Some(_) => SessionAction::Mode(request),
                 None => SessionAction::Message(mode_report(self)),
             },
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),

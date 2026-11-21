@@ -95,7 +95,7 @@ fn mode_is_registered_listed_described_and_honest() {
     );
     let listing = help_text();
     assert!(
-        listing.contains("/mode [ask|accept-edits|plan|bypass]"),
+        listing.contains("/mode [ask|accept-edits|plan|bypass|read-only|never]"),
         "the listing shows the /mode usage: {listing}"
     );
     let help = command_help("mode").expect("mode has per-command help");
@@ -104,8 +104,8 @@ fn mode_is_registered_listed_described_and_honest() {
         "the /mode help states the bypass composition verbatim: {help}"
     );
     assert!(
-        help.contains("task posture") && help.contains("consent posture"),
-        "the /mode help separates Plan from read-only: {help}"
+        help.contains("task posture") && help.contains("read-only") && help.contains("never"),
+        "the /mode help separates Plan from the consent values it now also names: {help}"
     );
     assert!(
         help.contains("hidden definitions") && help.contains("ending with a plan"),

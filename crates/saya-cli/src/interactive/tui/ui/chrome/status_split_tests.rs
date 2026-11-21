@@ -45,10 +45,10 @@ fn posture_combos() -> Vec<StatusView> {
                             model: "glm-5.2".into(),
                             approval_mode: approval_mode.to_string(),
                             agent_mode: "build".into(),
-                            permission_mode: PermissionMode::of(
+                            permission_mode: Some(PermissionMode::of(
                                 approval_mode.parse().unwrap_or(ApprovalPolicy::Ask),
                                 AgentMode::Build,
-                            ),
+                            )),
                             workspace_root: workspace_root.clone(),
                             sharing_on,
                             host_composed,

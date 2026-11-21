@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use super::RunPort;
 use super::ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest, SessionOp};
+use crate::interactive::session::permissions::mode;
 use crate::slash::SlashCommand;
 
 /// The wording a `/run` in a chat session gets: the run engine is a separate
@@ -131,8 +132,7 @@ impl ChatOps {
                 Some(if *sharing { "on" } else { "off" }.to_owned()),
             ),
             SlashCommand::Connections => Op::Read(ReadOp::Connections),
-            SlashCommand::Approvals(policy) => Op::Session(SessionOp::Approvals(*policy)),
-            SlashCommand::Mode(mode) => Op::Session(SessionOp::Mode(*mode)),
+            SlashCommand::Mode(request) => Op::Session(SessionOp::Mode(*request)),
             SlashCommand::Schema(refresh) => Op::Read(ReadOp::Schema { refresh: *refresh }),
             SlashCommand::Sql(query) => Op::Read(ReadOp::Sql(query.clone())),
             SlashCommand::Export(request) => Op::Read(ReadOp::Export(request.clone())),
@@ -184,10 +184,15 @@ impl ChatOps {
     /// that owns that state.
     pub(crate) fn run(&self, command: SlashCommand) -> OpResult {
         match self.operation(&command) {
-            Op::Session(SessionOp::Mode(None)) => OpResult::Done(self.context.mode_words()),
-            Op::Session(SessionOp::Mode(Some(next))) => match self.context.state_mode(next) {
-                Ok(message) => OpResult::Done(message),
-                Err(refusal) => OpResult::Refused(refusal),
+            Op::Session(SessionOp::Mode(request)) => match request.value {
+                None => OpResult::Done(self.context.mode_words()),
+                // The alias's deprecation note rides the one switch's answer,
+                // so `/approvals` and `/mode` cannot answer differently about
+                // the mode itself.
+                Some(next) => match mode::with_alias_note(self.context.state_mode(next), request) {
+                    Ok(message) => OpResult::Done(message),
+                    Err(refusal) => OpResult::Refused(refusal),
+                },
             },
             Op::Session(op) => OpResult::Session(op),
             Op::Rollover(change, value) => OpResult::Rollover(RolloverRequest { change, value }),

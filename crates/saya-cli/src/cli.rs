@@ -84,7 +84,14 @@ pub struct GlobalOptions {
     /// Read one turn from this file instead of stdin, then exit (session only).
     #[arg(long = "turn-file", value_name = "PATH")]
     pub turn_file: Option<std::path::PathBuf>,
-    /// Start in this permission mode: ask|accept-edits|plan|bypass (session only).
+    /// Start in this consent mode — the one axis `/mode` moves (session) and the
+    /// posture a headless surface runs under: ask|accept-edits|plan|bypass|
+    /// read-only|never.
+    #[arg(long = "mode", value_name = "MODE", global = true)]
+    pub mode: Option<String>,
+    /// Deprecated alias of `--mode`, removed next release; states the consent a
+    /// session launches with, and `plan` is the one value only the interactive
+    /// session can run (session only).
     #[arg(long = "permission-mode", value_name = "MODE")]
     pub permission_mode: Option<String>,
     /// Connection profile to use (overrides `default_profile` in config).
@@ -128,8 +135,9 @@ pub struct GlobalOptions {
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
-    /// When tool calls need approval: ask|read-only|never|bypass (headless default: never, no `shell`).
-    #[arg(long, value_name = "MODE", global = true)]
+    /// Deprecated alias of `--mode`, removed next release: when tool calls need
+    /// approval — ask|read-only|never|bypass (headless default: never, no `shell`).
+    #[arg(long = "approval-mode", value_name = "MODE", global = true)]
     pub approval_mode: Option<String>,
     /// Advertise only these model tools (comma-separated, repeatable).
     #[arg(long, value_name = "NAME,...", value_delimiter = ',', global = true)]

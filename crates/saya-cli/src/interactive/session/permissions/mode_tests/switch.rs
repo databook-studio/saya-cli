@@ -5,7 +5,7 @@ use saya_agent::{
 use saya_store::JournalEvent;
 use std::sync::Arc;
 
-use super::super::{BYPASS_REFUSAL, name, switch};
+use super::super::{BYPASS_REFUSAL, name, switch_with_job};
 use super::support::{Approves, Fixture};
 
 /// The `write`/`edit` family's shape: a workspace file write, needing an
@@ -36,10 +36,11 @@ fn outside_the_family() -> ToolEffect {
 #[test]
 fn a_switch_to_accept_edits_sets_the_pair_and_pre_answers_workspace_writes() {
     let mut fixture = Fixture::acquire("accept-edits", ApprovalPolicy::Ask, false);
-    let message = switch(
+    let message = switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::AcceptEdits,
+        None,
     )
     .expect("accept-edits needs no gate");
 
@@ -67,10 +68,11 @@ fn a_switch_to_accept_edits_sets_the_pair_and_pre_answers_workspace_writes() {
 #[test]
 fn a_switch_into_plan_keeps_the_consent_and_closes_the_write_surface() {
     let mut fixture = Fixture::acquire("into-plan", ApprovalPolicy::Ask, false);
-    switch(
+    switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Plan,
+        None,
     )
     .expect("plan needs no gate");
 
@@ -97,10 +99,11 @@ fn a_switch_into_plan_keeps_the_consent_and_closes_the_write_surface() {
 #[tokio::test]
 async fn leaving_plan_re_arms_the_gate() {
     let mut fixture = Fixture::acquire("leave-plan", ApprovalPolicy::Ask, true);
-    switch(
+    switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Plan,
+        None,
     )
     .expect("plan needs no gate");
     assert_eq!(
@@ -127,10 +130,11 @@ async fn leaving_plan_re_arms_the_gate() {
         "an approved plan opens the write surface at the engine, not only in the advertisement"
     );
 
-    switch(
+    switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Ask,
+        None,
     )
     .expect("ask needs no gate");
     assert!(!universe.plan_gate_open(), "leaving plan re-arms the gate");
@@ -142,10 +146,11 @@ async fn leaving_plan_re_arms_the_gate() {
 #[test]
 fn a_switch_to_bypass_is_refused_without_the_config_key_and_changes_nothing() {
     let mut fixture = Fixture::acquire("bypass-refused", ApprovalPolicy::Ask, false);
-    let error = switch(
+    let error = switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Bypass,
+        None,
     )
     .expect_err("bypass is withheld");
 
@@ -179,10 +184,11 @@ fn a_switch_to_bypass_is_refused_without_the_config_key_and_changes_nothing() {
 #[test]
 fn an_allowed_switch_to_bypass_activates_and_journals_once() {
     let mut fixture = Fixture::acquire("bypass-allowed", ApprovalPolicy::Ask, true);
-    let message = switch(
+    let message = switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Bypass,
+        None,
     )
     .expect("the configuration allows bypass");
 
@@ -204,10 +210,11 @@ fn an_allowed_switch_to_bypass_activates_and_journals_once() {
 
     // A re-statement of the mode it is already in records nothing new — the
     // `/allow`-over-a-granted-token shape.
-    switch(
+    switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::Bypass,
+        None,
     )
     .expect("re-stating bypass is allowed");
     let activations = fixture

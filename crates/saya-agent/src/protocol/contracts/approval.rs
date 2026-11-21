@@ -101,34 +101,46 @@ pub enum PermissionMode {
     Plan,
     /// Every call runs without asking.
     Bypass,
+    /// Read-shaped calls run; every call that would need approval is denied
+    /// instead. No prompt, and no widening: the consent posture an operator
+    /// reaches when they want the engine to answer without them.
+    ReadOnly,
+    /// Nothing is put to the operator: every call that would need approval is
+    /// denied instead.
+    Never,
 }
 
 impl PermissionMode {
     /// The pair this mode sets. A `None` consent posture means the mode leaves
     /// that axis alone: `plan` is a task posture, orthogonal to who answers,
-    /// so switching into it keeps the consent the session already had.
+    /// so switching into it keeps the consent the session already had. Every
+    /// other mode names both axes — `read-only` and `never` are consent
+    /// postures this one switch reaches like any other.
     pub const fn decompose(self) -> (Option<ApprovalPolicy>, AgentMode) {
         match self {
             Self::Ask => (Some(ApprovalPolicy::Ask), AgentMode::Build),
             Self::AcceptEdits => (Some(ApprovalPolicy::AcceptEdits), AgentMode::Build),
             Self::Plan => (None, AgentMode::Plan),
             Self::Bypass => (Some(ApprovalPolicy::Bypass), AgentMode::Build),
+            Self::ReadOnly => (Some(ApprovalPolicy::ReadOnly), AgentMode::Build),
+            Self::Never => (Some(ApprovalPolicy::Never), AgentMode::Build),
         }
     }
 
-    /// The mode a `(policy, agent_mode)` pair projects to, or `None` where the
-    /// pair is not one of the four. The task axis is read first — a Plan
-    /// session is `plan` whatever its consent posture. `read-only` and `never`
-    /// are consent postures with no mode of their own, so they project to
-    /// nothing and a bar keeps showing the pair rather than inventing a mode.
-    pub const fn of(policy: ApprovalPolicy, agent_mode: AgentMode) -> Option<Self> {
+    /// The mode a `(policy, agent_mode)` pair projects to. The task axis is
+    /// read first — a Plan session is `plan` whatever its consent posture.
+    /// The six modes are the whole vocabulary, so every pair of the two axes
+    /// projects: `read-only` and `never` are modes here, not postures a bar has
+    /// to report around.
+    pub const fn of(policy: ApprovalPolicy, agent_mode: AgentMode) -> Self {
         match agent_mode {
-            AgentMode::Plan => Some(Self::Plan),
+            AgentMode::Plan => Self::Plan,
             AgentMode::Build => match policy {
-                ApprovalPolicy::Ask => Some(Self::Ask),
-                ApprovalPolicy::AcceptEdits => Some(Self::AcceptEdits),
-                ApprovalPolicy::Bypass => Some(Self::Bypass),
-                ApprovalPolicy::ReadOnly | ApprovalPolicy::Never => None,
+                ApprovalPolicy::Ask => Self::Ask,
+                ApprovalPolicy::AcceptEdits => Self::AcceptEdits,
+                ApprovalPolicy::Bypass => Self::Bypass,
+                ApprovalPolicy::ReadOnly => Self::ReadOnly,
+                ApprovalPolicy::Never => Self::Never,
             },
         }
     }

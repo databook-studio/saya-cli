@@ -58,9 +58,10 @@ pub struct LaunchPlan {
     pub write_paths: Vec<String>,
 }
 
-/// Resolves the raw `--permission-mode` / `--approval-mode` values into one
-/// mode. `-p` is ungated for `bypass` in both spellings, so `allow_bypass` is
-/// accepted for the caller's seam but never consulted.
+/// Resolves the raw `--mode` (or its one-release `--permission-mode` /
+/// `--approval-mode` aliases) into one mode. `-p` is ungated for `bypass` in
+/// every spelling, so `allow_bypass` is accepted for the caller's seam but
+/// never consulted.
 pub fn resolve_mode(
     permission_mode: Option<&str>,
     approval_mode: Option<&str>,
@@ -90,7 +91,7 @@ fn mode_from(stated: &str) -> Result<OneShotMode, String> {
         "bypass" | "bypassPermissions" => Ok(OneShotMode::Bypass),
         "plan" => Err(
             "plan mode needs an operator to answer the submitted plan, and `-p` has \
-                       no interactive surface: drop `--permission-mode plan`"
+                       no interactive surface: drop `--mode plan`"
                 .to_owned(),
         ),
         other => Err(format!(
@@ -113,8 +114,8 @@ pub fn launch_plan(
         OneShotMode::ReadOnly | OneShotMode::Never => {
             if !stated_write.is_empty() {
                 return Err(
-                    "`--write` needs an edit-capable mode: state `--permission-mode \
-                            accept-edits` (or `--permission-mode bypass`)"
+                    "`--write` needs an edit-capable mode: state `--mode accept-edits` (or \
+                            `--mode bypass`)"
                         .to_owned(),
                 );
             }
