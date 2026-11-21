@@ -16,17 +16,14 @@ use crate::commands::coding::parent_turn_provider::{Reply, Scripted};
 /// Load ceiling, not a product bound: how long one scripted turn may take.
 const RUN: Duration = Duration::from_secs(120);
 
-/// The write-shaped names the old session withheld under `read-only` and a
-/// headless `ask`: the workspace writers, the notebook writer, the two fetch
-/// doors and the host-command lane.
-const WRITE_SHAPED: [&str; 6] = [
-    "write",
-    "edit",
-    "notebook_edit",
-    "http_fetch",
-    "http_download",
-    "run_command",
-];
+/// The write-shaped names the core's catalogue carries and a mode with no
+/// consent reach hides: the workspace writers and the web pair. The old
+/// session's spellings (`http_fetch`, `http_download`, `run_command`) are in no
+/// list at all now, so a mode test cannot drift with them.
+const WRITE_SHAPED: [&str; 5] = ["write", "edit", "notebook_edit", "web_fetch", "web_search"];
+
+/// The spellings the core replaced: advertised by no mode, under any consent.
+const OLD_SPELLINGS: [&str; 3] = ["http_fetch", "http_download", "run_command"];
 
 /// The composed and opened run over one fixture, with the folder kept alive.
 async fn compose_case(
@@ -75,7 +72,8 @@ async fn turn(composition: &RunComposition) {
 #[tokio::test]
 async fn a_read_only_composition_advertises_no_write_tool() {
     let provider = Scripted::start_with_script(vec![Reply::Text("hello")]);
-    let fixture = compose_fixture::in_place("mode-read-only", &provider.endpoint).await;
+    let fixture =
+        compose_fixture::in_place_with_web_search("mode-read-only", &provider.endpoint).await;
     let front = operator_front_fixture::non_interactive();
     let (composition, _root) = compose_case(
         fixture,
@@ -101,7 +99,19 @@ async fn a_read_only_composition_advertises_no_write_tool() {
             "a read-only session still offers {name}: {offered:?}"
         );
     }
+    for name in OLD_SPELLINGS {
+        assert!(
+            !offered.iter().any(|advertised| advertised == name),
+            "a read-only session offers no {name} in any case: {offered:?}"
+        );
+    }
 }
+
+/// The write-shaped names no consent reaches when nobody can be asked: the
+/// workspace writers. The web pair is absent here too, but for its own reason
+/// — nothing in this request asks for a fetch, and none is configured — so
+/// asserting it would prove nothing about the mode.
+const NO_PERSON_WRITE_SHAPED: [&str; 3] = ["write", "edit", "notebook_edit"];
 
 /// A headless `ask` is the same surface: its approval is its `--allow` scopes
 /// and there is nobody to put the call to, so no write-shaped tool is offered.
@@ -121,10 +131,16 @@ async fn a_headless_ask_composition_advertises_no_write_tool() {
 
     let bodies = provider.bodies();
     let offered = advertised(&bodies[0]);
-    for name in WRITE_SHAPED {
+    for name in NO_PERSON_WRITE_SHAPED {
         assert!(
             !offered.iter().any(|advertised| advertised == name),
             "a headless ask offers no {name}: {offered:?}"
+        );
+    }
+    for name in OLD_SPELLINGS {
+        assert!(
+            !offered.iter().any(|advertised| advertised == name),
+            "a headless ask offers no {name} in any case: {offered:?}"
         );
     }
 }

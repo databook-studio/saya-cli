@@ -162,6 +162,37 @@ fn one_sql_grant_covers_the_family_on_one_connection_only() {
     }
 }
 
+/// The core's `web_fetch` suggests the same `fetch:` token the old
+/// `http_fetch`/`http_download` spellings recorded, so a destination the user
+/// already granted keeps pre-answering the fetch it named — one token per
+/// destination, whatever the tool is called.
+#[test]
+fn the_core_web_fetch_suggests_the_fetch_token_the_old_spellings_recorded() {
+    let facts = composed_facts();
+    let url = json!({"url": "https://a.example/x"});
+    let fetch = grant_token("web_fetch", &url, None, &facts);
+    assert_eq!(
+        fetch,
+        grant_token("http_fetch", &url, None, &facts),
+        "the core's fetch and the old spelling name one destination"
+    );
+    assert_eq!(
+        fetch,
+        grant_token("http_download", &url, None, &facts),
+        "and the download's URL is that same destination"
+    );
+    assert_eq!(
+        fetch,
+        Some("fetch:https+a.example".to_owned()),
+        "the token is the grammar's fetch destination"
+    );
+    assert_eq!(
+        grant_token("web_fetch", &url, None, &ApprovalFacts::default()),
+        None,
+        "no composed egress, no offer — the same gate as the old spelling"
+    );
+}
+
 /// The fan-out tool (`bounded_sql_query_all`) suggests no token: any "all"
 /// token's referent can grow after approval (`/connect` mid-session puts a
 /// database inside a grant made before it existed), so it is denied a token

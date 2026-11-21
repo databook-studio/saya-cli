@@ -83,13 +83,20 @@ pub(super) struct Composed {
 
 /// An in-place session with no database configured.
 pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, false, None).await
+    build(case, endpoint, false, None, None).await
 }
 
 /// The same, with one seeded SQLite database named `primary`: a chat that has a
 /// database to read and to ask about.
 pub(super) async fn in_place_with_database(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, true, None).await
+    build(case, endpoint, true, None, None).await
+}
+
+/// The same, with a `[web_search]` backend configured: the session's run holds
+/// the whole web lane, because the configuration — not a URL in the message —
+/// is what advertises the web tools.
+pub(super) async fn in_place_with_web_search(case: &str, endpoint: &str) -> Fixture {
+    build(case, endpoint, false, None, Some("https://search.example")).await
 }
 
 /// The same, with `memory` as the session's resolved memory mode: a chat whose
@@ -99,10 +106,16 @@ pub(super) async fn in_place_with_memory(
     endpoint: &str,
     memory: MemoryMode,
 ) -> Fixture {
-    build(case, endpoint, true, Some(memory)).await
+    build(case, endpoint, true, Some(memory), None).await
 }
 
-async fn build(case: &str, endpoint: &str, database: bool, memory: Option<MemoryMode>) -> Fixture {
+async fn build(
+    case: &str,
+    endpoint: &str,
+    database: bool,
+    memory: Option<MemoryMode>,
+    web_search: Option<&str>,
+) -> Fixture {
     use std::os::unix::fs::PermissionsExt;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
@@ -122,6 +135,11 @@ async fn build(case: &str, endpoint: &str, database: bool, memory: Option<Memory
         .expect("the fixture resolves a runtime");
     if let Some(mode) = memory {
         runtime.resolved.memory.mode = mode;
+    }
+    if let Some(endpoint) = web_search {
+        runtime.resolved.web_search.backend = Some(saya_config::WebSearchBackend::Searxng {
+            endpoint: endpoint.into(),
+        });
     }
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.model = "composition".into();

@@ -18,7 +18,10 @@
 
 /// The tool names `[tools] allow` may name, canonical and de-duplicated by
 /// construction. `bash` is not here: it is an alias of `shell`
-/// ([`canonical_tool_name`]), and an allow list is stored canonically.
+/// ([`canonical_tool_name`]), and an allow list is stored canonically. The
+/// three old spellings ([`DEPRECATED_TOOL_ALIASES`]) are: they are names the
+/// list still accepts for one release, and removing them would turn a stale
+/// list into a launch failure the day the alias lookup moved.
 pub const GOVERNED_TOOLS: &[&str] = &[
     "checklist",
     "delete",
@@ -42,6 +45,49 @@ pub const GOVERNED_TOOLS: &[&str] = &[
     "web_search",
     "write",
 ];
+
+/// The spellings the release before this one advertised, and the tool each one
+/// now names. This is the one table a stated name, an advertisement, and the
+/// doctor's diagnosis all read.
+///
+/// They keep working for **one release**. A `[tools] allow` entry or a grant
+/// token that still spells one is mapped to its successor and reports a
+/// deprecation note ([`deprecation_note`]) — never an error, and never a silent
+/// no-op: a list that named `run_command` must keep taking `shell` away, or it
+/// would widen the surface its author narrowed.
+///
+/// `http_download` maps to `web_fetch` because the core has no download tool:
+/// `web_fetch` delivers a page into the model's context and writes no workspace
+/// file, so the fetch the old name named is exactly what survives. The
+/// composition the old name also required (a bound workspace, a download
+/// budget) has no successor at all.
+pub const DEPRECATED_TOOL_ALIASES: &[(&str, &str)] = &[
+    ("run_command", "shell"),
+    ("http_fetch", "web_fetch"),
+    ("http_download", "web_fetch"),
+];
+
+/// The tool an old spelling now names, or `None` for a name that is not an old
+/// spelling. The successor is a static name of the catalog, so a caller can
+/// canonicalise against it without allocating.
+pub fn tool_successor(name: &str) -> Option<&'static str> {
+    DEPRECATED_TOOL_ALIASES
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, successor)| *successor)
+}
+
+/// The one-line diagnosis an old spelling earns: what it is, what to write
+/// instead, and how long the old word still works. `None` for a current name,
+/// so a caller can report exactly the stale entries and nothing else.
+pub fn deprecation_note(name: &str) -> Option<String> {
+    tool_successor(name).map(|successor| {
+        format!(
+            "`{name}` is a deprecated spelling of `{successor}`: it keeps working for one \
+             release and is refused after that; write `{successor}`"
+        )
+    })
+}
 
 /// The tool names `[tools] allow` must not name. Every one of them is tied to
 /// selecting a connection or a profile and, except for `schema_discovery`, to
@@ -122,13 +168,14 @@ pub fn is_mcp_allow_name(name: &str) -> bool {
 }
 
 /// The canonical spelling of a model-tool name. `bash` is the model's spelling
-/// of `shell`; every other name is taken as written. One table, so an allow
-/// list, an advertisement, and a dispatch cannot disagree about which tool a
-/// word names.
+/// of `shell`; an old spelling names its successor
+/// ([`DEPRECATED_TOOL_ALIASES`]); every other name is taken as written. One
+/// table, so an allow list, an advertisement, and a dispatch cannot disagree
+/// about which tool a word names.
 pub fn canonical_tool_name(name: &str) -> &str {
     match name {
         "bash" => "shell",
-        other => other,
+        other => tool_successor(other).unwrap_or(other),
     }
 }
 

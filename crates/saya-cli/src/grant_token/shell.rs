@@ -51,6 +51,26 @@ pub(crate) fn shell_token_for_host_route(arguments: &Value) -> Option<String> {
     Some(format!("shell:{}", normalised_prefix(command)?))
 }
 
+/// The **legacy** `command:<program>` key this shell call answers to, for one
+/// release: the token the old `run_command` spelling recorded for a program,
+/// read by the tool that replaced it.
+///
+/// That grant meant "this program with any argv, and no shell", so the mapping
+/// is the command's own first word — the program — and only for a command that
+/// is **one plain segment**: no separator, redirection, grouping, substitution,
+/// leading `cd`, or leading `NAME=value`, because those are the strings whose
+/// words are not the words that run. A compound command names no program token
+/// at all, so a `command:` grant can never admit one.
+///
+/// `None` where the first word is not a bare program name — a path, a
+/// traversal, or anything else the `command:` grammar would not accept — so the
+/// mapping can never widen the grant it reads.
+pub(crate) fn legacy_program_token(arguments: &Value) -> Option<String> {
+    let command = arguments.get("command")?.as_str()?;
+    let program = prefix_words(command)?.into_iter().next()?;
+    saya_types::is_bare_name(program).then(|| format!("command:{program}"))
+}
+
 /// The one spelling of a `shell:` payload, for the two writers that state it:
 /// the suggester, spelling a call's command, and the grammar
 /// (`commands::run::scopes::parse`), spelling a typed `/allow`. Both ask this

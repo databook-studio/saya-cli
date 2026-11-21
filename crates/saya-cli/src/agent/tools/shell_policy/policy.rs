@@ -141,21 +141,24 @@ impl ShellPolicy {
     }
 
     /// Whether this job's remembered answers pre-answer this call without the
-    /// operator: the call's own `shell:` token is one the store holds. Read
-    /// from the asking arm of [`lane`](Self::lane) only, so a deny rule and the
-    /// mode have each decided first, and only for a shell that holds the host
-    /// lane the token names. The store is the surface's own where it keeps one
-    /// (a session binds it per turn, and a headless turn composes no prompt at
-    /// all) and the operator's otherwise (a job's). A command that is not one
+    /// operator: the call's own `shell:` token is one the store holds, or — for
+    /// one release — the old `run_command` spelling's `command:<program>` token
+    /// is, for a command that is that one program (see
+    /// [`legacy_program_token`](crate::grant_token::legacy_program_token)).
+    /// Read from the asking arm of [`lane`](Self::lane) only, so a deny rule and
+    /// the mode have each decided first, and only for a shell that holds the
+    /// host lane the token names. The store is the surface's own where it keeps
+    /// one (a session binds it per turn, and a headless turn composes no prompt
+    /// at all) and the operator's otherwise (a job's). A command that is not one
     /// plain segment names no token, so it never matches.
     fn remembered(&self, arguments: &Value) -> bool {
         if !self.host_lane {
             return false;
         }
-        let Some(token) = crate::grant_token::shell_token_for_host_route(arguments) else {
-            return false;
-        };
-        self.granted(&token)
+        let own = crate::grant_token::shell_token_for_host_route(arguments)
+            .is_some_and(|token| self.granted(&token));
+        own || crate::grant_token::legacy_program_token(arguments)
+            .is_some_and(|token| self.granted(&token))
     }
 
     /// Whether either store this shell consults remembers `token`.
