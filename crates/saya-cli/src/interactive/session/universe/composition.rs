@@ -192,7 +192,14 @@ impl SessionUniverse {
         // shape, on the first turn that needs one (`shell.rs`).
         let shell_sandboxes = root.map(|root| ShellSandboxes::new(root.to_path_buf()));
         let shell_host = crate::agent::tools::shell_policy::host_policy(runtime);
-        let shell_rules = runtime.resolved.permissions.rules.clone();
+        // The session's deny list binds the shell tool too (SEC1): each denied
+        // program becomes a deny rule in the same trusted set the shell policy
+        // decides first in every mode, `bypass` included. The list itself is
+        // unchanged — `run_command`'s door and the journal still read it.
+        let shell_rules = crate::interactive::session::permissions::deny::shell_rules(
+            &runtime.resolved.permissions.rules,
+            &deny,
+        )?;
         // The plan gate, once per session: the mode can enter `plan` at any
         // point, and the gate the operator's approval opens is the one the
         // switch closes.

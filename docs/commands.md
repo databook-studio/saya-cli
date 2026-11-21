@@ -224,8 +224,9 @@ live here.
 - `--deny <program>` (repeatable) states the session's deny list of bare
   program names: a user-stated refusal evaluated before every grant, every
   approval prompt, and bypass, at every session door that execs a program by
-  name — the `run_command` door. Refusal-only: it composes nothing. Session
-  only; `saya ask` and `saya run` refuse it.
+  name — the `run_command` door, and the `shell` tool, whose copy of the list
+  is a deny rule in the `[permissions]` set it decides first. Refusal-only:
+  it composes nothing. Session only; `saya ask` and `saya run` refuse it.
 - `--allow-command <prefix>` (repeatable) allows a command prefix on the host
   without asking: matched word by word, so `cargo test` covers
   `cargo test -p x` and never `cargo testx`. Every segment of a compound
