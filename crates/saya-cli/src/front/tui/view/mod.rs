@@ -17,10 +17,18 @@
 //! T5 lands the transcript: the conversation as the rows a terminal paints,
 //! with the newest turn at the live edge. What one turn reads as is `turn`;
 //! how the turns sit under each other is `transcript`.
+//!
+//! T10 lands the command palette (`02` §11): the catalogue rows a query fuzzy-matches
+//! through their names and their aliases, the selected row's usage, and the box they
+//! are painted in. The list is `slash/catalog`'s, read rather than copied.
 
 pub(crate) mod cards;
 mod composer;
 mod composer_frame;
+mod palette;
+mod palette_frame;
+mod palette_match;
+mod palette_rows;
 mod status;
 mod status_fit;
 mod status_segments;
@@ -44,6 +52,10 @@ pub(crate) use composer::{
 #[allow(unused_imports)]
 pub(crate) use composer_frame::rows;
 #[allow(unused_imports)]
+pub(crate) use palette::Palette;
+#[allow(unused_imports)]
+pub(crate) use palette_rows::rows as palette_rows;
+#[allow(unused_imports)]
 pub(crate) use status::{ActivityState, StatusFacts, status_line};
 #[allow(unused_imports)]
 pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
@@ -59,6 +71,18 @@ mod cards_tests;
 #[cfg(test)]
 #[path = "composer_tests.rs"]
 mod composer_tests;
+
+#[cfg(test)]
+#[path = "palette_fixture.rs"]
+mod palette_fixture;
+
+#[cfg(test)]
+#[path = "palette_match_tests.rs"]
+mod palette_match_tests;
+
+#[cfg(test)]
+#[path = "palette_tests.rs"]
+mod palette_tests;
 
 #[cfg(test)]
 #[path = "status_fixture.rs"]
