@@ -67,6 +67,48 @@ pub(super) fn indented(spans: Vec<Span<'static>>) -> Line<'static> {
     Line::from(all)
 }
 
+/// `words` cut to `room` cells, marked with an ellipsis when it was cut.
+pub(super) fn truncate_to(words: &str, room: usize) -> String {
+    if cell_width(words) <= room {
+        return words.to_owned();
+    }
+    match room {
+        0 => String::new(),
+        room => format!("{}…", truncate_cells(words, room - 1)),
+    }
+}
+
+/// A block's mark and its words, wrapped under the mark: the first row carries
+/// the glyph, and every later row aligns under the words. Nothing is cut with
+/// an ellipsis — a reason that wraps is still the whole reason.
+pub(super) fn marked_wrapped(
+    mark: (&str, Token),
+    words: &str,
+    words_token: Token,
+    facts: &TranscriptFacts,
+    content: usize,
+) -> Vec<Line<'static>> {
+    let room = content
+        .saturating_sub(GUTTER + cell_width(mark.0) + 1)
+        .max(1);
+    wrapped(words, room)
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let (prefix, token) = match index {
+                0 => (mark.0.to_owned(), mark.1),
+                _ => (" ".repeat(cell_width(mark.0)), words_token),
+            };
+            Line::from(vec![
+                Span::raw(" ".repeat(GUTTER)),
+                Span::styled(prefix, style(token, facts.scheme)),
+                Span::raw(" "),
+                Span::styled(row, style(words_token, facts.scheme)),
+            ])
+        })
+        .collect()
+}
+
 /// One logical line wrapped to `room` cells, never wider than the room.
 pub(super) fn wrapped(text: &str, room: usize) -> Vec<String> {
     let width = room.max(1);

@@ -7,10 +7,10 @@
 use saya_agent::AgentEvent;
 use serde_json::Value;
 
-use super::entry::{
-    Activity, Answer, Entry, Notice, ResultPreview, Step, StepState, TranscriptView, TurnView,
-};
-use crate::chat::ChatEvent;
+use super::entry::{Activity, Answer, Entry, Notice, Step, StepState, TranscriptView, TurnView};
+use super::entry_blocks::{Clarification, Error, Stop};
+use super::entry_result::ResultPreview;
+use crate::chat::{ChatEvent, ChatOutcome};
 use crate::render::tool_groups::is_failure_summary;
 
 /// Folds one session event into the transcript.
@@ -23,7 +23,7 @@ pub(crate) fn apply(view: &mut TranscriptView, event: &ChatEvent) {
         ChatEvent::Notice { message } => view.current().push(Entry::Notice(Notice {
             message: message.clone(),
         })),
-        ChatEvent::TurnEnded(_) => end_turn(view.current()),
+        ChatEvent::TurnEnded(outcome) => end_turn(view.current(), outcome),
         // A prepared run and a call put to the operator are read by the status
         // line and the approval card, not by the transcript.
         ChatEvent::Ready { .. } | ChatEvent::Question(_) => {}
@@ -39,6 +39,14 @@ fn apply_agent(turn: &mut TurnView, event: &AgentEvent) {
         AgentEvent::ToolCompleted { name, summary } => completed(turn, name, summary),
         AgentEvent::ToolDenied { name, reason, .. } => denied(turn, name, reason),
         AgentEvent::AssistantText { text } => answer(turn).text.push_str(text),
+        // The model stopped to ask instead of assuming: the question is a block
+        // of the turn, and the operator's answer is the next turn (`02` §3.9).
+        AgentEvent::ClarificationNeeded { question, options } => {
+            turn.push(Entry::Question(Clarification {
+                question: question.clone(),
+                options: options.clone(),
+            }))
+        }
         // The attempt that produced the text so far was discarded, and the
         // retried stream re-emits the whole answer as fresh deltas.
         AgentEvent::TurnReset => {
@@ -132,14 +140,42 @@ fn settle(activity: &mut Activity, tool: &str, state: StepState) {
     }
 }
 
-/// Ends the turn: a successful block folds to its one summary line.
+/// Ends the turn: a successful block folds to its one summary line, and, when
+/// the turn stopped on something the operator has to read, its stop or its
+/// error becomes a block of its own.
 ///
 /// A failed block never folds, and a turn with no tool call has no block to
 /// fold.
-fn end_turn(turn: &mut TurnView) {
+fn end_turn(turn: &mut TurnView, outcome: &ChatOutcome) {
     if let Some(activity) = turn.activity_mut()
         && !activity.failed
     {
         activity.folded = true;
+    }
+    if let Some(entry) = ended_entry(outcome) {
+        turn.push(entry);
+    }
+}
+
+/// The block an ending leaves behind, when it left one: a stop with the
+/// dimension that ran out or the guard's own sentence, an error with its
+/// reason, or the operator's cancel. A turn the model answered leaves none.
+fn ended_entry(outcome: &ChatOutcome) -> Option<Entry> {
+    match outcome {
+        ChatOutcome::Answered => None,
+        ChatOutcome::Stopped(budget) => Some(Entry::Stop(Stop::Budget {
+            dimension: budget.dimension,
+            // The key and value that bound the turn are the surface's facts:
+            // the outcome names the dimension, not the configuration it came
+            // from.
+            limit: None,
+        })),
+        ChatOutcome::Paused { message } => Some(Entry::Stop(Stop::Paused {
+            message: message.clone(),
+        })),
+        ChatOutcome::Failed { message } => Some(Entry::Error(Error {
+            message: message.clone(),
+        })),
+        ChatOutcome::Cancelled => Some(Entry::Stop(Stop::Cancelled)),
     }
 }
