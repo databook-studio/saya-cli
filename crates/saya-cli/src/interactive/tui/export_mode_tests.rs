@@ -63,6 +63,7 @@ fn export_request(mode: Option<ExportMode>, overwrite: bool, path: &str) -> Expo
         mode,
         overwrite,
         path: path.to_string(),
+        ..ExportRequest::default()
     }
 }
 

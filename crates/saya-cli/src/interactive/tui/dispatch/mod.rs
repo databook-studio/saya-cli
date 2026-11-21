@@ -80,9 +80,9 @@ pub(crate) fn dispatch(
             return Dispatch::Handled;
         }
     }
-    // Bare /investigations opens the searchable investigation picker rather
-    // than the text list; `/investigation list` and any flagged
-    // /investigations tail (`--list`, `--limit`, `--offset`) keep it.
+    // Bare /investigation and its /investigations alias open the searchable
+    // investigation picker rather than the text list; `/investigation list`
+    // and any flagged tail (`--list`, `--limit`, `--offset`) keep it.
     if super::dispatch_investigation::bare_investigations(line) {
         return Dispatch::OpenInvestigationPicker;
     }
@@ -127,9 +127,13 @@ pub(crate) fn dispatch(
                             job,
                         ) {
                             result = outcome;
-                        } else if let Some(outcome) =
-                            grants::apply_grant_action(&mut action, transcript, runtime, session)
-                        {
+                        } else if let Some(outcome) = grants::apply_grant_action(
+                            &mut action,
+                            transcript,
+                            state,
+                            runtime,
+                            session,
+                        ) {
                             result = outcome;
                         } else if let Some(outcome) = query::apply_query_actions(
                             &mut action,

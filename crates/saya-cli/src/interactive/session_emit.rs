@@ -35,13 +35,14 @@ pub(crate) fn emit_action(
         | SessionAction::Resume(_)
         // The `/run` family is intercepted in the session loop (it needs the
         // runtime, and the nested run's output never passes through this
-        // seam); the arms keep the match exhaustive. `/allow` and `/grants`
-        // are intercepted too — they seed and read the session's grant
-        // store, which lives in the runtime. `/context` is intercepted as
-        // well: the view needs the runtime's settings and the session's
-        // workspace root. `/sessions list` and `/sessions delete <id>` are
-        // intercepted too — the shared saved-session operations run in the
-        // loop, which owns the store and the sessions root. `/preferences`
+        // seam); the arms keep the match exhaustive. `/allow` and
+        // `/permissions` are intercepted too — they seed and read the
+        // session's grant store, which lives in the runtime. `/context` is
+        // intercepted as well: the view needs the runtime's settings and the
+        // session's workspace root. `/sessions list` and
+        // `/sessions delete <id>` are intercepted too — the shared
+        // saved-session operations run in the loop, which owns the store and
+        // the sessions root. `/preferences`
         // is intercepted likewise: the shared operations run in the loop,
         // scoped to the session's bound worktree root. `/rotate` is
         // intercepted too: the rotation runs in the loop through the shared
@@ -52,7 +53,7 @@ pub(crate) fn emit_action(
         // launch's gate.
         | SessionAction::Mode(_)
         | SessionAction::Allow(_)
-        | SessionAction::Grants
+        | SessionAction::Permissions(_)
         | SessionAction::Context
         | SessionAction::SessionsList
         | SessionAction::SessionsDelete(_)
@@ -89,12 +90,6 @@ pub(crate) fn emit_action(
         SessionAction::Export(_) => emit(
             TerminalEvent::Error {
                 message: "export is only available in the interactive TUI".into(),
-            },
-            format,
-        ),
-        SessionAction::Report(_) => emit(
-            TerminalEvent::Error {
-                message: "report is only available in the interactive TUI".into(),
             },
             format,
         ),

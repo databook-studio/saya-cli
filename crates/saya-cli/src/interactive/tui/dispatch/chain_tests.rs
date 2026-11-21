@@ -27,6 +27,8 @@ include!("chain_tests/dispatch_basics.rs");
 
 include!("chain_tests/report_and_context.rs");
 
+include!("chain_tests/export_permissions.rs");
+
 include!("chain_tests/setup_parse.rs");
 
 include!("chain_tests/sessions.rs");

@@ -16,6 +16,7 @@ mod link;
 mod operator;
 mod ops;
 mod ops_context;
+pub(crate) mod ops_permissions;
 mod ops_rewind;
 mod ops_rewind_run;
 pub(crate) mod ops_status;

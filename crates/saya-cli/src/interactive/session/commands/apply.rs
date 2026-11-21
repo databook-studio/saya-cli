@@ -98,7 +98,6 @@ impl SessionState {
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
             SlashCommand::Export(request) => SessionAction::Export(request),
-            SlashCommand::Report(request) => SessionAction::Report(request),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
             SlashCommand::Compact(request) => {
@@ -213,7 +212,7 @@ impl SessionState {
             SlashCommand::RunCancel(run_id) => SessionAction::RunCancel(run_id),
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
-            SlashCommand::Grants => SessionAction::Grants,
+            SlashCommand::Permissions(request) => SessionAction::Permissions(request),
             SlashCommand::Status => SessionAction::Status,
             SlashCommand::Context => SessionAction::Context,
             SlashCommand::SessionsList => SessionAction::SessionsList,

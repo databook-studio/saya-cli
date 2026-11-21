@@ -36,8 +36,18 @@ fn command_help_memory_runs(name: &str) -> Option<&'static str> {
         "allow" => Some(
             "allow <scopes…> — seed pre-authorized scopes into this session's grant store: a granted scope pre-answers the asks it names until the session ends (grants die with the session and are never persisted; a resumed session starts empty). The grammar is the same one `--allow` parses, judged for the session surface: the wired scopes are `workspace-write`, `fetch:<scheme>+<host>`, `command:<program>` (a host program — unsandboxed, as your user with your filesystem and network — gated on the lane, which composes wherever a workspace root binds; refused here when no root is bound), and `sql:<connection>` (one SQL grant covers the read-shaped SQL family — bounded_sql_query, result_shape, column_health, join_check — against that connection), and `shell:<command prefix>` (the `shell` tool's own key: the leading words of one plain command, which pre-answers that tool's asks naming the same prefix). `endpoint:<role>=<endpoint>` is refused here: a session binds no per-step endpoint roles. A scope naming a denied program refuses here: a grant cannot override the deny list, and the deny list bounds only the program named in the ask — allowed programs may still invoke it. `none` states the empty approval and must stand alone: it seeds nothing, and it is not a revoke — the store keeps whatever it already holds. /allow only adds. Example: /allow sql:analytics   or   /allow workspace-write sql:analytics",
         ),
+        "permissions" => Some(
+            "permissions — one read-only view of what this session may do: the mode in force, the \
+             grant store (one granted scope per line, sorted, in the words /allow seeded), the \
+             deny list, whether the host lane composed, and whether cloud data sharing is on. It \
+             only reads: no provider call, no database query, no network — /doctor is the command \
+             that checks. Example: /permissions",
+        ),
         "grants" => Some(
-            "grants — list this session's grant store verbatim: one granted scope per line, sorted, under a header stating the lifetime, with a count. The words are the record, and they are the same words /allow seeded and the prompts offered. Example: /grants",
+            "grants — deprecated alias for /permissions (removed next release): the same view, in \
+             the same words. The grant store it lists is the record: one granted scope per line, \
+             sorted, under a header stating the lifetime, with a count — the same words /allow \
+             seeded and the prompts offered. Example: /grants",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",

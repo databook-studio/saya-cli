@@ -35,7 +35,6 @@ use help::help_text;
 include!("slash/command_types.rs");
 include!("slash/request_types.rs");
 include!("slash/export_parser.rs");
-include!("slash/report_parser.rs");
 include!("slash/preferences_parser.rs");
 include!("slash/notes_parser.rs");
 include!("slash/recovery_parser.rs");

@@ -39,13 +39,12 @@ Provider, model & privacy
   /privacy [on|off] — Enable or disable data sharing privacy
   /mode [ask|accept-edits|plan|bypass|read-only|never] — Set the session's consent mode: ask, accept-edits, plan, bypass, read-only, or never
   /allow <scopes…> — Seed pre-authorised scopes into this session's grant store
-  /grants — List the session's granted scopes
+  /permissions — One read-only view: the mode, the grant store, the deny list, the host lane and data sharing
 
 Query & data
   /schema [refresh] — Inspect or refresh database schema
   /sql <query> — Run a raw SQL query against the active profile
-  /export [--snapshot|--refresh] [--overwrite] <path> — Export the last query's fresh result, or the captured /sql result with --snapshot
-  /report [--rows N] [--overwrite] <path> — Write a Markdown report (SQL + provenance) of the captured /sql result
+  /export [--snapshot|--refresh] [--overwrite] [--rows N] [--format csv|json|md] <path> — Export the last query's fresh result, or the captured /sql result with --snapshot; a .md path writes today's Markdown report
   /investigation save|list|show|run|export|import|delete — Save, list, show, run, export, import, or delete a saved investigation
   /chart [type] [path] — Re-run the last query and render the fresh result as an HTML chart
   /explain [sql] — Explain the given or last SQL statement

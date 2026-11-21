@@ -22,7 +22,7 @@ use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::commands::approval_name;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
 use crate::interactive::session::permissions::mode;
-use crate::slash::{ExportRequest, ModeRequest, ReportRequest, RewindRequest};
+use crate::slash::{ExportRequest, ModeRequest, PermissionsRequest, RewindRequest};
 
 /// The session's handles, as one operation sees them.
 pub(crate) struct OpsContext {
@@ -166,10 +166,10 @@ pub(crate) enum ReadOp {
     Schema { refresh: bool },
     /// `/sql <query>` — one bounded read-only statement.
     Sql(String),
-    /// `/export …` — write the last result.
+    /// `/export …` — write the last result (or, for a `.md` destination,
+    /// today's Markdown report). `/report` states the same read through its
+    /// one-release alias.
     Export(ExportRequest),
-    /// `/report …` — the Markdown report of the last result.
-    Report(ReportRequest),
     /// `/chart [type] [path]` — a chart of the last result.
     Chart(String),
     /// `/explain [sql]` — the statement's plan.
@@ -197,8 +197,10 @@ pub(crate) enum ReadOp {
     Investigation(InvestigationCommand),
     /// `/runs [id]` — the run engine's own store.
     Runs(Option<String>),
-    /// `/grants` — the session's grant store.
-    Grants,
+    /// `/permissions` — one read-only view of what this session may do: the
+    /// mode, the grant store, the deny list, the host lane and data sharing.
+    /// `/grants` states the same read through its one-release alias.
+    Permissions(PermissionsRequest),
     /// `/doctor` — the configuration check.
     Doctor,
     /// `/help [command]` — the help text.

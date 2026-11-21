@@ -12,10 +12,11 @@ use std::sync::Mutex;
 pub(crate) enum Followup {
     /// Render the table and remember the query for /export & friends.
     Sql { connection: Option<String> },
-    /// Write the result to a CSV/JSON path. Only the refresh forms of
-    /// `/export` reach here (legacy and `--refresh`); `--snapshot` never
-    /// dispatches a query. `mode: None` is the legacy form, whose success
-    /// message may point at `--snapshot`.
+    /// Write the result to a data-file path, in the request's format. Only
+    /// the refresh forms of `/export` reach here (legacy and `--refresh`);
+    /// `--snapshot` and a `.md` report write the capture and never dispatch a
+    /// query. `mode: None` is the legacy form, whose success message may
+    /// point at `--snapshot`.
     Export { request: ExportRequest },
     /// Build an HTML chart (optionally forced kind + output path).
     Chart {

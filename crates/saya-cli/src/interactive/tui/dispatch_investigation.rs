@@ -30,11 +30,12 @@ use crate::interactive::session::lifecycle::resume::block_on;
 use crate::render::RenderFormat;
 use saya_agent::CancellationToken;
 
-/// Bare `/investigations` — no subcommand, no flags — opens the TUI's
-/// searchable picker instead of the text listing. Any tail (`--list`,
-/// `--limit N`, `--offset N`) keeps today's text listing.
+/// Bare `/investigation` or `/investigations` — no subcommand, no flags —
+/// opens the TUI's searchable picker instead of the text listing. Any tail
+/// (`--list`, `--limit N`, `--offset N`) keeps today's text listing, and a
+/// subcommand word is that subcommand.
 pub(super) fn bare_investigations(line: &str) -> bool {
-    line.trim() == "/investigations"
+    matches!(line.trim(), "/investigations" | "/investigation")
 }
 
 /// Fills a save that carries neither `--sql` nor `--file` from the session's
