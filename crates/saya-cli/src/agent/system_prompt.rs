@@ -4,8 +4,21 @@
 
 use super::session_facts::{SessionFacts, session_facts_text};
 use crate::connection::ConnectionRegistry;
+use crate::plugins::database::prompt::DatabaseFacts;
 use saya_agent::AgentMode;
 use saya_config::MemoryMode;
+
+/// The database texts this prompt states, re-exported from the one copy in
+/// `plugins::database::prompt`: the plugin's `system_section` states the same
+/// bytes on a chat run, so neither path can drift from the other.
+pub(crate) use crate::plugins::database::prompt::{
+    ANSWER_CONTRACT, WORKING_GUIDANCE, memory_section,
+};
+
+/// The memory briefing, re-exported for the tests that pin its wording: the
+/// assembly reads it through [`memory_section`].
+#[cfg(test)]
+pub(crate) use crate::plugins::database::prompt::MEMORY_SYSTEM_PROMPT;
 
 /// Plan-mode briefing, appended to the assembled system prompt under Plan
 /// only. It states what Plan means — investigate and answer with a plan —
@@ -24,111 +37,12 @@ pub(crate) const PLAN_SYSTEM_PROMPT: &str = "You are in Plan mode: investigate a
     do not promise edits as if you had made them — describe the change you would make instead. \
     Plan composes with the approval policy and never widens it.";
 
-/// Memory briefing prompt included when assisted memory mode is active.
-pub(crate) const MEMORY_SYSTEM_PROMPT: &str = "\
-SAYA maintains durable knowledge about the user's databases across sessions. \
-Confirmed facts relevant to the question are already supplied in context; there is no need to fetch them. \
-The `contract_search` and `contract_read` tools are available for objects discovered mid-turn that were not in the supplied set. \
-When the user states something durable about their data — what a word means, which column counts, what a table's grain is — restate it explicitly and precisely in the answer. What SAYA records is drawn from the turn, so a vague restatement is recorded vaguely.";
-
-/// Memory section for the system prompt, present only in [`MemoryMode::Assisted`].
-pub(crate) fn memory_section(mode: MemoryMode) -> Option<&'static str> {
-    match mode {
-        MemoryMode::Assisted => Some(MEMORY_SYSTEM_PROMPT),
-        _ => None,
-    }
-}
-
-/// How the connected engines want an object named in SQL, plus the dialect
-/// statement that names each engine and pins the SQL dialect.
-///
-/// Schema discovery reports every engine as catalog → schema → table, because
-/// that is what a durable fact binds to. SQLite has no such depth in SQL: shown
-/// `db.main.singer`, a model writes exactly that and the statement is rejected,
-/// costing a round trip on nearly every question before it retries unqualified.
-/// So each engine is told the fullest name it actually accepts — and no more.
-///
-/// The same section states the engine plainly and warns that the declared
-/// column types may come from another engine. Observed evidence: one SQLite
-/// database was a PostgreSQL dump, so its DDL still declared `jsonb`, `point`
-/// and `timestamp with time zone`; schema discovery reported those declared
-/// types, the model wrote Postgres syntax (`city->>'en'`, `coordinates[0]`),
-/// and SQLite rejected every statement. The prompt must say the SQL dialect is
-/// the connected engine's, whatever the DDL says — one or two sentences, on
-/// every request. With several connections the engines are listed, so the
-/// warning is worded per connected engine.
+/// The engine naming and dialect statement for the connected engines. The one
+/// copy of the text lives in `plugins::database::prompt`, which is also what the
+/// plugin's `system_section` states.
 fn naming_section(registry: &ConnectionRegistry) -> Option<String> {
-    let mut forms: Vec<(&str, &str)> = Vec::new();
-    for dialect in registry.dialects() {
-        let entry = (dialect.as_str(), dialect.qualified_name_form());
-        if !forms.contains(&entry) {
-            forms.push(entry);
-        }
-    }
-    match forms.as_slice() {
-        [] => None,
-        [(engine, form)] => Some(format!(
-            "The SQL dialect is {engine}'s, whatever the DDL says — the declared column \
-             types in this database may come from another engine. Name objects as `{form}` \
-             when writing SQL — the fullest form this engine accepts; an under-qualified \
-             name cannot be recorded against a real object and an over-qualified one is a \
-             syntax error."
-        )),
-        many => {
-            let list = many
-                .iter()
-                .map(|(engine, form)| format!("- {engine}: `{form}`"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            Some(format!(
-                "Name objects with the fullest form the target engine accepts, and no more \
-                 — an under-qualified name cannot be recorded against a real object, and an \
-                 over-qualified one is a syntax error:\n{list}\nThe SQL dialect is the \
-                 connected engine's, whatever the DDL says — the declared column types in a \
-                 database may come from another engine."
-            ))
-        }
-    }
+    DatabaseFacts::of(registry).naming_section()
 }
-
-/// Coaching that applies to every turn regardless of how many databases are
-/// connected: multi-step work is the norm, a failed attempt must not be
-/// repeated, and a question nothing in the session can answer must end with a
-/// stated reason rather than an endless loop. With no turn ceiling by default,
-/// the model giving up well is the primary stopping condition. The database
-/// specifics — schema discovery first, missing tables and columns — stay as
-/// the database case of that rule.
-const WORKING_GUIDANCE: &str = "Multi-step work is expected. Do not repeat an attempt that already \
-    failed — change your approach instead. When working with a database, discover the schema before \
-    you query it. If a material definition (grain, time column, metric, filter) is ambiguous and no \
-    confirmed context resolves it, call request_clarification instead of assuming. When the question \
-    cannot be answered from what is available in this session, stop \
-    and say so, explaining what you tried and what is missing: a missing table or column, data that \
-    is not present, or a question the schema cannot express. Giving up with a reason is a correct \
-    outcome; looping is not.";
-
-/// The shape an answer must take. [`WORKING_GUIDANCE`] tells the model how to
-/// proceed; this tells it how to present the result. Each clause fixes a
-/// observed class of failure where the numbers were right and the
-/// presentation was wrong: extra working columns, rounding the question never
-/// asked for, non-ISO dates, the operands of a computation handed back instead
-/// of the computation the question named, a superlative answered with the
-/// ranking it came from, one quantity answered where several were named, a
-/// measure word read loosely, a metric qualifier applied to the whole
-/// population, a tie broken to fit a limit, and a named period replaced by the
-/// rows that happened to appear. Plain rules, no examples — this text rides on
-/// every request.
-const ANSWER_CONTRACT: &str = "Answer the question exactly as asked. These rules govern answers that report query results, and leave other answers untouched:\n\
-    - Return only the columns the question asks for; drop intermediate working columns.\n\
-    - Do not round unless asked.\n\
-    - Write dates as ISO YYYY-MM-DD.\n\
-    - If the question asks for a ratio, a percentage, or a difference, compute that value and answer with it — returning the operands alone stops one step short.\n\
-    - A superlative — \"the fastest\", \"the highest\", \"the top one\", \"the fewest\" — asks which one: answer with that row and the value that makes it so, not the ranking it came from. Every row tied with it is part of the answer.\n\
-    - Answer every quantity the question names; if it asks for two things, answer both.\n\
-    - Read measure words literally: \"volume\" is units, \"revenue\" is money.\n\
-    - A qualifier on a metric is not a qualifier on the population — filter the metric, not the rows.\n\
-    - Keep every row tied at a cut-off; never drop a tie to fit a limit.\n\
-    - When a period is named, enumerate that whole period, not only the rows that happen to appear in the data.";
 
 pub(crate) use super::turn_context::{last_sql_hint_block, memory_reachable};
 

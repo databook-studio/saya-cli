@@ -12,6 +12,7 @@
 use std::path::Path;
 
 use crate::connection::ConnectionRegistry;
+use crate::plugins::database::prompt::DatabaseFacts;
 
 /// Session-stable facts: what the session is, not what it may do.
 ///
@@ -39,8 +40,10 @@ pub(crate) const SESSION_FACTS_HEADING: &str = "Session facts";
 pub(crate) fn session_facts_text(facts: &SessionFacts<'_>) -> Option<String> {
     let mut lines = vec![SESSION_FACTS_HEADING.to_string()];
     let mut has_facts = false;
-    for (name, entry) in facts.registry.entries() {
-        lines.push(format!("- Database `{name}` ({}).", entry.dialect.as_str()));
+    // The database lines are the one copy `plugins::database::prompt` renders,
+    // so the plugin's section and this one cannot state them differently.
+    for line in DatabaseFacts::of(facts.registry).session_lines() {
+        lines.push(line);
         has_facts = true;
     }
     match facts.workspace_root {

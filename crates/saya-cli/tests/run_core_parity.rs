@@ -42,6 +42,8 @@ mod job;
 mod known_gaps;
 #[path = "run_core_parity/matrix.rs"]
 mod matrix;
+#[path = "run_core_parity/no_database.rs"]
+mod no_database;
 #[path = "mvp/db_goldens/normalise.rs"]
 #[allow(dead_code)]
 mod normalise;
@@ -72,6 +74,19 @@ fn run_core_surfaces_advertise_the_same_tools_or_recorded_gaps() {
     let matrix = matrix::Matrix::build(&captures);
     matrix.print();
     matrix.assert_known_gaps(known_gaps::KNOWN_GAPS, known_gaps::NOT_CAPTURED);
+}
+
+/// The database text belongs to the database plugin's section, so a run that
+/// activates no database plugin sends none of its words.
+#[test]
+fn a_run_without_a_database_sends_no_database_text() {
+    let body = no_database::first_request_body();
+    for word in no_database::DATABASE_WORDS {
+        assert!(
+            !body.contains(word),
+            "a run with no active database plugin sent `{word}`: {body}"
+        );
+    }
 }
 
 /// The request-size and prefix baseline: what each surface sends on its first

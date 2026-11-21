@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use saya_harness::coding::policy::ChildAuthorityView;
 
+use super::prompt::ChatPrompt;
 use super::{DatabasePlugin, SessionBudget};
 use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::commands::coding::database::CodingDatabaseTools;
@@ -21,12 +22,14 @@ pub(crate) struct ChatDatabaseFlags {
     pub(crate) permit_candidate_writes: bool,
 }
 
-/// The chat surface's toolset, the gates it advertises under, and the
-/// `[limits.session]` budget a chat turn of this run is bounded by.
+/// The chat surface's toolset, the gates it advertises under, the
+/// `[limits.session]` budget a chat turn of this run is bounded by, and the
+/// prompt inputs the run handed the plugin once.
 pub(super) struct ChatSurface {
     pub(super) tools: Arc<DatabaseTools>,
     pub(super) flags: ChatDatabaseFlags,
     pub(super) session: SessionBudget,
+    pub(super) prompt: ChatPrompt,
 }
 
 /// A coding job's toolset and the authority view it serves.
@@ -49,11 +52,14 @@ impl DatabasePlugin {
     /// are bounded by, plus the run's query-capture hook when the front drives
     /// one. The hook reaches the tools the executor hands the loop, so a chat
     /// query is captured exactly as the old chat turn captured it; `None`
-    /// installs nothing and every existing caller behaves as before.
+    /// installs nothing and every existing caller behaves as before. `prompt`
+    /// is what the run resolved once: the section this plugin contributes to
+    /// the run's system prompt is rendered from it.
     pub(crate) fn for_chat(
         tools: Arc<DatabaseTools>,
         flags: ChatDatabaseFlags,
         session: SessionBudget,
+        prompt: ChatPrompt,
         capture: Option<CaptureHook>,
     ) -> Self {
         Self {
@@ -61,11 +67,13 @@ impl DatabasePlugin {
                 tools,
                 flags,
                 session,
+                prompt,
             }),
             capture,
             recall: None,
             learning: None,
             last_receipt: Mutex::new(None),
+            last_sql: Mutex::new(None),
         }
     }
 
@@ -82,6 +90,7 @@ impl DatabasePlugin {
             recall: None,
             learning: None,
             last_receipt: Mutex::new(None),
+            last_sql: Mutex::new(None),
         }
     }
 
