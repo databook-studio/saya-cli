@@ -80,6 +80,19 @@ impl CodingApplication {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = grants;
     }
+    /// States whether this host's runs inherit the job's continuation context.
+    /// A one-turn composition — the one-shot `ask` — states `false`: its job
+    /// began a moment ago, so there is nothing to inherit, and the block that
+    /// would state it carries the run's own identity, which no two runs share.
+    pub(crate) fn with_continuation_context(self: &Arc<Self>, inherits: bool) {
+        self.continuation_context
+            .store(inherits, std::sync::atomic::Ordering::Release);
+    }
+    /// Whether this host's runs inherit the job's continuation context.
+    pub(crate) fn inherits_continuation_context(&self) -> bool {
+        self.continuation_context
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
     /// States the mode a freshly reopened host starts with: the same mode this
     /// one holds, frozen again when this one is. A detached start that falls
     /// back to an in-place root reopens through here, so the fallback cannot

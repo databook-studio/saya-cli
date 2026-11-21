@@ -80,8 +80,13 @@ impl NativeCodingJob {
         // This turn's context comes first: the root shell's composition proves
         // the sandbox by creating and removing canary directories inside W, and
         // a readiness walk that met one of them mid-removal would send the model
-        // a different view than the run's first request must carry.
-        let mut context_blocks = self.continuation_context().await?;
+        // a different view than the run's first request must carry. A one-turn
+        // composition inherits nothing, so it states none of it.
+        let mut context_blocks = if self.application.inherits_continuation_context() {
+            self.continuation_context().await?
+        } else {
+            Vec::new()
+        };
         // A chat surface carries the project's own untrusted context too — the
         // instruction sources and the worktree's explicit preferences, on the
         // same labelled lane and through the one injection site the interactive

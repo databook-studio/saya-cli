@@ -49,6 +49,12 @@ pub struct CodingApplication {
     /// A cell rather than a plain flag because the surface states it through the
     /// shared host it already holds — the same way it states its mode.
     pub(super) can_obtain_approval: std::sync::atomic::AtomicBool,
+    /// Whether a run of this host inherits the job's continuation context: the
+    /// block that states what a *continuing* run already knows. `true` for
+    /// every surface whose job outlives its turn, and stated `false` by a
+    /// one-turn composition, whose run answers one question and inherits
+    /// nothing — a question asked twice must send the provider the same bytes.
+    pub(super) continuation_context: std::sync::atomic::AtomicBool,
     /// The job's one permission-mode cell: the root's `shell` reads it on every
     /// call, so the mode stated here is the mode the next call resolves. Shared
     /// by handle, so a host two `Arc`s hold still answers with its current mode.
@@ -172,6 +178,7 @@ impl CodingApplication {
             personal_instruction_dir: None,
             operator: None,
             can_obtain_approval: std::sync::atomic::AtomicBool::new(true),
+            continuation_context: std::sync::atomic::AtomicBool::new(true),
             mode: ModeCell::new(ApprovalPolicy::Ask),
             launch_grants: std::sync::Mutex::new(saya_agent::SessionGrants::default()),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
