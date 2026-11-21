@@ -33,9 +33,9 @@ pub(crate) use operator::SessionOperator;
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
-pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
 #[allow(unused_imports)]
 pub(crate) use transcript::{SettledTurn, Transcript};
+pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]
