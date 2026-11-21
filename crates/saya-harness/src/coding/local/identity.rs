@@ -40,9 +40,10 @@ impl fmt::Display for LocalRootId {
     }
 }
 
-/// One canonical in-place folder. Constructed only by [`LocalRoot::open`],
-/// which refuses a file, a symlink, a missing path, and any overlap with
-/// saya's state root.
+/// One canonical in-place folder. Constructed by [`LocalRoot::open`], which
+/// refuses a file, a symlink, a missing path, and any overlap with saya's
+/// state root — or by [`LocalRoot::label`] for a folder that is only a run's
+/// label, where no file tool exists to reach that state.
 pub struct LocalRoot {
     id: LocalRootId,
     path: PathBuf,
@@ -53,28 +54,50 @@ impl LocalRoot {
     /// that cannot be an in-place root: a missing path, a file, a symlink,
     /// or a folder that contains the state root or sits inside it.
     pub fn open(path: &Path, state_root: &Path) -> Result<Self, LocalRootError> {
-        let metadata = fs::symlink_metadata(path).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => LocalRootError::NotFound,
-            _ => LocalRootError::Io,
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(LocalRootError::Symlink);
-        }
-        if !metadata.is_dir() {
-            return Err(LocalRootError::NotDirectory);
-        }
-        let canonical = fs::canonicalize(path).map_err(|_| LocalRootError::Io)?;
+        let canonical = canonical_directory(path)?;
         let state = fs::canonicalize(state_root).map_err(|_| LocalRootError::Io)?;
         if state.starts_with(&canonical) || canonical.starts_with(&state) {
             return Err(LocalRootError::StateOverlap);
         }
-        let id = identity(&canonical)?;
-        Ok(Self {
-            id,
-            path: canonical,
-        })
+        Self::of(&canonical)
     }
 
+    /// The same identity for a folder that is only a run's label: a run
+    /// composed without a workspace — no file, search, shell or write tool —
+    /// cannot reach the state root, so an overlap with it is not a refusal.
+    /// Everything about the folder itself is still refused exactly as
+    /// [`LocalRoot::open`] refuses it.
+    pub fn label(path: &Path) -> Result<Self, LocalRootError> {
+        Self::of(&canonical_directory(path)?)
+    }
+
+    /// The identity of a canonical directory.
+    fn of(canonical: &Path) -> Result<Self, LocalRootError> {
+        let id = identity(canonical)?;
+        Ok(Self {
+            id,
+            path: canonical.to_path_buf(),
+        })
+    }
+}
+
+/// A path that can be an in-place folder at all: it exists, is not a symlink,
+/// is a directory, and canonicalises.
+fn canonical_directory(path: &Path) -> Result<PathBuf, LocalRootError> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => LocalRootError::NotFound,
+        _ => LocalRootError::Io,
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(LocalRootError::Symlink);
+    }
+    if !metadata.is_dir() {
+        return Err(LocalRootError::NotDirectory);
+    }
+    fs::canonicalize(path).map_err(|_| LocalRootError::Io)
+}
+
+impl LocalRoot {
     pub fn id(&self) -> &LocalRootId {
         &self.id
     }

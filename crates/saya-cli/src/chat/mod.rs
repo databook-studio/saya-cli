@@ -58,7 +58,7 @@ pub(crate) use transcript::{SettledTurn, Transcript};
 #[allow(unused_imports)]
 pub(crate) use turn::{ChatTurn, JobPort};
 #[allow(unused_imports)]
-pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
+pub(crate) use workspace_shape::{Workspace, WorkspaceShape, decide as workspace_shape};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]

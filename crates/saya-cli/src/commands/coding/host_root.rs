@@ -25,14 +25,16 @@ pub(crate) fn resolve_in_place(
 /// Resolves the root a session over a folder that cannot root an in-place job
 /// opens over: the folder's own canonical identity, taken without the
 /// dangerous-root refusal because nothing here is a job root — no baseline is
-/// inventoried and no file is reached. What it still refuses is everything
-/// [`LocalRoot::open`] refuses about the folder itself (a symlink, a file, a
-/// missing path, either direction of state overlap).
+/// inventoried and no file is reached. The state root is not asked of it
+/// either: a run with no workspace composes no file, shell or write tool, so a
+/// state root the configuration keeps inside the folder is reachable by
+/// nothing. What it still refuses is everything about the folder itself that
+/// [`LocalRoot::label`] refuses (a symlink, a file, a missing path).
 pub(crate) fn resolve_session_root(
     stated: &Path,
-    state_root: &Path,
+    _state_root: &Path,
 ) -> Result<LocalRoot, CodingError> {
-    LocalRoot::open(stated, state_root).map_err(|error| CodingError::InPlaceRoot {
+    LocalRoot::label(stated).map_err(|error| CodingError::InPlaceRoot {
         detail: error.to_string(),
     })
 }
