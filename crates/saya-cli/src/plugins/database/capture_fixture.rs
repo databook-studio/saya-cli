@@ -9,7 +9,7 @@ use saya_connectors::{ConnectorOptions, DatabaseConnector, SqliteConnector};
 use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
 
 use super::prompt::ChatPrompt;
-use super::tests::{chat_session, scratch};
+use super::tests::{chat_budget, scratch};
 use super::{ChatDatabaseFlags, DatabasePlugin};
 use crate::agent::tools::{CaptureEvent, CaptureHook, DatabaseTools};
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
@@ -104,7 +104,7 @@ pub(super) fn chat_plugin(entry: ConnectionEntry, capture: Option<CaptureHook>) 
             has_state_store: false,
             permit_candidate_writes: false,
         },
-        chat_session(),
+        chat_budget(),
         prompt,
         capture,
     )
