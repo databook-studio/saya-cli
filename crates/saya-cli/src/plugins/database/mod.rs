@@ -10,6 +10,10 @@
 #[cfg(test)]
 mod activation_tests;
 #[cfg(test)]
+mod capture_fixture;
+#[cfg(test)]
+mod capture_tests;
+#[cfg(test)]
 mod learning_fixture;
 #[cfg(test)]
 mod learning_tests;
@@ -25,6 +29,7 @@ mod turn_policy_tests;
 mod job_adapter;
 mod learning;
 mod recall;
+mod surface;
 mod turn_policy;
 
 use std::sync::{Arc, Mutex};
@@ -34,16 +39,21 @@ use saya_agent::{
     AgentEventSink, ContextBlock, RunContext, RunPlugin, RunSurface, TokenUsage, ToolDefinition,
     ToolExecutor, TurnOutcome, TurnPolicy,
 };
-use saya_harness::coding::policy::ChildAuthorityView;
 
-use crate::agent::tools::DatabaseTools;
 use crate::agent::tools::workspace::is_tool_name;
-use crate::commands::coding::database::CodingDatabaseTools;
+use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::contracts::RecallReceipt;
 
 pub(crate) use learning::LearningSource;
 pub(crate) use recall::RecallSource;
+// The two surfaces' constructors and gates live in `surface`; the tests build
+// a chat plugin through them, so the flag type is re-exported for test runs
+// only — the plugin's own code never names it.
+#[cfg(test)]
+pub(crate) use surface::ChatDatabaseFlags;
 pub(crate) use turn_policy::SessionBudget;
+
+use surface::{ChatSurface, Surface};
 
 /// Every database tool name either surface can offer. The registry checks
 /// collisions against this list once, so it is the whole of what the plugin may
@@ -62,41 +72,14 @@ const DECLARED_TOOLS: [&str; 10] = [
     "contract_read",
 ];
 
-/// The gates the chat surface passes to `DatabaseTools::definitions`. The
-/// workspace-write flag is not here: the workspace tools are the core's, so
-/// this plugin always asks for their absent form.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ChatDatabaseFlags {
-    pub(crate) allow_query_data: bool,
-    pub(crate) has_state_store: bool,
-    pub(crate) permit_candidate_writes: bool,
-}
-
-/// The chat surface's toolset, the gates it advertises under, and the
-/// `[limits.session]` budget a chat turn of this run is bounded by.
-struct ChatSurface {
-    tools: Arc<DatabaseTools>,
-    flags: ChatDatabaseFlags,
-    session: SessionBudget,
-}
-
-/// A coding job's toolset and the authority view it serves.
-struct JobSurface {
-    tools: Arc<CodingDatabaseTools>,
-    view: Option<ChildAuthorityView>,
-}
-
-/// Which surface's tools this plugin was built for, and the narrowed toolset it
-/// serves them from. The job side is boxed: a `ChildAuthorityView` is far larger
-/// than the chat side's flags, and the plugin is not a hot path that wants the
-/// larger shape inline.
-enum Surface {
-    Chat(ChatSurface),
-    Job(Box<JobSurface>),
-}
-
 pub(crate) struct DatabasePlugin {
     surface: Surface,
+    /// The run's query-capture hook, when the surface publishes captures: the
+    /// chat previews and exports the queries it runs, so its tools receive
+    /// this hook. A job surface's queries are the job's own evidence, never a
+    /// preview, so that arm never installs it. `None` — every caller that
+    /// passes no hook — installs nothing and captures nothing.
+    capture: Option<CaptureHook>,
     /// What `context()` recalls from, when the run configured memory.
     recall: Option<RecallSource>,
     /// What `on_turn_finish()` learns from, when the run configured memory.
@@ -108,38 +91,6 @@ pub(crate) struct DatabasePlugin {
 }
 
 impl DatabasePlugin {
-    /// The chat surface's database tools, over the session budget its turns
-    /// are bounded by.
-    pub(crate) fn for_chat(
-        tools: Arc<DatabaseTools>,
-        flags: ChatDatabaseFlags,
-        session: SessionBudget,
-    ) -> Self {
-        Self {
-            surface: Surface::Chat(ChatSurface {
-                tools,
-                flags,
-                session,
-            }),
-            recall: None,
-            learning: None,
-            last_receipt: Mutex::new(None),
-        }
-    }
-
-    /// A coding job's database tools, narrowed to the profiles `view` admits.
-    pub(crate) fn for_job(
-        tools: Arc<CodingDatabaseTools>,
-        view: Option<ChildAuthorityView>,
-    ) -> Self {
-        Self {
-            surface: Surface::Job(Box::new(JobSurface { tools, view })),
-            recall: None,
-            learning: None,
-            last_receipt: Mutex::new(None),
-        }
-    }
-
     /// Attaches the run's recall source: with one, `context()` recalls this
     /// turn's database contracts. Without one, it contributes nothing.
     pub(crate) fn with_recall(mut self, source: RecallSource) -> Self {
@@ -237,8 +188,15 @@ impl RunPlugin for DatabasePlugin {
         match &self.surface {
             // The chat surface's executor is `DatabaseTools` itself — never a
             // wrapper — so the tools the loop already runs are the ones this
-            // plugin routes to.
-            Surface::Chat(ChatSurface { tools, .. }) => Some(tools.clone()),
+            // plugin routes to, and they are the ones that capture: the run's
+            // hook is installed on them here, before the loop can call them.
+            // No hook installs nothing, leaving the tools as built.
+            Surface::Chat(ChatSurface { tools, .. }) => {
+                if let Some(capture) = &self.capture {
+                    tools.set_capture_hook(capture.clone());
+                }
+                Some(tools.clone())
+            }
             Surface::Job(job) => Some(Arc::new(job_adapter::JobToolExecutor::new(
                 job.tools.clone(),
                 job.view.clone(),

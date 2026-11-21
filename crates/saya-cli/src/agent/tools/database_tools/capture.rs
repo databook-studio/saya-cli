@@ -123,7 +123,13 @@ impl DatabaseTools {
         if context.cancellation.is_cancelled() {
             return;
         }
-        let Some(hook) = self.capture_hook.as_ref() else {
+        // Cloned out of the cell before it is called: the hook runs without
+        // the lock held, so nothing it reaches can wait on this cell.
+        let hook = match self.capture_hook.lock() {
+            Ok(slot) => slot.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let Some(hook) = hook else {
             return;
         };
         let connection = arguments
