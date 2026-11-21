@@ -8,6 +8,9 @@
 
 mod event;
 mod front;
+mod port;
+mod queue;
+mod session;
 
 // This `pub(crate)` surface is the chat layer's boundary: the composition, the
 // session, the turn, the operator and the fronts above them consume it. Nothing
@@ -17,6 +20,10 @@ mod front;
 pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
 pub(crate) use front::ChatFront;
+#[allow(unused_imports)]
+pub(crate) use port::{PortError, Prepared, RunPort};
+#[allow(unused_imports)]
+pub(crate) use session::{Admission, ChatSession, SessionState};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]

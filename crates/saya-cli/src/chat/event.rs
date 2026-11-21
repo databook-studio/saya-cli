@@ -24,6 +24,13 @@ pub(crate) enum ChatEvent {
         db: Option<String>,
         workspace: Option<PathBuf>,
     },
+    /// Something the session itself has to say — a message replaced before it
+    /// ran, a prepare that failed — in plain words. Whether it is a line, a
+    /// banner or a status bar is the front's business.
+    Notice {
+        /// The sentence the operator reads.
+        message: String,
+    },
     /// A call with an effect is put to the operator and waits for its answer.
     Question(Question),
     /// One turn ended, and how it ended.
