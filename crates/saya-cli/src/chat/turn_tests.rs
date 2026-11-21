@@ -216,6 +216,7 @@ async fn a_turn_budget_stop_reads_as_stopped_and_leaves_the_run_open() {
             max_elapsed: None,
         }),
         plugins: None,
+        seed: Vec::new(),
     };
     let port = JobPort::new(Arc::clone(&fixture.job), inputs);
     assert!(

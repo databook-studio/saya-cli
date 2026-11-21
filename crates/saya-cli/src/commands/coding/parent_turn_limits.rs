@@ -32,6 +32,13 @@ pub(crate) struct TurnInputs {
 pub(crate) struct RunPlugins {
     pub(crate) registry: PluginRegistry,
     pub(crate) context: RunContext,
+    /// The primary connection a call that names none resolves to, when the
+    /// surface resolved one: it is what the database lane's `sql:<primary>`
+    /// token names, so a call that names no connection is approved — and its
+    /// answer remembered — as the primary database. `None` — a surface with no
+    /// database, or one whose primary cannot be resolved — suggests no token,
+    /// and such a call keeps asking.
+    pub(crate) primary: Option<String>,
 }
 
 /// The run's live turn state: the policy a surface set, how the turn that just

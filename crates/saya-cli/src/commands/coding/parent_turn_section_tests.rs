@@ -114,6 +114,7 @@ async fn a_plugins_section_rides_the_run_prompt_once_and_stays_put() {
         plugins: Some(RunPlugins {
             registry,
             context: context(),
+            primary: None,
         }),
         seed: Vec::new(),
     };
@@ -190,6 +191,7 @@ async fn an_inactive_plugins_section_contributes_zero_bytes() {
         plugins: Some(RunPlugins {
             registry,
             context: context(),
+            primary: None,
         }),
         seed: Vec::new(),
     };

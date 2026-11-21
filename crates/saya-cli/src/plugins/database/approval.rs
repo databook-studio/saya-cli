@@ -108,11 +108,13 @@ impl DbApprovalLane {
     }
 
     /// The chat run's root lane for `job`: the job's own mode cell, its
-    /// operator and that operator's "yes for this run" store, and the job's
-    /// `[tools]` list. The primary connection is unbound here — the chat's
-    /// registry is not this composition's to read — so only a call that names
-    /// its connection suggests a token.
-    pub(crate) fn for_root(job: &NativeCodingJob) -> Self {
+    /// operator and that operator's "yes for this run" store, the job's
+    /// `[tools]` list, and the primary connection the surface resolved. A call
+    /// that names no connection is approved as the primary one — its token is
+    /// `sql:<primary>`, the name the chat's own grants always used — while a
+    /// surface that resolved no primary (`None`) suggests no token for it and
+    /// such a call keeps asking.
+    pub(crate) fn for_root(job: &NativeCodingJob, primary: Option<String>) -> Self {
         let operator = job.operator();
         let grants = operator
             .as_ref()
@@ -125,7 +127,7 @@ impl DbApprovalLane {
         Self::new(
             job.approval_mode(),
             grants,
-            None,
+            primary,
             job.tools().clone(),
             prompt,
         )
@@ -136,8 +138,12 @@ impl DbApprovalLane {
     /// ([`runs_on_chat`]) cannot be restated somewhere else and drift: a chat
     /// run with a database takes the lane, and every job surface — `-p`, a
     /// background run, a helper — composes none.
-    pub(crate) fn for_run(job: &NativeCodingJob, context: &RunContext) -> Option<Self> {
-        runs_on_chat(context).then(|| Self::for_root(job))
+    pub(crate) fn for_run(
+        job: &NativeCodingJob,
+        context: &RunContext,
+        primary: Option<String>,
+    ) -> Option<Self> {
+        runs_on_chat(context).then(|| Self::for_root(job, primary))
     }
 
     /// The token an answer to this call would record: `sql:<connection>` for

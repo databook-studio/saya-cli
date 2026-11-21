@@ -142,10 +142,11 @@ impl Operator for SessionOperator {
 }
 
 /// The facts body the operator reads before answering: the call's own target —
-/// a shell's command and working directory, a plan, a path, or a URL — sanitised
-/// and bounded, in the shapes every approval prompt of this crate states. `None`
-/// for a call that names no target this operator can show in full: refusing is
-/// the safe answer, and the model is free to send a shorter one.
+/// a shell's command and working directory, a query and the connection it runs
+/// on, a plan, a path, or a URL — sanitised and bounded, in the shapes every
+/// approval prompt of this crate states. `None` for a call that names no target
+/// this operator can show in full: refusing is the safe answer, and the model is
+/// free to send a shorter one.
 fn facts(arguments: &Value) -> Option<String> {
     if let Some(command) = arguments.get("command").and_then(Value::as_str) {
         let workdir = arguments
@@ -159,6 +160,28 @@ fn facts(arguments: &Value) -> Option<String> {
             "in: {}\n$ {}",
             sanitise_prompt_text(workdir),
             sanitise_prompt_text(command)
+        ));
+    }
+    if let Some(sql) = arguments.get("sql").and_then(Value::as_str) {
+        // The SQL safety layer bounds a statement well below this, so the check
+        // is a shape guard rather than a bound the operator meets.
+        if sql.chars().count() > MAX_FACTS_CHARS {
+            return None;
+        }
+        // A call that names no connection runs on the primary one, and the
+        // question says which database it is the primary of: that is the name
+        // the answer's grant is recorded under.
+        let connection = arguments
+            .get("connection")
+            .and_then(Value::as_str)
+            .unwrap_or("the primary connection");
+        if connection.chars().count() > MAX_FACTS_CHARS {
+            return None;
+        }
+        return Some(format!(
+            "on: {}\n{}",
+            sanitise_prompt_text(connection),
+            sanitise_prompt_text(sql)
         ));
     }
     if let Some(plan) = arguments.get("plan").and_then(Value::as_str) {

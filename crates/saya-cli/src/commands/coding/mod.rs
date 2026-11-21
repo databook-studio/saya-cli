@@ -44,9 +44,10 @@ mod observations;
 mod operations;
 mod outcome;
 mod parent;
-/// The per-turn inputs a surface states when it opens a run: the chat turn
-/// states its own at `run_prepare`.
-pub(crate) use parent::TurnInputs;
+/// The per-turn inputs a surface states when it opens a run, and the plugins
+/// those turns may activate: the chat's composition states its own at
+/// `run_prepare`.
+pub(crate) use parent::{RunPlugins, TurnInputs};
 
 /// The turn-per-message fixtures a chat turn's tests drive the real engine
 /// with: the same in-place job and scripted provider the core's own turn tests
