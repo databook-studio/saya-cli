@@ -41,7 +41,10 @@ pub(super) fn line(job: &ModeCell, consent: Option<ApprovalPolicy>) -> String {
 /// The posture a switch states on the job's cell, or `None` where it may state
 /// none: the mode's own consent posture, and `plan`'s `read-only` — never over
 /// a job already narrower than that.
-fn posture(consent: Option<ApprovalPolicy>, current: ApprovalPolicy) -> Option<ApprovalPolicy> {
+pub(crate) fn posture(
+    consent: Option<ApprovalPolicy>,
+    current: ApprovalPolicy,
+) -> Option<ApprovalPolicy> {
     match consent {
         Some(mode) => Some(mode),
         None if current == ApprovalPolicy::Never => None,
