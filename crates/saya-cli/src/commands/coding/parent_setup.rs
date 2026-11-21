@@ -115,11 +115,23 @@ impl NativeCodingJob {
                 std::env::var_os("PATH").as_deref(),
             ),
         );
-        let system_prompt = Some(super::super::prompts::system_with_file_sources(
+        let mut system_prompt = super::super::prompts::system_with_file_sources(
             self.request.plan,
             self.is_read_only_root(),
             file_sources,
-        ));
+        );
+        // The active plugins' sections ride after the core prompt, composed
+        // here with the rest of the run's one-time setup: every turn of the run
+        // sends these exact bytes, so the request prefix never moves. A run
+        // given no registry appends nothing and sends today's prompt.
+        if let Some(plugins) = plugins.as_ref() {
+            let sections = plugins.system_sections();
+            if !sections.is_empty() {
+                system_prompt.push_str("\n\n");
+                system_prompt.push_str(&sections.join("\n\n"));
+            }
+        }
+        let system_prompt = Some(system_prompt);
         self.record_observation_boundary("started", false).await?;
         Ok(RootSession {
             provider,

@@ -144,6 +144,19 @@ impl ActivePlugins {
         owner.executor()
     }
 
+    /// The active plugins' sections of the run's system prompt, in
+    /// registration order; a plugin that states none contributes nothing.
+    ///
+    /// The core appends these once, after its own prompt, when it composes the
+    /// prompt a run sends on every turn: they belong to the run, not to a turn,
+    /// so every turn carries the same bytes and the request prefix stays stable.
+    pub fn system_sections(&self) -> Vec<String> {
+        self.plugins
+            .iter()
+            .filter_map(|plugin| plugin.system_section(&self.ctx))
+            .collect()
+    }
+
     /// The active plugins' context blocks, in registration order, bounded by
     /// `budget_bytes`.
     ///
