@@ -53,7 +53,7 @@ pub(crate) use parent::{RunPlugins, TurnInputs};
 /// with: the same in-place job and scripted provider the core's own turn tests
 /// run on, so one turn of a session is measured on the engine itself.
 #[cfg(all(test, unix))]
-pub(crate) use parent::{parent_turn_fixture, parent_turn_provider};
+pub(crate) use parent::{RunPlugins, parent_turn_fixture, parent_turn_provider};
 mod prepare;
 mod prepare_direct;
 mod prepare_receipt;

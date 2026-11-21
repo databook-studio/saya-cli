@@ -1,5 +1,5 @@
 //! The two surfaces the plugin serves: the chat's whole non-workspace toolset
-//! over the session budget its turns are bounded by, and a coding job's
+//! over the database budget its turns are bounded by, and a coding job's
 //! read-only pair over the authority view its consent selected. The
 //! constructors live here so the plugin keeps that difference in one place.
 
@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use saya_harness::coding::policy::ChildAuthorityView;
 
 use super::prompt::ChatPrompt;
-use super::{DatabasePlugin, SessionBudget};
+use super::{DatabaseBudget, DatabasePlugin};
 use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::commands::coding::database::CodingDatabaseTools;
 
@@ -22,13 +22,13 @@ pub(crate) struct ChatDatabaseFlags {
     pub(crate) permit_candidate_writes: bool,
 }
 
-/// The chat surface's toolset, the gates it advertises under, the
-/// `[limits.session]` budget a chat turn of this run is bounded by, and the
-/// prompt inputs the run handed the plugin once.
+/// The chat surface's toolset, the gates it advertises under, the database
+/// budget a turn of this run spends once it uses the database, and the prompt
+/// inputs the run handed the plugin once.
 pub(super) struct ChatSurface {
     pub(super) tools: Arc<DatabaseTools>,
     pub(super) flags: ChatDatabaseFlags,
-    pub(super) session: SessionBudget,
+    pub(super) budget: DatabaseBudget,
     pub(super) prompt: ChatPrompt,
 }
 
@@ -48,17 +48,17 @@ pub(super) enum Surface {
 }
 
 impl DatabasePlugin {
-    /// The chat surface's database tools, over the session budget its turns
-    /// are bounded by, plus the run's query-capture hook when the front drives
-    /// one. The hook reaches the tools the executor hands the loop, so a chat
-    /// query is captured exactly as the old chat turn captured it; `None`
-    /// installs nothing and every existing caller behaves as before. `prompt`
-    /// is what the run resolved once: the section this plugin contributes to
-    /// the run's system prompt is rendered from it.
+    /// The chat surface's database tools, over the database budget a turn of
+    /// this run spends once it uses the database, plus the run's query-capture
+    /// hook when the front drives one. The hook reaches the tools the executor
+    /// hands the loop, so a chat query is captured exactly as the old chat turn
+    /// captured it; `None` installs nothing and every existing caller behaves as
+    /// before. `prompt` is what the run resolved once: the section this plugin
+    /// contributes to the run's system prompt is rendered from it.
     pub(crate) fn for_chat(
         tools: Arc<DatabaseTools>,
         flags: ChatDatabaseFlags,
-        session: SessionBudget,
+        budget: DatabaseBudget,
         prompt: ChatPrompt,
         capture: Option<CaptureHook>,
     ) -> Self {
@@ -66,7 +66,7 @@ impl DatabasePlugin {
             surface: Surface::Chat(ChatSurface {
                 tools,
                 flags,
-                session,
+                budget,
                 prompt,
             }),
             capture,

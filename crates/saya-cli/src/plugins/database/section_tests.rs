@@ -76,7 +76,7 @@ fn chat_plugin_with(registry: &ConnectionRegistry, memory: MemoryMode) -> Databa
             has_state_store: true,
             permit_candidate_writes: true,
         },
-        super::tests::chat_session(),
+        super::tests::chat_budget(),
         ChatPrompt::of(registry, memory, true),
         None,
     )

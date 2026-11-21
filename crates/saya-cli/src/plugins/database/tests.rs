@@ -13,7 +13,7 @@ use saya_store::SqliteStateStore;
 use saya_types::DatabaseProfile;
 
 use super::prompt::ChatPrompt;
-use super::{ChatDatabaseFlags, DatabasePlugin, SessionBudget};
+use super::{ChatDatabaseFlags, DatabaseBudget, DatabasePlugin};
 use crate::agent::tools::DatabaseTools;
 use crate::agent::tools::workspace::is_tool_name;
 use crate::commands::coding::database::CodingDatabaseTools;
@@ -32,17 +32,17 @@ const CHAT: RunContext = RunContext {
 };
 
 pub(super) fn chat_plugin() -> DatabasePlugin {
-    chat_plugin_over(chat_session())
+    chat_plugin_over(chat_budget())
 }
 
-/// The chat's `[limits.session]`, resolved from an empty configuration: the
-/// product defaults a chat turn is bounded by.
-pub(super) fn chat_session() -> SessionBudget {
-    SessionBudget::of(&runtime(&scratch("session")))
+/// The chat's `[limits.database]`, resolved from an empty configuration: the
+/// product defaults a turn's database work is bounded by.
+pub(super) fn chat_budget() -> DatabaseBudget {
+    DatabaseBudget::of(&runtime(&scratch("budget")))
 }
 
-/// The same, over the `[limits.session]` numbers the test states.
-pub(super) fn chat_plugin_over(session: SessionBudget) -> DatabasePlugin {
+/// The same, over the database budget the test states.
+pub(super) fn chat_plugin_over(budget: DatabaseBudget) -> DatabasePlugin {
     DatabasePlugin::for_chat(
         Arc::new(DatabaseTools::new(None, 100, true)),
         ChatDatabaseFlags {
@@ -50,7 +50,7 @@ pub(super) fn chat_plugin_over(session: SessionBudget) -> DatabasePlugin {
             has_state_store: true,
             permit_candidate_writes: true,
         },
-        session,
+        budget,
         ChatPrompt::of(&ConnectionRegistry::new("local"), MemoryMode::Off, false),
         None,
     )

@@ -57,7 +57,7 @@ pub(crate) use recall::RecallSource;
 // The two surfaces' constructors and gates live in `surface`; the chat's gate
 // type is composed by the chat's own composition, so it is reachable there.
 pub(crate) use surface::ChatDatabaseFlags;
-pub(crate) use turn_policy::SessionBudget;
+pub(crate) use turn_policy::DatabaseBudget;
 
 use surface::{ChatSurface, Surface};
 
@@ -266,11 +266,12 @@ impl RunPlugin for DatabasePlugin {
         }
     }
 
-    /// The chat's question budget as the core enforces it: every turn of a chat
-    /// with a database configured is a database question, and its ceilings come
-    /// from `[limits.session]`. A job surface asks for none.
-    fn turn_policy(&self, ctx: &RunContext) -> Option<TurnPolicy> {
-        self.turn_policy_for(ctx)
+    /// The database budget a turn spends once it uses the database, and nothing
+    /// before that: it arms on the turn's first database use, so a turn of this
+    /// chat that never touches one is not bounded by it. A job surface asks for
+    /// none, and no surface states an every-turn policy any more.
+    fn policy_on_use(&self, ctx: &RunContext) -> Option<TurnPolicy> {
+        self.policy_on_use_for(ctx)
     }
 
     /// Learns from the turn through the one function the chat's turn calls, and
