@@ -119,3 +119,34 @@ fn no_row_is_painted_past_the_terminal_edge() {
         "{rows:#?}"
     );
 }
+
+#[test]
+fn the_open_mode_picker_is_painted_over_the_transcript() {
+    let mut model = Model::default();
+    model.begin_turn(String::from("how many orders did we get?"));
+    model.open_mode_picker();
+
+    let rows = painted(&model, &Facts::default(), 100, 30);
+    let top = row_of(&rows, "╭ Mode");
+    let status = row_of(&rows, "help");
+    let first = row_of(&rows, "every edit, command, fetch and query asks first");
+    let last = row_of(&rows, "no tool needs approval because none are offered");
+    let keys = row_of(&rows, "↑↓ choose · Enter set · Esc cancel");
+
+    assert!(top < first, "the frame opens above its rows");
+    assert!(first < last, "the six modes read in 02 §8's order");
+    assert!(last < keys, "the key row closes the frame");
+    assert!(
+        keys < status,
+        "the picker sits over the transcript, above the status line"
+    );
+    assert_eq!(
+        status,
+        keys + 1,
+        "the status line is the next row under the picker"
+    );
+    assert!(
+        status < row_of(&rows, "╭ Message"),
+        "and the composer keeps the rows below it"
+    );
+}

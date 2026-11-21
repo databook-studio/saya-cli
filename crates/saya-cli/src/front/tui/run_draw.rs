@@ -22,9 +22,10 @@ use ratatui::widgets::Paragraph;
 
 use super::model::Model;
 use super::run_draw_card;
+use super::run_draw_overlay;
 use super::theme::{Charset, Scheme, style};
 use super::view::{
-    ActivityState, Database, EmptyFacts, StatusFacts, TranscriptFacts, empty_rows,
+    ActivityState, Database, EmptyFacts, Row, StatusFacts, TranscriptFacts, empty_rows,
     rows as composer_rows, status_line, transcript_rows,
 };
 
@@ -77,6 +78,11 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
     let regions = regions(model, facts, frame.area());
     let transcript = transcript(model, facts, regions.transcript);
     paint(frame, regions.transcript, transcript);
+    // A pane that is open takes the transcript's rows: nothing else on the
+    // frame gives way, so the operator keeps the mode in force and their draft.
+    if let Some((area, rows)) = run_draw_overlay::overlay(model, facts, regions.transcript) {
+        paint(frame, area, rows);
+    }
     let width = regions.status.width as usize;
     paint(
         frame,
@@ -204,13 +210,18 @@ fn activity(model: &Model, facts: &Facts) -> ActivityState {
 
 /// The composer's box: its rows' runs, each in the token the pane gave it.
 fn composer(model: &Model, facts: &Facts, width: usize) -> Vec<Line<'static>> {
-    composer_rows(model, width, facts.charset)
-        .into_iter()
+    lines(composer_rows(model, width, facts.charset), facts.scheme)
+}
+
+/// Painted rows: every run in the token the pane gave it, so the panes above
+/// resolve light, dark and no-colour without knowing what the words mean.
+pub(crate) fn lines(rows: Vec<Row>, scheme: Scheme) -> Vec<Line<'static>> {
+    rows.into_iter()
         .map(|row| {
             Line::from(
                 row.runs
                     .into_iter()
-                    .map(|run| Span::styled(run.text, style(run.token, facts.scheme)))
+                    .map(|run| Span::styled(run.text, style(run.token, scheme)))
                     .collect::<Vec<_>>(),
             )
         })

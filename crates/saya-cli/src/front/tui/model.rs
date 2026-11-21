@@ -8,6 +8,7 @@
 
 use saya_agent::PermissionMode;
 
+use super::model_overlay::Overlay;
 use crate::chat::Question;
 use crate::front::tui::view::Toast;
 use crate::front::{TranscriptView, TurnView};
@@ -49,6 +50,10 @@ pub(crate) struct Model {
     /// with it: a new call opens folded, at its first row.
     pub(crate) card_full: bool,
     pub(crate) card_scroll: usize,
+    /// The pane that owns the screen while it is open, if one does: it takes
+    /// the keyboard before the card and the composer, and it is painted over
+    /// the transcript (`02` §8).
+    pub(crate) overlay: Option<Overlay>,
 }
 
 impl Model {
