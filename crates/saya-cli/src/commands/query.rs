@@ -73,31 +73,60 @@ pub(super) async fn ask(
     // The operator's stop, for the phases the turn's own listener cannot reach
     // (the vote's real statements): the question's own token, latched once. A
     // turn in flight hears the signal on its own listener, says nothing, and
-    // settles as the cancelled class.
+    // settles as the cancelled class. The question's elapsed bound is raced
+    // here as well: the scope debits it between source segments, so a call that
+    // waits for an answer — a terminal question nobody answered — would
+    // otherwise outlive the budget it was asked under.
     tokio::pin!(work);
-    let settled = tokio::select! {
-        result = &mut work => result,
-        _ = tokio::signal::ctrl_c() => {
-            cancellation.cancel();
-            work.await
+    let settled = match crate::agent::limits::answering_deadline(
+        runtime,
+        crate::agent::limits::AnsweringSurface::Ask,
+    ) {
+        Some(bound) => {
+            let deadline = tokio::time::sleep(bound);
+            tokio::pin!(deadline);
+            tokio::select! {
+                result = &mut work => result,
+                _ = &mut deadline => {
+                    cancellation.cancel_with_reason(saya_agent::CancellationReason::Budget(
+                        saya_agent::BudgetDimension::ElapsedTime,
+                    ));
+                    work.await
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    cancellation.cancel();
+                    work.await
+                }
+            }
         }
+        None => tokio::select! {
+            result = &mut work => result,
+            _ = tokio::signal::ctrl_c() => {
+                cancellation.cancel();
+                work.await
+            }
+        },
     };
     settle_ask(settled, &cancellation, format)
 }
 
 /// The one classification for a settled `ask`: the question token's first stop
-/// reason decides — User 130 quiet, Budget 6 with truthful partial wording,
-/// OwnerFailure 5 — and a run that stopped for no typed reason falls through to
-/// the attempt's own turn, as [`turn_exit_code`] reads it.
+/// reason decides — User 130 with the interrupted sentence, Budget 6 with
+/// truthful partial wording, OwnerFailure 5 — and a run that stopped for no
+/// typed reason falls through to the attempt's own turn, as [`turn_exit_code`]
+/// reads it.
 fn settle_ask(
     outcome: Result<AgentOutput, AgentRuntimeError>,
     cancellation: &CancellationToken,
     format: RenderFormat,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match cancellation.reason() {
-        // The turn said `Request cancelled.` when the operator stopped it; a
-        // quiet 130 is the class itself.
-        Some(saya_agent::CancellationReason::User) => Ok(130),
+        // The turn said `Request cancelled.` when the operator stopped it; the
+        // ask says the same class in its own words, as it always has, because
+        // its front carries none of a settled turn's wording.
+        Some(saya_agent::CancellationReason::User) => {
+            failure_message(130, "request cancelled".to_string(), format)
+        }
         Some(saya_agent::CancellationReason::Budget(dimension)) => {
             failure_message(6, budget_partial_message(dimension), format)
         }

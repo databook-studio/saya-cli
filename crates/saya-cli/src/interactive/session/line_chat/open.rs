@@ -75,6 +75,12 @@ pub(crate) struct LineSession {
     /// records inside the folder it asks about, so its one-turn job records
     /// elsewhere rather than refusing the question.
     pub(crate) state_root: Option<PathBuf>,
+    /// The question's own stop, when the surface drove this session from one: a
+    /// one-shot ask hands the token its question already answers to, so a stop
+    /// the ask latches — its elapsed budget, the operator's signal — also ends
+    /// the call waiting at the terminal. The plain loop states none: its turns
+    /// are its own.
+    pub(crate) cancellation: Option<CancellationToken>,
 }
 
 /// Opens the session: composes and opens its run, and hands back the session
@@ -110,24 +116,54 @@ pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
 async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
     let config: &RuntimeConfig = &parts.runtime;
     let token = CancellationToken::new();
-    let application = match parts.state_root.clone() {
-        Some(root) => {
+    // Where this session's records live, and what its folder may be: both are
+    // read before the application opens, because the shape decides which root
+    // the application opens over.
+    let state_root = match parts.state_root.clone() {
+        Some(root) => root,
+        None => coding_state_root(config)?,
+    };
+    // The folder is writable for this session or it is not: the fact is taken
+    // before the first run holds the lease, and every run a rollover prepares
+    // states it again.
+    let shape = workspace_shape(&parts.folder, &state_root);
+    // A one-turn question asked in a folder that cannot root an in-place job
+    // runs there without a workspace: the database tools it resolved are its
+    // whole surface. Every other composition asks its folder to be the root.
+    let workspace = match one_shot {
+        super::one_shot::OneShot::Yes => super::one_shot::workspace(&shape),
+        super::one_shot::OneShot::No => super::one_shot::Workspace::Here,
+    };
+    let root_mode = crate::cli::RootMode::InPlace;
+    let application = match (parts.state_root.clone(), workspace) {
+        (_, super::one_shot::Workspace::None) => {
+            CodingApplication::session_without_workspace(
+                config.clone(),
+                parts.store.clone(),
+                &parts.folder,
+                crate::cli::RootMode::NoWorkspace,
+                &state_root,
+                &token,
+            )
+            .await
+        }
+        (Some(root), super::one_shot::Workspace::Here) => {
             CodingApplication::session_over(
                 config.clone(),
                 parts.store.clone(),
                 &parts.folder,
-                crate::cli::RootMode::InPlace,
+                root_mode,
                 &root,
                 &token,
             )
             .await
         }
-        None => {
+        (None, super::one_shot::Workspace::Here) => {
             CodingApplication::session(
                 config.clone(),
                 parts.store.clone(),
                 &parts.folder,
-                crate::cli::RootMode::InPlace,
+                root_mode,
                 &token,
             )
             .await
@@ -135,7 +171,7 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
     }
     .map_err(|error| error.to_string())?;
     if one_shot == super::one_shot::OneShot::Yes {
-        application.with_continuation_context(false);
+        super::one_shot::state_on(&application);
     }
     // The launch's own seeds ride the host the run composes over: a held token
     // pre-answers the calls its family would have asked about, so the mode's
@@ -144,25 +180,20 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
     // The run's own counters, printed after every settled turn: the same
     // collector the answering turn hands its metrics sink, and the stop
     // instant a Ctrl-C is measured from. Its cancellation token is the scope's
-    // own — the run keeps the one it was opened with.
-    let scope =
-        crate::agent::question_scope::QuestionScope::session(config, CancellationToken::new());
+    // own — the run keeps the one it was opened with — and a surface that
+    // brought the question's token states it, so the stop the question latched
+    // is the stop this front waits on.
+    let stop = parts.cancellation.clone().unwrap_or_default();
+    let scope = match parts.cancellation.is_some() {
+        true => crate::agent::question_scope::QuestionScope::ask(config, stop),
+        false => crate::agent::question_scope::QuestionScope::session(config, stop),
+    };
     let metrics = scope.metrics();
     let front = match parts.sink.clone() {
         Some(sink) => LineFront::over(sink, parts.can_prompt, tally_handle()),
         None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
     };
     let front = Arc::new(front.with_scope(scope));
-    // The folder is writable for this session or it is not: the fact is taken
-    // before the first run holds the lease, and every run a rollover prepares
-    // states it again.
-    let shape = workspace_shape(
-        &parts.folder,
-        &match parts.state_root.clone() {
-            Some(root) => root,
-            None => coding_state_root(config)?,
-        },
-    );
     let name = parts.session.clone();
     let stated = session_run(
         &parts,
@@ -171,9 +202,13 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
         &shape,
     )
     .await?;
-    let composed = RunComposition::compose(Arc::clone(&application), stated)
+    let composed = RunComposition::compose(application, stated)
         .await
         .map_err(|error| error.to_string())?;
+    // The composition states the operator on the host, which only the host's one
+    // handle can do: the handle it was given is read back from the job it made,
+    // so a call of this run is put to the person at this terminal.
+    let application = composed.job().application();
     composed.open().await.map_err(|error| error.to_string())?;
     let run = Run::opened(composed, &front, metrics.clone()).await;
     Ok(Line::new(application, parts, front, shape, metrics, run))

@@ -99,7 +99,21 @@ impl Line {
         let Some(run) = self.run.as_ref() else {
             return Err(ENDED.to_owned());
         };
-        self.front.set_turn(CancellationToken::new());
+        // This turn's own stop token, held here as well as by the front: a bare
+        // Esc at an approval prompt cancels it from the terminal owner, and the
+        // turn — never the run — is what ends when it does.
+        let turn = CancellationToken::new();
+        self.front.set_turn(turn.clone());
+        // A one-turn surface's question carries its own stop — the elapsed
+        // budget its scope states — and that stop ends the turn: there is no
+        // next line for it to leave open.
+        let question = self.front.one_turn_stop();
+        let question_stop = async move {
+            match question {
+                Some(token) => token.cancelled().await,
+                None => std::future::pending::<()>().await,
+            }
+        };
         {
             let send = run.session().send(message.clone());
             tokio::pin!(send);
@@ -109,6 +123,22 @@ impl Line {
                     // The turn's own stop and the single instant the
                     // settlement sample is measured from. The message does not
                     // run, and the run stays open for the next line.
+                    self.front.stop_turn();
+                    run.session().cancel().await;
+                    send.await;
+                }
+                _ = turn.cancelled() => {
+                    // The terminal owner's own stop, recorded at the one stop
+                    // instant: the question the turn left pending ends with it,
+                    // and the run stays open for the next line.
+                    self.front.stop_turn();
+                    run.session().cancel().await;
+                    send.await;
+                }
+                _ = question_stop => {
+                    // The question's configured budget ran out. Its stop is
+                    // already latched, so the settlement keeps that class; the
+                    // turn ends here rather than starting another round.
                     self.front.stop_turn();
                     run.session().cancel().await;
                     send.await;

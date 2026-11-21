@@ -53,6 +53,8 @@ fn handle_message(
                 // The plain loop takes the configured root: it works in the
                 // folder, so its records are the folder's.
                 state_root: None,
+                // Its turns are its own: no question token is stated here.
+                cancellation: None,
             })?;
             // The record names the run the session belongs to: lineage only.
             state.run = chat.run_link();

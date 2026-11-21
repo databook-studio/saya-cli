@@ -151,10 +151,11 @@ fn a_ctrl_c_after_a_budget_latch_keeps_the_budget_class() {
     assert!(format!("{stdout}{stderr}").contains("partial"));
 }
 
-/// A plain Ctrl-C (the token carries the user's stop) is still exit 130 and
-/// prints nothing extra, exactly as before.
+/// A plain Ctrl-C (the token carries the user's stop) is still exit 130, and
+/// says the interrupted class in the ask's own words — the sentence the
+/// terminal approval's own stop restores.
 #[test]
-fn a_plain_ctrl_c_still_exits_130_quietly() {
+fn a_plain_ctrl_c_still_exits_130_with_the_interrupted_sentence() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     capture_output_start();
@@ -163,8 +164,8 @@ fn a_plain_ctrl_c_still_exits_130_quietly() {
     let (stdout, stderr) = capture_output_take();
     assert_eq!(code, 130);
     assert!(
-        format!("{stdout}{stderr}").is_empty(),
-        "no new output on a plain interrupt"
+        format!("{stdout}{stderr}").contains("request cancelled"),
+        "the interrupted class is said once: {stdout}{stderr}"
     );
 }
 

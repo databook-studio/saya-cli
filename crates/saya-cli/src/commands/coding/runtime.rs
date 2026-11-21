@@ -167,6 +167,14 @@ impl NativeCodingJob {
     pub(crate) fn runtime_config(&self) -> &crate::config::runtime::RuntimeConfig {
         &self.application.runtime
     }
+    /// The host this job was composed over. A surface that builds a run states
+    /// facts on that host (the operator its calls are put to), and a state that
+    /// can only be made on the host's one handle is read back here: composing a
+    /// run therefore hands the host over rather than keeping a second handle to
+    /// it.
+    pub(crate) fn application(&self) -> Arc<CodingApplication> {
+        Arc::clone(&self.application)
+    }
     /// The operator's approver for an egressing call — a `shell` run outside
     /// the sandbox, or a `web_fetch` — when one is present. Without it such a
     /// run falls back to the sandbox under `ask` (and is refused when no
