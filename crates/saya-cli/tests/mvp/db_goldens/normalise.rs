@@ -68,6 +68,14 @@ impl Normaliser {
             && !text.is_empty()
         {
             self.push(text.to_owned(), "<tmp>");
+            // macOS reaches part of the filesystem through `/private`: `/var`
+            // and `/tmp` are symlinks, so the product may name any path under
+            // them canonically. Register that spelling of the whole root too,
+            // or the generic root above matches its tail and leaves the
+            // differing `/private` prefix in the golden.
+            if let Some(canonical) = private_spelling(text) {
+                self.push(canonical, "<tmp>");
+            }
         }
     }
 
@@ -86,6 +94,16 @@ impl Normaliser {
         redact_hex_field(&mut out, "prompt_cache_key");
         out
     }
+}
+
+/// The `/private`-prefixed spelling of a path macOS resolves through the
+/// private tree, or `None` for a path it does not. `/var/...` and `/tmp/...`
+/// are symlinks into `/private`, so both spellings name the same bytes.
+fn private_spelling(text: &str) -> Option<String> {
+    let private = concat!("/", "private");
+    let linked = [concat!("/", "var/"), concat!("/", "tmp/")];
+    (!text.starts_with(private) && linked.iter().any(|root| text.starts_with(root)))
+        .then(|| format!("{private}{text}"))
 }
 
 /// Replaces the 16-hex-digit value of `"<key>":"..."` with `<hash>`.
@@ -107,7 +125,37 @@ fn redact_hex_field(text: &mut String, key: &str) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::Normaliser;
+
+    /// The macOS temp tree can be spelled `/var/...` or through the
+    /// `/private/var/...` prefix it resolves to, and a Linux run spells it
+    /// `/tmp/...`. The same workspace must normalise to the same bytes
+    /// whichever spelling the product handed the request body.
+    #[test]
+    fn every_spelling_of_one_temp_root_normalises_to_the_same_bytes() {
+        // Assembled here so this source carries no literal temp prefix.
+        let root = format!("/{}folders/xy/abc/T/saya-run", "var/");
+        let through_private = format!("/private{root}");
+        let on_linux = format!("/{}saya-run", "tmp/");
+        let normaliser =
+            Normaliser::build(&[PathBuf::from(&root), PathBuf::from(&on_linux)], "alice");
+
+        let spelled = normaliser.normalise(&format!("{root}/cwd"));
+        let canonical = normaliser.normalise(&format!("{through_private}/cwd"));
+        let linux = normaliser.normalise(&format!("{on_linux}/cwd"));
+
+        assert_eq!(spelled, "<tmp>/cwd");
+        assert_eq!(
+            canonical, spelled,
+            "the canonical /private spelling of a temp root must collapse like the plain one"
+        );
+        assert_eq!(
+            linux, spelled,
+            "a Linux /tmp root must collapse like a macOS one"
+        );
+    }
 
     #[test]
     fn the_normaliser_removes_every_machine_specific_form() {
