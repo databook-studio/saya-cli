@@ -106,6 +106,63 @@ fn a_mode_never_widens_a_cell_narrower_than_read_only() {
 }
 
 #[test]
+fn status_answers_without_entering_the_run() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    // A turn is in flight whenever the port is busy; `/status` is a read, so it
+    // is answered the same as any other moment — and the port sees nothing.
+    assert_eq!(
+        harness.ops.run(command("/status")),
+        OpResult::Read(ReadOp::Status)
+    );
+    assert_eq!(
+        harness.ops.run(command("/status")),
+        OpResult::Read(ReadOp::Status),
+        "a repeated `/status` is the same read"
+    );
+    assert!(
+        harness.port.calls().is_empty(),
+        "the panel reads facts the session already holds: {:?}",
+        harness.port.calls()
+    );
+}
+
+#[test]
+fn the_status_aliases_open_their_sections() {
+    use crate::chat::ops_status::Section;
+    let harness = harness(ApprovalPolicy::Ask, false);
+    for (text, section) in [
+        ("/usage", Section::Model),
+        ("/workspace", Section::Workspace),
+        ("/context", Section::Instructions),
+    ] {
+        assert_eq!(
+            harness.ops.run(command(text)),
+            OpResult::Read(ReadOp::StatusSection(section)),
+            "{text} opens its section of the one panel"
+        );
+    }
+    assert!(
+        harness.port.calls().is_empty(),
+        "no alias reaches the run: {:?}",
+        harness.port.calls()
+    );
+}
+
+#[test]
+fn history_reads_the_sessions_listing() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    assert_eq!(
+        harness.ops.run(command("/history")),
+        OpResult::Read(ReadOp::Sessions),
+        "`/history` is `/sessions`: one read"
+    );
+    assert_eq!(
+        harness.ops.run(command("/sessions")),
+        OpResult::Read(ReadOp::Sessions)
+    );
+}
+
+#[test]
 fn sql_never_touches_the_run() {
     let harness = harness(ApprovalPolicy::Ask, false);
     assert_eq!(
@@ -132,6 +189,7 @@ fn no_read_only_command_enters_the_run() {
         "/grants",
         "/context",
         "/doctor",
+        "/status",
         "/usage",
         "/workspace",
         "/runs",

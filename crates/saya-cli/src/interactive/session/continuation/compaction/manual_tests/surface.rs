@@ -4,7 +4,9 @@
 fn compact_is_registered_listed_described_and_helped() {
     assert_eq!(
         crate::slash::parse_slash_command("/compact"),
-        Ok(Some(crate::slash::SlashCommand::Compact))
+        Ok(Some(crate::slash::SlashCommand::Compact(
+            crate::slash::CompactRequest::compact()
+        )))
     );
     assert!(
         crate::slash::catalog::is_command("compact"),

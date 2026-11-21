@@ -17,8 +17,8 @@ fn rotate_dispatch_refuses_an_uncompacted_session() {
 }
 
 /// `/rotate` on a compacted session: the System block carries the exact
-/// success sentence, the state is the successor, and the published record
-/// links back to the parent.
+/// success sentence plus the one-release alias's note, the state is the
+/// successor, and the published record links back to the parent.
 #[test]
 fn rotate_dispatch_rotates_a_compacted_session() {
     let mut fx = ChainFixture::build("rotate-ok");
@@ -31,9 +31,14 @@ fn rotate_dispatch_rotates_a_compacted_session() {
     assert_ne!(new, "chain-test", "the state is the successor");
     // The success sentence is found by its own text rather than as the last
     // System block: session start may announce a lane notice, and the
-    // rotation's sentence must still be the shared one, said once.
-    let expected =
+    // rotation's sentence must still be the shared one, said once — with the
+    // `/rotate` alias's note after it, and only here.
+    let sentence =
         crate::interactive::session::lifecycle::rotate_run::rotated_message("chain-test", &new);
+    let expected = format!(
+        "{sentence}\n{}",
+        crate::chat::ops_status::Note::Rotate.text()
+    );
     let successes: Vec<&str> = fx
         .app
         .transcript
@@ -45,7 +50,7 @@ fn rotate_dispatch_rotates_a_compacted_session() {
     assert_eq!(
         successes,
         [expected.as_str()],
-        "the success sentence is the shared one, said once"
+        "the success sentence is the shared one, said once, with the alias's note"
     );
     let successor = crate::interactive::session::lifecycle::resume::block_on(fx.store.load(&new))
         .expect("the successor loads")

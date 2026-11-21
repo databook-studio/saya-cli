@@ -103,7 +103,10 @@ fn handle_resume(
     Ok(outcome)
 }
 
-fn handle_rotate(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+fn handle_rotate(
+    request: crate::slash::CompactRequest,
+    ctx: &mut TurnContext,
+) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let ActionParts {
         state,
         runtime,
@@ -114,20 +117,31 @@ fn handle_rotate(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::erro
         ..
     } = action_parts(ctx);
     let runtime: &RuntimeConfig = &runtime;
-    // `/rotate` — continue in a small successor. The shared steps run
-    // once, in `session_rotate_run`, for both surfaces: save the
-    // parent, publish the lineage-linked successor, re-acquire the
-    // runtime for it, and swap only on success. A refusal or a failed
-    // swap is an errored turn; the completed rotation's save below
-    // persists the successor (the swapped state).
+    // `/compact --new-session` — compact, then continue in a small successor,
+    // which is the one operation `/rotate` has always run: the alias states the
+    // same request, and its note rides this one answer. The shared steps run
+    // once, in `session_rotate_run`, for both surfaces: save the parent,
+    // publish the lineage-linked successor, re-acquire the runtime for it, and
+    // swap only on success. A refusal or a failed swap is an errored turn; the
+    // completed rotation's save below persists the successor (the swapped
+    // state).
     let outcome = match crate::interactive::session::lifecycle::rotate_run::rotate_session(
         store, runtime, state, session,
     ) {
         crate::interactive::session::lifecycle::rotate_run::RotateResult::Rotated { old, new } => {
+            let message =
+                crate::interactive::session::lifecycle::rotate_run::rotated_message(&old, &new);
+            let message = if request.via_rotate_alias {
+                crate::chat::ops_status::with_note(
+                    state,
+                    crate::chat::ops_status::Note::Rotate,
+                    message,
+                )
+            } else {
+                message
+            };
             session_emit::emit_action(
-                SessionAction::Message(
-                    crate::interactive::session::lifecycle::rotate_run::rotated_message(&old, &new),
-                ),
+                SessionAction::Message(message),
                 format,
                 state,
                 store,

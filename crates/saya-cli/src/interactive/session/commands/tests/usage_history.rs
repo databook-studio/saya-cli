@@ -1,14 +1,14 @@
 /// `/history` and `/sessions` are one command under two names: both map to
-/// `SessionAction::History` (saved sessions on disk). This is intentional
-/// aliasing, not a bug — see `slash::tests::history_help_names_the_alias`
-/// for the matching requirement that the help makes the aliasing explicit.
+/// `SessionAction::History` (saved sessions on disk), and only the flag — the
+/// one-release alias's note — tells the spellings apart. This is intentional
+/// aliasing, not a bug.
 #[test]
 fn history_and_sessions_map_to_the_same_action() {
     let mut state = SessionState::new("test", None, "gpt-4o");
-    let history = state.apply(SlashCommand::History, &[]);
-    let sessions = state.apply(SlashCommand::Sessions, &[]);
-    assert_eq!(history, SessionAction::History);
-    assert_eq!(sessions, SessionAction::History);
+    let history = state.apply(SlashCommand::Sessions(SessionsRequest::history()), &[]);
+    let sessions = state.apply(SlashCommand::Sessions(SessionsRequest::default()), &[]);
+    assert_eq!(history, SessionAction::History(true));
+    assert_eq!(sessions, SessionAction::History(false));
 }
 
 /// `/usage` returns a `SessionAction::Message` carrying the session usage

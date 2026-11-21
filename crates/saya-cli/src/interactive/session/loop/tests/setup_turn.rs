@@ -14,7 +14,7 @@ mod setup_turn_tests {
     /// The explicit runtime the interactive test modules hand-build (the
     /// `session_headless_receipt_tests` pattern): no profile configured, no
     /// provider reachable — the refusal must fire before any connector.
-    fn handoff_runtime() -> RuntimeConfig {
+    pub(super) fn handoff_runtime() -> RuntimeConfig {
         RuntimeConfig {
             resolved: ResolvedConfig {
                 hooks: Default::default(),

@@ -193,6 +193,7 @@ fn representative_line(name: &str, root: &std::path::Path) -> String {
         "explain" => "/explain SELECT 1",
         "clear" => "/clear",
         "compact" => "/compact",
+        "status" => "/status",
         "history" => "/history",
         "sessions" => "/sessions",
         "notes" => "/notes",

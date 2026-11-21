@@ -62,8 +62,11 @@ fn finish_action(
     if let SessionAction::Resume(id) = action {
         return handle_resume(id, ctx);
     }
-    if let SessionAction::Rotate = action {
-        return handle_rotate(ctx);
+    if let SessionAction::Rotate(request) = action {
+        return handle_rotate(request, ctx);
+    }
+    if let SessionAction::Status = action {
+        return handle_status(ctx);
     }
     if let SessionAction::Reload = action {
         return handle_reload(ctx);

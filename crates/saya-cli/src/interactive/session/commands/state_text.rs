@@ -52,6 +52,22 @@ pub(crate) fn mode_report(state: &SessionState) -> String {
     mode_message(PermissionMode::of(policy, state.agent_mode_parsed()))
 }
 
+/// One panel section plus its alias's note, as `/usage` (`Note::Usage`,
+/// `Section::Model`) and `/workspace` (`Note::Workspace`,
+/// `Section::Workspace`) answer: the one panel builder, so an alias can never
+/// disagree with `/status` about the fact it shows.
+pub(crate) fn section_answer(
+    state: &mut SessionState,
+    note: crate::chat::ops_status::Note,
+    section: crate::chat::ops_status::Section,
+) -> SessionAction {
+    let text = crate::chat::ops_status::StatusPanel::build(
+        &crate::chat::ops_status::StatusFacts::of_session(state),
+    )
+    .render_section(section);
+    SessionAction::Message(crate::chat::ops_status::with_note(state, note, text))
+}
+
 fn available_providers() -> &'static [&'static str] {
     &[
         "ollama",

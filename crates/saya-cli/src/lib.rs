@@ -93,7 +93,7 @@ pub use render::{
 // lines with it, and `run_management` is the one dispatcher the slash
 // adapters and the headless `saya run` commands share.
 pub use render_run::render_run_event;
-pub use slash::{SlashCommand, parse_slash_command};
+pub use slash::{SessionsRequest, SlashCommand, parse_slash_command};
 pub use state_path::resolve_state_db_path;
 
 pub fn run_from_env() -> i32 {

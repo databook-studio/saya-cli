@@ -53,7 +53,7 @@ fn test_parse_setup_takes_no_argument() {
 fn test_parse_sessions_and_resume() {
     assert_eq!(
         parse_slash_command("/sessions"),
-        Ok(Some(SlashCommand::Sessions))
+        Ok(Some(SlashCommand::Sessions(SessionsRequest::default())))
     );
     assert_eq!(
         parse_slash_command("/resume 12345"),

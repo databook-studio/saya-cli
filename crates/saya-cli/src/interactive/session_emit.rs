@@ -61,7 +61,7 @@ pub(crate) fn emit_action(
         | SessionAction::Run(_)
         | SessionAction::RunCancel(_)
         | SessionAction::Runs(_)
-        | SessionAction::Rotate
+        | SessionAction::Rotate(_)
         // `/setup` is intercepted in the session loop: the headless refusal
         // is emitted there as an Error action naming the shell command, and
         // the TUI routes the action to its own handoff. The arm keeps the
@@ -72,6 +72,10 @@ pub(crate) fn emit_action(
         // runtime handle only on success; the arm keeps the match
         // exhaustive.
         | SessionAction::Reload
+        // `/status` is intercepted in the session loop: it reads the runtime's
+        // settings, the instruction sources and the stored record's size. The
+        // arm keeps the match exhaustive.
+        | SessionAction::Status
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {
@@ -107,7 +111,7 @@ pub(crate) fn emit_action(
             format,
         ),
         SessionAction::Error(message) => emit(TerminalEvent::Error { message }, format),
-        SessionAction::History => history(format, state, store)?,
+        SessionAction::History(via_alias) => history(format, state, store, via_alias)?,
     }
     Ok(())
 }
@@ -116,6 +120,7 @@ fn history(
     format: RenderFormat,
     state: &mut SessionState,
     store: &FsSessionStore,
+    via_alias: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let page = block_on(
         store.history(
@@ -145,6 +150,11 @@ fn history(
         if more {
             message.push_str("\n(more saved sessions available)");
         }
+        message
+    };
+    let message = if via_alias {
+        crate::chat::ops_status::with_note(state, crate::chat::ops_status::Note::History, message)
+    } else {
         message
     };
     emit(

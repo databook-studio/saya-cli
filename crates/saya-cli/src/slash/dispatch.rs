@@ -67,8 +67,19 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "chart" => SlashCommand::Chart(arg.trim().to_string()),
         "explain" => SlashCommand::Explain(arg.trim().to_string()),
         "clear" => SlashCommand::Clear,
-        "compact" => SlashCommand::Compact,
-        "history" => SlashCommand::History,
+        "compact" => {
+            // Bare compacts this session; `--new-session` compacts and
+            // continues in a successor, which is the one operation
+            // `/rotate` runs — its one-release alias states that spelling.
+            let tail = trimmed
+                .strip_prefix("/compact")
+                .unwrap_or("")
+                .trim_start();
+            SlashCommand::Compact(parse_compact(tail)?)
+        }
+        // `/history` is `/sessions`'s one-release alias, not a second
+        // command: one variant, one grammar, one listing.
+        "history" => SlashCommand::Sessions(SessionsRequest::history()),
         "sessions" => {
             // Bare `/sessions` keeps today's meaning (REPL text history,
             // TUI picker). `list` and `delete <id>` are the shared
@@ -76,7 +87,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // naming every valid form, so a typo cannot read as a silent
             // show.
             match arg.as_str() {
-                "" => SlashCommand::Sessions,
+                "" => SlashCommand::Sessions(SessionsRequest::default()),
                 "list" => SlashCommand::SessionsList,
                 other => {
                     let (head, rest) = other.split_once(' ').unwrap_or((other, ""));
@@ -105,12 +116,15 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         }
         "resume" => SlashCommand::Resume(required()?),
         "rotate" => {
-            // `/rotate` takes no argument: a trailing word is a mistake
-            // worth naming, never a silent ignore.
+            // `/rotate` takes no argument, and it is `/compact --new-session`'s
+            // one-release alias: the same variant, carrying the spelling so
+            // its note rides the one operation's answer.
             if !arg.is_empty() {
-                return Err(SlashParseError("rotate takes no argument: /rotate".into()));
+                return Err(SlashParseError(
+                    "rotate takes no argument: /rotate (alias of /compact --new-session)".into(),
+                ));
             }
-            SlashCommand::Rotate
+            SlashCommand::Compact(CompactRequest::rotate())
         }
         "setup" => {
             // `/setup` takes no argument: a trailing word is a typo, and the
@@ -173,6 +187,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             SlashCommand::Rewind(parse_rewind(tail)?)
         }
         "doctor" => SlashCommand::Doctor,
+        "status" => SlashCommand::Status,
         "usage" => SlashCommand::Usage,
         "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
         "workspace" => SlashCommand::Workspace,

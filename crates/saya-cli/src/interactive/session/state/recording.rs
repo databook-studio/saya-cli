@@ -31,6 +31,7 @@ impl SessionState {
             denied_programs: Vec::new(),
             allow_bypass: false,
             user_commands: Default::default(),
+            status_notes: Default::default(),
         }
     }
 
