@@ -72,7 +72,7 @@ pub use commands::coding::{
 };
 pub use commands::{
     Replay, RunOutcome, capture_output_start, capture_output_take, run_contracts,
-    run_investigation, run_investigation_outcome, run_management,
+    run_contracts_request, run_investigation, run_investigation_outcome, run_management,
 };
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 // The `TerminalEvent::DoctorTask` payload types: a public enum may not

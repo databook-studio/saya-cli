@@ -187,7 +187,7 @@ impl SessionState {
                 topic.as_deref(),
                 &self.user_commands,
             )),
-            SlashCommand::Contracts(command) => SessionAction::Contracts(command),
+            SlashCommand::Contracts(request) => SessionAction::Contracts(request),
             SlashCommand::Investigation(command) => SessionAction::Investigation(command),
             SlashCommand::Run(args) => {
                 // Plan's escape hatch stays shut here: a run writes through

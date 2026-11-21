@@ -1,4 +1,4 @@
-use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
+use crate::cli::{InvestigationCommand, PreferencesCommand};
 use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
 use saya_agent::PermissionMode;
@@ -13,6 +13,10 @@ pub(crate) mod param_redact;
 pub(crate) mod registry;
 pub(crate) mod user_commands;
 
+// The contract slash request (the one operation plus the note a deprecated
+// spelling states), re-exported so `SlashCommand::Contracts` and
+// `SessionAction::Contracts` name the same type from every layer.
+pub(crate) use contracts::ContractsRequest;
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // resolves through the `help` module.
 pub(crate) use help::help_for;

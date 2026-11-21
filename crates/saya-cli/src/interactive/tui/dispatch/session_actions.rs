@@ -186,8 +186,8 @@ pub(super) fn apply_session_action(
                 },
             )));
         }
-        SessionAction::Contracts(command) => {
-            run_contracts(transcript, state, runtime, state_db, format, &command)
+        SessionAction::Contracts(request) => {
+            run_contracts(transcript, state, runtime, state_db, format, &request)
         }
         SessionAction::Investigation(command) => {
             // The saved-investigation adapter: the shared `run_investigation`

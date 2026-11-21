@@ -16,7 +16,7 @@
 use saya_agent::PermissionMode;
 
 use crate::agent::tools::shell_policy::ModeCell;
-use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
+use crate::cli::{InvestigationCommand, PreferencesCommand};
 use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::commands::approval_name;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
@@ -174,8 +174,9 @@ pub(crate) enum ReadOp {
     SessionsDelete(String),
     /// `/preferences …` — the worktree's project preferences.
     Preferences(PreferencesCommand),
-    /// `/contracts …` — the knowledge store.
-    Contracts(ContractsCommand),
+    /// `/contracts <verb>` — the knowledge store: the one operation the
+    /// deprecated spellings alias, plus the note they state.
+    Contracts(crate::slash::ContractsRequest),
     /// `/investigation …` — saved investigations.
     Investigation(InvestigationCommand),
     /// `/runs [id]` — the run engine's own store.

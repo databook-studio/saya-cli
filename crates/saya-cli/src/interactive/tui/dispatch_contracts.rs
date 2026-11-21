@@ -14,16 +14,18 @@
 use super::transcript::{BlockKind, Transcript};
 use crate::cli::ContractsCommand;
 use crate::commands::{
-    capture_output_start, capture_output_take, run_contracts as run_contracts_command,
+    capture_output_start, capture_output_take, run_contracts_request as run_contracts_command,
 };
 use crate::config::runtime::RuntimeConfig;
 use crate::interactive::session::lifecycle::resume::block_on;
 use crate::interactive::session::state::SessionState;
 use crate::render::RenderFormat;
+use crate::slash::ContractsRequest;
 
-/// Runs a contract slash command through the shared `run_contracts` dispatcher
+/// Runs a contract slash request through the shared `run_contracts_request`
+/// seam — the operation, plus the one-line note a deprecated spelling states —
 /// and pushes its rendered output into the transcript. The TUI runs under the
-/// alternate screen, so `run_contracts`'s `emit` output is captured through the
+/// alternate screen, so the seam's `emit` output is captured through the
 /// thread-local seam instead of going to the process stdout; a non-zero exit
 /// surfaces as an error block.
 pub(super) fn run_contracts(
@@ -32,17 +34,21 @@ pub(super) fn run_contracts(
     runtime: &RuntimeConfig,
     state_db: &saya_store::SqliteStateStore,
     format: RenderFormat,
-    command: &ContractsCommand,
+    request: &ContractsRequest,
 ) {
     // The session's selected profile maps to the headless `--profile` field:
     // setting it (not a second resolution) routes the command at the database
     // the user /connect-ed to, matching every other TUI slash command.
-    let command = with_profile(command, state.profile.as_deref());
+    let command = with_profile(&request.command, state.profile.as_deref());
+    let request = ContractsRequest {
+        command,
+        note: request.note,
+    };
     capture_output_start();
     // The shared dispatcher returns Ok(code) for every typed outcome (a store
     // error is emitted as a diagnostic and returned non-zero); the outer Err is
     // a render/IO failure, surfaced here as an error block.
-    let code = match block_on(run_contracts_command(command, runtime, format, state_db)) {
+    let code = match block_on(run_contracts_command(request, runtime, format, state_db)) {
         Ok(code) => code,
         Err(error) => {
             capture_output_take();

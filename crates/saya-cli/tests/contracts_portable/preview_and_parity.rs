@@ -135,7 +135,7 @@ fn slash_export_import_import_dbt_parse_matches_headless() {
         ),
     ] {
         let parsed = match parse_slash_command(line) {
-            Ok(Some(SlashCommand::Contracts(command))) => command,
+            Ok(Some(SlashCommand::Contracts(request))) => request.command,
             other => panic!("{line:?} must parse to a contracts command, got {other:?}"),
         };
         assert_eq!(parsed, expected, "{line:?} must equal the headless command");
