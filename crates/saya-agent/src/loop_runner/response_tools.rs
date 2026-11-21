@@ -7,6 +7,7 @@ use super::{
 pub(super) async fn execute(
     state: &mut RunState<'_>,
     admission: &mut admission::Admission,
+    deferred_budget: Option<&super::DeferredAnsweringScope>,
     assistant: ChatMessage,
     result_caps: Vec<usize>,
     response_limits: super::AgentLimits,
@@ -50,6 +51,7 @@ pub(super) async fn execute(
                 state.actor_correlation,
                 state.request_ordinal.saturating_add(1),
                 first_request,
+                deferred_budget,
             )
             .await?,
         ));

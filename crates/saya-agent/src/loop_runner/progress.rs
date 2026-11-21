@@ -201,6 +201,20 @@ pub struct ProgressReport {
     pub check: Option<ProgressCheck>,
 }
 
+/// The model-facing instruction for the clean wind-down. It names the guard
+/// that fired in plain terms and the one tool that remains.
+pub(super) fn final_turn_note(stop: &ProgressStop) -> String {
+    let reason = match stop.kind {
+        ProgressStopKind::NoProgress => "it stopped making progress",
+        ProgressStopKind::Repeating => "a tool call kept returning the same result",
+        ProgressStopKind::WallClock | ProgressStopKind::Cost => "a limit was reached",
+    };
+    format!(
+        "The job is stopping because {reason}. Only the checklist tool is available now. \
+         Write your best current state and a short summary now."
+    )
+}
+
 #[cfg(test)]
 #[path = "progress_tests.rs"]
 mod tests;

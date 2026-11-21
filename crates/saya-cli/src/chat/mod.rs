@@ -35,6 +35,7 @@ pub(crate) use port::{PortError, Prepared, RunPort};
 pub(crate) use session::{Admission, ChatSession, SessionState};
 #[allow(unused_imports)]
 pub(crate) use transcript::{SettledTurn, Transcript};
+#[allow(unused_imports)]
 pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
 
 #[cfg(test)]

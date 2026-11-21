@@ -8,6 +8,7 @@ use super::{
 pub(super) async fn run(
     state: &mut RunState<'_>,
     admission: &mut admission::Admission,
+    deferred_budget: Option<&super::DeferredAnsweringScope>,
 ) -> Result<Option<super::AgentOutput>, AgentError> {
     admission.legacy.admit_turn();
     state.request_ordinal = state.request_ordinal.saturating_add(1);
@@ -64,6 +65,7 @@ pub(super) async fn run(
         cancellation: &state.cancellation,
         events: &mut state.events,
         admission,
+        deferred_budget,
         effect_admission: state.effect_admission,
         require_physical_effect_admission: state.require_physical_effect_admission,
         call_kind,
@@ -260,5 +262,5 @@ pub(super) async fn run(
     };
     // Providers report cumulative counts per response; sum across turns.
     add_usage(&mut state.usage, turn_usage);
-    response::handle(state, admission, assistant, reasoning).await
+    response::handle(state, admission, deferred_budget, assistant, reasoning).await
 }

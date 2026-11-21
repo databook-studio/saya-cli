@@ -7,13 +7,14 @@
 //! provider, toolset, hooks and checkout come from the run's one-time setup
 //! (`RootSession`), so a second turn costs no composition.
 
+use super::parent_arming::{TurnArming, stated_delay, stop_the_turn};
 use super::parent_turn::RootSession;
 use super::{CodingError, NativeCodingJob, map_root_error};
 use crate::budget_wording::budget_dimension;
 use crate::commands::coding::TurnStop;
 use saya_agent::{
-    AgentError, AgentEventSink, AgentOutput, AgentRequest, ApprovalDecider, BudgetDimension,
-    CancellationReason, ToolExecutor, run_agent_with_control,
+    AgentError, AgentEventSink, AgentOutput, AgentRequest, ApprovalDecider, ToolExecutor,
+    run_agent_with_control,
 };
 use std::sync::Arc;
 
@@ -59,16 +60,18 @@ impl NativeCodingJob {
             None => session.tools.as_ref(),
         };
         let root_budget = self.ledger.root_view();
+        // This turn's plugin budget: unarmed until the turn first uses a plugin.
+        let arming = TurnArming::new(session.plugins.clone(), cancellation.clone());
         let turn_control = super::parent_control::build(
             self,
             session,
             approver,
             &checkpointed,
-            cancellation,
+            cancellation.clone(),
             &progress,
             &root_budget,
         )?;
-        let control = turn_control.control;
+        let control = turn_control.control.with_deferred_budget(arming.scope());
         let turn_budget = turn_control.budget;
         let deadline = turn_control.deadline;
         // The prompt as it was sent: the prompt half of the pair a later turn
@@ -79,13 +82,15 @@ impl NativeCodingJob {
         // a readiness walk that met one of them mid-removal would send the model
         // a different view than the run's first request must carry.
         let mut context_blocks = self.continuation_context().await?;
-        // The active plugins' context joins it, bounded by the same context
-        // byte budget, asked for once for this turn.
+        // The active plugins' context joins it, bounded by the same byte
+        // budget; plugin context in this turn's prompt is a use of the plugin,
+        // so its policy arms here, before request 1.
         if let Some(plugins) = session.plugins.as_ref() {
-            context_blocks.extend(
+            let blocks =
                 super::parent_plugins::context(plugins, &asked, config.ai.context_byte_budget)
-                    .await,
-            );
+                    .await;
+            arming.arm_on_context(&blocks).await;
+            context_blocks.extend(blocks);
         }
         session.tools.start_shell_composition();
         let request = AgentRequest {
@@ -105,7 +110,11 @@ impl NativeCodingJob {
         // other name is the run's own executor. With no plugins the run hands
         // the loop exactly the executor it always did.
         let routed = session.plugins.as_ref().map(|plugins| {
-            super::parent_plugins::Routed::new(Arc::clone(plugins), Arc::clone(&session.executor))
+            super::parent_plugins::Routed::new(
+                Arc::clone(plugins),
+                Arc::clone(&session.executor),
+                arming.clone(),
+            )
         });
         let executor: &dyn ToolExecutor = match &routed {
             Some(routed) => routed,
@@ -127,22 +136,21 @@ impl NativeCodingJob {
             control,
         );
         tokio::pin!(work);
-        // The elapsed dimension of the policy is the owner's to arm, as chat
-        // arms its own: the deadline stops the turn's token, not the run's.
-        let outcome = match deadline {
-            Some(deadline) => tokio::select! {
-                biased;
-                outcome = &mut work => outcome,
-                _ = tokio::time::sleep(deadline) => {
-                    if let Some(scope) = turn_budget.as_ref() {
-                        scope.cancellation_token().cancel_with_reason(
-                            CancellationReason::Budget(BudgetDimension::ElapsedTime),
-                        );
-                    }
-                    work.await
+        // Two elapsed owners, one wait: the deadline a stated turn policy names,
+        // and the plugin budget's own, whose sleep starts at its arm.
+        let outcome = tokio::select! {
+            biased;
+            outcome = &mut work => outcome,
+            () = arming.expire() => {
+                stop_the_turn(&cancellation);
+                work.await
+            }
+            () = stated_delay(deadline) => {
+                if let Some(scope) = turn_budget.as_ref() {
+                    stop_the_turn(&scope.cancellation_token());
                 }
-            },
-            None => work.await,
+                work.await
+            }
         };
         self.lifecycle().enter("after_loop");
         // The turn's end is stated to the active plugins once, whatever it was:
@@ -202,6 +210,7 @@ impl NativeCodingJob {
                 if let Some(dimension) = turn_budget
                     .as_ref()
                     .and_then(|scope| budget_dimension(scope.cancellation_token().reason()))
+                    .or_else(|| arming.stop_dimension())
                 {
                     self.root_run
                         .note_turn_stop(Some(TurnStop::budget(dimension)));

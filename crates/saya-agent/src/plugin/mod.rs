@@ -215,8 +215,20 @@ pub trait RunPlugin: Send + Sync {
     }
 
     /// The turn limits this plugin asks for, or `None` — the default — to ask
-    /// for none.
+    /// for none. A turn applies these from its start, whether or not it uses the
+    /// plugin.
     fn turn_policy(&self, _ctx: &RunContext) -> Option<TurnPolicy> {
+        None
+    }
+
+    /// The turn limits to arm the first time a turn USES this plugin — the
+    /// plugin's context reached the turn, or a tool call was routed to it — or
+    /// `None` — the default — to arm none.
+    ///
+    /// A turn that never uses the plugin spends nothing of this policy, which is
+    /// the difference from [`Self::turn_policy`]: a database budget arms on the
+    /// turn's first database use, not when the turn starts (`ref/05`, §2-§3).
+    fn policy_on_use(&self, _ctx: &RunContext) -> Option<TurnPolicy> {
         None
     }
 }

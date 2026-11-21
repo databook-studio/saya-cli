@@ -57,6 +57,9 @@ pub(super) async fn salvage(
     actor_correlation: Option<ActorCorrelationDigest>,
     request_ordinal: u64,
     first_request: bool,
+    // The turn's deferred plugin budget: the salvage call is a request of this
+    // turn, so it is charged as one once a plugin use has armed it.
+    deferred_budget: Option<&super::DeferredAnsweringScope>,
 ) -> Result<AgentOutput, AgentError> {
     for call in pending {
         let (message, _) = tools::tool_message(
@@ -91,6 +94,7 @@ pub(super) async fn salvage(
         cancellation,
         events,
         admission,
+        deferred_budget,
         effect_admission,
         require_physical_effect_admission,
         call_kind: crate::EffectCallKind::Salvage,

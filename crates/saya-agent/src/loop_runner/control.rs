@@ -1,10 +1,10 @@
 use super::{
-    AgentLimits, ProgressHandle, admission::Admission, coding_checkpoint::AuthorityRefusalContext,
-    preflight::RequestPreflightConfig,
+    AgentLimits, DeferredAnsweringScope, ProgressHandle, admission::Admission,
+    coding_checkpoint::AuthorityRefusalContext, preflight::RequestPreflightConfig,
 };
 use crate::{
-    ActorCorrelationDigest, AgentError, AgentEventSink, AgentRequest, ApprovalDecider,
-    CancellationToken, ChatProvider, CorrelationId, EffectAdmission, ToolDefinition, ToolExecutor,
+    ActorCorrelationDigest, AgentError, AgentEventSink, ApprovalDecider, CancellationToken,
+    CorrelationId, EffectAdmission,
 };
 use std::{fmt, sync::Arc};
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -81,6 +81,9 @@ pub struct AgentRunControl<'a> {
     pub(super) mailbox: Option<super::steering::AgentMailbox>,
     pub(super) limits: AgentLimits,
     pub(super) answering_scope: AnsweringScope,
+    /// The turn's deferred budget, armed on its first plugin use: unarmed, it
+    /// counts and refuses nothing.
+    pub(super) deferred_budget: Option<DeferredAnsweringScope>,
     pub(super) approval: &'a dyn ApprovalDecider,
     pub(super) sink: &'a dyn AgentEventSink,
     /// The run's own stop signal. An unarmed turn runs on it directly; a turn
@@ -118,6 +121,7 @@ impl<'a> AgentRunControl<'a> {
             mailbox: None,
             limits,
             answering_scope: AnsweringScope::new(answering, run.clone()),
+            deferred_budget: None,
             approval,
             sink,
             run_cancellation: run.clone(),
@@ -160,6 +164,17 @@ impl<'a> AgentRunControl<'a> {
         scope.cancellation_token().follows(&self.run_cancellation);
         self.cancellation = scope.cancellation_token();
         self.answering_scope = scope;
+        self
+    }
+
+    /// Supplies the turn's deferred budget: a scope created unarmed on the
+    /// turn's own token, which the caller arms when the turn first uses a
+    /// plugin. Until then it counts nothing; once armed it counts every request,
+    /// tool call and reported token, and its elapsed ceiling is the caller's own
+    /// to watch. A turn without one counts exactly what it did before.
+    #[must_use]
+    pub fn with_deferred_budget(mut self, scope: DeferredAnsweringScope) -> Self {
+        self.deferred_budget = Some(scope);
         self
     }
 
@@ -224,25 +239,4 @@ impl<'a> AgentRunControl<'a> {
         self.background_wait = Some(slice);
         self
     }
-}
-
-pub(super) struct AgentRunInvocation<'a> {
-    pub(super) provider: &'a dyn ChatProvider,
-    pub(super) tools: &'a dyn ToolExecutor,
-    pub(super) request: AgentRequest,
-    pub(super) definitions: Vec<ToolDefinition>,
-    pub(super) mailbox: Option<super::steering::AgentMailbox>,
-    pub(super) limits: AgentLimits,
-    pub(super) approval: &'a dyn ApprovalDecider,
-    pub(super) sink: &'a dyn AgentEventSink,
-    pub(super) cancellation: CancellationToken,
-    pub(super) answering: Option<AnsweringScope>,
-    pub(super) request_preflight: Option<RequestPreflightConfig>,
-    pub(super) effect_admission: Option<&'a dyn EffectAdmission>,
-    pub(super) require_physical_effect_admission: bool,
-    pub(super) actor_correlation: Option<ActorCorrelationDigest>,
-    pub(super) authority_refusal_context: Option<AuthorityRefusalContext>,
-    pub(super) context_preamble: crate::ContextPreamble,
-    pub(super) progress_report: Option<ProgressHandle>,
-    pub(super) background_wait: Option<std::time::Duration>,
 }

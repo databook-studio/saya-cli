@@ -48,21 +48,36 @@ pub(super) async fn turn_finished(
 
 /// A root turn's executor while plugins are active: a name an active plugin
 /// declares is the plugin's to serve, and every other name is the run's own
-/// executor.
+/// executor. A call that routes to a plugin is the turn's use of it, so the
+/// turn's plugin budget arms there, before the call executes.
 pub(super) struct Routed {
     plugins: Arc<ActivePlugins>,
     core: Arc<dyn ToolExecutor>,
+    arming: super::parent_arming::TurnArming,
 }
 
 impl Routed {
-    pub(super) fn new(plugins: Arc<ActivePlugins>, core: Arc<dyn ToolExecutor>) -> Self {
-        Self { plugins, core }
+    pub(super) fn new(
+        plugins: Arc<ActivePlugins>,
+        core: Arc<dyn ToolExecutor>,
+        arming: super::parent_arming::TurnArming,
+    ) -> Self {
+        Self {
+            plugins,
+            core,
+            arming,
+        }
     }
 
     /// The executor that serves `name`, or the run's own when no active plugin
-    /// declares it.
-    fn route(&self, name: &str) -> Option<Arc<dyn ToolExecutor>> {
-        self.plugins.route(name)
+    /// declares it. A plugin answers, so the turn has used it: the budget arms
+    /// here, before the call it is used for executes.
+    async fn owner(&self, name: &str) -> Option<Arc<dyn ToolExecutor>> {
+        let owner = self.plugins.route(name);
+        if owner.is_some() {
+            self.arming.arm_on_route().await;
+        }
+        owner
     }
 }
 
@@ -115,7 +130,7 @@ impl ToolExecutor for Routed {
         arguments: serde_json::Value,
         context: saya_agent::ToolExecutionContext,
     ) -> Result<serde_json::Value, ToolError> {
-        match self.route(name) {
+        match self.owner(name).await {
             Some(owner) => owner.execute_with_context(name, arguments, context).await,
             None => {
                 self.core
@@ -131,7 +146,7 @@ impl ToolExecutor for Routed {
         arguments: serde_json::Value,
         result_cap: usize,
     ) -> Result<serde_json::Value, ToolError> {
-        match self.route(name) {
+        match self.owner(name).await {
             Some(owner) => {
                 owner
                     .execute_with_result_cap(name, arguments, result_cap)
@@ -150,7 +165,7 @@ impl ToolExecutor for Routed {
         name: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
-        match self.route(name) {
+        match self.owner(name).await {
             Some(owner) => owner.execute(name, arguments).await,
             None => self.core.execute(name, arguments).await,
         }

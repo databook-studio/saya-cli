@@ -11,6 +11,7 @@ mod deferred_scope;
 mod designation;
 mod failed_statements;
 mod failure_key;
+mod invocation;
 mod output;
 mod preflight;
 mod progress;
@@ -46,9 +47,9 @@ use crate::{
 };
 
 pub use coding_checkpoint::AuthorityRefusalContext;
-use control::AgentRunInvocation;
 pub use control::{AgentRunControl, AnsweringLimits, AnsweringScope};
 pub use deferred_scope::{DeferredAnsweringScope, DeferredCounts};
+use invocation::AgentRunInvocation;
 pub use output::{
     AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets, budgets_from_env,
 };
@@ -125,6 +126,7 @@ pub async fn run_agent_with_sink(
         cancellation,
         mailbox: None,
         answering: None,
+        deferred_budget: None,
         request_preflight: None,
         effect_admission: None,
         require_physical_effect_admission: false,
@@ -155,6 +157,7 @@ pub fn run_agent_with_control<'a>(
         sink: control.sink,
         cancellation: control.cancellation,
         answering: Some(control.answering_scope),
+        deferred_budget: control.deferred_budget,
         request_preflight: control.request_preflight,
         effect_admission: control.effect_admission,
         require_physical_effect_admission: control.require_physical_effect_admission,
