@@ -75,6 +75,18 @@ pub(crate) struct LineSession {
     /// records inside the folder it asks about, so its one-turn job records
     /// elsewhere rather than refusing the question.
     pub(crate) state_root: Option<PathBuf>,
+    /// The session's live task list: the cell the run's `checklist` writes
+    /// through, synced back into the session record after every turn.
+    pub(crate) tasks: Option<crate::interactive::session::tasks::SessionTasks>,
+    /// The session facts the run's requests carry: the compaction narrative and
+    /// the continuation record the session's loop holds. Written at this
+    /// front's compaction boundary, read where a request is assembled.
+    pub(crate) facts: Option<Arc<crate::chat::SessionFacts>>,
+    /// The conversation the run begins with, oldest pair first: the pairs the
+    /// session's record keeps ahead of the compaction boundary, so a resumed
+    /// session replays its kept tail exactly as the run before it did. Empty —
+    /// a session that has said nothing yet — is a run with no history.
+    pub(crate) seed: Vec<(String, String)>,
 }
 
 /// Opens the session: composes and opens its run, and hands back the session
@@ -171,9 +183,10 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
         &shape,
     )
     .await?;
-    let composed = RunComposition::compose(Arc::clone(&application), stated)
-        .await
-        .map_err(|error| error.to_string())?;
+    let composed =
+        RunComposition::compose_seeded(Arc::clone(&application), stated, parts.seed.clone())
+            .await
+            .map_err(|error| error.to_string())?;
     composed.open().await.map_err(|error| error.to_string())?;
     let run = Run::opened(composed, &front, metrics.clone()).await;
     Ok(Line::new(application, parts, front, shape, metrics, run))
@@ -226,6 +239,8 @@ pub(super) async fn session_run(
         // Memory off learns nothing; with memory on, the run learns through the
         // plugin's post-turn hook, on its own provider and model.
         learning,
+        tasks: parts.tasks.clone(),
+        facts: parts.facts.clone(),
     })
 }
 

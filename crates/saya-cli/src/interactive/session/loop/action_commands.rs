@@ -144,13 +144,20 @@ fn handle_compact(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::err
         Some(chat) => chat.compact(),
         None => crate::interactive::session::line_chat::nothing_to_compact(),
     };
+    // The summary and the record this compaction saved are the session's own
+    // facts: they are applied to the state here, and the cell the next request
+    // is rendered from is re-read from it — the same writer, the same place,
+    // as a turn's boundary compaction.
+    let facts = ctx.chat.as_ref().and_then(LineChat::session_facts);
     let ActionParts {
         state,
         format,
         store,
         save_refused,
+        session,
         ..
     } = action_parts(ctx);
+    sync_session_facts(facts.as_deref(), session, state);
     let failed = matches!(said, Said::Error(_));
     if let Some(action) = said.action() {
         session_emit::emit_action(action, format, state, store)?;

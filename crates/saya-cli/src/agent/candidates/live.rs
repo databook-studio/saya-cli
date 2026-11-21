@@ -172,6 +172,12 @@ impl<'a> LiveAttemptRunner<'a> {
             // The one-turn composition states the root the attempt records
             // under, so an ask keeps no records inside the folder it asks about.
             state_root: None,
+            // An attempt is one turn of a job, not a session: no live task list
+            // and none of a session's facts ride it.
+            tasks: None,
+            facts: None,
+            // The attempt says what it was asked and nothing else.
+            seed: Vec::new(),
         }
     }
 

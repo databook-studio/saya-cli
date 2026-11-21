@@ -65,6 +65,8 @@ impl Fixture {
                 memory_reachable: false,
                 capture: None,
                 learning: None,
+                tasks: None,
+                facts: None,
             },
             root,
         }

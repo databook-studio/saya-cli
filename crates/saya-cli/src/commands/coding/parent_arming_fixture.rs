@@ -170,6 +170,7 @@ pub(super) fn inputs(plugin: Arc<TestPlugin>) -> TurnInputs {
             primary: None,
         }),
         seed: Vec::new(),
+        ..TurnInputs::default()
     }
 }
 

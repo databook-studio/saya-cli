@@ -28,7 +28,7 @@ mod one_shot;
 mod open;
 mod run;
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::interactive::turn_summary::ToolTally;
 
@@ -90,6 +90,12 @@ impl LineChat {
     /// rollover moves it to the job that follows.
     pub(crate) fn run_link(&self) -> Option<saya_store::RunLink> {
         self.lock().run_link()
+    }
+
+    /// The session facts this front's compaction states and its requests are
+    /// rendered from: the one cell the loop applies to its own session state.
+    pub(crate) fn session_facts(&self) -> Option<Arc<crate::chat::SessionFacts>> {
+        self.lock().facts()
     }
 
     /// Sends one operator line as a turn of the session's run, and reports how

@@ -22,6 +22,12 @@ fn handle_message(
     let approval = state
         .approval_mode_parsed()
         .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
+    // The session's live task list: the cell the run's `checklist` writes
+    // through. The record re-seeds it here, so a resumed session's list rides
+    // its next request, and the cell is synced back after the turn however the
+    // turn ended.
+    let tasks = session.universe().tasks();
+    tasks.replace(state.task_list.clone());
     let said = match ctx.chat.as_ref() {
         Some(chat) => chat.send(line.to_owned())?,
         None => {
@@ -53,6 +59,15 @@ fn handle_message(
                 // The plain loop takes the configured root: it works in the
                 // folder, so its records are the folder's.
                 state_root: None,
+                // The session's own task cell, and the facts its requests are
+                // rendered from: the compaction narrative and the continuation
+                // record the loop's state holds now.
+                tasks: Some(tasks.clone()),
+                facts: Some(crate::chat::SessionFacts::of(state, session.universe().workspace())),
+                // The conversation the record keeps behind the compaction
+                // boundary: a resumed session replays its kept tail exactly as
+                // the run before it did.
+                seed: state.replayed_pairs(),
             })?;
             // The record names the run the session belongs to: lineage only.
             state.run = chat.run_link();
@@ -79,6 +94,12 @@ fn handle_message(
             .fold_into(&mut state.usage, &settled.outcome);
         if matches!(settled.outcome, ChatOutcome::Answered) {
             state.record_turn(line, settled.record.answer.clone(), false, Vec::new());
+            // What the turn's tools observed settles into the session record the
+            // way the interactive turn's own settle did: the continuation a
+            // compaction saves reads its file and check facts from here.
+            if let Some(output) = sent.output.as_ref() {
+                state.observe_agent_output(output);
+            }
         }
         // What the turn's boundary then did — a compaction's own line, or the
         // failure that latched it — is said through the session's one emit
@@ -89,10 +110,20 @@ fn handle_message(
         }
     }
     // The record names the run the session belongs to now: a compaction or
-    // `/clear` moved it to the job that followed.
+    // `/clear` moved it to the job that followed. The session's facts follow
+    // the record: the compaction a turn's boundary ran is applied to the
+    // state here, and the cell every later request is rendered from is re-read
+    // from it. The task list the run left behind is the record's, whatever the
+    // turn's outcome.
     if let Some(chat) = ctx.chat.as_ref() {
         state.run = chat.run_link();
+        sync_session_facts(
+            ctx.chat.as_ref().and_then(LineChat::session_facts).as_deref(),
+            session,
+            state,
+        );
     }
+    sync_session_tasks(&tasks, state);
     // A pause is not a failure: the next message continues from where the guard
     // stopped the turn. Every other stop keeps today's exit contract — a
     // cancelled turn and a stop that ended it errored the run.

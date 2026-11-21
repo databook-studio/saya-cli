@@ -25,6 +25,16 @@ pub(crate) struct TurnInputs {
     /// over the transcript of the run before it when it prepares this one. Empty
     /// — every job surface today — is a run whose first turn carries no history.
     pub(crate) seed: Vec<(String, String)>,
+    /// The session's live task list, when a session states one: the cell the
+    /// run's `checklist` writes through, and the one its turns render at the
+    /// turn's start — the session's own, never a job-local copy. `None` is a
+    /// job surface: it has no session record to sync, so its run keeps the
+    /// list it composes and renders it mid-turn.
+    pub(crate) tasks: Option<crate::interactive::session::tasks::SessionTasks>,
+    /// The session facts this run's requests carry, when a session states them:
+    /// the compaction narrative and the continuation record its loop holds.
+    /// `None` is a job surface, which carries neither.
+    pub(crate) facts: Option<std::sync::Arc<crate::chat::SessionFacts>>,
 }
 
 /// The plugin registry a surface supplies at open, and the context its plugins

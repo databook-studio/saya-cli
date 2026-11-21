@@ -76,6 +76,13 @@ pub(crate) struct SessionRun {
     /// memory mode is on. `None` means the run learns nothing: nothing is
     /// extracted after a turn and nothing is announced.
     pub(crate) learning: Option<Arc<dyn saya_agent::ChatProvider>>,
+    /// The session's live task list, for a session that states one: the run's
+    /// `checklist` writes through it, and its turns render it at the turn's
+    /// start instead of the root rendering it mid-turn.
+    pub(crate) tasks: Option<crate::interactive::session::tasks::SessionTasks>,
+    /// The session facts this run's requests carry — the compaction narrative
+    /// and the continuation record — when a session states them.
+    pub(crate) facts: Option<Arc<super::SessionFacts>>,
 }
 
 /// One session's composed run: the job that runs it, what its one open is given,
@@ -124,6 +131,8 @@ impl RunComposition {
             memory_reachable,
             capture,
             learning,
+            tasks,
+            facts,
         } = run;
         // The surface's own fact, stated beside the operator that answers its
         // asks: a front with nobody to ask cannot reach a write-shaped call, so
@@ -166,6 +175,8 @@ impl RunComposition {
                 policy: None,
                 plugins: Some(plugins),
                 seed,
+                tasks,
+                facts,
             })),
             operator,
             mode,

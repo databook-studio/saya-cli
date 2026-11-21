@@ -34,6 +34,7 @@ include!("action_lifecycle.rs");
 include!("action_dispatch.rs");
 include!("headless_entry.rs");
 include!("action_message.rs");
+include!("session_facts_sync.rs");
 include!("launch_prepare.rs");
 include!("launch_terminal.rs");
 include!("launch_headless.rs");

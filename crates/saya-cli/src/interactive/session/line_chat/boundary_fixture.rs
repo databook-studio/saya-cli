@@ -40,6 +40,8 @@ pub(super) fn next_run(name: &str) -> SessionRun {
         memory_reachable: false,
         capture: None,
         learning: None,
+        tasks: None,
+        facts: None,
     }
 }
 

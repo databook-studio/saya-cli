@@ -20,6 +20,7 @@ mod port;
 mod queue;
 mod rollover;
 mod session;
+mod session_facts;
 mod transcript;
 mod turn;
 mod workspace_shape;
@@ -50,6 +51,8 @@ pub(crate) use port::{PortError, Prepared, RunPort};
 pub(crate) use rollover::{Ending, Rollover, RolloverCause, RolloverError};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
+#[allow(unused_imports)]
+pub(crate) use session_facts::SessionFacts;
 #[allow(unused_imports)]
 pub(crate) use transcript::{SettledTurn, Transcript};
 #[allow(unused_imports)]

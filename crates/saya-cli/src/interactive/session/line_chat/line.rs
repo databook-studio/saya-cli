@@ -69,6 +69,9 @@ impl Line {
             model: run.model(),
             ..RedactedSession::default()
         });
+        // The session's own facts, stated before the parts are taken: a
+        // compaction this front runs writes them, and its turns read them.
+        let compaction = Compaction::new().stating(parts.facts.clone());
         Self {
             rollover: Rollover::new(application),
             parts,
@@ -77,9 +80,15 @@ impl Line {
             metrics,
             run: Some(run),
             transcript,
-            compaction: Compaction::new(),
+            compaction,
             opened: 1,
         }
+    }
+
+    /// The session facts this front's compaction states and its requests are
+    /// rendered from: the one cell the loop applies to its session state.
+    pub(super) fn facts(&self) -> Option<std::sync::Arc<crate::chat::SessionFacts>> {
+        self.parts.facts.clone()
     }
 
     /// The link the record carries to the run the session belongs to now.
