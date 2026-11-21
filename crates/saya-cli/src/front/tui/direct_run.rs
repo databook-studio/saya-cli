@@ -26,7 +26,7 @@ use crate::config::runtime::RuntimeConfig;
 use crate::front::ResultPreview;
 use crate::interactive::tui::{
     CAP_REFUSAL, Followup, LastQuery, SqlTask, fill_save_from_last_query, parse_chart_args,
-    spawn_sql_task, try_acquire_worker_permit, write_result_overwrite,
+    spawn_sql_task, try_acquire_worker_permit, write_result_for,
 };
 use crate::render::{RenderFormat, TerminalEvent};
 
@@ -62,7 +62,14 @@ pub(crate) fn perform(deps: &DirectDeps, command: Direct) -> Worker {
 
 /// `/export`: today's two-phase write, to the path the operator named.
 fn export(result: &QueryResult, path: &str, overwrite: bool) -> Worker {
-    match write_result_overwrite(result, std::path::Path::new(path), overwrite) {
+    // The one export request the slash grammar builds: the destination's
+    // extension selects the format, as K7's `/export` does.
+    let request = crate::slash::ExportRequest {
+        overwrite,
+        path: path.to_owned(),
+        ..crate::slash::ExportRequest::default()
+    };
+    match write_result_for(result, &request) {
         Ok(rows) => Worker {
             message: format!("Exported {rows} row(s) to {path}"),
             ..Worker::default()

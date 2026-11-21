@@ -126,6 +126,8 @@ pub(crate) use worker_permits::{CAP_REFUSAL, try_acquire_worker_permit};
 // publish atomically) rather than a second writer, so the bytes a new-surface
 // export writes are the bytes today's writes.
 #[allow(unused_imports)]
+pub(crate) use export::write_result_for;
+#[cfg(test)]
 pub(crate) use export::write_result_overwrite;
 
 // `/chart [kind] [path]` is parsed once, by the grammar the old TUI reads.
