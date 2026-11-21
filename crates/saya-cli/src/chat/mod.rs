@@ -15,6 +15,7 @@ mod link;
 mod operator;
 mod port;
 mod queue;
+mod rollover;
 mod session;
 mod transcript;
 mod turn;
@@ -36,6 +37,8 @@ pub(crate) use link::{Resume, RunFacts};
 pub(crate) use operator::SessionOperator;
 #[allow(unused_imports)]
 pub(crate) use port::{PortError, Prepared, RunPort};
+#[allow(unused_imports)]
+pub(crate) use rollover::{ContextChange, Ending, Rollover, RolloverError};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
 #[allow(unused_imports)]
@@ -64,6 +67,18 @@ mod compose_tests;
 #[cfg(all(test, unix))]
 #[path = "compose_sql_tests.rs"]
 mod compose_sql_tests;
+
+#[cfg(all(test, unix))]
+#[path = "rollover_fixture.rs"]
+mod rollover_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "rollover_tests.rs"]
+mod rollover_tests;
+
+#[cfg(all(test, unix))]
+#[path = "rollover_clear_tests.rs"]
+mod rollover_clear_tests;
 
 #[cfg(test)]
 #[path = "workspace_shape_tests.rs"]

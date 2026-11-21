@@ -165,6 +165,9 @@ pub(super) fn inputs(plugin: Arc<TestPlugin>) -> TurnInputs {
         plugins: Some(RunPlugins {
             registry: registry(plugin),
             context: chat(),
+            // This fixture's calls name no connection, and its job resolves
+            // none: no call is approved as a primary database.
+            primary: None,
         }),
         seed: Vec::new(),
     }

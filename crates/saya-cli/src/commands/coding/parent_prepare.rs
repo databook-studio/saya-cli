@@ -1,4 +1,4 @@
-//! Opening a run without a turn.
+//! Opening a run without a turn — and ending one.
 //!
 //! A chat session opens its run while the human is still typing: the slot is
 //! claimed, the run is composed and held, and the first message the user sends
@@ -12,11 +12,16 @@
 //! turn of the run. The job's `request.task` stays a real, stable label —
 //! `"session <id>"` for a prepared run — because every helper brief and the
 //! tool advertisement read it; it is never the first message.
+//!
+//! The same file states the run's end for a surface that owns the whole run:
+//! `run_close` for a close that is nothing more than the close, and
+//! `run_finish` for the end a session's rollover or quit states — the close, the
+//! implicit join, the candidate preparation and the run's one terminal record.
 
 use super::parent_turn::RootSession;
 use super::parent_turn_limits::TurnInputs;
 use super::{CodingError, NativeCodingJob};
-use saya_agent::{AgentEventSink, AgentMailbox};
+use saya_agent::{AgentEventSink, AgentMailbox, AgentOutput, TokenUsage};
 use std::sync::Arc;
 
 impl NativeCodingJob {
@@ -81,5 +86,52 @@ impl NativeCodingJob {
     /// run open, so the next message is another turn of it.
     pub(crate) async fn run_close(&self) {
         self.root_run.close();
+    }
+
+    /// Ends a prepared run whose turns are done: the run's close, the implicit
+    /// child join, the candidate preparation and the one terminal record — the
+    /// tail a job surface gets from `run()`, stated for a run a session rolls
+    /// over or closes.
+    ///
+    /// `answer` is the run's last answer as the surface recorded it, and the
+    /// only thing this tail cannot read off the job: the run's turns reported
+    /// their own outputs to the surface that ran them.
+    ///
+    /// The close is stated once, so the end is written once: a run that is
+    /// already finished has nothing left to end.
+    pub(crate) async fn run_finish(
+        self: &Arc<Self>,
+        answer: Option<String>,
+    ) -> Result<(), CodingError> {
+        if !self.root_run.close_once() {
+            return Ok(());
+        }
+        self.lifecycle().enter("settle");
+        self.settle_implicit_join().await;
+        self.lifecycle().enter("candidate_prepare");
+        let output = AgentOutput {
+            answer: answer.unwrap_or_default(),
+            events: Vec::new(),
+            used_bounded_sql_query: false,
+            tool_metadata: Vec::new(),
+            usage: TokenUsage::default(),
+            learning_usage: None,
+            truncated: false,
+            answer_sql: None,
+        };
+        let result = self.prepare_at_finish(Ok(output)).await;
+        self.lifecycle().enter("finalize");
+        if let Err(error) = &result {
+            self.latch_error(error);
+        }
+        let result = self.finalize_run(result).await;
+        self.lifecycle()
+            .finish(&self.application.store, self.job_id())
+            .await;
+        // The run is over: the advisory precompute holds the job it was planned
+        // for, so giving the slot back is what lets a dropped job — and, in
+        // place, its folder lease — go.
+        self.forget_readiness_precompute();
+        result.map(|_| ())
     }
 }

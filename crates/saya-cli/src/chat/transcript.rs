@@ -41,9 +41,21 @@ impl Transcript {
         &self.record
     }
 
-    /// The record the next save writes.
+    /// The record as the next save writes it.
     pub(crate) fn into_record(self) -> RedactedSession {
         self.record
+    }
+
+    /// The record, for the one field the session states itself after a run is
+    /// prepared: the run link a rollover replaces.
+    pub(crate) fn record_mut(&mut self) -> &mut RedactedSession {
+        &mut self.record
+    }
+
+    /// Forgets the conversation: `/clear` starts the next run with nothing, so
+    /// neither the seed nor the saved turns carry a word of it.
+    pub(crate) fn clear(&mut self) {
+        self.record.turns.clear();
     }
 
     /// The settled turns, oldest first: what a new epoch is seeded with.

@@ -167,7 +167,9 @@ impl NativeCodingJob {
 
     /// Waits for a started precompute so the outcome reuses its facts instead
     /// of paying the scan again. A precompute that never started returns at
-    /// once.
+    /// once. The slot is kept, because the outcome it was planned for is the
+    /// one thing that still reads it — [`Self::forget_readiness_precompute`]
+    /// gives it back once the run is over.
     pub(super) async fn settle_readiness_precompute(&self) {
         let precompute = self
             .readiness_precompute
@@ -195,6 +197,18 @@ impl NativeCodingJob {
         {
             *held = Some(ReadinessPrecompute::new(self));
         }
+    }
+
+    /// Gives the precompute slot back once the run is over. The precompute holds
+    /// the job it was planned for, so the slot is a cycle: left set, a finished
+    /// job outlives the surface that dropped it — and, in place, so does the
+    /// folder's lease, which a session's rollover needs free before the next job
+    /// is created.
+    pub(super) fn forget_readiness_precompute(&self) {
+        *self
+            .readiness_precompute
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 
     /// The advisory facts, recomputed only when the key moved. The children are
