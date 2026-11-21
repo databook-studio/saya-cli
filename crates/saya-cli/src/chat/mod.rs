@@ -13,6 +13,7 @@ mod operator;
 mod port;
 mod queue;
 mod session;
+mod workspace_shape;
 
 // This `pub(crate)` surface is the chat layer's boundary: the composition, the
 // session, the turn, the operator and the fronts above them consume it. Nothing
@@ -28,6 +29,7 @@ pub(crate) use operator::SessionOperator;
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
+pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]
@@ -36,3 +38,7 @@ mod contract_guard_tests;
 #[cfg(test)]
 #[path = "operator_front_fixture.rs"]
 pub(crate) mod operator_front_fixture;
+
+#[cfg(test)]
+#[path = "workspace_shape_tests.rs"]
+mod workspace_shape_tests;

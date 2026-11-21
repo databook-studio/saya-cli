@@ -11,7 +11,7 @@ use std::{
 /// Resolves one in-place root: the dangerous-root refusal first, then the
 /// canonical directory identity (which refuses a symlink, a file, a missing
 /// path, and either direction of state overlap).
-pub(super) fn resolve_in_place(
+pub(crate) fn resolve_in_place(
     stated: &Path,
     canonical: &Path,
     state_root: &Path,

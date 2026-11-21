@@ -144,7 +144,7 @@ impl InPlaceLease {
 /// whether the lock is held. A lock file no process holds, a dead owner's, and a
 /// missing one both read as free, so an ended run keeps today's recovery
 /// behaviour.
-pub(super) fn leased(state_root: &Path, root_id: &str) -> Result<bool, CodingError> {
+pub(crate) fn leased(state_root: &Path, root_id: &str) -> Result<bool, CodingError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;

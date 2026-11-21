@@ -6,6 +6,8 @@ mod compaction;
 mod evidence;
 #[path = "coding_context_efficiency/fixture.rs"]
 mod fixture;
+#[path = "coding_context_efficiency/lease_probe.rs"]
+mod lease_probe;
 #[path = "coding_context_efficiency/provider.rs"]
 mod provider;
 #[path = "coding_context_efficiency/resume_after_provider_failure.rs"]

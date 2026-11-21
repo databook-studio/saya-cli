@@ -2,6 +2,7 @@
 //! workspace, under the same consent rules as a resumed paused job.
 
 use super::{
+    lease_probe::live_writer,
     provider::Provider,
     resume_support::{attempt, continuation_body, epoch, fixture, provider_failed, resume, run},
     script::{Fault, RESUMED, Scenario},
@@ -44,8 +45,9 @@ async fn a_job_resume_after_a_provider_failure_continues_the_same_folder() {
         2,
         "the resume starts a new epoch"
     );
-    // The resumed job holds the one-live-job lease over its folder.
-    let busy = match attempt(&fixture, "resume-after-provider-live").await {
+    // The resumed job holds the one-live-job lease over its folder: a live
+    // write-scoped job over that folder is refused it.
+    let busy = match live_writer(&fixture, "resume-after-provider-live").await {
         Err(error) => error,
         Ok(_) => panic!("one live job per folder"),
     };
@@ -63,12 +65,12 @@ async fn a_job_resume_after_a_provider_failure_continues_the_same_folder() {
     assert_eq!(status["state"], "completed", "{status}");
     assert_eq!(epoch(&fixture, &id).await, 2, "the run kept its new epoch");
 
-    // The lease goes with the handle: the folder admits a new job.
+    // The lease goes with the handle: the folder admits a new writer.
     drop(resumed);
     drop(
-        attempt(&fixture, "resume-after-provider-next")
+        live_writer(&fixture, "resume-after-provider-next")
             .await
-            .unwrap(),
+            .expect("the folder admits a new writer once the run's lease is released"),
     );
 }
 

@@ -63,18 +63,30 @@ fn boundaries(job: &NativeCodingJob) -> Vec<Value> {
         .collect()
 }
 
-/// The one folder lease file the state directory holds.
-fn lease_file(application: &CodingApplication) -> PathBuf {
-    let directory = application.state_root.join("inplace-leases");
-    std::fs::read_dir(&directory)
-        .expect("the lease folder exists")
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "lock")
-        })
-        .expect("the job holds one folder lease file")
+/// The lease file a dead owner left behind for this job's folder: the run's
+/// own root id under the state root, with no descriptor holding it.
+fn dead_owners_lease(job: &NativeCodingJob) -> PathBuf {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(job.records.join("inplace-root.json"))
+            .expect("the run records the root it worked over"),
+    )
+    .expect("the root record is JSON");
+    let directory = job.application.state_root.join("inplace-leases");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&directory)
+        .expect("the private lease folder is created");
+    let path = directory.join(format!(
+        "{}.lock",
+        record["root_id"]
+            .as_str()
+            .expect("the record names its root")
+    ));
+    std::fs::write(&path, b"").expect("the dead owner's lease file is left behind");
+    path
 }
 
 /// A resume of a job whose run is open and idle between its turns is refused by
@@ -167,10 +179,10 @@ async fn a_stale_lease_from_a_dead_owner_still_resumes_with_one_consent() {
         .await
         .expect("the run must settle");
     assert!(ran.is_ok(), "the run must finish: {ran:?}");
-    let lease = lease_file(&application);
+    let lease = dead_owners_lease(&job);
     let epoch_before = super::resume_turns::epoch(&application, &id).await;
-    // The owner is gone: the operating system released its lock with its last
-    // handle, and only the lock file stays behind.
+    // No owner holds the file: a lock file a dead session left behind is the
+    // folder it leased, not a live claim on it.
     drop(job);
     assert!(lease.is_file(), "the dead owner's lease file stays on disk");
 
