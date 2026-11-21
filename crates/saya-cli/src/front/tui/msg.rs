@@ -1,0 +1,64 @@
+//! What reaches the model, and what the model asks the runtime to do.
+//!
+//! Two directions, two types: [`Msg`] is everything the surface reacts to —
+//! one input thread's keys, a paste, a resize, a session event, the tick —
+//! and [`Cmd`] is the side effect the pure [`update`](super::update) decided
+//! on but must not perform itself. The runtime between them is what actually
+//! sends, cancels, answers and switches.
+
+use ratatui::crossterm::event::KeyEvent;
+use saya_agent::PermissionMode;
+
+use crate::agent::tools::consent::Answer;
+use crate::chat::ChatEvent;
+
+/// What a background worker reports back.
+///
+/// A worker that produced something hands it to the unit that asked for it;
+/// what the surface has to say for itself — a worker that could not finish —
+/// is what lands here. A struct rather than a bare sentence, so the units that
+/// add a field do not have to rewrite every construction of it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Worker {
+    /// The worker's own words about itself, said to the operator.
+    pub(crate) message: String,
+}
+
+/// One thing the surface has to react to.
+#[derive(Debug)]
+pub(crate) enum Msg {
+    /// One key press, as the input thread read it.
+    Key(KeyEvent),
+    /// One bracketed paste, as one event: a pasted block never reads as
+    /// keystrokes, so a `\r` in it cannot send it.
+    Paste(String),
+    /// The terminal's new size. Nothing in the model reads it yet: the panes
+    /// lay themselves out from the frame they are given.
+    Resize { width: u16, height: u16 },
+    /// One session event, passed on unchanged.
+    Chat(ChatEvent),
+    /// One background worker's answer. The panes that ask a worker — the
+    /// result table, an export, a chart, a compaction, the clipboard — land in
+    /// their own units; what this queue needs from the start is that a
+    /// worker's answer has a place of its own, so a slow one can never read as
+    /// a key press.
+    Worker(Worker),
+    /// The 250 ms tick that drives the spinner and expires a toast.
+    Tick,
+}
+
+/// One side effect the runtime performs after an [`update`](super::update).
+///
+/// The model never performs these itself: that is what keeps a whole session
+/// — sending, queueing, cancelling, answering — testable without a terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Cmd {
+    /// Run one message as a turn.
+    Send(String),
+    /// Cancel the turn in flight; the run stays open.
+    CancelTurn,
+    /// Answer the call asked under this id.
+    Answer(u64, Answer),
+    /// State a mode on the run's cell.
+    SwitchMode(PermissionMode),
+}
