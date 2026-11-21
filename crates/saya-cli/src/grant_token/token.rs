@@ -52,7 +52,7 @@ pub(crate) fn grant_token(
 /// name so `/grants` shows the database the user actually approved. The
 /// payload is judged by the same name-shape rule `endpoint:` payloads
 /// are; a name that fails it yields `None` — never a guessed token.
-fn sql_token(arguments: &Value, primary: Option<&str>) -> Option<String> {
+pub(crate) fn sql_token(arguments: &Value, primary: Option<&str>) -> Option<String> {
     let connection = match arguments.get("connection") {
         // Absent or empty — the registry's own "primary" spellings.
         None => primary?,

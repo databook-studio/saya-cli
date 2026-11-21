@@ -5,6 +5,7 @@ mod owner_denial;
 mod parent;
 pub(crate) mod plan_gate;
 mod readonly;
+mod root_db_lane;
 mod root_mcp;
 pub(crate) use root_mcp::build_for_helper;
 mod root_progress;
@@ -28,6 +29,14 @@ mod direct_allow_tests;
 #[cfg(test)]
 #[path = "direct_ask_tests.rs"]
 mod direct_ask_tests;
+
+#[cfg(test)]
+#[path = "direct_db_lane_tests.rs"]
+mod direct_db_lane_tests;
+
+#[cfg(test)]
+#[path = "direct_db_job_tests.rs"]
+mod direct_db_job_tests;
 
 #[cfg(test)]
 #[path = "direct_tests.rs"]

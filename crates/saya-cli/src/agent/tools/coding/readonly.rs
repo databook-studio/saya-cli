@@ -21,6 +21,10 @@ pub(crate) struct ReadOnlyTools {
     coordinator: CodingTools,
     workspace: DatabaseTools,
     defs: Vec<ToolDefinition>,
+    /// The plugin's database lane, when this run put the plugin on the chat
+    /// surface: `None` — every job surface — decides database calls the way
+    /// this surface always did.
+    pub(super) db_lane: Option<Arc<crate::plugins::database::approval::DbApprovalLane>>,
 }
 
 impl ReadOnlyTools {
@@ -52,6 +56,7 @@ impl ReadOnlyTools {
             coordinator,
             workspace,
             defs,
+            db_lane: None,
         })
     }
 

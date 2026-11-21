@@ -9,6 +9,11 @@
 
 #[cfg(test)]
 mod activation_tests;
+pub(crate) mod approval;
+#[cfg(test)]
+mod approval_order_tests;
+#[cfg(test)]
+mod approval_tests;
 #[cfg(test)]
 mod capture_fixture;
 #[cfg(test)]
@@ -74,6 +79,13 @@ const DECLARED_TOOLS: [&str; 10] = [
     "contract_search",
     "contract_read",
 ];
+
+/// Whether `name` is a name the plugin routes at all: its whole declared
+/// table, never only what it advertises on this run. The lane and the registry
+/// read one list, so neither can route a name the other never took.
+pub(crate) fn routes(name: &str) -> bool {
+    DECLARED_TOOLS.contains(&name)
+}
 
 pub(crate) struct DatabasePlugin {
     surface: Surface,
