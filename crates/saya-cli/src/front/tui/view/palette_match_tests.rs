@@ -9,6 +9,22 @@ use super::palette_fixture::{folded, pane, querying};
 use super::palette_match;
 use crate::slash::catalog::{self, Category};
 
+/// A hidden row is a palette row for no query: `/run`, `/runs` and
+/// `/recovery` are hidden (K8), so even typing their whole name offers
+/// nothing.
+#[test]
+fn a_hidden_row_is_never_offered() {
+    for query in ["", "r", "re", "run", "runs", "recovery", "recov"] {
+        let entries = querying(query).entries();
+        for hidden in ["run", "runs", "recovery"] {
+            assert!(
+                entries.iter().all(|entry| entry.name != hidden),
+                "the query {query:?} offers the hidden /{hidden}: {entries:?}"
+            );
+        }
+    }
+}
+
 /// A row the listing folds under another command is not a palette row.
 #[test]
 fn a_row_the_help_listing_folds_away_is_never_offered() {

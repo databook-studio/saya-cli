@@ -11,13 +11,13 @@ use crate::front::tui::theme::{Charset, Glyph, glyph};
 use crate::interactive::tui::wrap::cell_width;
 use crate::slash::catalog::{self, Surface};
 
-/// The empty query is the whole palette: every row the `/help` listing carries
-/// and the TUI can run, in catalogue order.
+/// The empty query is the whole palette: every row the `/help` listing carries,
+/// is not hidden, and the TUI can run, in catalogue order.
 #[test]
 fn an_empty_query_lists_the_listed_tui_rows_in_catalogue_order() {
     let palette = Palette::default();
     let expected: Vec<&str> = catalog::all()
-        .filter(|spec| spec.listed.is_some())
+        .filter(|spec| spec.listed.is_some() && !spec.hidden)
         .filter(|spec| spec.surfaces.covers(Surface::Tui))
         .map(|spec| spec.name)
         .collect();
@@ -29,13 +29,13 @@ fn an_empty_query_lists_the_listed_tui_rows_in_catalogue_order() {
             .map(|entry| entry.name)
             .collect::<Vec<_>>(),
         expected,
-        "the palette is the catalogue, listed and on the TUI"
+        "the palette is the catalogue, listed, visible and on the TUI"
     );
     assert!(
         palette.entries().iter().all(|entry| catalog::all()
             .find(|spec| spec.name == entry.name)
-            .is_some_and(|spec| spec.listed.is_some())),
-        "no row the listing folds away is offered"
+            .is_some_and(|spec| spec.listed.is_some() && !spec.hidden)),
+        "no row the listing folds away or hides is offered"
     );
 
     let rows = pane(&palette, 100, 60);

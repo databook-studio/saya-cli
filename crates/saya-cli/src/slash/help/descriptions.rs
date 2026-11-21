@@ -7,15 +7,20 @@ pub(crate) const PLAN_BYPASS_SENTENCE: &str = "Plan still denies writes under `b
 /// The grouped, described listing printed by `/help` with no argument — a view
 /// of [`crate::slash::catalog::CATALOGUE`], not a list of its own. Each of the
 /// catalogue's categories prints its heading, then its rows in listing order,
-/// each pairing the usage form with the shared one-line description. One
-/// string so the TUI and headless paths render it identically; the transcript
-/// word-wraps it at the terminal width.
+/// each pairing the usage form with the shared one-line description. A
+/// category whose rows are all hidden prints nothing — not even its heading,
+/// which would have no row under it. One string so the TUI and headless paths
+/// render it identically; the transcript word-wraps it at the terminal width.
 pub(crate) fn help_text() -> String {
     let mut out = String::from("Slash commands:");
     for category in Category::ALL {
+        let rows: Vec<(&str, &str)> = crate::slash::catalog::listed_in(category).collect();
+        if rows.is_empty() {
+            continue;
+        }
         out.push_str("\n\n");
         out.push_str(category.heading());
-        for (usage, description) in crate::slash::catalog::listed_in(category) {
+        for (usage, description) in rows {
             out.push_str("\n  ");
             out.push_str(usage);
             out.push_str(" — ");

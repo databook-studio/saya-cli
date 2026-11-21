@@ -1,5 +1,7 @@
 //! The slash commands the surface answers itself (`03` §4.1): `/sql`,
-//! `/export`, `/chart` and `/investigation`.
+//! `/export`, `/chart` and `/investigation` — and, since the harness run engine
+//! is not this surface's (O5, K8), one pointer line for `/run …`, `/run cancel
+//! …` and `/runs`.
 //!
 //! Two halves, both pure. [`read`] reads one submitted line through the
 //! crate's one slash parser and answers what the line comes to: a [`Cmd`] the
@@ -27,6 +29,11 @@ pub(crate) const NOTHING_TO_EXPORT: &str = "Nothing to export yet — run a quer
 
 /// What `/chart` says with no result to chart, in today's words.
 pub(crate) const NOTHING_TO_CHART: &str = "Nothing to chart yet — run a query first.";
+
+/// What the surface says to `/run …`, `/run cancel …` and `/runs` (O5): the
+/// harness run engine is not this surface's, and the pointer names the terminal
+/// command that drives it. The line REPL keeps today's behavior.
+pub(crate) const RUN_MOVED: &str = "/run moved out of chat — use `saya run` in a terminal";
 
 /// One command the surface reads as its own, already resolved against the
 /// state the surface holds: the run's connection, and the result to write.
@@ -100,6 +107,14 @@ pub(crate) fn read(model: &Model, line: &str) -> Read {
                 command,
                 last_query: last_query(model),
             }))
+        }
+        // O5: the harness run engine is not this surface's, so every spelling
+        // of it — `/run …`, `/run cancel …`, `/runs` — is one pointer line to
+        // the terminal command that does drive it. A hidden command elsewhere
+        // still resolves and runs: the hide is the catalogue's, not this
+        // match's.
+        Ok(Some(SlashCommand::Run(_) | SlashCommand::RunCancel(_) | SlashCommand::Runs(_))) => {
+            Read::Said(RUN_MOVED.to_owned())
         }
         // Every other line — a message, and a command whose argument is a
         // later unit's — is still a turn's (T18's rule for `/mode plan`).

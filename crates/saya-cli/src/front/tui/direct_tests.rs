@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use super::direct::{Direct, NOTHING_TO_CHART};
+use super::direct::{Direct, NOTHING_TO_CHART, RUN_MOVED};
 use super::direct_fixture::{Fixture, submit};
 use super::direct_run;
 use super::msg::{Cmd, Msg, Worker};
@@ -138,6 +138,37 @@ fn an_export_writes_the_bytes_todays_export_writes() {
         !written.is_empty(),
         "the export wrote the fixture's rows, not nothing"
     );
+}
+
+#[test]
+fn a_run_in_the_tui_prints_the_pointer_to_saya_run() {
+    // O5: the harness run engine is out of scope for this surface. `/run`,
+    // `/run cancel` and `/runs` are one pointer line, never a turn and never
+    // a command: the line REPL keeps driving the same engine. The fixture is
+    // made once; every form is read against a fresh model.
+    let fixture = Fixture::new("run-pointer");
+    for line in [
+        "/run survey the data --allow workspace-read",
+        "/run cancel r-1",
+        "/runs",
+        "/runs r-1",
+    ] {
+        let mut model = fixture.model();
+        let cmds = submit(&mut model, line);
+        assert!(
+            cmds.is_empty(),
+            "{line} is a pointer, not a command: {cmds:?}"
+        );
+        assert_eq!(
+            model.toast(),
+            Some(RUN_MOVED),
+            "{line} says the one pointer line"
+        );
+        assert!(
+            entries(&model).is_empty(),
+            "{line} writes nothing into the transcript"
+        );
+    }
 }
 
 #[test]

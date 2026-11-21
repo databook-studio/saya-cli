@@ -1,29 +1,34 @@
-/// The `/run` family is wired at every touchpoint, not just the parser: the
-/// catalogue row (the popup's single source), the `/help` listing, and the
-/// per-command help. A command that parses but is absent from help is exactly
-/// the defect this test exists to catch — a half-existing command.
+/// The `/run` family stays registered, described and documented where a
+/// reader decides to use it — and K8 hides it from the listing. A command
+/// that parses but is absent from help is exactly the defect this test exists
+/// to catch — a half-existing command; the hide is the one deliberate
+/// exception, and `/help run` still carries the words.
 #[test]
-fn run_and_runs_are_registered_listed_and_described() {
+fn run_and_runs_stay_registered_and_described_but_unlisted() {
     for name in ["run", "runs"] {
         assert!(
             crate::slash::catalog::is_command(name),
             "{name} is registered"
         );
+        // The description is the catalogue's even though the popup and the
+        // listing no longer offer the row (K8), so read the rows themselves.
         assert!(
-            description_for(name).is_some(),
-            "{name} has a popup description"
+            crate::slash::catalog::all()
+                .find(|spec| spec.name == name)
+                .is_some_and(|spec| !spec.description.is_empty()),
+            "{name} carries a one-line description"
         );
         let help = command_help(name).expect("per-command help exists");
         assert!(!help.is_empty(), "{name} help is not empty");
     }
     let listing = help_text();
     assert!(
-        listing.contains("/run <goal…> --allow <scopes>"),
-        "the listing shows the /run usage: {listing}"
+        !listing.contains("/run <goal…> --allow <scopes>"),
+        "the listing hides the /run usage (K8): {listing}"
     );
     assert!(
-        listing.contains("/runs [id]"),
-        "the listing shows the /runs usage: {listing}"
+        !listing.contains("/runs [id]"),
+        "the listing hides the /runs usage (K8): {listing}"
     );
     // `/run cancel` is reachable and documented where a reader decides how to
     // stop a run.

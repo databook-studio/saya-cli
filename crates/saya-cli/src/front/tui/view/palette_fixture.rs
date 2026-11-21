@@ -46,6 +46,7 @@ pub(super) fn folded() -> Vec<CommandSpec> {
             category: Category::Query,
             surfaces: crate::slash::catalog::Surfaces::BOTH,
             listed: Some(("/offered <path>", 1)),
+            hidden: false,
         },
         CommandSpec {
             name: "folded",
@@ -54,6 +55,7 @@ pub(super) fn folded() -> Vec<CommandSpec> {
             category: Category::Query,
             surfaces: crate::slash::catalog::Surfaces::BOTH,
             listed: None,
+            hidden: false,
         },
     ]
 }

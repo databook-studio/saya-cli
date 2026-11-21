@@ -120,6 +120,10 @@ pub(crate) struct CommandSpec {
     /// is the listing's print order. `None` for a name the listing folds
     /// under another command.
     pub(crate) listed: Option<(&'static str, u8)>,
+    /// A command that still resolves and runs when typed, but is offered
+    /// nowhere: absent from the `/help` listing, the completion popup, the
+    /// palette and the "did you mean" suggestion.
+    pub(crate) hidden: bool,
 }
 
 impl CommandSpec {
@@ -144,6 +148,7 @@ const fn cmd(
         category,
         surfaces,
         listed,
+        hidden: false,
     }
 }
 
@@ -163,12 +168,34 @@ const fn aliased(
         category,
         surfaces,
         listed,
+        hidden: false,
+    }
+}
+
+/// A row that resolves and runs but is offered nowhere: kept out of the
+/// `/help` listing, the popup, the palette and the typo suggestion.
+const fn hidden_cmd(
+    name: &'static str,
+    category: Category,
+    surfaces: Surfaces,
+    description: &'static str,
+    listed: Option<(&'static str, u8)>,
+) -> CommandSpec {
+    CommandSpec {
+        name,
+        aliases: &[],
+        description,
+        category,
+        surfaces,
+        listed,
+        hidden: true,
     }
 }
 
 /// Every slash command, in the order the parser's `match` declares them (the
 /// order the completion popup lists them in). `listed` carries the `/help`
 /// view: its heading comes from `category`, its line and place from `listed`.
+/// A `hidden_cmd` row still parses, resolves and runs — it is offered nowhere.
 // rustfmt must not reflow the table: one row per two lines is what makes a
 // 56-row table reviewable, and the usage strings are read as they print.
 #[rustfmt::skip]
@@ -257,9 +284,9 @@ pub(crate) const CATALOGUE: &[CommandSpec] = &[
         Some(("/remember <table> <kind> <value…>", 45))),
     cmd("forget", Memory, BOTH, "Tombstone a contract claim so recall excludes it",
         Some(("/forget <id>", 46))),
-    cmd("run", Runs, BOTH, "Start or operate a headless run from the session",
+    hidden_cmd("run", Runs, BOTH, "Start or operate a headless run from the session",
         Some(("/run <goal…> --allow <scopes>", 48))),
-    cmd("runs", Runs, BOTH, "List runs, or show one run by id",
+    hidden_cmd("runs", Runs, BOTH, "List runs, or show one run by id",
         Some(("/runs [id]", 49))),
     cmd("allow", Model, BOTH, "Seed pre-authorised scopes into this session's grant store",
         Some(("/allow <scopes…>", 18))),
@@ -277,7 +304,7 @@ pub(crate) const CATALOGUE: &[CommandSpec] = &[
         Some(("/thinking [on|off]", 38))),
     cmd("tasks", Session, BOTH, "Show the session's task list, or clear it with /tasks clear",
         Some(("/tasks [clear]", 39))),
-    cmd("recovery", Session, BOTH, "Record file edits so you can undo them; list, preview and restore",
+    hidden_cmd("recovery", Session, BOTH, "Record file edits so you can undo them; list, preview and restore",
         Some(("/recovery [on|off|list|diff <id>|restore <id>]", 41))),
     cmd("help", Session, BOTH, "Show help for slash commands",
         Some(("/help [command]", 42))),
