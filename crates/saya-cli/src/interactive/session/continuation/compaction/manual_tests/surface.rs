@@ -1,5 +1,5 @@
-/// `/compact` is registered, listed, described, and helped — the same four
-/// hand-maintained touchpoints `/mode` keeps in step.
+/// `/compact` is registered, listed, described, and helped — the same
+/// touchpoints every catalogued command keeps in step.
 #[test]
 fn compact_is_registered_listed_described_and_helped() {
     assert_eq!(
@@ -7,11 +7,11 @@ fn compact_is_registered_listed_described_and_helped() {
         Ok(Some(crate::slash::SlashCommand::Compact))
     );
     assert!(
-        crate::slash::registry::KNOWN_COMMANDS.contains(&"compact"),
+        crate::slash::catalog::is_command("compact"),
         "compact is registered"
     );
     assert!(
-        crate::slash::description_for("compact").is_some(),
+        crate::slash::catalog::entries().any(|entry| entry.name == "compact"),
         "compact has a popup description"
     );
     let commands = crate::slash::user_commands::UserCommands::default();

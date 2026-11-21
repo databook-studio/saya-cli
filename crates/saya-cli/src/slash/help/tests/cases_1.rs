@@ -101,42 +101,13 @@ fn connect_and_include_read_as_a_contrast() {
     );
 }
 
-/// There is one source of description text. The popup in
-/// `complete.rs` and the `/help` listing here must not be two hand-maintained
-/// copies. The popup reads its descriptions from this module's
-/// [`COMMAND_DESCRIPTIONS`]; this test proves that single source covers
-/// exactly the parser's registry, so a command added to one surface cannot
-/// be missing from the other. (The same agreement is checked from the popup
-/// side in `complete.rs::descriptions_cover_exactly_the_registry`, which
-/// reads the same shared table.)
-#[test]
-fn command_descriptions_cover_exactly_the_registry() {
-    assert_eq!(
-        COMMAND_DESCRIPTIONS.len(),
-        registry::KNOWN_COMMANDS.len(),
-        "the description table and the command registry must list the same commands"
-    );
-    for (name, _) in COMMAND_DESCRIPTIONS {
-        assert!(
-            registry::KNOWN_COMMANDS.contains(name),
-            "{name} is described but not in the registry"
-        );
-    }
-    for name in registry::KNOWN_COMMANDS {
-        assert!(
-            description_for(name).is_some(),
-            "{name} is registered but has no description"
-        );
-    }
-}
-
 /// `/context` is registered, listed, described, and has per-command help
 /// that states its one hard bound: the instruction sources are shown by
 /// name, size, digest, and reason — their text is never shown.
 #[test]
 fn context_has_help_listing_and_description() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"context"),
+        crate::slash::catalog::is_command("context"),
         "context is registered"
     );
     assert!(

@@ -1,4 +1,5 @@
 use super::*;
+include!("tests/catalog.rs");
 include!("tests/commands.rs");
 include!("tests/coding.rs");
 include!("tests/export.rs");

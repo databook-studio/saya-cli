@@ -6,7 +6,7 @@
 #[test]
 fn tasks_is_registered_listed_and_described() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"tasks"),
+        crate::slash::catalog::is_command("tasks"),
         "tasks is registered"
     );
     assert!(
@@ -38,7 +38,7 @@ fn tasks_is_registered_listed_and_described() {
 #[test]
 fn preferences_is_registered_listed_and_described() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"preferences"),
+        crate::slash::catalog::is_command("preferences"),
         "preferences is registered"
     );
     assert!(
@@ -86,7 +86,7 @@ fn preferences_is_registered_listed_and_described() {
 #[test]
 fn mode_is_registered_listed_described_and_honest() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"mode"),
+        crate::slash::catalog::is_command("mode"),
         "mode is registered"
     );
     assert!(

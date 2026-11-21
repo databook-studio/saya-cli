@@ -5,28 +5,30 @@ fn profiles() -> Vec<String> {
 }
 
 #[test]
-fn descriptions_cover_exactly_the_registry() {
-    // the popup reads its descriptions from the single source in
-    // `slash::help` (no local copy here), so this asserts that shared
-    // table covers exactly the parser's registry — the popup and the
-    // `/help` listing cannot drift, because they share this one table.
-    let descriptions = crate::slash::COMMAND_DESCRIPTIONS;
-    assert_eq!(
-        descriptions.len(),
-        crate::slash::registry::KNOWN_COMMANDS.len()
-    );
-    for (name, _) in descriptions {
+fn descriptions_cover_exactly_the_catalogue() {
+    // the popup reads its rows from the catalogue — one table, no local
+    // copy — so this asserts the catalogue's names and descriptions are the
+    // popup's: every name is unique, every name carries a description, and
+    // the count is today's 59 (56 commands and their 3 alias spellings).
+    let entries: Vec<_> = crate::slash::catalog::entries().collect();
+    assert_eq!(entries.len(), 59);
+    for entry in &entries {
         assert!(
-            crate::slash::registry::KNOWN_COMMANDS.contains(name),
-            "{name} described but not registered"
+            entry.surfaces.covers(crate::slash::catalog::Surface::Tui),
+            "{} is not available in the popup's surface",
+            entry.name
+        );
+        assert!(
+            !entry.description.is_empty(),
+            "{} has no popup description",
+            entry.name
         );
     }
-    for name in crate::slash::registry::KNOWN_COMMANDS {
-        assert!(
-            description_for(name).is_some(),
-            "{name} registered but not described"
-        );
-    }
+    let mut names: Vec<_> = entries.iter().map(|entry| entry.name).collect();
+    names.sort_unstable();
+    let count = names.len();
+    names.dedup();
+    assert_eq!(names.len(), count, "a catalogued name appears twice");
 }
 
 #[test]

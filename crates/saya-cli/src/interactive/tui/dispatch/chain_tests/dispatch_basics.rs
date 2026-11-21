@@ -14,7 +14,7 @@ fn every_registered_slash_command_survives_dispatch() {
     ));
     std::fs::create_dir_all(&root).expect("chain test lines root");
     let mut failed: Vec<String> = Vec::new();
-    for name in KNOWN_COMMANDS {
+    for name in catalog::names() {
         let line = representative_line(name, &root);
         let tag = name.replace('-', "_");
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {

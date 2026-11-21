@@ -5,18 +5,16 @@
 //! re-exports [`help_for`] so the existing `crate::slash::help_for` path used by
 //! the session command layer keeps resolving.
 //!
-//! [`COMMAND_DESCRIPTIONS`] is the single source of the one-line description per
-//! command. The completion popup in `interactive::tui::complete` reads it via
-//! [`description_for`], and the `/help` listing here reads it too — so the popup
-//! and the listing can never drift into two hand-maintained copies. The listing
-//! only adds presentation the popup does not carry: a usage form, a group
-//! heading, and which of the alias-folded commands to show.
+//! The listing and the one-line descriptions are a view of
+//! [`crate::slash::catalog::CATALOGUE`] — the usage form, the description, the
+//! heading and the order all come from that one table. The completion popup in
+//! `interactive::tui::complete` reads the same rows, so the popup and the
+//! listing cannot drift into two hand-maintained copies.
 
 use super::user_commands::{UserCommands, user_command_help, user_commands_section};
+use crate::slash::catalog::Category;
 
-include!("help/registry.rs");
 include!("help/descriptions.rs");
-include!("help/listing_groups.rs");
 /// Returns a short usage and example string for a known slash command, or `None` if unknown.
 pub(crate) fn command_help(name: &str) -> Option<&'static str> {
     let clean_name = name.trim_start_matches('/').to_lowercase();
