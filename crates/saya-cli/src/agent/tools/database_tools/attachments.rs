@@ -12,6 +12,12 @@ impl DatabaseTools {
         &self.registry
     }
 
+    /// The same registry as a shared handle: what a run's recall source holds so
+    /// it selects against the connections the tools query.
+    pub(crate) fn registry_handle(&self) -> Arc<ConnectionRegistry> {
+        Arc::clone(&self.registry)
+    }
+
     /// Returns a reference to the optional state database.
     pub(crate) fn state_db(&self) -> Option<&SqliteStateStore> {
         self.state_db.as_ref()
@@ -150,7 +156,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db: None,
@@ -183,7 +189,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db,

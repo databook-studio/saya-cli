@@ -17,7 +17,7 @@ use saya_agent::{AgentEventSink, CancellationToken, NoopEventSink};
 use saya_config::MemoryMode;
 use saya_connectors::{ConnectorOptions, SqliteConnector};
 use saya_store::SqliteStateStore;
-use saya_types::SqlDialect;
+use saya_types::{DatabaseProfile, SqlDialect};
 
 use super::compose::SessionRun;
 use super::workspace_shape::WorkspaceShape;
@@ -79,16 +79,26 @@ pub(super) struct Composed {
 
 /// An in-place session with no database configured.
 pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, false).await
+    build(case, endpoint, false, None).await
 }
 
 /// The same, with one seeded SQLite database named `primary`: a chat that has a
 /// database to read and to ask about.
 pub(super) async fn in_place_with_database(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, true).await
+    build(case, endpoint, true, None).await
 }
 
-async fn build(case: &str, endpoint: &str, database: bool) -> Fixture {
+/// The same, with `memory` as the session's resolved memory mode: a chat whose
+/// run can recall the claims its store holds and learn from its turns.
+pub(super) async fn in_place_with_memory(
+    case: &str,
+    endpoint: &str,
+    memory: MemoryMode,
+) -> Fixture {
+    build(case, endpoint, true, Some(memory)).await
+}
+
+async fn build(case: &str, endpoint: &str, database: bool, memory: Option<MemoryMode>) -> Fixture {
     use std::os::unix::fs::PermissionsExt;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
@@ -106,6 +116,9 @@ async fn build(case: &str, endpoint: &str, database: bool) -> Fixture {
     let git = git_path();
     let mut runtime = load_with_sources(&GlobalOptions::default(), &folder, &root, BTreeMap::new())
         .expect("the fixture resolves a runtime");
+    if let Some(mode) = memory {
+        runtime.resolved.memory.mode = mode;
+    }
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.model = "composition".into();
     runtime.resolved.ai.base_url = Some(endpoint.into());
@@ -169,13 +182,24 @@ async fn sqlite_connection(root: &Path) -> ConnectionRegistry {
     let connector = SqliteConnector::open(&path, true, ConnectorOptions::default())
         .await
         .expect("the fixture database opens");
+    // The entry carries the profile identity a stored claim is filed under, so
+    // recall can resolve the profile it selects against — the same identity the
+    // connection's own profile would hash to.
+    let identity = crate::profile_identity::profile_identity(
+        "primary",
+        &DatabaseProfile::Sqlite {
+            path: path.display().to_string(),
+            read_only: true,
+        },
+        &root.join("connections.toml"),
+    );
     let mut registry = ConnectionRegistry::new("primary");
     registry.insert(
         "primary",
         ConnectionEntry {
             connector: Box::new(connector),
             dialect: SqlDialect::Sqlite,
-            profile_id: None,
+            profile_id: Some(identity.as_str().to_string()),
         },
     );
     registry
