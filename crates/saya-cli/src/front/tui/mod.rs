@@ -4,14 +4,17 @@
 //! fallback as pure data, so the screens that follow name meaning instead of
 //! hue. T3 lands the model, the messages it takes, the pure update that folds
 //! them and the keymap that reads a press: one owner of state, and every
-//! decision that leaves the surface a [`Cmd`] the runtime performs. No
-//! terminal I/O, no widgets, no drawing — the panes come later.
+//! decision that leaves the surface a [`Cmd`] the runtime performs. T4 lands the
+//! status line, the first pane: one pure function from the session's facts and a
+//! width to the row a terminal paints. No terminal I/O, no widgets beyond the
+//! line the pane builds itself, no drawing loop — the panes come later.
 
 pub(crate) mod keys;
 pub(crate) mod model;
 pub(crate) mod msg;
 pub(crate) mod theme;
 pub(crate) mod update;
+pub(crate) mod view;
 
 // This `pub(crate)` surface is the surface's boundary: the runtime above it
 // reads the model, feeds it messages and performs the commands it answers
