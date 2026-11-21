@@ -6,6 +6,7 @@
 //! back to `palette`'s `COLORFGBG` heuristic.
 
 mod detect;
+pub(crate) mod hue;
 mod palette;
 #[cfg(test)]
 #[path = "tests.rs"]

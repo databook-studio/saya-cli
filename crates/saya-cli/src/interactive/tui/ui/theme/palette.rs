@@ -11,6 +11,7 @@
 //! hard-coded colour anywhere outside this module is the bug that centralisation
 //! exists to prevent.
 
+use super::hue;
 use crate::interactive::tui::transcript::BlockKind;
 use ratatui::{
     layout::Rect,
@@ -135,37 +136,37 @@ fn pick(dark: Color, light: Color) -> Color {
 
 /// saya's signature accent (iris violet): brand, assistant, focus, borders.
 pub(in crate::interactive::tui) fn accent() -> Color {
-    pick(Color::Rgb(157, 139, 245), Color::Rgb(109, 78, 200))
+    pick(hue::ACCENT_DARK, hue::ACCENT_LIGHT)
 }
 /// User turns — a cool secondary so the accent stays saya's.
 pub(in crate::interactive::tui) fn user_color() -> Color {
-    pick(Color::Rgb(106, 155, 204), Color::Rgb(44, 108, 176))
+    pick(hue::INFO_DARK, hue::INFO_LIGHT)
 }
 /// Secondary/de-emphasised text: tool + system lines, hints, provider/model.
 pub(in crate::interactive::tui) fn secondary() -> Color {
-    pick(Color::Rgb(168, 162, 154), Color::Rgb(107, 102, 96))
+    pick(hue::DIM_DARK, hue::DIM_LIGHT)
 }
 /// Status: success / safe (read-only approval, `sharing:off` — data stays
 /// local, passing checks).
 pub(in crate::interactive::tui) fn success() -> Color {
-    pick(Color::Rgb(127, 174, 107), Color::Rgb(61, 122, 53))
+    pick(hue::OK_DARK, hue::OK_LIGHT)
 }
 /// Status: caution (ask approval, approval-panel border, `sharing:on` — row
 /// values are being sent to the provider).
 pub(in crate::interactive::tui) fn warning() -> Color {
-    pick(Color::Rgb(224, 164, 88), Color::Rgb(154, 93, 18))
+    pick(hue::WARN_DARK, hue::WARN_LIGHT)
 }
 /// Status: error / danger (failures, never approval).
 pub(in crate::interactive::tui) fn danger() -> Color {
-    pick(Color::Rgb(229, 105, 95), Color::Rgb(181, 55, 44))
+    pick(hue::BAD_DARK, hue::BAD_LIGHT)
 }
 /// Status-bar / badge background (faint iris-tinted dark, or a light tint).
 pub(in crate::interactive::tui) fn status_bg() -> Color {
-    pick(Color::Rgb(30, 28, 36), Color::Rgb(236, 233, 245))
+    pick(hue::SURFACE_DARK, hue::SURFACE_LIGHT)
 }
 /// Inline `code` in assistant answers.
 pub(in crate::interactive::tui) fn code_color() -> Color {
-    pick(Color::Rgb(127, 181, 214), Color::Rgb(46, 109, 158))
+    pick(hue::CODE_DARK, hue::CODE_LIGHT)
 }
 /// Primary foreground for body text on the terminal's default ground. The
 /// dark entry is the terminal's own text colour (`Reset`), never a fixed
@@ -174,7 +175,7 @@ pub(in crate::interactive::tui) fn code_color() -> Color {
 /// which is deliberately painted (the light palette is only ever chosen
 /// when the terminal is known to be light).
 pub(in crate::interactive::tui) fn foreground() -> Color {
-    pick(Color::Reset, Color::Rgb(40, 38, 42))
+    pick(Color::Reset, hue::FOREGROUND_LIGHT)
 }
 /// Text colour that reads against the accent when the accent is the background
 /// (selection badges, highlighted rows): black on the light iris, white on the
