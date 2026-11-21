@@ -102,8 +102,11 @@ impl RootTools {
             denials: super::owner_denial::DenialTally::default(),
         };
         // The root writes the shared working checkout, so the exact
-        // write admission over W is the whole write decision.
-        let decider = workspace.approval;
+        // write admission over W is the whole write decision — with the
+        // session's own grant store beside it: a family the session already
+        // holds a grant for is pre-answered, and the workspace tool's
+        // containment stays the last word on the path.
+        let decider = workspace.approval.with_grants(job.launch_grants());
         // The root's shell: built over the working checkout's own root, and
         // only when the config is on, the mode is not `never`, and the sandbox
         // (or, without one, the host lane) allows it.
@@ -128,7 +131,7 @@ impl RootTools {
         let plan = job.plan_gate();
         let mut direct = DirectCodingTools::new(
             coordinator,
-            workspace.tools,
+            workspace.tools.with_grants(job.launch_grants()),
             workspace.definitions,
             decider,
             shell,
