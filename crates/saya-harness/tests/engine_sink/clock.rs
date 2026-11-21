@@ -43,6 +43,7 @@ async fn streamed_text_bounds_clock_observations_by_elapsed_seconds_and_boundari
             name: "read".into(),
             arguments: serde_json::Value::Null,
             effect: None,
+            caller: None,
         },
     )
     .await;
@@ -180,6 +181,7 @@ async fn a_failed_clock_append_before_a_tool_request_does_not_fabricate_a_pause(
             name: "write".into(),
             arguments: serde_json::Value::Null,
             effect: None,
+            caller: None,
         },
     )
     .await;

@@ -66,7 +66,7 @@ impl App {
                         AgentEvent::AssistantText { .. } => {
                             self.request.activity = None;
                         }
-                        AgentEvent::ToolCompleted { name, summary } => {
+                        AgentEvent::ToolCompleted { name, summary, .. } => {
                             self.request.activity = None;
                             // The completion decides promotion, classified by
                             // the same failure predicate the renderers use —

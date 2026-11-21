@@ -26,6 +26,7 @@ fn failed_completion(name: &str) -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: name.into(),
             summary: "read-only database tool failed".into(),
+            caller: None,
         },
     ]
 }
@@ -40,6 +41,7 @@ fn succeeded_completion(name: &str) -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: name.into(),
             summary: "1 row".into(),
+            caller: None,
         },
     ]
 }
@@ -130,6 +132,7 @@ fn a_denied_tool_still_renders_as_denied() {
             name: "run_command".into(),
             arguments: serde_json::Value::Null,
             reason: "needs approval".into(),
+            caller: None,
         },
         false,
     );
@@ -157,6 +160,7 @@ fn the_group_header_still_names_the_failure_count() {
         AgentEvent::ToolCompleted {
             name: "bounded_sql_query".into(),
             summary: "1 row".into(),
+            caller: None,
         },
         AgentEvent::tool_requested(
             "bounded_sql_query",
@@ -166,6 +170,7 @@ fn the_group_header_still_names_the_failure_count() {
         AgentEvent::ToolCompleted {
             name: "bounded_sql_query".into(),
             summary: "read-only database tool failed".into(),
+            caller: None,
         },
     ];
     let groups = crate::render::tool_groups::group_tool_events(&events);
@@ -201,6 +206,7 @@ fn the_mark_uses_the_shared_failure_predicate() {
             AgentEvent::ToolCompleted {
                 name: "probe".into(),
                 summary: summary.into(),
+                caller: None,
             },
             false,
         );

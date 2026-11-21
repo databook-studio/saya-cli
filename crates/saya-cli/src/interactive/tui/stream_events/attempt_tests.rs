@@ -48,6 +48,7 @@ fn delivered_first_step() -> Transcript {
         AgentEvent::ToolCompleted {
             name: "bounded_sql_query".into(),
             summary: "1 row".into(),
+            caller: None,
         },
         false,
     );
