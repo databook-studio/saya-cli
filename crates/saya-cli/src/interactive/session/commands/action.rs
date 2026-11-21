@@ -16,19 +16,29 @@ pub enum SessionAction {
     /// The loops intercept this (it needs the provider runtime); the arm here
     /// keeps the match exhaustive.
     Compact,
+    /// `/status` — the one panel. Intercepted in both loops, which hold the
+    /// runtime's settings, the instruction sources and the store's record
+    /// size; the arm here keeps the match exhaustive. Nothing here probes —
+    /// `/doctor` is the command that checks.
+    Status,
     Agent(AgentOutput),
     Cancelled,
     NotImplemented(String),
     Error(String),
-    History,
+    /// `/sessions` — the saved-session listing, through the adapter's own
+    /// store. The flag says the one-release `/history` alias stated it, so
+    /// the one listing carries that spelling's note.
+    History(bool),
     /// Run `config doctor` and surface its report as a message.
     Doctor,
     Resume(String),
-    /// `/rotate` — continue the session in a small successor. Intercepted
-    /// in both loops (they own the store and the runtime, and the shared
-    /// `session_rotate_run` runner needs both); the arm here keeps the
-    /// match exhaustive.
-    Rotate,
+    /// `/compact --new-session` (and its one-release alias `/rotate`) —
+    /// continue the session in a small successor. Intercepted in both loops
+    /// (they own the store and the runtime, and the shared
+    /// `session_rotate_run` runner needs both); the arm here keeps the match
+    /// exhaustive. The request carries the spelling, so the alias's note is
+    /// said by the one rotation.
+    Rotate(crate::slash::CompactRequest),
     Schema(bool),
     Sql(String),
     /// `/export` — the parsed request (mode, overwrite, path) the TUI's

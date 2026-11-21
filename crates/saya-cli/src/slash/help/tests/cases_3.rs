@@ -148,31 +148,30 @@ fn every_help_surface_names_bypass() {
     );
 }
 
-/// `/rotate` is wired at every hand-maintained touchpoint the
-/// cli-application standard names: the registry, the description table
-/// (the popup's single source), the `/help` listing (the Session group),
-/// and the per-command help that states what carries over, what does
-/// not, and the /compact-first requirement.
+/// `/rotate` is `/compact --new-session`'s one-release alias, wired at every
+/// touchpoint: the catalogue resolves it, it keeps its own popup description
+/// (aliases are catalogue rows' aliases, each with its own description), the
+/// listing shows the canonical `/compact [--new-session]` row instead, and the
+/// per-command help states what carries over, what does not, and the
+/// /compact-first requirement.
 #[test]
-fn rotate_is_registered_listed_and_described() {
+fn rotate_is_an_alias_listed_described_and_helped() {
     assert!(
-        crate::slash::catalog::is_command("rotate"),
-        "rotate is registered"
+        crate::slash::catalog::resolve("rotate") == Some("compact"),
+        "rotate is /compact's alias"
     );
     assert_eq!(
         description_for("rotate"),
-        Some(
-            "Continue in a new, smaller session that keeps your summary and notes (run /compact first)"
-        ),
-        "the description is the shared one-liner"
+        Some("Deprecated alias for /compact --new-session (removed next release)"),
+        "the alias keeps its own one-line description"
     );
     let listing = help_text();
     assert!(
-        listing.contains("/rotate"),
-        "the listing shows the /rotate usage: {listing}"
+        listing.contains("/compact [--new-session]"),
+        "the listing shows the canonical row: {listing}"
     );
     let help = command_help("rotate").expect("rotate has per-command help");
-    for stated in ["/compact", "grants", "resumable"] {
+    for stated in ["/compact --new-session", "grants", "resumable"] {
         assert!(
             help.contains(stated),
             "the /rotate help states {stated:?}: {help}"

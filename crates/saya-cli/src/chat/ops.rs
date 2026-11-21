@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use super::RunPort;
 use super::ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest, SessionOp};
+use super::ops_status::Section;
 use crate::interactive::session::permissions::mode;
 use crate::slash::SlashCommand;
 
@@ -141,12 +142,20 @@ impl ChatOps {
             SlashCommand::Explain(sql) => Op::Read(ReadOp::Explain(sql.clone())),
             // The conversation itself: emptying or shrinking it is a new epoch.
             SlashCommand::Clear => Op::Rollover(ContextChange::Clear, None),
-            SlashCommand::Compact => Op::Rollover(ContextChange::Compact, None),
-            SlashCommand::Rotate => Op::Rollover(ContextChange::Rotate, None),
+            // One compaction operation: bare shrinks this session's working
+            // memory, `--new-session` (and its one-release alias `/rotate`)
+            // continues in a successor afterwards.
+            SlashCommand::Compact(request) => Op::Rollover(
+                if request.new_session {
+                    ContextChange::Rotate
+                } else {
+                    ContextChange::Compact
+                },
+                None,
+            ),
             SlashCommand::Resume(id) => Op::Rollover(ContextChange::Resume, Some(id.clone())),
             // Everything else reads or maintains something other than the run.
-            SlashCommand::History => Op::Read(ReadOp::History),
-            SlashCommand::Sessions => Op::Read(ReadOp::Sessions),
+            SlashCommand::Sessions(_) => Op::Read(ReadOp::Sessions),
             SlashCommand::SessionsList => Op::Read(ReadOp::SessionsList),
             SlashCommand::SessionsDelete(id) => Op::Read(ReadOp::SessionsDelete(id.clone())),
             SlashCommand::Preferences(command) => Op::Read(ReadOp::Preferences(command.clone())),
@@ -159,11 +168,14 @@ impl ChatOps {
             SlashCommand::Run(_) | SlashCommand::RunCancel(_) => Op::Unavailable(RUN_ELSEWHERE),
             SlashCommand::Allow(tokens) => Op::Session(SessionOp::Allow(tokens.clone())),
             SlashCommand::Grants => Op::Read(ReadOp::Grants),
-            SlashCommand::Context => Op::Read(ReadOp::InstructionSources),
+            // The one panel, and the three aliases that open one of its
+            // sections: one operation, one set of facts, one rendering.
+            SlashCommand::Status => Op::Read(ReadOp::Status),
+            SlashCommand::Usage => Op::Read(ReadOp::StatusSection(Section::Model)),
+            SlashCommand::Workspace => Op::Read(ReadOp::StatusSection(Section::Workspace)),
+            SlashCommand::Context => Op::Read(ReadOp::StatusSection(Section::Instructions)),
             SlashCommand::Doctor => Op::Read(ReadOp::Doctor),
-            SlashCommand::Usage => Op::Read(ReadOp::Usage),
             SlashCommand::Thinking(shown) => Op::Session(SessionOp::Thinking(*shown)),
-            SlashCommand::Workspace => Op::Read(ReadOp::Workspace),
             SlashCommand::Help(name) => Op::Read(ReadOp::Help(name.clone())),
             SlashCommand::Tasks(tail) => Op::Read(ReadOp::Tasks(tail.clone())),
             SlashCommand::Notes(command) => Op::Read(ReadOp::Notes(command.clone())),

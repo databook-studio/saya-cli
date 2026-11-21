@@ -36,16 +36,17 @@ pub(super) fn apply_session_action(
     if !matches!(
         action,
         Some(
-            SessionAction::History
+            SessionAction::History(_)
                 | SessionAction::Mode(_)
                 | SessionAction::Doctor
                 | SessionAction::Context
+                | SessionAction::Status
                 | SessionAction::SessionsList
                 | SessionAction::SessionsDelete(_)
                 | SessionAction::Preferences(_)
                 | SessionAction::Recovery(_)
                 | SessionAction::Resume(_)
-                | SessionAction::Rotate
+                | SessionAction::Rotate(_)
                 | SessionAction::Sql(_)
                 | SessionAction::Contracts(_)
                 | SessionAction::Investigation(_)
@@ -59,7 +60,7 @@ pub(super) fn apply_session_action(
     }
     let current = action.take()?;
     match current {
-        SessionAction::History => list_sessions(transcript, store),
+        SessionAction::History(via_alias) => list_sessions(transcript, state, store, via_alias),
         SessionAction::Mode(request) => {
             // `/mode <mode>` — the one shared switch the keyboard cycle runs
             // too. It moves the session's one policy, journals a fresh bypass
@@ -86,17 +87,27 @@ pub(super) fn apply_session_action(
             transcript.push(BlockKind::System, crate::config::doctor::summary(runtime))
         }
         SessionAction::Context => {
-            // `/context` shows the instruction sources the next request
-            // would load through the one shared renderer the headless loop
-            // prints too — names, sizes, short digests, reasons; never the
-            // file text.
+            // `/context` opens the panel's Instructions section — the sources
+            // the next request would load, through the one shared renderer the
+            // headless loop prints too — and says the alias's note once.
             transcript.push(
                 BlockKind::System,
-                crate::interactive::session::context_view::context_view(runtime, session.root()),
+                crate::chat::ops_status::instructions_answer(state, runtime, session.root()),
+            );
+        }
+        SessionAction::Status => {
+            // `/status` — the one panel. Every fact is one the session already
+            // holds or one read without a probe: no provider call, no database
+            // query, no network. `/doctor` stays the command that checks.
+            transcript.push(
+                BlockKind::System,
+                crate::chat::ops_status::panel_text(state, runtime, store, session.root()),
             );
         }
         SessionAction::Resume(id) => resume(transcript, state, runtime, store, session, &id),
-        SessionAction::Rotate => rotate(transcript, state, runtime, store, session),
+        SessionAction::Rotate(request) => {
+            rotate(transcript, request, state, runtime, store, session)
+        }
         SessionAction::SessionsList => {
             // `/sessions list` — the same listing the headless REPL prints,
             // through the one shared builder: rows, pending deletions, and

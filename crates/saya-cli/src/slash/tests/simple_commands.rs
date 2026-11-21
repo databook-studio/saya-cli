@@ -71,11 +71,11 @@ fn kept_alias_pairs_still_parse_and_suggest() {
     // Both names still parse.
     assert_eq!(
         parse_slash_command("/history"),
-        Ok(Some(SlashCommand::History))
+        Ok(Some(SlashCommand::Sessions(SessionsRequest::history())))
     );
     assert_eq!(
         parse_slash_command("/sessions"),
-        Ok(Some(SlashCommand::Sessions))
+        Ok(Some(SlashCommand::Sessions(SessionsRequest::default())))
     );
     assert_eq!(parse_slash_command("/exit"), Ok(Some(SlashCommand::Exit)));
     assert_eq!(parse_slash_command("/quit"), Ok(Some(SlashCommand::Exit)));

@@ -16,6 +16,7 @@
 use saya_agent::PermissionMode;
 
 use crate::agent::tools::shell_policy::ModeCell;
+use crate::chat::ops_status::Section;
 use crate::cli::{InvestigationCommand, PreferencesCommand};
 use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::commands::approval_name;
@@ -112,7 +113,9 @@ pub(crate) enum ContextChange {
     Compact,
     /// `/resume <id>` — a saved session's record.
     Resume,
-    /// `/rotate` — a smaller successor keeps the summary and the tail.
+    /// `/compact --new-session` — a compaction that continues in a smaller
+    /// successor keeping the summary and the tail. `/rotate` is this change's
+    /// one-release alias, so the two spellings state one request.
     Rotate,
 }
 
@@ -171,9 +174,15 @@ pub(crate) enum ReadOp {
     Chart(String),
     /// `/explain [sql]` — the statement's plan.
     Explain(String),
-    /// `/history` — the saved session ids.
-    History,
-    /// `/sessions` — the adapter's own listing.
+    /// `/status` — the one panel: five sections, built from the facts this
+    /// session already holds and never from a probe.
+    Status,
+    /// One section of that panel, for the one-release aliases `/usage`
+    /// ([`Section::Model`]), `/workspace` ([`Section::Workspace`]) and
+    /// `/context` ([`Section::Instructions`]).
+    StatusSection(Section),
+    /// `/sessions` — the saved-session listing (`/history` is its one-release
+    /// alias, and states the same read).
     Sessions,
     /// `/sessions list` — the shared listing.
     SessionsList,
@@ -190,14 +199,8 @@ pub(crate) enum ReadOp {
     Runs(Option<String>),
     /// `/grants` — the session's grant store.
     Grants,
-    /// `/context` — the instruction sources the next request would load.
-    InstructionSources,
     /// `/doctor` — the configuration check.
     Doctor,
-    /// `/usage` — the session's token totals.
-    Usage,
-    /// `/workspace` — the workspace binding.
-    Workspace,
     /// `/help [command]` — the help text.
     Help(Option<String>),
     /// `/tasks [clear]` — the session task list.

@@ -29,9 +29,22 @@ pub enum SlashCommand {
     Chart(String),
     Explain(String),
     Clear,
-    Compact,
-    History,
-    Sessions,
+    /// `/compact [--new-session]` — shrink working memory through the one
+    /// compaction operation (AC's chat compaction), and with `--new-session`
+    /// continue in a smaller successor afterwards. `/rotate` is this command's
+    /// one-release alias, so it produces **this** variant with
+    /// [`CompactRequest::via_rotate_alias`] set: one operation, one path.
+    Compact(CompactRequest),
+    /// `/sessions` — the saved-session listing, browsing through the adapter's
+    /// own store. `/history` is this command's one-release alias, so it
+    /// produces **this** variant with [`SessionsRequest::via_history_alias`]
+    /// set: one listing, one path.
+    Sessions(SessionsRequest),
+    /// `/status` — the one panel: five sections built from the facts this
+    /// session already holds, and never a probe (`/doctor` is the command that
+    /// checks). `/usage`, `/workspace` and `/context` are its one-release
+    /// aliases, each opening the one section it names.
+    Status,
     /// `/sessions list` — the saved-session listing through the shared
     /// operations the headless `saya sessions list` uses: rows newest
     /// first, pending deletions named separately, the storage root last.
@@ -49,12 +62,6 @@ pub enum SlashCommand {
     /// becomes a model-callable tool.
     Preferences(PreferencesCommand),
     Resume(String),
-    /// `/rotate` — continue the session in a new, smaller successor that
-    /// keeps the saved summary, the notes, and the not-yet-summarised tail;
-    /// grants, approvals and the recovery setting are never inherited. The
-    /// loops own the behaviour (they hold the store and the runtime); the
-    /// form takes no argument.
-    Rotate,
     /// `/setup` — hand the terminal to the guided setup from the full-screen
     /// TUI. Parsed bare; trailing text is a usage error, never an argument.
     /// The TUI owns the handoff; headless surfaces refuse with the pointer
