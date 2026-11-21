@@ -33,7 +33,7 @@ use crate::commands::coding::{CodingApplication, CodingError};
 /// What a context change changed. The change is what the surface states; the
 /// run it states next is composed from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ContextChange {
+pub(crate) enum RolloverCause {
     /// A different model.
     Model,
     /// A different provider, or the same one at a different endpoint.
@@ -46,7 +46,7 @@ pub(crate) enum ContextChange {
     Clear,
 }
 
-impl ContextChange {
+impl RolloverCause {
     /// Whether the change clears the conversation. `/clear` is the one change
     /// that starts the next run with an empty seed and an empty transcript;
     /// every other change carries the conversation over.
@@ -95,7 +95,7 @@ impl Ending {
 
 /// A change waiting for the turn in flight to end.
 struct Waiting {
-    change: ContextChange,
+    change: RolloverCause,
     next: SessionRun,
 }
 
@@ -120,7 +120,7 @@ impl Rollover {
     /// Records the change a running turn holds back: it is rolled when the turn
     /// ends, and a second change replaces it — the newest statement of where the
     /// session should point is the one that rolls.
-    pub(crate) fn request(&self, change: ContextChange, next: SessionRun) {
+    pub(crate) fn request(&self, change: RolloverCause, next: SessionRun) {
         *self.queue() = Some(Waiting { change, next });
     }
 
@@ -139,7 +139,7 @@ impl Rollover {
     pub(crate) async fn roll(
         &self,
         ending: Ending,
-        change: ContextChange,
+        change: RolloverCause,
         next: SessionRun,
         transcript: &mut Transcript,
     ) -> Result<RunComposition, RolloverError> {

@@ -25,7 +25,7 @@ use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::commands::coding::{CodingApplication, CodingError, NativeCodingJob, RunPlugins};
 use crate::connection::ConnectionRegistry;
 use crate::plugins::database::prompt::ChatPrompt;
-use crate::plugins::database::{ChatDatabaseFlags, DatabasePlugin, SessionBudget};
+use crate::plugins::database::{ChatDatabaseFlags, DatabaseBudget, DatabasePlugin};
 
 /// What a session hands the database plugin once, at composition.
 pub(super) struct PluginSetup {
@@ -79,7 +79,7 @@ pub(super) fn run_plugins(
             has_state_store: true,
             permit_candidate_writes: false,
         },
-        SessionBudget::of(runtime),
+        DatabaseBudget::of(runtime),
         prompt,
         capture,
     )) as Arc<dyn RunPlugin>;

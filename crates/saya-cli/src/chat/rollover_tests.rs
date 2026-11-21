@@ -16,7 +16,7 @@ use saya_store::RunLink;
 use super::ChatOutcome;
 use super::compose_fixture;
 use super::operator_front_fixture;
-use super::rollover::{ContextChange, Ending, Rollover};
+use super::rollover::{Ending, Rollover, RolloverCause};
 use super::rollover_fixture::{RUN, job_id, last_body, messages, next_run, open, transcript, turn};
 use crate::commands::coding::parent_turn_provider::{Reply, Scripted};
 
@@ -51,7 +51,7 @@ async fn a_change_while_ready_closes_the_run_and_seeds_the_next_one() {
     let rolled = rollover
         .roll(
             Ending::new(session.run),
-            ContextChange::Model,
+            RolloverCause::Model,
             next_run(front.front(), "roll-ready-2"),
             &mut transcript,
         )
@@ -137,7 +137,7 @@ async fn a_change_while_busy_rolls_after_the_turn_ends() {
 
     let rollover = Rollover::new(Arc::clone(&session.application));
     rollover.request(
-        ContextChange::Connection,
+        RolloverCause::Connection,
         next_run(front.front(), "roll-busy-2"),
     );
     assert!(

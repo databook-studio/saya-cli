@@ -11,7 +11,7 @@ use saya_store::RunLink;
 use super::ChatOutcome;
 use super::compose_fixture;
 use super::operator_front_fixture;
-use super::rollover::{ContextChange, Ending, Rollover};
+use super::rollover::{Ending, Rollover, RolloverCause};
 use super::rollover_fixture::{job_id, last_body, messages, next_run, open, transcript, turn};
 use crate::commands::coding::parent_turn_provider::{Reply, Scripted};
 
@@ -33,7 +33,7 @@ async fn clear_rolls_with_an_empty_seed_and_an_empty_transcript() {
     let rolled = rollover
         .roll(
             Ending::new(session.run),
-            ContextChange::Clear,
+            RolloverCause::Clear,
             next_run(front.front(), "roll-clear-2"),
             &mut transcript,
         )
@@ -90,7 +90,7 @@ async fn a_rollover_asks_nobody_and_never_contends_for_the_folder() {
     let second = rollover
         .roll(
             Ending::new(session.run),
-            ContextChange::Provider,
+            RolloverCause::Provider,
             next_run(front.front(), "roll-quiet-2"),
             &mut transcript,
         )
@@ -103,7 +103,7 @@ async fn a_rollover_asks_nobody_and_never_contends_for_the_folder() {
     let third = rollover
         .roll(
             Ending::new(second),
-            ContextChange::Privacy,
+            RolloverCause::Privacy,
             next_run(front.front(), "roll-quiet-3"),
             &mut transcript,
         )

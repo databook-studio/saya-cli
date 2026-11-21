@@ -67,6 +67,7 @@ fn inputs(budget: DatabaseBudget) -> TurnInputs {
             registry: PluginRegistry::new(vec![plugin], &[])
                 .expect("the database plugin declares no name an empty core list owns"),
             context: CHAT,
+            primary: None,
         }),
         seed: Vec::new(),
     }

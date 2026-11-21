@@ -44,7 +44,7 @@ pub(crate) use ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest,
 #[allow(unused_imports)]
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]
-pub(crate) use rollover::{ContextChange, Ending, Rollover, RolloverError};
+pub(crate) use rollover::{Ending, Rollover, RolloverCause, RolloverError};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
 #[allow(unused_imports)]
