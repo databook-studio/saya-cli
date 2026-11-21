@@ -172,8 +172,7 @@ async fn runtime_with_sqlite(root: &Path, base_url: String) -> RuntimeConfig {
                     elapsed_seconds: finite(10),
                     known_tokens: finite(1000),
                 },
-                run: Default::default(),
-                job: Default::default(),
+                ..Default::default()
             },
             ai: ResolvedAi {
                 app_attribution: true,
