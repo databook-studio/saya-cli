@@ -55,6 +55,11 @@ pub(crate) struct LineSession {
     /// Whether this surface may put a question to somebody (the loop's
     /// live-terminal fact).
     pub(crate) can_prompt: bool,
+    /// The grants the launch stated (`--allow`): the session's seed store, whose
+    /// held tokens pre-answer the calls a mode would have asked about. The run's
+    /// host is told them, so the families they cover are advertised exactly as
+    /// the session advertised them.
+    pub(crate) grants: saya_agent::SessionGrants,
 }
 
 /// Opens the session: composes and opens its run, and hands back the session
@@ -84,6 +89,10 @@ async fn assemble(parts: LineSession) -> Result<Line, String> {
     )
     .await
     .map_err(|error| error.to_string())?;
+    // The launch's own seeds ride the host the run composes over: a held token
+    // pre-answers the calls its family would have asked about, so the mode's
+    // advertisement states the family the session stated.
+    application.with_launch_grants(parts.grants.clone());
     // The run's own counters, printed after every settled turn: the same
     // collector the answering turn hands its metrics sink, and the stop
     // instant a Ctrl-C is measured from. Its cancellation token is the scope's

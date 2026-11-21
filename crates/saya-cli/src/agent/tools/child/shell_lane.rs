@@ -46,6 +46,9 @@ pub(crate) fn compose_shell(
         cancellation,
         Background::Owned,
         rules,
+        // A helper's calls are put to the job's operator, so it keeps the host
+        // lane its mode allows exactly as the root does.
+        shell_policy::HostLane::Allowed,
     )
     .map(|tool| tool.following_mode(capped))
 }

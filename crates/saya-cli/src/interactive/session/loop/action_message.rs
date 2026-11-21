@@ -41,6 +41,10 @@ fn handle_message(
                 overrides: state.prompt_overrides(),
                 format,
                 can_prompt: terminal,
+                // The launch statement's seeds, as the session that stated them
+                // holds them: a resumed session restarts unstated, and its store
+                // is empty because nothing was seeded into it.
+                grants: session.policy().grants().clone(),
             })?;
             // The record names the run the session belongs to: lineage only.
             state.run = chat.run_link();

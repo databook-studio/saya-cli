@@ -41,11 +41,25 @@ pub struct CodingApplication {
     /// host runs fall back to the sandbox under `ask` and whose fetches are
     /// refused, rather than either being put to anyone.
     pub(super) operator: Option<Arc<dyn Operator>>,
+    /// Whether this surface can obtain a per-call approval at all: the fact the
+    /// tool advertisement reads, never the stdio one. `true` — every surface
+    /// that states nothing keeps today's advertisement — unless the surface
+    /// composing this application says otherwise: a chat whose front has nobody
+    /// to ask cannot reach the calls a write-shaped tool would put to a person.
+    /// A cell rather than a plain flag because the surface states it through the
+    /// shared host it already holds — the same way it states its mode.
+    pub(super) can_obtain_approval: std::sync::atomic::AtomicBool,
     /// The job's one permission-mode cell: the root's `shell` reads it on every
     /// call, so the mode stated here is the mode the next call resolves. Shared
     /// by handle, so a host two `Arc`s hold still answers with its current mode.
     /// `Ask` — the fail-safe default — unless the building surface states one.
     pub(super) mode: ModeCell,
+    /// The grants the launching surface stated for this session (`--allow`): a
+    /// seed pre-answers the call the mode would have asked about, so the family
+    /// it covers is advertised. A cell because the surface states it through the
+    /// shared host, like the mode; empty unless a surface states one, which is
+    /// every job surface.
+    pub(super) launch_grants: std::sync::Mutex<saya_agent::SessionGrants>,
     /// The current job's lifecycle timeline. It starts at application open so
     /// the proposal and approval phases are measured; `create` takes it into
     /// the job and leaves a fresh one for the next job.
@@ -157,7 +171,9 @@ impl CodingApplication {
             managed_fallback: None,
             personal_instruction_dir: None,
             operator: None,
+            can_obtain_approval: std::sync::atomic::AtomicBool::new(true),
             mode: ModeCell::new(ApprovalPolicy::Ask),
+            launch_grants: std::sync::Mutex::new(saya_agent::SessionGrants::default()),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
         }))
     }

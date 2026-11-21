@@ -69,6 +69,9 @@ pub(super) fn run_shell(
         // stays the coding root's, where a job owns what it started.
         Background::Off,
         rules,
+        // The run's own step shells keep every lane the mode allows: the run was
+        // approved before it started, so its calls have nowhere else to be put.
+        shell_policy::HostLane::Allowed,
     )
     .map(Arc::new)
 }

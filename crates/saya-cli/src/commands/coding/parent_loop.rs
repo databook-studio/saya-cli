@@ -82,6 +82,23 @@ impl NativeCodingJob {
         // a readiness walk that met one of them mid-removal would send the model
         // a different view than the run's first request must carry.
         let mut context_blocks = self.continuation_context().await?;
+        // A chat surface carries the project's own untrusted context too — the
+        // instruction sources and the worktree's explicit preferences, on the
+        // same labelled lane and through the one injection site the interactive
+        // turn uses. It is stable across the run's turns, so it sits ahead of
+        // the continuation blocks and keeps the request prefix the provider
+        // caches.
+        if session.project_context {
+            context_blocks = crate::agent::runtime::project_untrusted_context(
+                &self.application.runtime,
+                Some(self.application.root_path()),
+                Some(&self.application.store),
+                &asked,
+                session.system_prompt.as_deref(),
+                context_blocks,
+            )
+            .await;
+        }
         // The active plugins' context joins it, bounded by the same byte
         // budget; plugin context in this turn's prompt is a use of the plugin,
         // so its policy arms here, before request 1.

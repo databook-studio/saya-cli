@@ -31,6 +31,14 @@ impl NativeCodingJob {
             .plugins
             .as_ref()
             .map(|supplied| Arc::new(active_plugins(&supplied.registry, &supplied.context)));
+        // The untrusted project context (instruction sources and the worktree's
+        // preferences) rides a chat surface's turns, as the line session carried
+        // it on release. A job surface states its own context, so it carries
+        // none of it.
+        let project_context = inputs
+            .plugins
+            .as_ref()
+            .is_some_and(|supplied| supplied.context.surface == saya_agent::RunSurface::Chat);
         // A direct-mode coordinator owns one working checkout for the whole
         // run; `RootTools::build` ensures it (resume re-ensures it) and composes
         // the toolset. Delegate-only jobs create nothing.
@@ -161,6 +169,7 @@ impl NativeCodingJob {
             // exactly as it always did.
             history: TurnHistory::seeded(inputs.seed.clone()),
             plugins,
+            project_context,
         })
     }
 }
