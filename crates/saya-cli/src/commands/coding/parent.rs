@@ -37,7 +37,7 @@ impl NativeCodingJob {
             self.lifecycle().enter("run_setup");
             // The run's one-time setup and its one turn; the run is closed as
             // soon as that turn ended, so a message now is a finished run.
-            let result = self.open_root(sink, mailbox).await;
+            let result = self.open_root(sink, mailbox, TurnInputs::default()).await;
             self.root_run.close();
             // The implicit join comes FIRST: a job that delegated without
             // awaiting must still end with its children's work in the candidate,
@@ -144,13 +144,26 @@ fn map_root_error(
 #[path = "parent_tests.rs"]
 mod parent_tests;
 
+#[path = "parent_control.rs"]
+mod parent_control;
 #[path = "parent_loop.rs"]
 mod parent_loop;
+#[path = "parent_plugins.rs"]
+mod parent_plugins;
+#[path = "parent_progress.rs"]
+mod parent_progress;
+#[path = "parent_run.rs"]
+mod parent_run;
 #[path = "parent_setup.rs"]
 mod parent_setup;
 #[path = "parent_turn.rs"]
 mod parent_turn;
-pub(super) use parent_turn::RootRun;
+pub(super) use parent_run::RootRun;
+#[path = "parent_turn_limits.rs"]
+mod parent_turn_limits;
+#[cfg(test)]
+pub(crate) use parent_turn_limits::RunPlugins;
+pub(crate) use parent_turn_limits::TurnInputs;
 
 #[cfg(all(test, unix))]
 #[path = "parent_turn_fixture.rs"]

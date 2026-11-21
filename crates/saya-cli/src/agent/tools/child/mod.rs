@@ -7,7 +7,7 @@ pub(crate) mod decider;
 mod executor;
 mod factory;
 mod no_effect;
-mod plugins;
+pub(crate) mod plugins;
 mod scope;
 mod shell_lane;
 #[cfg(test)]

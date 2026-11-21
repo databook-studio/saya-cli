@@ -15,144 +15,21 @@
 //! replays them as its history, in chat's shape and under chat's bound
 //! (`history`), so a conversation on an open job reads as it does in chat.
 
+use super::parent_turn_limits::TurnInputs;
 use super::{CodingError, NativeCodingJob};
 use crate::agent::hooks::{HookApprovalGate, Hooks};
 use crate::agent::tools::coding::RootTools;
 use crate::commands::coding::TurnStop;
-use parent_turn_limits::TurnInputs;
-use saya_agent::{AgentEventSink, AgentMailbox, AgentOutput, ToolExecutor, TurnPolicy};
-use saya_harness::coding::worktree::VerifiedCheckout;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+use saya_agent::{
+    ActivePlugins, AgentEventSink, AgentMailbox, AgentOutput, CancellationToken, ToolExecutor,
+    TurnPolicy,
 };
+use saya_harness::coding::worktree::VerifiedCheckout;
+use std::sync::{Arc, Mutex};
 
 #[path = "parent_history.rs"]
 mod history;
 pub(super) use history::TurnHistory;
-
-#[path = "parent_turn_limits.rs"]
-mod parent_turn_limits;
-
-/// The open root run of one job: the one-time composition every turn of the
-/// run shares, and whether a turn is running right now.
-pub(crate) struct RootRun {
-    /// The job this run belongs to: the identity its own liveness is recorded
-    /// under, so a verb of the same process can ask whether a run is open.
-    job: String,
-    /// One turn at a time: a second is refused `Busy` rather than interleaved.
-    running: AtomicBool,
-    /// How many turns this run has started. Every turn records the next number
-    /// at its boundary, so the run's diagnostics show the second turn as
-    /// plainly as the first, in one increasing sequence.
-    turns: AtomicU64,
-    /// The run's composition, present from the first turn until the owner
-    /// closes the run. `None` before it and after it.
-    session: Mutex<Option<Arc<RootSession>>>,
-    /// The limits a surface set for this run's turns, and how the turn that
-    /// ended most recently ended.
-    inputs: TurnInputs,
-}
-
-impl RootRun {
-    pub(crate) fn new(job: &saya_types::JobId) -> Self {
-        Self {
-            job: job.as_str().to_owned(),
-            running: AtomicBool::new(false),
-            turns: AtomicU64::new(0),
-            session: Mutex::new(None),
-            inputs: TurnInputs::default(),
-        }
-    }
-
-    /// Sets this run's per-turn limits, or clears them: an explicit input a
-    /// surface states before a turn.
-    pub(super) fn set_turn_policy(&self, policy: Option<TurnPolicy>) {
-        self.inputs.set_policy(policy);
-    }
-
-    /// The limits the next turn applies.
-    pub(super) fn turn_policy(&self) -> Option<TurnPolicy> {
-        self.inputs.policy()
-    }
-
-    /// States how the turn that just ended ended, for the surface that ran it.
-    pub(super) fn note_turn_stop(&self, stop: Option<TurnStop>) {
-        self.inputs.note_stop(stop);
-    }
-
-    /// How the turn that ended most recently ended.
-    pub(super) fn turn_stop(&self) -> Option<TurnStop> {
-        self.inputs.stop()
-    }
-
-    /// The fresh, monotonic number this turn's boundary record carries: 1 for
-    /// the run's first turn, one more for every turn after it.
-    pub(super) fn next_turn(&self) -> u64 {
-        self.turns.fetch_add(1, Ordering::AcqRel) + 1
-    }
-
-    /// Claims the job's one turn slot for as long as the guard lives.
-    fn claim(&self) -> Result<TurnGuard<'_>, CodingError> {
-        if self.running.swap(true, Ordering::AcqRel) {
-            return Err(CodingError::Busy);
-        }
-        Ok(TurnGuard { run: self })
-    }
-
-    fn hold(&self, session: Arc<RootSession>) {
-        *self.lock() = Some(session);
-        // From here until the run closes, this job numbers its own events: no
-        // verb that is not the run may append to the job's stream.
-        super::super::live_runs::run_opened(&self.job);
-    }
-
-    #[allow(dead_code)] // only `run_next_turn` reads it, and that entry is not wired yet
-    fn session(&self) -> Option<Arc<RootSession>> {
-        self.lock().clone()
-    }
-
-    /// The run is over: a further turn is refused as one on a finished run.
-    pub(super) fn close(&self) {
-        *self.lock() = None;
-        super::super::live_runs::run_closed(&self.job);
-    }
-
-    /// A guard that closes the run when it drops: the caller holds it for as
-    /// long as the run is its own, so no exit path leaves the run open.
-    pub(super) fn closable(&self) -> CloseOnDrop<'_> {
-        CloseOnDrop { run: self }
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<Arc<RootSession>>> {
-        self.session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-/// Holds the job's one turn slot; dropping it lets the next turn start.
-struct TurnGuard<'a> {
-    run: &'a RootRun,
-}
-
-impl Drop for TurnGuard<'_> {
-    fn drop(&mut self) {
-        self.run.running.store(false, Ordering::Release);
-    }
-}
-
-/// Closes a run on every exit path, a dropped one included: a message can
-/// never land on a run that ended, however it ended.
-pub(super) struct CloseOnDrop<'a> {
-    run: &'a RootRun,
-}
-
-impl Drop for CloseOnDrop<'_> {
-    fn drop(&mut self) {
-        self.run.close();
-    }
-}
 
 /// Everything a root turn needs that is composed ONCE per run: the provider,
 /// the toolset, the hooks over the run's own checkout, the executor that puts
@@ -179,6 +56,9 @@ pub(super) struct RootSession {
     /// replays as its history, bounded by the run's own context byte budget
     /// exactly as chat bounds its own.
     pub(super) history: TurnHistory,
+    /// The plugins this run activated at open, or `None` for a run that
+    /// consults no registry — every job surface today.
+    pub(super) plugins: Option<Arc<ActivePlugins>>,
 }
 
 impl NativeCodingJob {
@@ -190,6 +70,7 @@ impl NativeCodingJob {
     pub(crate) async fn run_open(
         self: &Arc<Self>,
         sink: &dyn AgentEventSink,
+        inputs: TurnInputs,
     ) -> Result<AgentOutput, CodingError> {
         let mailbox = self
             .root_mailbox
@@ -197,7 +78,7 @@ impl NativeCodingJob {
             .await
             .take()
             .ok_or(CodingError::Busy)?;
-        self.open_root(sink, mailbox).await
+        self.open_root(sink, mailbox, inputs).await
     }
 
     /// The same, over a mailbox the run's own caller already took, so one run
@@ -206,12 +87,19 @@ impl NativeCodingJob {
         self: &Arc<Self>,
         sink: &dyn AgentEventSink,
         mailbox: AgentMailbox,
+        inputs: TurnInputs,
     ) -> Result<AgentOutput, CodingError> {
         // The slot is claimed before the composition, so a message that
         // arrives while the first turn is still being set up is refused `Busy`
         // rather than starting a second turn beside it.
         let turn = self.root_run.claim()?;
-        let session = Arc::new(self.compose_root(mailbox).await?);
+        // The policy the surface states at open bounds the first turn exactly as
+        // it bounds every turn after it. Stating none leaves the run's slot as a
+        // surface set it, which is how a caller states one before opening.
+        if inputs.policy.is_some() {
+            self.root_run.set_turn_policy(inputs.policy);
+        }
+        let session = Arc::new(self.compose_root(mailbox, &inputs).await?);
         self.root_run.hold(Arc::clone(&session));
         let result = self
             .run_turn(&session, sink, self.request.task.clone())
@@ -227,7 +115,11 @@ impl NativeCodingJob {
     /// managed-checkout job are refused, in place being the only shape this
     /// release runs a further turn on.
     #[allow(dead_code)] // the attached front end of a later unit is its caller
-    pub(crate) async fn run_next_turn(&self, prompt: &str) -> Result<AgentOutput, CodingError> {
+    pub(crate) async fn run_next_turn(
+        &self,
+        sink: &dyn AgentEventSink,
+        prompt: &str,
+    ) -> Result<AgentOutput, CodingError> {
         let _turn = self.root_run.claim()?;
         if !self.application.is_in_place() {
             return Err(not_continuable(
@@ -241,10 +133,10 @@ impl NativeCodingJob {
                 "has already finished its run; a further turn needs a resumed job",
             ));
         };
-        // This release has no attached front end, so a further turn reports to
-        // no downstream sink; the chat surface of a later unit hands it one.
-        self.run_turn(&session, &saya_agent::NoopEventSink, prompt.to_owned())
-            .await
+        // This release has no attached front end, so the caller's sink is what
+        // a further turn reports to; a job surface passes one with nothing
+        // downstream, as it always did.
+        self.run_turn(&session, sink, prompt.to_owned()).await
     }
 
     /// Sets the limits every turn of this run applies, or clears them.
@@ -262,6 +154,13 @@ impl NativeCodingJob {
     #[allow(dead_code)] // the chat surface of phase 4.6 is its production caller
     pub(crate) fn turn_stop(&self) -> Option<TurnStop> {
         self.root_run.turn_stop()
+    }
+
+    /// The stop signal of the turn running right now, or `None` between turns:
+    /// what an attached surface cancels to end that turn and no other.
+    #[allow(dead_code)] // the attached front end of a later unit is its caller
+    pub(crate) fn turn_cancellation(&self) -> Option<CancellationToken> {
+        self.root_run.turn_cancellation()
     }
 }
 
