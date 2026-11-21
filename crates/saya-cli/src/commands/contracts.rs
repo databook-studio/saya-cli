@@ -36,11 +36,12 @@ pub(crate) use contracts_profile::resolve_profile;
 // them at the same paths as before.
 pub(crate) use schema_cache::{cached_schema, cached_schema_availability, unobserved_fingerprint};
 
-use super::output::failure_message;
+use super::output::{self, failure_message};
 use crate::cli::ContractsCommand;
 use crate::config::runtime::RuntimeConfig;
 use crate::contracts::ContractOpError;
-use crate::render::RenderFormat;
+use crate::render::{RenderFormat, TerminalEvent};
+use crate::slash::ContractsRequest;
 use saya_store::SqliteStateStore;
 use saya_types::ClaimId;
 
@@ -150,6 +151,35 @@ pub async fn run_contracts(
             .await
         }
     }
+}
+
+/// Runs the request a slash spelling translated: the one operation through
+/// [`run_contracts`], then — for a deprecated spelling — its one-line
+/// deprecation note, exactly once.
+///
+/// The slot is here, not in either surface, because both surfaces (the
+/// headless loop and the TUI) hand their request to this one function: a
+/// deprecation note cannot be printed twice by one surface and forgotten by
+/// the other. The note rides the command's own output stream (a `Result` line,
+/// the channel a slash command's prose answer already uses), so a captured or
+/// transcribed surface shows it in the same place. A canonical spelling —
+/// `/contracts <verb>`, `/remember`, `/forget` — appends nothing.
+pub async fn run_contracts_request(
+    request: ContractsRequest,
+    runtime: &RuntimeConfig,
+    format: RenderFormat,
+    store: &SqliteStateStore,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let code = run_contracts(request.command, runtime, format, store).await?;
+    if let Some(note) = request.note {
+        output::emit(
+            TerminalEvent::Result {
+                message: note.to_string(),
+            },
+            format,
+        );
+    }
+    Ok(code)
 }
 
 /// Emits a typed contract-operation error and returns the contract error exit

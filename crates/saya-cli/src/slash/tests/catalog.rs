@@ -63,6 +63,7 @@ fn sample_line(name: &str) -> String {
         "run" => " survey --allow workspace-write",
         "allow" => " sql:analytics",
         "confirm" | "reject" => " ab12",
+        "contracts" => " list",
         "remember" => " analytics.public.orders description one row per order",
         "forget" => " c-1",
         _ => "",
@@ -128,7 +129,7 @@ fn every_alias_resolves_to_its_command() {
                 alias.name
             );
             assert!(
-                parse_slash_command(&format!("/{}", alias.name)).is_ok(),
+                parse_slash_command(&sample_line(alias.name)).is_ok(),
                 "alias /{} does not parse",
                 alias.name
             );
@@ -140,6 +141,10 @@ fn every_alias_resolves_to_its_command() {
             ("approvals", "mode"),
             ("investigations", "investigation"),
             ("contract", "contracts"),
+            ("queue", "contracts"),
+            ("confirm", "contracts"),
+            ("reject", "contracts"),
+            ("approve-all", "contracts"),
             ("quit", "exit"),
         ],
         "today's aliases, and only these"
@@ -234,7 +239,7 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         );
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 55, "the listing shows 55 of today's 59 names");
+    assert_eq!(ranks.len(), 51, "the listing shows 51 of today's 59 names");
     assert_eq!(
         catalog::names().count(),
         59,

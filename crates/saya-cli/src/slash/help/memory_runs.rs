@@ -1,12 +1,13 @@
 fn command_help_memory_runs(name: &str) -> Option<&'static str> {
     match name {
         "contracts" => Some(
-            "contracts [catalog.schema.object] — list every recalled contract for the active profile, or show one object's contract when you name it. Example: /contracts   or   /contracts analytics.public.orders",
+            "contracts <list|show|queue|confirm|reject|confirm-all|export|import> — the knowledge store. `list` prints every recalled contract for the active profile; `show <catalog.schema.object>` prints one object's contract; `queue [limit]` lists the candidate claims awaiting review; `confirm <claim-id-prefix>` and `reject <claim-id-prefix>` decide one candidate; `confirm-all [--yes] [limit]` approves the whole queue (each candidate still gets the per-item validation `confirm` applies, and without --yes the queue is only printed); `export <path>` and `import <path>` move the context. Example: /contracts list   or   /contracts show analytics.public.orders",
         ),
-        // `/contract` is a silent alias of the merged `/contracts` command,
-        // so `/help contract` returns the same help rather than "no help".
+        // The five deprecated spellings keep help of their own: it says they
+        // are aliases, names the verb that replaces them, and describes the
+        // operations that verb has.
         "contract" => Some(
-            "contract [catalog.schema.object] — alias for /contracts: list every recalled contract, or show one object's contract when you name it. Example: /contract analytics.public.orders",
+            "contract <list|show|queue|confirm|reject|confirm-all|export|import> — deprecated alias of /contracts, removed in the next release: use /contracts. It runs the same operations: list every recalled contract, show one object's contract with /contracts show <catalog.schema.object>, review the queue, decide a candidate, and export or import the context. Example: /contracts show analytics.public.orders",
         ),
         "remember" => Some(
             "remember <catalog.schema.object> <kind> <value…> [because <reason…>] — store a confirmed claim. Kinds: description, alias, grain, time-column, column-description <column> <value…>, column-role <column> <role>. The optional `because <reason…>` (directive kinds only) records why the claim holds. Example: /remember analytics.public.orders time-column created_at because orders complete on return",
@@ -14,17 +15,17 @@ fn command_help_memory_runs(name: &str) -> Option<&'static str> {
         "forget" => Some(
             "forget <claim-id> — tombstone a claim so recall excludes it. Example: /forget abc-123",
         ),
-        "queue" => {
-            Some("queue [limit] — list candidate claims awaiting review. Example: /queue 20")
-        }
+        "queue" => Some(
+            "queue [limit] — deprecated alias of /contracts queue, removed in the next release: use /contracts queue. It lists candidate knowledge claims awaiting review. Example: /contracts queue 20",
+        ),
         "confirm" => Some(
-            "confirm <claim-id-prefix> — confirm the claim named by its short id prefix (the ki-xxxx form /contracts shows). Example: /confirm ki-a86a3f",
+            "confirm <claim-id-prefix> — deprecated alias of /contracts confirm, removed in the next release: use /contracts confirm <claim-id-prefix>. It confirms the knowledge claim named by its short id prefix (the ki-xxxx form /contracts shows). Example: /contracts confirm ki-a86a3f",
         ),
         "reject" => Some(
-            "reject <claim-id-prefix> — reject the claim named by its short id prefix. Example: /reject ki-a86a3f",
+            "reject <claim-id-prefix> — deprecated alias of /contracts reject, removed in the next release: use /contracts reject <claim-id-prefix>. It rejects the knowledge claim named by its short id prefix. Example: /contracts reject ki-a86a3f",
         ),
         "approve-all" => Some(
-            "approve-all [--yes] [limit] — approve every candidate in the review queue: the same set /queue shows. Each candidate still gets the per-item validation /confirm applies, so some may be refused; every approval and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /approve-all --yes",
+            "approve-all [--yes] [limit] — deprecated alias of /contracts confirm-all, removed in the next release: use /contracts confirm-all [--yes] [limit]. It confirms knowledge claims only, never job approvals — those are /approve <id>. It approves every candidate in the review queue: the same set /contracts queue shows. Each candidate still gets the per-item validation /contracts confirm applies, so some may be refused; every confirmation and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /contracts confirm-all --yes",
         ),
         "run" => Some(
             "run <goal…> --allow <scopes> [--budget k=v…] — start a headless run from the session: the nested `saya run` streams its events and lands where the headless command lands (completed 0, paused 6 — resume it with /run resume <id> — cancelled 130). `none` states a read-only run with no capabilities; the wired scopes are `workspace-write`, `fetch:<scheme>+<host>`, and `sql:<connection>` (seeds the run's decider: under `--approval-mode ask` the read-shaped SQL tools' calls naming that connection run without asking). `command:<program>` is refused here: a run is unattended and this scope names unconfined host execution. `shell:<command prefix>` is refused here: it names a session's grant for the `shell` tool, and a run composes no session grant store. `endpoint:<role>=<endpoint>` is refused here: per-step endpoint roles are not bound. Prefix the tail with `--seed-grants` to seed the child's `--allow` from this session's grant store — only tokens a run accepts are forwarded, and the rest are named, not silently dropped. `/run cancel <id>` records a run cancelled the same way `saya run cancel` does; a run with a live holder refuses. Example: /run survey the data --allow workspace-write",

@@ -1,9 +1,10 @@
 /// K1 pinned the user-visible `/help` listing byte for byte: the catalogue
 /// replaces the four hand-maintained tables, and the bytes the user reads must
-/// not move. K2 is the one deliberate move since — `/approvals` folded into
-/// `/mode` as an alias — so the snapshot below is K1's text with exactly that
-/// edit: one line gone, one line's usage and description widened to the six
-/// values. Any other difference is a regression.
+/// not move. K2 folded `/approvals` into `/mode`. K3 is the one deliberate move
+/// since — the knowledge store is one command, `/contracts <verb>`: the
+/// `/contracts` row widens to its eight verbs and the four rows `/queue`,
+/// `/confirm`, `/reject`, `/approve-all` are gone (they are catalogue aliases
+/// now, folded out of the listing). Any other difference is a regression.
 #[test]
 fn help_listing_is_byte_identical() {
     assert_eq!(help_text(), LISTING);
@@ -67,14 +68,10 @@ Session
   /exit  (alias /quit) — Exit the REPL
 
 Memory
-  /contracts [table] — List contracts, or show one object's contract
+  /contracts <list|show|queue|confirm|reject|confirm-all|export|import> — The knowledge store: list every contract, show one object's contract, review and decide the queue, and export or import the context
   /remember <table> <kind> <value…> — Store a confirmed contract claim
   /forget <id> — Tombstone a contract claim so recall excludes it
   /preferences [list|add <text>|edit <id> <text>|forget <id>|forget-all] — Explicit per-worktree guidance you confirmed: list, add, edit, forget; never permissions; separate from /remember
-  /queue [limit] — Show pending candidate claims awaiting review
-  /confirm <prefix> — Confirm a pending candidate claim by id prefix
-  /reject <prefix> — Reject a pending candidate claim by id prefix
-  /approve-all [--yes] [limit] — Approve the whole review queue (needs --yes)
 
 Runs
   /run <goal…> --allow <scopes> — Start or operate a headless run from the session
