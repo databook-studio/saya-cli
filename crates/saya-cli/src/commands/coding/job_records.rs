@@ -7,9 +7,11 @@
 //! store open, no repository, no run — so a surface that is not a coding verb
 //! (a session delete, say) can ask what a job is without opening one.
 //!
-//! The removal is this one function: a bounded walk that unlinks links instead
-//! of following them, so a job's directory is removed by the owner of the layout
-//! and never by a shell.
+//! The removal is this one function: the job's records are first renamed out of
+//! the job's name to a tombstone in the job's own directory — one atomic step,
+//! so a delete that stops part-way leaves a tombstone and never a half job, and
+//! the next delete finishes it — and only then taken, through directory
+//! descriptors on unix so a swapped link can never redirect the walk.
 
 use super::{CodingError, JobOrigin, context};
 use crate::state_path;
@@ -18,6 +20,9 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
 };
+
+#[path = "job_records_tombstone.rs"]
+mod tombstone;
 
 /// The job's request is bounded at 64 KiB where it is written
 /// (`job_files::write`) and its outcome block at 256 KiB (`outcome`); a reader
@@ -28,8 +33,8 @@ const MAX_OUTCOME_BYTES: usize = 256 * 1024;
 /// Per-directory entries and recursion depth the removal will walk: a job's
 /// records are its own writes, so a tree past these is not one this build made
 /// and is left rather than swept.
-const MAX_ENTRIES: usize = 4096;
-const MAX_DEPTH: usize = 12;
+pub(super) const MAX_ENTRIES: usize = 4096;
+pub(super) const MAX_DEPTH: usize = 12;
 
 /// The states a job never leaves: a job in one of them takes no further turn.
 const TERMINAL: [&str; 3] = ["completed", "failed", "cancelled"];
@@ -51,10 +56,16 @@ pub(crate) struct JobFacts {
     pub(crate) records_present: bool,
 }
 
+/// Whether the job's records directory is present. A lookup never resolves a
+/// name a deletion left: a dot-prefixed name is not a job's.
+pub(crate) fn present(state_root: &Path, job: &JobId) -> bool {
+    !job.as_str().starts_with('.') && state_root.join(job.as_str()).is_dir()
+}
+
 /// The facts `state_root` holds about `job`.
 pub(crate) fn facts(state_root: &Path, job: &JobId) -> JobFacts {
     let records = state_root.join(job.as_str());
-    let present = records.is_dir();
+    let present = present(state_root, job);
     JobFacts {
         origin: origin(&records),
         terminal: present && terminal(&records),
@@ -97,24 +108,48 @@ fn lease_held(state_root: &Path, records: &Path) -> bool {
 /// job that recorded none works in a managed checkout, which runs one turn per
 /// run and takes no further turn here.
 pub(crate) fn works_in_place(state_root: &Path, job: &JobId) -> bool {
-    super::root_checkout::InPlaceRootRecord::read(
-        &state_root.join(job.as_str()).join("inplace-root.json"),
-    )
-    .is_ok()
+    present(state_root, job)
+        && super::root_checkout::InPlaceRootRecord::read(
+            &state_root.join(job.as_str()).join("inplace-root.json"),
+        )
+        .is_ok()
 }
 
-/// Removes the job's whole records directory, bounded and never following a
-/// link. An absent directory is already removed.
+/// Removes the job's whole records directory: renamed to a tombstone first, so a
+/// stop leaves the tombstone alone, and taken afterwards through the module that
+/// owns the one walk. An absent directory is already removed.
 pub(crate) fn delete_records(state_root: &Path, job: &JobId) -> Result<(), CodingError> {
     if !is_one_name(job.as_str()) {
         return Err(CodingError::StateDirectory);
     }
-    let path = state_root.join(job.as_str());
-    match fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(CodingError::owner(error)),
-        Ok(_) => remove_tree(&path, MAX_DEPTH),
+    // A delete that stopped part-way left one tombstone and no job under any
+    // name of its own; this delete finishes it before starting one of its own.
+    tombstone::sweep(state_root);
+    // The tombstone comes first: one rename in the job's own directory, atomic,
+    // so from this moment nothing is left under the job's name whatever stops
+    // next. Nothing to rename is a job already removed.
+    let tombstone = tombstone::name(job.as_str());
+    match fs::rename(state_root.join(job.as_str()), state_root.join(&tombstone)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(CodingError::owner(error)),
     }
+    remove_tombstone(state_root, &tombstone)
+}
+
+/// Takes the tombstoned tree on unix: through directory descriptors, so a link
+/// swapped into the tree cannot redirect the walk.
+#[cfg(unix)]
+fn remove_tombstone(state_root: &Path, name: &str) -> Result<(), CodingError> {
+    super::job_records_remove::remove(state_root, name)
+}
+
+/// Windows keeps this path walk: the platform's own answer to a reparse point is
+/// `FILE_FLAG_OPEN_REPARSE_POINT` on the handles it opens, and the tombstone
+/// above is what keeps a stop to one leftover entry there too.
+#[cfg(not(unix))]
+fn remove_tombstone(state_root: &Path, name: &str) -> Result<(), CodingError> {
+    remove_tree(&state_root.join(name), MAX_DEPTH)
 }
 
 /// The state root a job's records live under: the state database's own
@@ -126,6 +161,9 @@ pub(crate) fn root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("coding"))
 }
 
+/// The path walk a host without unix descriptors keeps: bounded, and unlinks a
+/// link instead of following it.
+#[cfg(not(unix))]
 fn remove_tree(path: &Path, depth: usize) -> Result<(), CodingError> {
     let metadata = fs::symlink_metadata(path).map_err(CodingError::owner)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -162,3 +200,6 @@ fn is_one_name(id: &str) -> bool {
 #[cfg(test)]
 #[path = "job_records_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "job_records_tombstone_tests.rs"]
+mod tombstone_tests;
