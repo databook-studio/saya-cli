@@ -105,6 +105,10 @@ mod cards_keys_tests;
 pub(crate) mod a11y_fixture;
 
 #[cfg(test)]
+#[path = "a11y_samples.rs"]
+mod a11y_samples;
+
+#[cfg(test)]
 #[path = "a11y_tests.rs"]
 mod a11y_tests;
 

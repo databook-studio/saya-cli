@@ -15,7 +15,7 @@ use super::a11y_fixture::{self, Pane};
 use super::jobs::JobReport;
 use super::model::Model;
 use super::run_draw::{Facts, frame};
-use super::theme::{BYPASS_CHIP, Charset, NO_COLOR, Scheme, scheme};
+use super::theme::{Charset, NO_COLOR, Scheme, scheme};
 use super::view::cards_fixture::shell_question;
 use super::view::jobs_fixture;
 use crate::chat::Question;
@@ -88,8 +88,8 @@ fn the_bypass_chip_keeps_its_word_with_colour_off() {
     for scheme in [Scheme::Dark, Scheme::Light, Scheme::NoColour] {
         let words = a11y_fixture::words(Pane::Status, scheme, Charset::Utf8);
         assert!(
-            words.contains(BYPASS_CHIP),
-            "{scheme:?}: the chip says {BYPASS_CHIP:?} rather than relying on its hue: {words}"
+            words.contains("! BYPASS"),
+            "{scheme:?}: the chip keeps its word rather than relying on its hue: {words}"
         );
     }
 }

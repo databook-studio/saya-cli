@@ -138,13 +138,12 @@ pub(crate) fn approval(question: &Question, mode: PermissionMode, screen_rows: u
     let (title, because, keys, compact, terse) = match kind {
         Kind::Plan => {
             let keys = plan_keys(withheld);
-            let compact = plan_keys_compact(withheld);
             (
                 format!("Approve plan? · {}", question.caller),
                 None,
                 keys.clone(),
-                compact.clone(),
-                compact,
+                keys.clone(),
+                keys,
             )
         }
         Kind::Approval => (
@@ -240,19 +239,11 @@ fn approval_keys(grant: Option<&str>, withheld: bool) -> String {
 }
 
 /// The plan's keys row: the two answers opening or keeping closed the write
-/// surface, and `v` for a plan longer than the card.
+/// surface, and `v` for a plan longer than the card. It is short enough for the
+/// narrowest frame, so its compact form is the full one.
 fn plan_keys(withheld: bool) -> String {
     format!(
         "y approve plan · n keep planning{}",
-        if withheld { "   v view all" } else { "" }
-    )
-}
-
-/// The plan's keys row at a narrow width: the same words, in one spelling, so
-/// the compact form is the full one.
-fn plan_keys_compact(withheld: bool) -> String {
-    format!(
-        "y approve plan   n keep planning{}",
         if withheld { "   v view all" } else { "" }
     )
 }
