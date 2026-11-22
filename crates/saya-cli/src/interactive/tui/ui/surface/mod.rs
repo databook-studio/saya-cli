@@ -12,4 +12,3 @@ mod starter;
 // second copy of it (`06` §5, T5).
 pub(crate) use markdown::markdown_spans_fenced;
 pub(crate) use starter::starter_questions;
-
