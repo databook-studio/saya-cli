@@ -96,7 +96,6 @@ pub(crate) struct ChatOps {
     /// today's table stays outside the run's turns, and the tests assert the
     /// port sees no call. An operation that must reach the run would have to
     /// say so here.
-    #[allow(dead_code)]
     run: Arc<dyn RunPort>,
     context: OpsContext,
 }

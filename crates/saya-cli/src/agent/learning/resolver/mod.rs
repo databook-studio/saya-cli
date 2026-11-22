@@ -36,7 +36,6 @@ fn lookup_error(profile: &str, error: ProfileLookupError) -> ResolutionError {
 /// A proposal fully resolved to a database object reference, verified profile,
 /// and derived schema binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct ResolvedProposal {
     pub object: DatabaseObjectRef,
     pub profile_name: String,
@@ -49,7 +48,6 @@ pub struct ResolvedProposal {
 
 /// Errors occurring during proposal resolution.
 #[derive(Debug, Error, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ResolutionError {
     #[error("turn object id {0} not found in turn table")]
     ObjectIdNotFound(TurnObjectId),
@@ -86,7 +84,7 @@ pub enum ResolutionError {
 ///      that corroboration the proposal resolves like any inference
 ///      (`Pending`, `ClaimOrigin::AssistantInferred`)
 ///    - `ProposalOrigin::AssistantInferred` -> `(KnowledgeState::Pending, ClaimOrigin::AssistantInferred)`
-#[allow(dead_code)]
+#[allow(dead_code)] // read only by `resolver/tests`: the learning runner is not wired into a turn yet
 pub async fn resolve_proposal(
     extracted: ExtractedProposal,
     prompt: &str,

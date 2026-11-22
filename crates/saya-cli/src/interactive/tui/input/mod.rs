@@ -1,6 +1,6 @@
 /// A multi-line text buffer with a cursor, addressed by a flat char index.
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
+#[allow(dead_code)] // the new composer's buffer: it calls part of this leaf, the leaf's tests the rest
 pub(crate) struct InputBuffer {
     text: String,  // full text, may contain '\n'
     cursor: usize, // cursor position as a CHAR index in [0, char_count]
@@ -15,7 +15,7 @@ pub(crate) mod wrap;
 mod input_tests;
 
 /// Helper function to convert a char index to a byte offset safely without panicking.
-#[allow(dead_code)]
+#[allow(dead_code)] // reached through the buffer's own methods and the leaf's tests only
 fn char_to_byte_idx(text: &str, char_idx: usize) -> usize {
     match text.char_indices().nth(char_idx) {
         Some((idx, _)) => idx,
@@ -23,7 +23,7 @@ fn char_to_byte_idx(text: &str, char_idx: usize) -> usize {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // only the methods the new composer calls are production-reachable today
 impl InputBuffer {
     /// Creates a new empty input buffer.
     pub(crate) fn new() -> Self {

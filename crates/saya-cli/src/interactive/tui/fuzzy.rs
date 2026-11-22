@@ -4,7 +4,6 @@
 /// Scoring favours: an exact case-insensitive prefix (largest bonus), matches at
 /// word boundaries (start, or right after '_', '.', ' ', '-'), contiguous runs of
 /// matched chars, and earlier matches. An empty query returns `Some(0)`.
-#[allow(dead_code)]
 pub(crate) fn fuzzy_score(text: &str, query: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);

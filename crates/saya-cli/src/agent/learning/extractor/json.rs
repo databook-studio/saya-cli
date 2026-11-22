@@ -23,7 +23,6 @@ pub(super) fn json_parse_diagnostic(error: &serde_json::Error) -> String {
 
 /// Converts a single raw JSON proposal into a validated `ExtractedProposal`,
 /// discarding any proposal with invalid slots, hallucinated object IDs, or bad payloads.
-#[allow(dead_code)]
 pub(super) fn convert_raw_proposal(
     raw: RawProposalJson,
     table: &TurnObjectTable,

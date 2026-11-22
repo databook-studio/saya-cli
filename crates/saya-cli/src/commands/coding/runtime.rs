@@ -121,13 +121,12 @@ impl NativeCodingJob {
     }
     /// The epoch this run opened: one per run of the job, so a surface can tell
     /// a further turn of this run from a rolled-over one.
-    #[allow(dead_code)] // the chat turn of phase 4.6 is its caller
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
     /// Whether this run still holds its one folder lease, as a run that ended
     /// no longer does: the lease is the run's, never a turn's.
-    #[allow(dead_code)] // the chat turn of phase 4.6 reads it; its tests read it today
+    #[allow(dead_code)] // read only by the lease tests: no surface asks it yet
     pub(crate) fn holds_folder_lease(&self) -> bool {
         self._in_place_lease.is_some()
     }

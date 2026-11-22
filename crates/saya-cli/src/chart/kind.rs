@@ -2,7 +2,6 @@
 
 /// Supported chart kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) enum ChartKind {
     Bar,
     Line,
@@ -14,7 +13,6 @@ pub(crate) enum ChartKind {
 
 impl ChartKind {
     /// Parses a case-insensitive kind name; returns None if unrecognized.
-    #[allow(dead_code)]
     pub(crate) fn parse(s: &str) -> Option<ChartKind> {
         match s.to_lowercase().as_str() {
             "bar" => Some(ChartKind::Bar),
@@ -27,7 +25,6 @@ impl ChartKind {
         }
     }
 
-    #[allow(dead_code)]
     pub(super) fn chartjs_type(self) -> &'static str {
         match self {
             ChartKind::Bar => "bar",
@@ -41,7 +38,6 @@ impl ChartKind {
 
 /// Which columns to plot and how.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct ChartSpec {
     pub(crate) kind: ChartKind,
     pub(crate) x: Option<String>, // label / x-axis column name; None => auto

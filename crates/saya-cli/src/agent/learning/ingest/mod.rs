@@ -9,7 +9,6 @@ use thiserror::Error;
 
 /// Errors occurring during proposal ingestion.
 #[derive(Debug, Error)]
-#[allow(dead_code)]
 pub enum IngestionError {
     #[error("failed to serialize schema binding: {0}")]
     Serialization(#[from] serde_json::Error),

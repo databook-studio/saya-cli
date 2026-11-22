@@ -257,7 +257,7 @@ impl NativeCodingJob {
     /// How many helpers the live schedule still holds: the count a surface's
     /// jobs drawer states (`02` §8). Zero between batches, and zero once every
     /// helper a batch admitted has ended.
-    #[allow(dead_code)] // the jobs drawer of phase 4.6 is its caller; the helper tests read it today
+    #[allow(dead_code)] // read only by the helper tests: no drawer asks the count yet
     pub(crate) async fn active_helpers(&self) -> usize {
         self.active
             .lock()

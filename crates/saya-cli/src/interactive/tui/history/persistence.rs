@@ -13,7 +13,6 @@ pub(super) fn is_disabled_env() -> bool {
     })
 }
 
-#[allow(dead_code)]
 impl History {
     pub(super) fn save(&self) {
         // A ring with no path has nowhere to save to: the model opens on one

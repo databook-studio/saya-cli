@@ -49,7 +49,6 @@ pub(super) fn normalize_row(row: &serde_json::Value, col_count: usize) -> Vec<se
 }
 
 /// Writes the HTML document string to the specified path.
-#[allow(dead_code)]
 pub(crate) fn write_html(html: &str, path: &std::path::Path) -> Result<(), String> {
     std::fs::write(path, html).map_err(|e| format!("failed to write chart file: {e}"))
 }

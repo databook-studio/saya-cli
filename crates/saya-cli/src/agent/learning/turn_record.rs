@@ -13,16 +13,12 @@ use crate::connection::ConnectionRegistry;
 use crate::contracts::{RecallReceipt, SuppliedContract};
 
 /// Maximum byte budgets for turn record text fields (Safety Property 3).
-#[allow(dead_code)]
 pub const MAX_PROMPT_BYTES: usize = 4096;
-#[allow(dead_code)]
 pub const MAX_ANSWER_BYTES: usize = 8192;
-#[allow(dead_code)]
 pub const MAX_TURN_RECORD_BYTES: usize = 16_384;
 
 /// DTO summarizing a supplied claim from recall.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct SuppliedClaimDto {
     pub claim_id: String,
     pub kind: String,
@@ -33,7 +29,6 @@ pub struct SuppliedClaimDto {
 
 /// DTO summarizing a supplied contract from recall.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct SuppliedContractDto {
     pub profile: String,
     pub object: String,
@@ -64,7 +59,6 @@ impl From<&SuppliedContract> for SuppliedContractDto {
 
 /// A bounded record of turn execution facts for structured extraction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct TurnRecord {
     pub prompt: String,
     pub assistant_answer: String,
@@ -86,7 +80,6 @@ impl TurnRecord {
     /// identity is turned into a name here. A connection whose identity does not
     /// resolve — a dropped connection mid-turn — falls back to the primary so the
     /// object is not silently lost.
-    #[allow(dead_code)]
     pub fn assemble(
         prompt: &str,
         assistant_answer: &str,
@@ -194,7 +187,7 @@ impl TurnRecord {
     }
 
     /// Number of record components not retained under the byte budget.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // read only by `turn_record_tests`
     pub fn omitted(&self) -> usize {
         self.omitted
     }
@@ -205,7 +198,6 @@ fn serialized_size(record: &TurnRecord) -> usize {
 }
 
 /// Truncates a string to at most `max_bytes` at a valid UTF-8 character boundary.
-#[allow(dead_code)]
 fn truncate_utf8(s: &str, max_bytes: usize) -> String {
     if s.len() <= max_bytes {
         return s.to_string();
@@ -218,7 +210,6 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> String {
 }
 
 /// Extracts potential corrective sentences from user prompt.
-#[allow(dead_code)]
 fn extract_user_corrections(prompt: &str) -> Vec<String> {
     prompt
         .lines()

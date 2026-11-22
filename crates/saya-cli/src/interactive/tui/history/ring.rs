@@ -3,7 +3,6 @@
 use super::{History, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES, total_bytes};
 use crate::slash::param_redact::redact_param_values;
 
-#[allow(dead_code)]
 impl History {
     pub(crate) fn push(&mut self, line: &str) -> bool {
         // A submit ends navigation and consumes the draft stash, whatever the

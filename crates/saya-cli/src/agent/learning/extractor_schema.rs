@@ -10,13 +10,11 @@ use thiserror::Error;
 use super::turn_table::TurnObjectId;
 
 /// Maximum proposals retained from a single extraction turn (Safety Property 3).
-#[allow(dead_code)]
 pub const MAX_PROPOSALS_PER_EXTRACTION: usize = 8;
 
 /// Origin indicating whether a proposal was explicitly stated by user or inferred by assistant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
 pub enum ProposalOrigin {
     UserExplicit,
     AssistantInferred,
@@ -24,7 +22,6 @@ pub enum ProposalOrigin {
 
 impl ProposalOrigin {
     /// Parses a string into a `ProposalOrigin` with tolerance for common synonyms.
-    #[allow(dead_code)]
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "user_explicit" | "user" | "explicit" => Some(Self::UserExplicit),
@@ -35,7 +32,6 @@ impl ProposalOrigin {
         }
     }
 
-    #[allow(dead_code)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::UserExplicit => "user_explicit",
@@ -55,7 +51,6 @@ impl From<ProposalOrigin> for ClaimOrigin {
 
 /// A typed, validated proposal candidate produced by structured extraction.
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct ExtractedProposal {
     pub object_id: TurnObjectId,
     pub slot: KnowledgeSlot,
@@ -66,14 +61,11 @@ pub struct ExtractedProposal {
 
 /// Errors occurring during structured extraction response parsing.
 #[derive(Debug, Error, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ExtractionError {
     #[error("failed to parse extraction JSON response: {0}")]
     JsonParse(String),
     #[error("invalid proposal payload: {0}")]
     InvalidPayload(String),
-    #[error("no valid proposals found in extraction response")]
-    Empty,
     /// The reply's first visible character was neither `{` nor a markdown
     /// fence, so it can never parse as JSON. Set before any parsing, by the
     /// stream collector that stopped the provider.
@@ -83,7 +75,6 @@ pub enum ExtractionError {
 
 /// Wire envelope for model extraction JSON responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct ExtractionResponseJson {
     #[serde(default)]
     pub proposals: Vec<RawProposalJson>,
@@ -91,7 +82,6 @@ pub struct ExtractionResponseJson {
 
 /// Wire representation of a single extracted proposal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct RawProposalJson {
     pub object_id: String,
     pub slot: String,
@@ -132,18 +122,15 @@ pub struct RawProposalJson {
     pub columns: Option<Vec<String>>,
 }
 
-#[allow(dead_code)]
 fn default_origin() -> String {
     "assistant_inferred".to_string()
 }
 
-#[allow(dead_code)]
 fn default_confidence() -> Option<f32> {
     Some(0.8)
 }
 
 /// Detects API key, token, or credential patterns in candidate values.
-#[allow(dead_code)]
 pub fn is_sensitive_or_credential_value(val: &str) -> bool {
     let lower = val.to_lowercase();
     let patterns = [
@@ -179,7 +166,6 @@ pub fn is_sensitive_or_credential_value(val: &str) -> bool {
 /// its name and underlying columns. Those arrive on the optional fields of
 /// [`RawProposalJson`]; a missing required field (a join rule with no target, a
 /// metric with no name) is a typed error rather than a guess.
-#[allow(dead_code)]
 pub fn build_claim_payload(
     slot: &KnowledgeSlot,
     raw: &RawProposalJson,

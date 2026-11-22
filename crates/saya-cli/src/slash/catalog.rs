@@ -65,6 +65,7 @@ pub(crate) enum Surface {
     /// The line REPL. Its reader lands with the line adapter, so today only
     /// the popup's [`Surface::Tui`] lookup is a production call site.
     #[allow(dead_code)]
+    // no line REPL reads it yet: `Surface::Tui` is the one production lookup
     Line,
     Tui,
 }
