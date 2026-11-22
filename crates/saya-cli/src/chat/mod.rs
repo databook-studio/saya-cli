@@ -126,6 +126,10 @@ mod turn_extraction_wait_tests;
 mod turn_learning_soft_tests;
 
 #[cfg(all(test, unix))]
+#[path = "turn_learning_usage_tests.rs"]
+mod turn_learning_usage_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_token_wallet_tests.rs"]
 mod compose_token_wallet_tests;
 

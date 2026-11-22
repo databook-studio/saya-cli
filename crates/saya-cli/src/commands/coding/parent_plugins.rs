@@ -42,14 +42,16 @@ pub(super) async fn context(
     plugins.context(prompt, budget_bytes).await
 }
 
-/// States the turn's end to every active plugin, once. A plugin observes the
-/// outcome; it never changes it.
+/// States the turn's end to every active plugin, once, and returns what their
+/// post-turn work spent — the extraction call's usage a plugin reports, or
+/// `None` when no plugin reported any. A plugin observes the outcome; it never
+/// changes it.
 pub(super) async fn turn_finished(
     plugins: &ActivePlugins,
     outcome: &TurnOutcome<'_>,
     sink: &dyn AgentEventSink,
-) {
-    plugins.on_turn_finish(outcome, sink).await;
+) -> Option<saya_agent::TokenUsage> {
+    plugins.on_turn_finish(outcome, sink).await
 }
 
 /// A root turn's executor while plugins are active: a name an active plugin
