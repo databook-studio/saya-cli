@@ -12,3 +12,6 @@ mod deny_residual_tests;
 
 #[cfg(test)]
 mod deny_shell_tests;
+
+#[cfg(test)]
+mod deny_wrapper_tests;

@@ -589,11 +589,15 @@ entry is a configuration diagnostic, not a startup failure.
   a sandbox, and it resolves the program a command really runs: it reads
   through a `command`/`builtin`/`exec` prefix, an `env` with any of its
   options, a subshell's own parentheses, and a path by its basename
-  (`/bin/rm`, `./rm`); it reads into a shell's `-c` script (`sh`, `bash`,
-  `zsh`, `dash`), at most three levels deep. Past that bound, or where a
-  script cannot be read, a command that names a denied program anywhere is
-  refused rather than run. `\rm` is still a different prefix, and a renamed
-  copy asked under its own name still runs.
+  (`/bin/rm`, `./rm`); through the launchers that run a later program —
+  `timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs` (with their options
+  and the values those carry), and `find`'s `-exec`/`-execdir`/`-ok` — and into
+  a script: a shell's `-c` (`sh`, `bash`, `zsh`, `dash`) and `eval`'s joined
+  arguments, at most three levels deep. Past that bound, where a script cannot
+  be read, or where an interpreter's inline code cannot be read (`python3 -c`,
+  `perl -e`, `awk '…'`, `ruby -e`, `node -e`), a command that names a denied
+  program anywhere is refused rather than run. `\rm` is still a different
+  prefix, and a renamed copy asked under its own name still runs.
 - **`allow`** lets a command take the host lane without asking under `ask`,
   with or without an operator. It never widens `read-only` or `never`.
 - A compound command (`&&`, `||`, `;`, `|`, `|&`, a single `&` for a
