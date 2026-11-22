@@ -58,6 +58,34 @@ fn scratch(label: &str) -> PathBuf {
     root
 }
 
+/// The configuration this row owns, stated through the loader's own parameters:
+/// a config home of its own and its own project file.
+///
+/// Both are needed. The home the row asks from IS the folder the run is asked
+/// in (`$HOME`), so the loader would otherwise read this machine's
+/// `$HOME/.saya/config.toml` as the project layer — a file the row does not own
+/// and cannot rely on: another checkout's retired key would fail the row before
+/// it ever reached its subject. The home is `SAYA_CONFIG_HOME/saya`, the shape
+/// the production loader is handed, and nothing here touches the process
+/// environment.
+fn own_config(records: &Path) -> (PathBuf, GlobalOptions) {
+    let home = records.join("config").join("saya");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("config.toml"), "# this row's own config home\n").unwrap();
+    let project = records.join("project.toml");
+    fs::write(&project, "# this row's own project layer\n").unwrap();
+    // The connections are stated too: discovery would look for them beside the
+    // project layer, in the same home this row must not read.
+    let connections = records.join("connections.toml");
+    fs::write(&connections, "# this row connects to nothing\n").unwrap();
+    let options = GlobalOptions {
+        config: Some(project),
+        connections: Some(connections),
+        ..GlobalOptions::default()
+    };
+    (home, options)
+}
+
 /// One job over `folder`, opened the way the ask's own composition opens it and
 /// with no write scope — the shape a one-turn ask states.
 async fn ask_job(
@@ -66,7 +94,8 @@ async fn ask_job(
     mode: RootMode,
 ) -> Arc<crate::commands::coding::NativeCodingJob> {
     let records = scratch(label);
-    let runtime = load_with_sources(&GlobalOptions::default(), folder, &records, BTreeMap::new())
+    let (config_home, options) = own_config(&records);
+    let runtime = load_with_sources(&options, folder, &config_home, BTreeMap::new())
         .expect("the folder's runtime resolves");
     let store = SqliteStateStore::new(records.join("state.sqlite3"));
     let token = CancellationToken::new();
