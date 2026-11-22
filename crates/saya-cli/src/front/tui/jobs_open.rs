@@ -14,7 +14,7 @@
 //! on the frame would ever read them.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
@@ -23,9 +23,11 @@ use super::direct::DirectOutcome;
 use super::jobs_desk::NO_SUCH_JOB;
 use super::live::LiveRuntime;
 use super::msg::Worker;
+use super::run_cmd_port::SessionPort;
 use super::run_front::Forward;
 use crate::cli::CodingCommand;
 use crate::interactive::tui::{CodingMessage, CodingPanel, Said, started_line};
+use crate::slash::JobRequest;
 
 /// What opening a job needs from the launch: the configuration in force, the
 /// state store its records and its receipts go to, the folder it roots at, and
@@ -72,6 +74,25 @@ impl JobDeps {
             self.root.clone(),
             self.policy,
         )
+    }
+}
+
+impl SessionPort {
+    /// Performs one job verb on the real port: the deprecated spelling's note is
+    /// said once per session (`chat::ops_job`), in the transcript, before the
+    /// verb is performed, and a verb the panel could not take is the operator's
+    /// business — the front is how the port says anything.
+    pub(super) fn perform_job(&self, mut request: JobRequest) {
+        {
+            let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+            crate::chat::claim_job_note(&mut notes, &mut request);
+        }
+        if let Some(note) = request.note() {
+            self.front.note(note.to_owned());
+        }
+        if let Some(refusal) = self.front.job_command(request.command, self.jobs.as_ref()) {
+            self.front.say(refusal);
+        }
     }
 }
 
