@@ -138,6 +138,10 @@ mod compose_preflight_stop_tests;
 mod compose_last_sql_tests;
 
 #[cfg(all(test, unix))]
+#[path = "compose_workspace_root_tests.rs"]
+mod compose_workspace_root_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_preferences_tests.rs"]
 mod compose_preferences_tests;
 

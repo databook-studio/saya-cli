@@ -30,6 +30,19 @@ pub(crate) struct SessionFacts<'a> {
 /// Heading for the session-facts section.
 pub(crate) const SESSION_FACTS_HEADING: &str = "Session facts";
 
+/// The workspace-root line, in the section's own wording: the one copy both
+/// the whole section and a run that states only this fact render.
+pub(crate) fn workspace_root_line(root: &Path) -> String {
+    format!("- Workspace root: {}.", root.display())
+}
+
+/// The same line under the section's heading, for a run whose connection lines
+/// are already stated — the database plugin's section states them, so repeating
+/// them here would state one fact twice.
+pub(crate) fn workspace_root_text(root: &Path) -> String {
+    format!("{SESSION_FACTS_HEADING}\n{}", workspace_root_line(root))
+}
+
 /// Renders the session-facts section, or `None` when the session binds
 /// neither a connection nor a workspace root — no empty heading.
 ///
@@ -48,7 +61,7 @@ pub(crate) fn session_facts_text(facts: &SessionFacts<'_>) -> Option<String> {
     }
     match facts.workspace_root {
         Some(root) => {
-            lines.push(format!("- Workspace root: {}.", root.display()));
+            lines.push(workspace_root_line(root));
             has_facts = true;
         }
         None => {
