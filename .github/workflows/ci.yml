@@ -121,7 +121,7 @@ jobs:
       - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
         with:
           tool: cargo-nextest
-      - run: cargo nextest run -p saya-cli --locked --profile ci --test job_apply_e2e
+      - run: cargo nextest run -p saya-cli --locked --profile ci --test job_apply_e2e --test chat_session_line_e2e
 
   postgres-live:
     name: PostgreSQL live contract

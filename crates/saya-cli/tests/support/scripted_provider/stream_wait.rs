@@ -1,4 +1,3 @@
-#[cfg(unix)]
 pub(crate) fn wait_for_stream(
     buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
     needle: &[u8],
@@ -7,7 +6,6 @@ pub(crate) fn wait_for_stream(
     wait_for_stream_timeout(buffer, needle, label, std::time::Duration::from_secs(30));
 }
 
-#[cfg(unix)]
 pub(crate) fn wait_for_stream_timeout(
     buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
     needle: &[u8],
