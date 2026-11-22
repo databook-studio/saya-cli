@@ -1,0 +1,22 @@
+{
+  "scenario": "investigation",
+  "requests": [],
+  "tool_calls": [],
+  "states": [],
+  "investigation": {
+    "statements": [
+      {
+        "sql": "SELECT id, label FROM events ORDER BY id",
+        "outcome": "ok"
+      },
+      {
+        "sql": "DELETE FROM events",
+        "outcome": "refused-by-safety"
+      }
+    ],
+    "results": [
+      "query_result",
+      "error"
+    ]
+  }
+}

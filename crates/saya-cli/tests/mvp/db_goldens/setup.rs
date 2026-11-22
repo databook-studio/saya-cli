@@ -45,12 +45,13 @@ pub(super) fn fixture(tag: &str) -> Fixture {
 
 /// The one config every scenario runs: data sharing is the operator's
 /// explicit consent (the provider is not a local endpoint), memory is off so
-/// no post-turn extraction adds a request, and the question budget is the
-/// scenario's.
+/// no post-turn extraction adds a request, and the database budget is the
+/// scenario's (`[limits.database]`, `ref/05` §3: it arms on a turn's first
+/// database use, so a scenario states the ceiling it stops on).
 fn config(elapsed_seconds: u64) -> String {
     format!(
         "[ai]\nallow_data_sharing = true\n\n\
-         [limits.session]\nelapsed_seconds = {elapsed_seconds}\n\n\
+         [limits.database]\nelapsed_seconds = {elapsed_seconds}\n\n\
          [memory]\nmode = 'off'\n"
     )
 }
