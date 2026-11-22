@@ -88,6 +88,15 @@ fn command_help_session(name: &str) -> Option<&'static str> {
              never stored. Example: /notes set prefer bounded queries",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
+        "continue" => Some(
+            "continue — continue the turn that paused. A progress guard stopping a turn is a \
+             pause the run stays open from, so /continue sends the message Continue. through \
+             the same path a typed line uses: one turn of the same run, nothing else. Takes no \
+             argument. Refused with `nothing to continue — the last turn did not pause` when \
+             the last turn answered, failed or was cancelled, and refused while a turn runs \
+             (it waits, it is not queued). The <id> <agent> form is the job control \
+             /job continue for this release. Example: /continue",
+        ),
         "rotate" => Some(
             "rotate — deprecated alias of /compact --new-session, removed in the next release: it \
              compacts and continues in a new, smaller session: saves this session, publishes a \

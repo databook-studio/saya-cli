@@ -53,7 +53,7 @@ fn sample_line(name: &str) -> String {
         "job" => " list",
         "approve" | "deny" => " j-1",
         "message" => " j-1 a hi",
-        "pause" | "continue" | "cancel-child" => " j-1 a",
+        "pause" | "cancel-child" => " j-1 a",
         "connect" | "include" | "exclude" => " prod",
         "resume" => " s-1",
         "investigation" => " list",
@@ -71,14 +71,14 @@ fn sample_line(name: &str) -> String {
     format!("/{name}{tail}")
 }
 
-/// Both directions, counted: the parser answers 62 command names, the
-/// catalogue lists the same 62, and every catalogued name parses.
+/// Both directions, counted: the parser answers 63 command names, the
+/// catalogue lists the same 63, and every catalogued name parses.
 #[test]
 fn catalogue_and_parser_name_the_same_commands() {
     let arms = parser_arm_names();
-    assert_eq!(arms.len(), 62, "the parser's match has 62 command arms");
+    assert_eq!(arms.len(), 63, "the parser's match has 63 command arms");
     let catalogued: Vec<&str> = catalog::names().collect();
-    assert_eq!(catalogued.len(), 62, "the catalogue has 62 names");
+    assert_eq!(catalogued.len(), 63, "the catalogue has 63 names");
 
     let missing: Vec<&String> = arms
         .iter()
@@ -138,7 +138,14 @@ fn every_alias_resolves_to_its_command() {
     assert_eq!(
         aliases,
         vec![
+            ("follow-up", "job"),
+            ("approve", "job"),
+            ("deny", "job"),
+            ("message", "job"),
+            ("pause", "job"),
+            ("cancel-child", "job"),
             ("approvals", "mode"),
+            ("report", "export"),
             ("investigations", "investigation"),
             ("rotate", "compact"),
             ("history", "sessions"),
@@ -147,6 +154,7 @@ fn every_alias_resolves_to_its_command() {
             ("confirm", "contracts"),
             ("reject", "contracts"),
             ("approve-all", "contracts"),
+            ("grants", "permissions"),
             ("usage", "status"),
             ("workspace", "status"),
             ("context", "status"),
@@ -222,9 +230,10 @@ fn setup_is_the_one_full_screen_only_command() {
     }
 }
 
-/// The `/help` listing is a view of the catalogue: every canonical row is
+/// The `/help` listing is a view of the catalogue: every visible row is
 /// listed, carries a description and its own usage line, ranks are unique,
-/// and the folded aliases are the only names the listing does not show.
+/// and the folded aliases are the only names the listing does not show. A
+/// hidden row keeps its listing data and prints nothing.
 #[test]
 fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
     let mut ranks: Vec<u8> = Vec::new();
@@ -242,13 +251,21 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
             "/{} is listed without a description",
             spec.name
         );
+        if spec.hidden {
+            assert!(
+                catalog::entries().all(|entry| entry.name != spec.name),
+                "the hidden /{} is offered by the lookup",
+                spec.name
+            );
+            continue;
+        }
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 49, "the listing shows 49 of today's 62 names");
+    assert_eq!(ranks.len(), 39, "the listing shows 39 of today's 63 names");
     assert_eq!(
         catalog::names().count(),
-        62,
-        "with the folded aliases, the parser answers 62 names"
+        63,
+        "with the folded aliases, the parser answers 63 names"
     );
     ranks.sort_unstable();
     let mut unique = ranks.clone();

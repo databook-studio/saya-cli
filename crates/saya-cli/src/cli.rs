@@ -9,7 +9,6 @@ pub use agent::{FollowUpCommand, StartCommand};
 pub use coding::CodingCommand;
 pub use coding_root::RootMode;
 pub(crate) use job::refusal as job_lane_refusal;
-pub(crate) use job::session_spelling as job_session_spelling;
 mod connection;
 mod foundation;
 mod investigation;

@@ -83,9 +83,9 @@ pub(crate) fn dispatch(
             return Dispatch::Handled;
         }
     }
-    // Bare /investigations opens the searchable investigation picker rather
-    // than the text list; `/investigation list` and any flagged
-    // /investigations tail (`--list`, `--limit`, `--offset`) keep it.
+    // Bare /investigation and its /investigations alias open the searchable
+    // investigation picker rather than the text list; `/investigation list`
+    // and any flagged tail (`--list`, `--limit`, `--offset`) keep it.
     if super::dispatch_investigation::bare_investigations(line) {
         return Dispatch::OpenInvestigationPicker;
     }
@@ -94,7 +94,12 @@ pub(crate) fn dispatch(
     match parsed {
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
         Ok(Some(command)) => match command {
-            SlashCommand::Coding(command) => return Dispatch::Coding(command),
+            SlashCommand::Coding(mut request) => {
+                // The alias's one-release note is said once per session
+                // (`chat::ops_job`), so the request carries it only once.
+                state.claim_job_note(&mut request);
+                return Dispatch::Coding(request);
+            }
             SlashCommand::Columns(arg) => {
                 result = Dispatch::SetColumns(arg);
             }
@@ -130,9 +135,13 @@ pub(crate) fn dispatch(
                             job,
                         ) {
                             result = outcome;
-                        } else if let Some(outcome) =
-                            grants::apply_grant_action(&mut action, transcript, runtime, session)
-                        {
+                        } else if let Some(outcome) = grants::apply_grant_action(
+                            &mut action,
+                            transcript,
+                            state,
+                            runtime,
+                            session,
+                        ) {
                             result = outcome;
                         } else if let Some(outcome) = query::apply_query_actions(
                             &mut action,

@@ -126,11 +126,21 @@ pub(crate) use worker_permits::{CAP_REFUSAL, try_acquire_worker_permit};
 // publish atomically) rather than a second writer, so the bytes a new-surface
 // export writes are the bytes today's writes.
 #[allow(unused_imports)]
+pub(crate) use export::write_result_for;
+#[cfg(test)]
 pub(crate) use export::write_result_overwrite;
 
 // `/chart [kind] [path]` is parsed once, by the grammar the old TUI reads.
 #[allow(unused_imports)]
 pub(crate) use dispatch::parse_chart_args;
+
+// The new surface's jobs drawer reads today's job plumbing rather than a second
+// copy of it: the panel a job runs under and the messages its worker queues —
+// its activity, and the calls it puts to the operator, which the drawer lists
+// and the card answers. A build of this module alone references neither, so the
+// re-exports read as unused.
+#[allow(unused_imports)]
+pub(crate) use coding::{CodingMessage, CodingPanel};
 
 // `/investigation save` keeps the TUI's save-without-SQL fill — the latest
 // query the surface shows, on the connection that ran it — as one function.

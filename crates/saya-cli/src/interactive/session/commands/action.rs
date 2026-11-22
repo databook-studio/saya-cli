@@ -2,7 +2,7 @@
 // this enum is `PartialEq` but not `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
-    Coding(crate::cli::CodingCommand),
+    Coding(crate::slash::JobRequest),
     Message(String),
     /// `/mode <mode>` — a switch, carried to the loops. The switch needs the
     /// session's one policy, the journal, and the launch's bypass gate, so it
@@ -41,14 +41,13 @@ pub enum SessionAction {
     Rotate(crate::slash::CompactRequest),
     Schema(bool),
     Sql(String),
-    /// `/export` — the parsed request (mode, overwrite, path) the TUI's
-    /// export dispatch acts on. Headless sessions never receive it: they
-    /// refuse export as TUI-only.
+    /// `/export` — the parsed request (mode, format, rows, overwrite, path)
+    /// the TUI's export dispatch acts on: a `.csv`/`.json` destination
+    /// writes the rows, a `.md` one (or `--format md`) writes today's
+    /// Markdown report. `/report` is the one-release alias of that
+    /// `--format md` form. Headless sessions never receive it: they refuse
+    /// export as TUI-only.
     Export(crate::slash::ExportRequest),
-    /// `/report` — the parsed request (path, rows, overwrite) the TUI's
-    /// report dispatch acts on. Headless sessions never receive it: they
-    /// refuse report as TUI-only, exactly like export.
-    Report(crate::slash::ReportRequest),
     Chart(String),
     Explain(String),
     /// A contract slash command, translated to the same `ContractsCommand` the
@@ -79,9 +78,13 @@ pub enum SessionAction {
     /// them on the session surface and seeds the session's one grant store;
     /// the loops own the policy, so the seeding lives there.
     Allow(Vec<String>),
-    /// `/grants` — the session grant store listed verbatim by the shared
-    /// `permissions::grants::listing`.
-    Grants,
+    /// `/permissions` — one read-only view: the mode, the grant store, the
+    /// deny list, the host lane and data sharing, through the shared
+    /// `chat::ops_permissions` renderer. `/grants` carries the same request
+    /// with its alias spelling, so its note rides the one view. Intercepted
+    /// in both loops (they hold the session's policy, its grant store and the
+    /// runtime's deny list); the arm here keeps the match exhaustive.
+    Permissions(crate::slash::PermissionsRequest),
     /// `/context` — the instruction-source view through the shared
     /// `context_view::context_view`. Intercepted in the loop (it needs
     /// the runtime's settings and the session's root); the arm here keeps

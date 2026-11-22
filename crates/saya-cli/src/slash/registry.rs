@@ -24,13 +24,15 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 /// Returns the catalogued name with the smallest Levenshtein distance to
 /// `input` if distance <= 2. Aliases take part, so a near-miss on `/quit`
-/// still lands on a name that parses.
+/// still lands on a name that parses; a hidden command takes no part, so a
+/// near-miss on `/recovery` suggests nothing rather than a command the listing
+/// and the popup do not offer.
 pub(crate) fn closest_command(input: &str) -> Option<&'static str> {
     let input_lower = input.to_lowercase();
     let mut best_cmd = None;
     let mut min_dist = usize::MAX;
 
-    for cmd in crate::slash::catalog::names() {
+    for cmd in crate::slash::catalog::suggestible_names() {
         let dist = levenshtein(&input_lower, cmd);
         if dist < min_dist {
             min_dist = dist;

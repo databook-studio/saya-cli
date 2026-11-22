@@ -5,6 +5,7 @@ use crate::cli::CodingCommand;
 use serde_json::json;
 
 mod failure;
+mod list;
 mod reconcile;
 mod review;
 mod usage;

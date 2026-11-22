@@ -88,8 +88,13 @@ pub(crate) fn tick_pending(
             job.as_ref(),
         );
         match outcome {
-            Dispatch::Coding(command) => {
-                app.coding_command(command, session.root(), session.policy().mode())
+            Dispatch::Coding(request) => {
+                // The one-release alias note, the first time this session uses
+                // that spelling (`chat::ops_job`).
+                if let Some(note) = request.note() {
+                    app.transcript.push(BlockKind::System, note);
+                }
+                app.coding_command(request.command, session.root(), session.policy().mode())
             }
             Dispatch::Quit => {
                 // An in-flight run is not orphaned by a quit: the quit is

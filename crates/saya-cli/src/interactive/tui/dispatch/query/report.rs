@@ -1,24 +1,31 @@
-//! The `/report` arm of the query dispatcher: the Markdown report is written
-//! from the captured result, with no query and no task.
+//! The Markdown report arm of the query dispatcher: `/export` with a `.md`
+//! destination (or `--format md`) — the form `/report` spells — writes the
+//! document from the captured result, with no query and no task.
 
+use crate::chat::ops_status::Note;
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::capture::CapturedResult;
 use crate::interactive::tui::export::write_report;
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
+use crate::slash::ExportRequest;
 use saya_types::{ExecutionEvidence, ResultScope};
 
 /// Writes the Markdown report from the captured result: no query, no task —
 /// the report is the capture, plus provenance from its evidence. Nothing
-/// here queries a database.
+/// here queries a database. `/report` is this request's one-release alias, so
+/// its note rides the same message, once per session.
 pub(super) fn apply_report(
-    request: &crate::slash::ReportRequest,
+    request: &ExportRequest,
     transcript: &mut Transcript,
+    state: &mut SessionState,
     captured: &Option<CapturedResult>,
 ) {
     let Some(capture) = captured else {
         transcript.push(
             BlockKind::Error,
             "No captured result to report. Run the query with /sql first; captures \
-             last only for this session.",
+             last only for this session."
+                .to_string(),
         );
         return;
     };
@@ -32,21 +39,39 @@ pub(super) fn apply_report(
     ) {
         Ok(Some(n)) => transcript.push(
             BlockKind::System,
-            format!(
-                "Wrote report to {} ({n} rows included{})",
-                request.path,
-                scope_note(&capture.evidence)
+            with_alias_note(
+                state,
+                request,
+                format!(
+                    "Wrote report to {} ({n} rows included{})",
+                    request.path,
+                    scope_note(&capture.evidence)
+                ),
             ),
         ),
         Ok(None) => transcript.push(
             BlockKind::System,
-            format!(
-                "Wrote report to {} (rows omitted{})",
-                request.path,
-                scope_note(&capture.evidence)
+            with_alias_note(
+                state,
+                request,
+                format!(
+                    "Wrote report to {} (rows omitted{})",
+                    request.path,
+                    scope_note(&capture.evidence)
+                ),
             ),
         ),
         Err(msg) => transcript.push(BlockKind::Error, msg),
+    }
+}
+
+/// The alias's note, said the first time this session reports: `/report` is
+/// `/export --format md`.
+fn with_alias_note(state: &mut SessionState, request: &ExportRequest, text: String) -> String {
+    if request.via_report_alias {
+        crate::chat::ops_status::with_note(state, Note::Report, text)
+    } else {
+        text
     }
 }
 

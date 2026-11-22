@@ -2,7 +2,16 @@ impl SessionState {
     pub fn apply(&mut self, command: SlashCommand, available: &[String]) -> SessionAction {
         use crate::chat::ops_status::{Note, Section};
         match command {
-            SlashCommand::Coding(command) => SessionAction::Coding(command),
+            // The alias's note is owed once per session (`chat::ops_job`).
+            SlashCommand::Coding(mut request) => {
+                self.claim_job_note(&mut request);
+                SessionAction::Coding(request)
+            }
+            // This engine's turns never pause, so the continuation turn has
+            // nothing to continue: the one sentence is the answer.
+            SlashCommand::ContinueTurn => {
+                SessionAction::Message(crate::chat::NOTHING_TO_CONTINUE.into())
+            }
             SlashCommand::Connect(name) => {
                 if !available.iter().any(|profile| profile == &name) {
                     return SessionAction::Error(format!("Unknown configured profile: {name}"));
@@ -98,7 +107,6 @@ impl SessionState {
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
             SlashCommand::Export(request) => SessionAction::Export(request),
-            SlashCommand::Report(request) => SessionAction::Report(request),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
             SlashCommand::Compact(request) => {
@@ -213,7 +221,7 @@ impl SessionState {
             SlashCommand::RunCancel(run_id) => SessionAction::RunCancel(run_id),
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
-            SlashCommand::Grants => SessionAction::Grants,
+            SlashCommand::Permissions(request) => SessionAction::Permissions(request),
             SlashCommand::Status => SessionAction::Status,
             SlashCommand::Context => SessionAction::Context,
             SlashCommand::SessionsList => SessionAction::SessionsList,

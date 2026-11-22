@@ -3,6 +3,8 @@ use saya_harness::coding::integration::AssignedPaths;
 use saya_types::JobId;
 use serde::{Deserialize, Serialize};
 
+pub use super::origin::JobOrigin;
+
 impl CodingApplication {
     /// The tool selection a coding start states, canonical, or `None` when the
     /// start narrows nothing.
@@ -91,6 +93,11 @@ pub struct CodingJobRequest {
     /// the job started as.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) plan: bool,
+    /// Where this job was opened from. A job the terminal opened states
+    /// nothing here, so a CLI job's `request.json` is byte-identical to one
+    /// written before this key existed; a session states `session`.
+    #[serde(default, skip_serializing_if = "JobOrigin::is_cli")]
+    pub(crate) origin: JobOrigin,
 }
 impl CodingJobRequest {
     pub fn new(job_id: JobId, task: String, write_paths: Vec<String>) -> Result<Self, CodingError> {
@@ -103,6 +110,7 @@ impl CodingJobRequest {
             database_identities: Default::default(),
             tools_allow: None,
             plan: false,
+            origin: JobOrigin::Cli,
         };
         request.validate()?;
         Ok(request)
@@ -114,6 +122,16 @@ impl CodingJobRequest {
         self.plan = plan;
         self.validate()?;
         Ok(self)
+    }
+    /// States where this job was opened from. It changes no authority and no
+    /// approval: it is what a listing filters on and shows.
+    pub fn with_origin(mut self, origin: JobOrigin) -> Result<Self, CodingError> {
+        self.origin = origin;
+        self.validate()?;
+        Ok(self)
+    }
+    pub fn origin(&self) -> JobOrigin {
+        self.origin
     }
     pub fn with_database_profiles(mut self, profiles: Vec<String>) -> Result<Self, CodingError> {
         self.database_profiles = profiles;

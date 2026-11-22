@@ -60,11 +60,7 @@ pub(crate) fn complete(
             capture::capture_within(captured, result, evidence, accounted, transcript);
         }
         Followup::Export { request } => {
-            match export::write_result_overwrite(
-                &result,
-                std::path::Path::new(&request.path),
-                request.overwrite,
-            ) {
+            match export::write_result_for(&result, request) {
                 Ok(n) => {
                     let mut msg = format!(
                         "Exported {n} row(s) to {} — refreshed: re-ran the query just now",

@@ -14,6 +14,7 @@ fn detached_refresh_export_writes_no_file() {
                     mode: Some(ExportMode::Refresh),
                     overwrite: false,
                     path: path.to_string_lossy().into_owned(),
+                    ..ExportRequest::default()
                 },
             },
         )

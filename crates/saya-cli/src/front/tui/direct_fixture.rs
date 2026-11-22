@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use ratatui::crossterm::event::KeyCode;
 use saya_store::SqliteStateStore;
+use saya_types::{EvidenceSource, ExecutionEvidence, QueryResult, ResultScope, SqlDialect};
 
 use super::direct_run::DirectDeps;
 use super::direct_trust::TrustStore;
@@ -23,6 +24,7 @@ use super::msg::{Cmd, Msg};
 use super::run_fixture::key;
 use super::update::update;
 use crate::config::runtime::{RuntimeConfig, load_with_sources};
+use crate::front::ResultPreview;
 use crate::render::RenderFormat;
 
 /// The profile every fixture test names.
@@ -80,6 +82,56 @@ impl Fixture {
             database: Some(PROFILE.to_owned()),
             ..Model::default()
         }
+    }
+}
+
+/// The SQL the report fixtures state, so a written document is pinned by
+/// content rather than by shape.
+pub(crate) const REPORT_SQL: &str = "SELECT id, label FROM events ORDER BY id";
+
+/// The two events the fixture's own database holds, as a result.
+pub(crate) fn report_result() -> QueryResult {
+    QueryResult {
+        columns: vec!["id".to_owned(), "label".to_owned()],
+        rows: vec![serde_json::json!([1, "one"]), serde_json::json!([2, "two"])],
+        row_count: 2,
+        truncated: false,
+        executed_sql: REPORT_SQL.to_owned(),
+    }
+}
+
+/// The provenance of [`report_result`]: the facts a report's Provenance
+/// section states, spelled out so two documents compare byte for byte.
+pub(crate) fn report_evidence() -> ExecutionEvidence {
+    ExecutionEvidence {
+        execution_id: "9f8e7d6c5b4a".to_owned(),
+        submitted_sql_sha256: "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
+            .to_owned(),
+        connection_label: "local".to_owned(),
+        connection_identity: Some("sqlite:data.sqlite3".to_owned()),
+        dialect: SqlDialect::Sqlite,
+        schema_fingerprint: None,
+        started_unix_ms: 1_700_000_000_000,
+        finished_unix_ms: 1_700_000_000_250,
+        max_rows: 1000,
+        returned_rows: 2,
+        truncated: false,
+        scope: ResultScope::Full,
+        source: EvidenceSource::DirectSql,
+        knowledge_ids: Vec::new(),
+        param_names: Vec::new(),
+        params_sha256: None,
+    }
+}
+
+/// The result entry the surface holds, as a landed `/sql` leaves it.
+pub(crate) fn held_preview() -> ResultPreview {
+    ResultPreview {
+        connection: "local".to_owned(),
+        sql: REPORT_SQL.to_owned(),
+        result: report_result(),
+        evidence: Some(std::sync::Arc::new(report_evidence())),
+        refusal: None,
     }
 }
 

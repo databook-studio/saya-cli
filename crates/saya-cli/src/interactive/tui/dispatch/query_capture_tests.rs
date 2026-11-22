@@ -11,7 +11,7 @@ use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::application::tests_support::unused_runtime;
 use crate::interactive::tui::capture::{CapturedResult, agent_evidence};
 use crate::interactive::tui::transcript::{BlockKind, Transcript};
-use crate::slash::{ExportMode, ExportRequest, ReportRequest};
+use crate::slash::{ExportFormat, ExportMode, ExportRequest};
 use saya_types::{QueryResult, SqlDialect};
 
 #[cfg(test)]
@@ -50,14 +50,18 @@ fn snapshot_request(path: &std::path::Path) -> ExportRequest {
         mode: Some(ExportMode::Snapshot),
         overwrite: false,
         path: path.to_string_lossy().into_owned(),
+        ..ExportRequest::default()
     }
 }
 
-fn report_request(path: &std::path::Path) -> ReportRequest {
-    ReportRequest {
-        path: path.to_string_lossy().into_owned(),
+fn report_request(path: &std::path::Path) -> ExportRequest {
+    ExportRequest {
         rows: Some(2),
         overwrite: false,
+        format: Some(ExportFormat::Markdown),
+        path: path.to_string_lossy().into_owned(),
+        via_report_alias: true,
+        ..ExportRequest::default()
     }
 }
 
@@ -130,7 +134,7 @@ fn report_of_agent_capture_names_scope() {
     let mut state = SessionState::new("test", None, "model");
     let rt = unused_runtime();
     apply_query_actions(
-        &mut Some(SessionAction::Report(report_request(&path))),
+        &mut Some(SessionAction::Export(report_request(&path))),
         &mut transcript,
         &mut state,
         &mut None,

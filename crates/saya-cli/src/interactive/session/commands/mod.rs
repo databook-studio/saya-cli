@@ -31,16 +31,21 @@ pub(crate) fn sessions_list_text(
 /// errors, the TUI pushes an Error block). The message is the headless
 /// `render_delete` wording, byte for byte. `current_session_id` is the
 /// calling session's own id on both surfaces, so a session can never
-/// delete itself underneath its owner.
+/// delete itself underneath its owner. The job the record links goes with
+/// the record when it is the session's own finished run; `jobs_root` is
+/// where those jobs keep their records — the caller states it, so a test
+/// can point the one operation at a tree it owns.
 pub(crate) fn sessions_delete_text(
     store: &FsSessionStore,
     sessions_root: &Path,
+    jobs_root: &Path,
     id: &str,
     current_session_id: Option<&str>,
 ) -> (bool, String) {
     let outcome = crate::commands::saved_sessions::delete_saved_session(
         store,
         sessions_root,
+        jobs_root,
         id,
         current_session_id,
     );

@@ -25,7 +25,7 @@ fn command_help_memory_runs(name: &str) -> Option<&'static str> {
             "reject <claim-id-prefix> — deprecated alias of /contracts reject, removed in the next release: use /contracts reject <claim-id-prefix>. It rejects the knowledge claim named by its short id prefix. Example: /contracts reject ki-a86a3f",
         ),
         "approve-all" => Some(
-            "approve-all [--yes] [limit] — deprecated alias of /contracts confirm-all, removed in the next release: use /contracts confirm-all [--yes] [limit]. It confirms knowledge claims only, never job approvals — those are /approve <id>. It approves every candidate in the review queue: the same set /contracts queue shows. Each candidate still gets the per-item validation /contracts confirm applies, so some may be refused; every confirmation and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /contracts confirm-all --yes",
+            "approve-all [--yes] [limit] — deprecated alias of /contracts confirm-all, removed in the next release: use /contracts confirm-all [--yes] [limit]. It confirms knowledge claims only, never job approvals — those are /job approve <id>. It approves every candidate in the review queue: the same set /contracts queue shows. Each candidate still gets the per-item validation /contracts confirm applies, so some may be refused; every confirmation and every refusal is reported by id. Without --yes the queue is printed and nothing is approved. Example: /contracts confirm-all --yes",
         ),
         "run" => Some(
             "run <goal…> --allow <scopes> [--budget k=v…] — start a headless run from the session: the nested `saya run` streams its events and lands where the headless command lands (completed 0, paused 6 — resume it with /run resume <id> — cancelled 130). `none` states a read-only run with no capabilities; the wired scopes are `workspace-write`, `fetch:<scheme>+<host>`, and `sql:<connection>` (seeds the run's decider: under `--approval-mode ask` the read-shaped SQL tools' calls naming that connection run without asking). `command:<program>` is refused here: a run is unattended and this scope names unconfined host execution. `shell:<command prefix>` is refused here: it names a session's grant for the `shell` tool, and a run composes no session grant store. `endpoint:<role>=<endpoint>` is refused here: per-step endpoint roles are not bound. Prefix the tail with `--seed-grants` to seed the child's `--allow` from this session's grant store — only tokens a run accepts are forwarded, and the rest are named, not silently dropped. `/run cancel <id>` records a run cancelled the same way `saya run cancel` does; a run with a live holder refuses. Example: /run survey the data --allow workspace-write",
@@ -36,8 +36,18 @@ fn command_help_memory_runs(name: &str) -> Option<&'static str> {
         "allow" => Some(
             "allow <scopes…> — seed pre-authorized scopes into this session's grant store: a granted scope pre-answers the asks it names until the session ends (grants die with the session and are never persisted; a resumed session starts empty). The grammar is the same one `--allow` parses, judged for the session surface: the wired scopes are `workspace-write`, `fetch:<scheme>+<host>`, `command:<program>` (a host program — unsandboxed, as your user with your filesystem and network — gated on the lane, which composes wherever a workspace root binds; refused here when no root is bound), and `sql:<connection>` (one SQL grant covers the read-shaped SQL family — bounded_sql_query, result_shape, column_health, join_check — against that connection), and `shell:<command prefix>` (the `shell` tool's own key: the leading words of one plain command, which pre-answers that tool's asks naming the same prefix). `endpoint:<role>=<endpoint>` is refused here: a session binds no per-step endpoint roles. A scope naming a denied program refuses here: a grant cannot override the deny list, and the deny list bounds only the program named in the ask — allowed programs may still invoke it. `none` states the empty approval and must stand alone: it seeds nothing, and it is not a revoke — the store keeps whatever it already holds. /allow only adds. Example: /allow sql:analytics   or   /allow workspace-write sql:analytics",
         ),
+        "permissions" => Some(
+            "permissions — one read-only view of what this session may do: the mode in force, the \
+             grant store (one granted scope per line, sorted, in the words /allow seeded), the \
+             deny list, whether the host lane composed, and whether cloud data sharing is on. It \
+             only reads: no provider call, no database query, no network — /doctor is the command \
+             that checks. Example: /permissions",
+        ),
         "grants" => Some(
-            "grants — list this session's grant store verbatim: one granted scope per line, sorted, under a header stating the lifetime, with a count. The words are the record, and they are the same words /allow seeded and the prompts offered. Example: /grants",
+            "grants — deprecated alias for /permissions (removed next release): the same view, in \
+             the same words. The grant store it lists is the record: one granted scope per line, \
+             sorted, under a header stating the lifetime, with a count — the same words /allow \
+             seeded and the prompts offered. Example: /grants",
         ),
         "help" => Some(
             "help [command] — display general help or detailed usage for a command. Example: /help connect",

@@ -44,6 +44,7 @@ fn handle_sessions_delete(
     let (ok, message) = crate::interactive::session::commands::sessions_delete_text(
         store,
         &default_session_dir(),
+        &crate::commands::coding::job_records::root(),
         &id,
         Some(&state.id),
     );

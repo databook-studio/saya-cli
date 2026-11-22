@@ -33,10 +33,20 @@ pub(crate) fn parse_investigation_command(
         return parse_list(tail);
     }
     let Some(&(start, end)) = flags::token_spans(tail).first() else {
-        return Err(SlashParseError(format!(
-            "investigation needs a subcommand{USAGE}"
-        )));
+        // A bare `/investigation` is the listing in the line REPL (the TUI
+        // opens its picker before this parser runs), so no subcommand word is
+        // the `list` verb rather than a usage error.
+        return parse_list("");
     };
+    if tail[start..end].starts_with("--") {
+        // A leading listing flag belongs to the listing the bare form states:
+        // `--list` says so explicitly, `--limit`/`--offset` bound it. Any
+        // other flag-shaped token keeps today's unknown-subcommand refusal,
+        // which redacts the value such a token carries.
+        if matches!(&tail[start..end], "--list" | "--limit" | "--offset") {
+            return parse_list(tail.strip_prefix("--list").unwrap_or(tail));
+        }
+    }
     let rest = tail[end..].trim_start();
     match &tail[start..end] {
         "save" => parse_save(rest),

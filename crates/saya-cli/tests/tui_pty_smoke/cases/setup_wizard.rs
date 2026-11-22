@@ -58,7 +58,7 @@ fn setup_handoff_full_wizard_writes_config_and_returns() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
         .expect("input works again after the handoff");
     assert!(
         tui.still_running(),

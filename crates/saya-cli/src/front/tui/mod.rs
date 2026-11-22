@@ -14,13 +14,21 @@
 //! through the pure update, the executor that performs the commands, and the
 //! frame painted only when the model changed and at most thirty times a second
 //! — the panes T4-T13 built, composed into one screen.
+//!
+//! T17 lands the background jobs drawer (`02` §8): `Ctrl+J` or bare `/job`
+//! lists the run's jobs over the transcript, a job's call enters the session's
+//! own card slot, and `x` asks before it cancels. The plumbing is today's
+//! (`interactive::tui::coding`), re-exported rather than copied.
 
 pub(crate) mod cards_keys;
 pub(crate) mod direct;
+pub(crate) mod direct_export;
 pub(crate) mod direct_run;
 pub(crate) mod direct_trust;
 pub(crate) mod focus;
 mod focus_text;
+pub(crate) mod jobs;
+mod jobs_desk;
 pub(crate) mod keys;
 pub(crate) mod model;
 pub(crate) mod model_overlay;
@@ -53,6 +61,10 @@ pub(crate) use direct_run::DirectDeps;
 pub(crate) use direct_trust::{TrustStore, press as trust_press};
 #[allow(unused_imports)]
 pub(crate) use focus::EntryPath;
+#[allow(unused_imports)]
+pub(crate) use jobs::{JobReport, press as jobs_press};
+#[allow(unused_imports)]
+pub(crate) use jobs_desk::{JobDesk, NO_SUCH_JOB};
 #[allow(unused_imports)]
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
@@ -109,6 +121,22 @@ mod update_mode_tests;
 mod update_cycle_tests;
 
 #[cfg(test)]
+#[path = "jobs_fixture.rs"]
+mod jobs_fixture;
+
+#[cfg(test)]
+#[path = "jobs_tests.rs"]
+mod jobs_tests;
+
+#[cfg(test)]
+#[path = "jobs_run_tests.rs"]
+mod jobs_run_tests;
+
+#[cfg(test)]
+#[path = "jobs_desk_tests.rs"]
+mod jobs_desk_tests;
+
+#[cfg(test)]
 #[path = "run_fixture.rs"]
 pub(crate) mod run_fixture;
 
@@ -147,3 +175,7 @@ mod direct_tests;
 #[cfg(test)]
 #[path = "direct_trust_tests.rs"]
 mod direct_trust_tests;
+
+#[cfg(test)]
+#[path = "direct_export_tests.rs"]
+mod direct_export_tests;

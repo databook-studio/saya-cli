@@ -7,7 +7,9 @@ use saya_cli::{Cli, CodingCommand, Command, SlashCommand, parse_slash_command};
 
 fn slash_command(line: &str) -> CodingCommand {
     match parse_slash_command(line).unwrap().unwrap() {
-        SlashCommand::Coding(command) => command,
+        // The operation, never the deprecated spelling that stated it: an
+        // alias parses to the same command `/job <verb>` parses.
+        SlashCommand::Coding(request) => request.command,
         _ => panic!("{line} parses a job command"),
     }
 }

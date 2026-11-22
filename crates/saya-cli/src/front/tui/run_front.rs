@@ -9,6 +9,11 @@
 //! key press and resumed when the press happens, possibly many messages later.
 //! The front therefore keeps the waiting ends by the question's own id, and
 //! [`Cmd::Answer`](super::msg::Cmd::Answer) resolves the one it names.
+//!
+//! A job's calls are answered here too (`02` §5, §8): its worker reports with
+//! today's `CodingMessage`, `super::jobs_desk` reads it as a row or as a
+//! question, and the waiting end is the plumbing's own — so one card answers
+//! the session's calls and a job's alike.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -18,15 +23,23 @@ use saya_agent::{AgentEvent, AgentEventSink};
 use std::sync::Arc;
 use tokio::sync::{mpsc::UnboundedSender, oneshot};
 
+use super::jobs_desk::JobDesk;
 use super::msg::{Msg, Worker};
 use crate::agent::tools::consent::Answer;
 use crate::chat::{ChatEvent, ChatFront, Question};
+use crate::interactive::tui::CodingPanel;
 
 /// The surface one session drives: its events in, its calls answered.
 pub(crate) struct Forward {
     msgs: UnboundedSender<Msg>,
     /// The asks waiting for an answer, by the id they were put under.
     pending: Mutex<HashMap<u64, oneshot::Sender<Answer>>>,
+    /// The run's jobs as today's job plumbing states them, and the waiting end
+    /// of every call one of them has put to the operator (`02` §8). A job is one
+    /// of this surface's workers, and its calls are answered by the same card.
+    pub(super) desk: Mutex<JobDesk>,
+    /// The panel a job of this run reports through, once one is running.
+    pub(super) panel: Mutex<Option<CodingPanel>>,
 }
 
 impl Forward {
@@ -35,7 +48,19 @@ impl Forward {
         Self {
             msgs,
             pending: Mutex::new(HashMap::new()),
+            desk: Mutex::new(JobDesk::default()),
+            panel: Mutex::new(None),
         }
+    }
+
+    /// The run's jobs, as today's job plumbing states them.
+    pub(super) fn desk_lock(&self) -> MutexGuard<'_, JobDesk> {
+        self.desk.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The panel a job of this run reports through.
+    pub(super) fn panel(&self) -> MutexGuard<'_, Option<CodingPanel>> {
+        self.panel.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Hands one session event to the loop. False when the loop is gone.
@@ -69,7 +94,9 @@ impl Forward {
         let waiting = self.pending().remove(&id);
         match waiting {
             Some(respond) => respond.send(answer).is_ok(),
-            None => false,
+            // A job's call is put to the operator through the same card, and its
+            // waiting end is today's plumbing's own (`02` §5, §8).
+            None => self.desk_lock().answer(id, answer),
         }
     }
 

@@ -28,10 +28,12 @@ mod delegate;
 mod delegate_batch;
 mod follow_up;
 mod helper_shape;
+pub(crate) mod job_records;
 mod joined_accounting;
 pub(crate) mod lane;
 pub(crate) mod lifecycle;
 pub(crate) mod limits;
+mod origin;
 pub use follow_up::{ChildFollowUpRequest, ChildFollowUpStarted};
 mod diagnostics;
 mod export;
@@ -128,7 +130,7 @@ pub use oneshot::{
     start as oneshot_start,
 };
 pub(crate) use owner_failure::NativeOwnerFailureState;
-pub use request::CodingJobRequest;
+pub use request::{CodingJobRequest, JobOrigin};
 pub use runtime::NativeCodingJob;
 
 pub(crate) use in_place_changes::job_changes;
@@ -163,7 +165,7 @@ pub enum CodingError {
     )]
     PreparedCandidateState,
     #[error(
-        "fresh approval for this exact job and scope is required: scripts pass --approve for exactly that scope; interactive sessions answer with `/approve <job>`"
+        "fresh approval for this exact job and scope is required: scripts pass --approve for exactly that scope; interactive sessions answer with `/job approve <job>`"
     )]
     ApprovalRequired,
     #[error(
@@ -333,6 +335,10 @@ mod plan_gate_tests;
 #[cfg(all(test, unix))]
 #[path = "tools_allow_tests.rs"]
 mod tools_allow_tests;
+
+#[cfg(all(test, unix))]
+#[path = "origin_tests.rs"]
+mod origin_tests;
 
 #[cfg(all(test, unix))]
 #[path = "root_checkout_tests.rs"]

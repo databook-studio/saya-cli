@@ -35,8 +35,8 @@ fn finish_action(
     if let SessionAction::Allow(tokens) = action {
         return handle_allow(tokens, ctx);
     }
-    if let SessionAction::Grants = action {
-        return handle_grants(ctx);
+    if let SessionAction::Permissions(request) = action {
+        return handle_permissions(request, ctx);
     }
     if let SessionAction::Context = action {
         return handle_context(ctx);

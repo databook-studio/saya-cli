@@ -22,7 +22,7 @@ use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::commands::approval_name;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
 use crate::interactive::session::permissions::mode;
-use crate::slash::{ExportRequest, ModeRequest, ReportRequest, RewindRequest};
+use crate::slash::{ExportRequest, ModeRequest, PermissionsRequest, RewindRequest};
 
 /// The session's handles, as one operation sees them.
 pub(crate) struct OpsContext {
@@ -136,9 +136,11 @@ pub(crate) enum SessionOp {
     Reload,
     /// `/setup`: hand the terminal to the guided setup.
     Setup,
-    /// `/start`, `/follow-up`, `/job …` and the six child controls: a job
-    /// beside the session's own run, never inside it.
-    Job(crate::cli::CodingCommand),
+    /// `/start`, `/follow-up`, `/job …` and the seven one-release top-level
+    /// spellings of its verbs: a job beside the session's own run, never
+    /// inside it. The request carries the alias that stated it, for the note
+    /// that alias owes once per session.
+    Job(crate::slash::JobRequest),
     /// `/undo`: restore the files the last turn edited, from the run's own
     /// checkpoint taken before that turn. The adapter runs it through the one
     /// rewind operation (`chat::ops_rewind`), never inside a turn.
@@ -146,6 +148,12 @@ pub(crate) enum SessionOp {
     /// `/rewind [<id>]`: the run's checkpoints listed newest first, or one of
     /// them restored — the same operation `/undo` and `saya job rewind` run.
     Rewind(RewindRequest),
+    /// Bare `/continue`: send the paused turn's continuation message. The one
+    /// session op that states a turn of the run: the adapter that owns the
+    /// session performs it through the same send path a typed line uses
+    /// (`chat::ops_continue`, `ChatSession::continue_turn`), and it refuses
+    /// while a turn runs.
+    ContinueTurn,
     /// `/exit`, `/quit`.
     Exit,
 }
@@ -166,10 +174,10 @@ pub(crate) enum ReadOp {
     Schema { refresh: bool },
     /// `/sql <query>` — one bounded read-only statement.
     Sql(String),
-    /// `/export …` — write the last result.
+    /// `/export …` — write the last result (or, for a `.md` destination,
+    /// today's Markdown report). `/report` states the same read through its
+    /// one-release alias.
     Export(ExportRequest),
-    /// `/report …` — the Markdown report of the last result.
-    Report(ReportRequest),
     /// `/chart [type] [path]` — a chart of the last result.
     Chart(String),
     /// `/explain [sql]` — the statement's plan.
@@ -197,8 +205,10 @@ pub(crate) enum ReadOp {
     Investigation(InvestigationCommand),
     /// `/runs [id]` — the run engine's own store.
     Runs(Option<String>),
-    /// `/grants` — the session's grant store.
-    Grants,
+    /// `/permissions` — one read-only view of what this session may do: the
+    /// mode, the grant store, the deny list, the host lane and data sharing.
+    /// `/grants` states the same read through its one-release alias.
+    Permissions(PermissionsRequest),
     /// `/doctor` — the configuration check.
     Doctor,
     /// `/help [command]` — the help text.

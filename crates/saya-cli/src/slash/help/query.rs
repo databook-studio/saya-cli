@@ -1,25 +1,29 @@
 fn command_help_query(name: &str) -> Option<&'static str> {
     match name {
         "export" => Some(
-            "export [--snapshot|--refresh] [--overwrite] <path> — write rows to a .csv or .json file. \
-             The default (and --refresh) re-runs the last query and exports that fresh read — the file \
-             reflects the fresh result, not the displayed table (/columns, scroll, and folds do not apply). \
-             --snapshot exports the result you already have: the latest /sql capture, held for this session \
-             only, with no query at all. An existing destination needs --overwrite. \
-             Example: /export results.csv or /export --snapshot results.csv",
+            "export [--snapshot|--refresh] [--overwrite] [--rows N] [--format csv|json|md] <path> — \
+             write the result to a file. The extension or --format selects it: a .csv or .json \
+             path writes the rows; a .md path (or --format md) writes the shareable Markdown \
+             report. The default (and --refresh) re-runs the last query and exports that fresh \
+             read — the file reflects the fresh result, not the displayed table (/columns, \
+             scroll, and folds do not apply). --snapshot exports the result you already have: \
+             the latest /sql capture, held for this session only, with no query at all. A \
+             Markdown report is always written from that capture, provenance included: connection \
+             label, submitted-SQL hash, execution id, times, row counts, truncation, scope — \
+             with the rows section reading that rows are omitted unless --rows N (at most 100) \
+             adds a table of the first N. Cell values are neutralised, so spreadsheet formulas, \
+             links, HTML, and control characters cannot be carried into the file — review a \
+             report before sharing. An existing destination needs --overwrite. \
+             Example: /export results.csv or /export notes.md --rows 20",
         ),
         "report" => Some(
-            "report [--rows N] [--overwrite] <path> — write a shareable Markdown report of the \
-             result you already inspected: the latest /sql capture, held for this session only. \
-             The report never queries a database and never opens a browser or uploads; it is \
-             written atomically and an existing destination needs --overwrite. By default the \
-             report carries the exact SQL and provenance only — connection label, submitted-SQL \
-             hash, execution id, times, row counts, truncation, scope — with the rows section \
-             reading that rows are omitted; pass --rows N (at most 100) to add a table of the \
-             first N captured rows. Cell values are neutralised, so spreadsheet formulas, \
-             links, HTML, and control characters cannot be carried into the file — the report \
-             must still be reviewed before sharing. Use /export for data files (.csv/.json). \
-             Example: /report notes.md   or   /report --rows 20 notes.md",
+            "report [--rows N] [--overwrite] <path> — deprecated alias for /export --format md \
+             (removed next release): the same operation, the same bytes. It writes the \
+             shareable Markdown report of the result you already inspected — the latest /sql \
+             capture, held for this session only — and never queries a database. By default \
+             the report carries the exact SQL and provenance only; pass --rows N (at most 100) \
+             to add a table of the first N captured rows. Use /export for data files. \
+             Example: /report notes.md   or   /export notes.md --rows 20",
         ),
         "investigation" => Some(
             "investigation <save|list|show|run|export|import|delete> — manage saved \

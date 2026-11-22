@@ -239,11 +239,16 @@ pub enum CodingCommand {
         #[arg(long, conflicts_with = "in_place")]
         managed: bool,
     },
-    /// List durable jobs for the selected repository.
+    /// List durable jobs for the selected repository. A job a chat session
+    /// opened is hidden unless `--all` asks for it: a session opens one job per
+    /// session, so the CLI's own jobs stay the default listing.
     List {
         /// Continue after this job id; at most 100 jobs per page.
         #[arg(long)]
         after: Option<String>,
+        /// Include the jobs chat sessions opened as well as the CLI's own.
+        #[arg(long)]
+        all: bool,
     },
     /// Show a job and its bounded child states.
     Show {

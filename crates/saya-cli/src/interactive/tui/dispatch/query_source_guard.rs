@@ -63,14 +63,16 @@ pub(super) fn refuse_rerun(
 
 /// The label a follow-up would resolve: the stored label wins, falling back
 /// to the current profile. `None` means the action never re-runs a capture
-/// (`--snapshot`, `/report`, explicit `/explain SQL`).
+/// (`--snapshot`, a `.md` report, explicit `/explain SQL`).
 pub(super) fn rerun_label(
     action: &SessionAction,
     state: &SessionState,
     last_query: &Option<LastQuery>,
 ) -> Option<String> {
     match action {
-        SessionAction::Export(request) if request.mode != Some(ExportMode::Snapshot) => {
+        SessionAction::Export(request)
+            if request.mode != Some(ExportMode::Snapshot) && !request.is_report() =>
+        {
             rerun_connection(last_query, state)
         }
         SessionAction::Chart(_) => rerun_connection(last_query, state),

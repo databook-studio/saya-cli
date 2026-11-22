@@ -56,6 +56,7 @@ const TABLE: &[(&str, Fate)] = &[
     ("/run cancel abc123", Fate::Unavailable),
     ("/runs", Fate::ReadOnly),
     ("/allow sql:analytics", Fate::Session),
+    ("/permissions", Fate::ReadOnly),
     ("/grants", Fate::ReadOnly),
     ("/context", Fate::ReadOnly),
     ("/doctor", Fate::ReadOnly),
@@ -70,6 +71,10 @@ const TABLE: &[(&str, Fate)] = &[
     ("/undo", Fate::Session),
     ("/rewind", Fate::Session),
     ("/rewind 3", Fate::Session),
+    // Bare `/continue` is the one session op that states a turn; the argument
+    // spelling is the job control's one-release alias.
+    ("/continue", Fate::Session),
+    ("/continue 7 a", Fate::Session),
     ("/exit", Fate::Session),
 ];
 
@@ -94,8 +99,110 @@ fn every_slash_command_maps_to_exactly_one_fate() {
     );
     assert_eq!(
         TABLE.len(),
-        55,
+        58,
         "the table names every spelling this unit pins"
+    );
+}
+
+/// Bare `/continue` is one session op, and its message is the operation's own:
+/// nothing else decides what a paused turn is continued with.
+#[test]
+fn bare_continue_is_the_one_session_op_that_states_a_turn() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    assert_eq!(
+        harness.ops.operation(&command("/continue")),
+        Op::Session(crate::chat::SessionOp::ContinueTurn)
+    );
+    assert_eq!(
+        crate::chat::CONTINUE_MESSAGE,
+        "Continue.",
+        "the continuation turn is the literal message decision 11 pins"
+    );
+    assert_eq!(
+        harness.ops.operation(&command("/continue 7 a")),
+        Op::Session(crate::chat::SessionOp::Job(
+            crate::slash::JobRequest::alias(
+                crate::cli::CodingCommand::Continue {
+                    id: "7".into(),
+                    agent: "a".into(),
+                },
+                crate::slash::JobAlias::Continue,
+            )
+        ))
+    );
+}
+
+/// Every top-level control is `/job`'s verb: one operation, two spellings, and
+/// the alias carries the note (row 171).
+#[test]
+fn every_job_control_is_its_job_verb() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    for (alias_line, job_line, alias) in [
+        (
+            "/approve 7",
+            "/job approve 7",
+            crate::slash::JobAlias::Approve,
+        ),
+        ("/deny 7", "/job deny 7", crate::slash::JobAlias::Deny),
+        (
+            "/message 7 a go",
+            "/job message 7 a go",
+            crate::slash::JobAlias::Message,
+        ),
+        (
+            "/pause 7 a",
+            "/job pause 7 a",
+            crate::slash::JobAlias::Pause,
+        ),
+        (
+            "/cancel-child 7 a",
+            "/job cancel-child 7 a",
+            crate::slash::JobAlias::CancelChild,
+        ),
+    ] {
+        let Op::Session(crate::chat::SessionOp::Job(alias_request)) =
+            harness.ops.operation(&command(alias_line))
+        else {
+            panic!("{alias_line} is a job operation");
+        };
+        let Op::Session(crate::chat::SessionOp::Job(job_request)) =
+            harness.ops.operation(&command(job_line))
+        else {
+            panic!("{job_line} is a job operation");
+        };
+        assert_eq!(
+            alias_request.command, job_request.command,
+            "{alias_line} is {job_line}'s operation"
+        );
+        assert_eq!(
+            alias_request.via_alias,
+            Some(alias),
+            "{alias_line} states its alias"
+        );
+        assert_eq!(job_request.via_alias, None, "{job_line} owes no note");
+    }
+}
+
+/// `/grants` is `/permissions`'s alias: one read-only view, two spellings,
+/// and the alias carries its own flag so the note can ride the answer.
+#[test]
+fn permissions_and_grants_are_one_read_operation() {
+    let harness = harness(ApprovalPolicy::Ask, false);
+    let canonical = harness.ops.operation(&command("/permissions"));
+    let alias = harness.ops.operation(&command("/grants"));
+    assert_eq!(
+        canonical,
+        Op::Read(ReadOp::Permissions(
+            crate::slash::PermissionsRequest::permissions()
+        )),
+        "the canonical spelling reads the view"
+    );
+    assert_eq!(
+        alias,
+        Op::Read(ReadOp::Permissions(
+            crate::slash::PermissionsRequest::grants()
+        )),
+        "the alias reads the same view, its spelling recorded"
     );
 }
 

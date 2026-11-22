@@ -46,25 +46,28 @@ fn export_request_maps_to_the_same_action() {
         mode: Some(ExportMode::Snapshot),
         overwrite: true,
         path: "out.csv".into(),
+        ..ExportRequest::default()
     };
     let action = state.apply(SlashCommand::Export(request.clone()), &[]);
     assert_eq!(action, SessionAction::Export(request));
 }
 
-/// `/report` carries the parsed request through unchanged — the TUI's
-/// report dispatch owns the behaviour; the adapter owns nothing but the
-/// mapping.
+/// `/report` is `/export --format md`'s one-release alias: the adapter maps
+/// the one request through, the TUI's export dispatch owns the behaviour.
 #[test]
-fn report_request_maps_to_the_same_action() {
-    use crate::slash::ReportRequest;
+fn report_request_maps_to_the_export_action() {
+    use crate::slash::{ExportFormat, ExportRequest};
     let mut state = SessionState::new("test", None, "gpt-4o");
-    let request = ReportRequest {
-        path: "out.md".into(),
+    let request = ExportRequest {
         rows: Some(20),
         overwrite: true,
+        format: Some(ExportFormat::Markdown),
+        path: "out.md".into(),
+        via_report_alias: true,
+        ..ExportRequest::default()
     };
-    let action = state.apply(SlashCommand::Report(request.clone()), &[]);
-    assert_eq!(action, SessionAction::Report(request));
+    let action = state.apply(SlashCommand::Export(request.clone()), &[]);
+    assert_eq!(action, SessionAction::Export(request));
 }
 
 /// `/investigation` carries the translated command through unchanged —

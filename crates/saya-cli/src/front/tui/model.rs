@@ -10,6 +10,7 @@ use saya_agent::PermissionMode;
 
 use super::focus::EntryPath;
 use super::model_overlay::Overlay;
+use super::view::jobs::Drawer;
 use crate::chat::Question;
 use crate::front::tui::view::Toast;
 use crate::front::{TranscriptView, TurnView};
@@ -24,6 +25,13 @@ pub(crate) struct Model {
     /// The call the operator has been asked and has not answered. One card at
     /// a time: the operator serialises its asks, so a second waits its turn.
     pub(crate) card: Option<Question>,
+    /// The calls that arrived while a card was open, oldest first: they take the
+    /// card in that order as it is answered (T9/A5 — a job's ask queues behind
+    /// the session's and never replaces it).
+    pub(crate) held: Vec<Question>,
+    /// The run's jobs, as the job plumbing reports them (`02` §8): the drawer's
+    /// rows, kept current whether or not the drawer is open.
+    pub(crate) jobs: Drawer,
     /// The mode the run's next call reads, and whether this process allows
     /// `bypass` at all — the key cycle skips what the configuration withholds.
     pub(crate) mode: PermissionMode,

@@ -1,9 +1,18 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
-    /// The job surface: `/job <verb>`, `/start`, `/follow-up`, and the six
-    /// session-only controls. Every spelling carries the same `CodingCommand`
-    /// the CLI parses, so the two surfaces cannot drift.
-    Coding(crate::cli::CodingCommand),
+    /// The job surface: `/job <verb>`, `/start`, and the seven top-level
+    /// spellings that are `/job`'s verbs for one release (`/approve`, `/deny`,
+    /// `/message`, `/pause`, `/continue <id> <agent>`, `/cancel-child`,
+    /// `/follow-up`). Every spelling carries the same `CodingCommand` the CLI
+    /// parses, so the two surfaces cannot drift; a deprecated spelling also
+    /// carries its alias, for the note it owes once per session.
+    Coding(JobRequest),
+    /// Bare `/continue` — continue the session's last turn when it paused. A
+    /// guard stop is a pause the operator's next message continues, and this is
+    /// that message: the literal `Continue.`, sent through the same path a
+    /// typed line uses, once (approved decision 11). The argument spelling
+    /// `/continue <id> <agent>` is [`JobAlias::Continue`], a job control.
+    ContinueTurn,
     Connect(String),
     Connections,
     Include(String),
@@ -17,15 +26,15 @@ pub enum SlashCommand {
     Mode(ModeRequest),
     Schema(bool),
     Sql(String),
-    /// `/export [--snapshot|--refresh] [--overwrite] <path>` — what to
-    /// write and where, parsed once here so every adapter sees the same
-    /// request. No mode flag is the legacy refresh.
+    /// `/export [--snapshot|--refresh] [--overwrite] [--rows N]
+    /// [--format csv|json|md] <path>` — what to write and where, parsed once
+    /// here so every adapter sees the same request. No mode flag is the
+    /// legacy refresh. The extension or `--format` selects the file: `.md`
+    /// (or `--format md`) writes today's Markdown report, `.csv`/`.json` the
+    /// data file. `/report <args>` is this command's one-release alias, so it
+    /// produces **this** variant with [`ExportRequest::via_report_alias`]
+    /// set: one operation, one writer, two spellings.
     Export(ExportRequest),
-    /// `/report [--rows N] [--overwrite] <path>` — write a shareable
-    /// Markdown report of the captured `/sql` result: SQL + provenance by
-    /// default, rows only on request. Parsed once here like `/export` so
-    /// every adapter sees the same request.
-    Report(ReportRequest),
     Chart(String),
     Explain(String),
     Clear,
@@ -115,9 +124,12 @@ pub enum SlashCommand {
     /// keeps its grammar meaning: the empty approval, alone — it seeds
     /// nothing and is not a revoke).
     Allow(Vec<String>),
-    /// `/grants` — the session's grant store listed verbatim: one token per
-    /// line, sorted, under a header stating the lifetime.
-    Grants,
+    /// `/permissions` — one read-only view of what this session may do:
+    /// the mode in force, the grant store, the deny list, the host lane, and
+    /// data sharing. `/grants` is its one-release alias, so it produces
+    /// **this** variant with [`PermissionsRequest::via_grants_alias`] set:
+    /// one view, one rendering, two spellings.
+    Permissions(PermissionsRequest),
     /// `/context` — the instruction sources as they would load for the next
     /// request: per source the origin, file name, whole-file size, bytes
     /// included, short digest, truncation and redaction flags; per skipped

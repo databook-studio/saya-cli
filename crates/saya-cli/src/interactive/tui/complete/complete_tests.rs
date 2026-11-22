@@ -9,9 +9,12 @@ fn descriptions_cover_exactly_the_catalogue() {
     // the popup reads its rows from the catalogue — one table, no local
     // copy — so this asserts the catalogue's names and descriptions are the
     // popup's: every name is unique, every name carries a description, and
-    // the count is today's 62 (49 commands and their 13 alias spellings).
+    // the count is today's 60 (39 commands and their 21 alias spellings —
+    // /report and /grants folded into their commands by K7, the six job
+    // controls and /follow-up folded into /job by K4, and the three hidden
+    // rows of K8 offered nowhere).
     let entries: Vec<_> = crate::slash::catalog::entries().collect();
-    assert_eq!(entries.len(), 62);
+    assert_eq!(entries.len(), 60);
     for entry in &entries {
         assert!(
             entry.surfaces.covers(crate::slash::catalog::Surface::Tui),
@@ -36,11 +39,28 @@ fn test_non_slash_line() {
     assert_eq!(slash_candidates("hello", &profiles()), None);
 }
 
+/// The three hidden rows (K8: `/run`, `/runs`, `/recovery`) are offered by no
+/// prefix: a hidden command still parses, but the popup never names it.
+#[test]
+fn test_hidden_commands_are_never_offered() {
+    for prefix in ["/", "/r", "/re", "/run", "/runs", "/recovery"] {
+        let Some((_, _, candidates)) = slash_candidates(prefix, &profiles()) else {
+            continue;
+        };
+        for value in ["/run", "/runs", "/recovery"] {
+            assert!(
+                candidates.iter().all(|candidate| candidate.value != value),
+                "the popup offers the hidden {value} for {prefix:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn test_slash_only() {
     let (start, end, candidates) = slash_candidates("/", &profiles()).unwrap();
     assert_eq!((start, end), (0, 1));
-    assert_eq!(candidates.len(), 62); // registry size: every known command with a description
+    assert_eq!(candidates.len(), 60); // catalogue size: every offered name with a description
     // An empty query scores every command equally, so the stable sort keeps
     // registry order and the registry's first entry leads.
     assert_eq!(candidates[0].value, "/start");
@@ -81,7 +101,6 @@ fn test_command_prefix() {
             "/contract",
             "/confirm",
             "/context",
-            "/recovery",
             "/doctor"
         ]
     );
@@ -104,7 +123,6 @@ fn test_command_prefix_case_insensitive() {
             "/contract",
             "/confirm",
             "/context",
-            "/recovery",
             "/doctor"
         ]
     );

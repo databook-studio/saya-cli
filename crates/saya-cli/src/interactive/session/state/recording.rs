@@ -32,6 +32,7 @@ impl SessionState {
             allow_bypass: false,
             user_commands: Default::default(),
             status_notes: Default::default(),
+            job_notes: Default::default(),
         }
     }
 

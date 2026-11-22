@@ -6,6 +6,7 @@ use super::{
     EXIT_SESSIONS_ERROR, delete_saved_session, list_sessions, render_delete, render_listing,
 };
 use crate::cli::SessionsCommand;
+use crate::commands::coding::job_records;
 use crate::commands::output::{failure_message, result};
 use crate::interactive::session::lifecycle::paths::default_session_dir;
 use crate::render::RenderFormat;
@@ -40,7 +41,7 @@ async fn list(format: RenderFormat) -> Result<i32, Box<dyn std::error::Error>> {
 fn delete(id: &str, format: RenderFormat) -> Result<i32, Box<dyn std::error::Error>> {
     let sessions_root = default_session_dir();
     let store = FsSessionStore::new(&sessions_root);
-    let outcome = delete_saved_session(&store, &sessions_root, id, None);
+    let outcome = delete_saved_session(&store, &sessions_root, &job_records::root(), id, None);
     let (code, message) = render_delete(&outcome, id);
     if code == 0 {
         result(message, format)

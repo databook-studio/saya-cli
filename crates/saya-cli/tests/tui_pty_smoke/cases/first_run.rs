@@ -66,7 +66,7 @@ fn first_run_setup_applies_immediately_without_a_restart() {
         .expect("the profile list follows the swap");
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
         .expect("the TUI is still responsive after the applied setup");
     assert!(
         tui.still_running(),
@@ -109,7 +109,7 @@ fn first_run_setup_cancel_changes_nothing() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
         .expect("input works again after the cancelled setup");
     assert!(
         tui.still_running(),
@@ -173,7 +173,7 @@ fn setup_handoff_failure_returns_to_the_tui() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
         .expect("input works again after the failed handoff");
     assert!(
         tui.still_running(),

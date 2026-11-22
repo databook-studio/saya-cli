@@ -41,8 +41,8 @@ use crate::agent::tools::CaptureHook;
 use crate::agent::tools::consent::Operator;
 use crate::agent::tools::shell_policy::ModeCell;
 use crate::commands::coding::{
-    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, Launch, NativeCodingJob,
-    TurnInputs,
+    CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, JobOrigin, Launch,
+    NativeCodingJob, TurnInputs,
 };
 use crate::connection::ConnectionRegistry;
 use crate::plugins::database::DatabaseBudget;
@@ -222,6 +222,10 @@ impl RunComposition {
 /// advertisement read it — and never the first message: a prepared run's first
 /// message is `run_next_turn`.
 ///
+/// The request states the origin `session`: a chat session and every `saya ask`
+/// open a job, and this is the one place either builds its request, so a
+/// `saya job list` can tell them from the CLI's own without asking anybody.
+///
 /// `taken` is the artifacts root's answer about the session's own name: a
 /// session opens a run more than once — a resumed session's next process says
 /// the same name the process before it did — and a run's private artifacts are
@@ -241,7 +245,7 @@ fn request(
     };
     let job = JobId::parse(&id).map_err(CodingError::owner)?;
     let task = format!("session {session}");
-    CodingJobRequest::new(job, task, write_scope(shape))
+    CodingJobRequest::new(job, task, write_scope(shape))?.with_origin(JobOrigin::Session)
 }
 
 /// The job id a run takes when the session's own name is already a run's: the

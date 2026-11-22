@@ -120,6 +120,10 @@ pub(crate) struct CommandSpec {
     /// is the listing's print order. `None` for a name the listing folds
     /// under another command.
     pub(crate) listed: Option<(&'static str, u8)>,
+    /// A command that still resolves and runs when typed, but is offered
+    /// nowhere: absent from the `/help` listing, the completion popup, the
+    /// palette and the "did you mean" suggestion.
+    pub(crate) hidden: bool,
 }
 
 impl CommandSpec {
@@ -144,6 +148,7 @@ const fn cmd(
         category,
         surfaces,
         listed,
+        hidden: false,
     }
 }
 
@@ -163,34 +168,50 @@ const fn aliased(
         category,
         surfaces,
         listed,
+        hidden: false,
+    }
+}
+
+/// A row that resolves and runs but is offered nowhere: kept out of the
+/// `/help` listing, the popup, the palette and the typo suggestion.
+const fn hidden_cmd(
+    name: &'static str,
+    category: Category,
+    surfaces: Surfaces,
+    description: &'static str,
+    listed: Option<(&'static str, u8)>,
+) -> CommandSpec {
+    CommandSpec {
+        name,
+        aliases: &[],
+        description,
+        category,
+        surfaces,
+        listed,
+        hidden: true,
     }
 }
 
 /// Every slash command, in the order the parser's `match` declares them (the
 /// order the completion popup lists them in). `listed` carries the `/help`
 /// view: its heading comes from `category`, its line and place from `listed`.
+/// A `hidden_cmd` row still parses, resolves and runs — it is offered nowhere.
 // rustfmt must not reflow the table: one row per two lines is what makes a
 // 56-row table reviewable, and the usage strings are read as they print.
 #[rustfmt::skip]
 pub(crate) const CATALOGUE: &[CommandSpec] = &[
     cmd("start", Jobs, BOTH, "Start a job for long or background work; ordinary work is just a message",
         Some(("/start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--approve]", 1))),
-    cmd("follow-up", Jobs, BOTH, "Run a bounded new invocation of a completed child in its checkout",
-        Some(("/follow-up <id> <agent> --expected-completion-sequence <n> <instruction> [--approve]", 2))),
-    cmd("job", Jobs, BOTH, "Operate a durable job's lifecycle: review, apply, resume, list, show, cancel, and the rest",
-        Some(("/job <export|events|review|apply|resume|list|show|cancel|doctor|setup|reconcile|worktrees|rewind> …", 3))),
-    cmd("approve", Jobs, BOTH, "Approve the exact pending job scope this session is showing",
-        Some(("/approve <id>", 4))),
-    cmd("deny", Jobs, BOTH, "Refuse the exact pending job scope this session is showing",
-        Some(("/deny <id>", 5))),
-    cmd("message", Jobs, BOTH, "Send bounded steering to one child in this session's active job",
-        Some(("/message <id> <agent> <text>", 6))),
-    cmd("pause", Jobs, BOTH, "Pause one active child at its next safe boundary",
-        Some(("/pause <id> <agent>", 7))),
-    cmd("continue", Jobs, BOTH, "Continue one paused child in this session's active job",
-        Some(("/continue <id> <agent>", 8))),
-    cmd("cancel-child", Jobs, BOTH, "Cancel one child, preserving its siblings",
-        Some(("/cancel-child <id> <agent>", 9))),
+    aliased("job", Jobs, BOTH, "Operate a durable job's lifecycle (review, apply, resume, list, show, cancel, and the rest) and its child controls",
+        Some(("/job <export|events|review|apply|resume|list|show|cancel|doctor|setup|reconcile|worktrees|rewind|approve|deny|message|pause|continue|cancel-child|follow-up> …", 3)),
+        &[Alias { name: "follow-up", description: "Deprecated alias for /job follow-up (removed next release)" },
+          Alias { name: "approve", description: "Deprecated alias for /job approve (removed next release)" },
+          Alias { name: "deny", description: "Deprecated alias for /job deny (removed next release)" },
+          Alias { name: "message", description: "Deprecated alias for /job message (removed next release)" },
+          Alias { name: "pause", description: "Deprecated alias for /job pause (removed next release)" },
+          Alias { name: "cancel-child", description: "Deprecated alias for /job cancel-child (removed next release)" }]),
+    cmd("continue", Session, BOTH, "Continue the turn that paused: it sends the message Continue. The <id> <agent> spelling is the job control /job continue for this release",
+        Some(("/continue [<id> <agent>]", 8))),
     cmd("connect", Connections, BOTH, "Replace the active database profile",
         Some(("/connect <profile>", 10))),
     cmd("connections", Connections, BOTH, "List configured database connections",
@@ -212,10 +233,9 @@ pub(crate) const CATALOGUE: &[CommandSpec] = &[
         Some(("/schema [refresh]", 20))),
     cmd("sql", Query, BOTH, "Run a raw SQL query against the active profile",
         Some(("/sql <query>", 21))),
-    cmd("export", Query, BOTH, "Export the last query's fresh result, or the captured /sql result with --snapshot",
-        Some(("/export [--snapshot|--refresh] [--overwrite] <path>", 22))),
-    cmd("report", Query, BOTH, "Write a Markdown report (SQL + provenance) of the captured /sql result",
-        Some(("/report [--rows N] [--overwrite] <path>", 23))),
+    aliased("export", Query, BOTH, "Export the last query's fresh result, or the captured /sql result with --snapshot; a .md path writes today's Markdown report",
+        Some(("/export [--snapshot|--refresh] [--overwrite] [--rows N] [--format csv|json|md] <path>", 22)),
+        &[Alias { name: "report", description: "Deprecated alias for /export --format md (removed next release)" }]),
     aliased("investigation", Query, BOTH, "Save, list, show, run, export, import, or delete a saved investigation",
         Some(("/investigation save|list|show|run|export|import|delete", 24)),
         &[Alias { name: "investigations", description: "Open a picker over saved investigations (TUI); /investigation list prints" }]),
@@ -258,14 +278,15 @@ pub(crate) const CATALOGUE: &[CommandSpec] = &[
         Some(("/remember <table> <kind> <value…>", 45))),
     cmd("forget", Memory, BOTH, "Tombstone a contract claim so recall excludes it",
         Some(("/forget <id>", 46))),
-    cmd("run", Runs, BOTH, "Start or operate a headless run from the session",
+    hidden_cmd("run", Runs, BOTH, "Start or operate a headless run from the session",
         Some(("/run <goal…> --allow <scopes>", 48))),
-    cmd("runs", Runs, BOTH, "List runs, or show one run by id",
+    hidden_cmd("runs", Runs, BOTH, "List runs, or show one run by id",
         Some(("/runs [id]", 49))),
     cmd("allow", Model, BOTH, "Seed pre-authorised scopes into this session's grant store",
         Some(("/allow <scopes…>", 18))),
-    cmd("grants", Model, BOTH, "List the session's granted scopes",
-        Some(("/grants", 19))),
+    aliased("permissions", Model, BOTH, "One read-only view: the mode, the grant store, the deny list, the host lane and data sharing",
+        Some(("/permissions", 19)),
+        &[Alias { name: "grants", description: "Deprecated alias for /permissions (removed next release)" }]),
     cmd("doctor", Session, BOTH, "Diagnose config: secrets, provider endpoint",
         Some(("/doctor", 36))),
     aliased("status", Session, BOTH, "One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks",
@@ -277,7 +298,7 @@ pub(crate) const CATALOGUE: &[CommandSpec] = &[
         Some(("/thinking [on|off]", 38))),
     cmd("tasks", Session, BOTH, "Show the session's task list, or clear it with /tasks clear",
         Some(("/tasks [clear]", 39))),
-    cmd("recovery", Session, BOTH, "Record file edits so you can undo them; list, preview and restore",
+    hidden_cmd("recovery", Session, BOTH, "Record file edits so you can undo them; list, preview and restore",
         Some(("/recovery [on|off|list|diff <id>|restore <id>]", 41))),
     cmd("help", Session, BOTH, "Show help for slash commands",
         Some(("/help [command]", 42))),

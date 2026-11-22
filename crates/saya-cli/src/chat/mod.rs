@@ -16,6 +16,9 @@ mod link;
 mod operator;
 mod ops;
 mod ops_context;
+mod ops_continue;
+mod ops_job;
+pub(crate) mod ops_permissions;
 mod ops_rewind;
 mod ops_rewind_run;
 pub(crate) mod ops_status;
@@ -50,6 +53,13 @@ pub(crate) use operator::SessionOperator;
 pub(crate) use ops::{ChatOps, Fate, Op, OpResult};
 #[allow(unused_imports)]
 pub(crate) use ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest, SessionOp};
+#[allow(unused_imports)]
+pub(crate) use ops_continue::{
+    CONTINUE_MESSAGE, NOTHING_TO_CONTINUE, Refusal as ContinueRefusal, TURN_RUNNING, paused,
+    refusal,
+};
+#[allow(unused_imports)]
+pub(crate) use ops_job::{JobNotes, claim_job_note};
 #[allow(unused_imports)]
 pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, rewind, undo};
 #[allow(unused_imports)]
@@ -110,6 +120,10 @@ mod compose_recall_tests;
 #[cfg(all(test, unix))]
 #[path = "compose_sql_tests.rs"]
 mod compose_sql_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_origin_tests.rs"]
+mod compose_origin_tests;
 
 #[cfg(all(test, unix))]
 #[path = "rollover_fixture.rs"]

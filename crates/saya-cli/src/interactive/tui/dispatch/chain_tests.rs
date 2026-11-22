@@ -27,6 +27,8 @@ include!("chain_tests/dispatch_basics.rs");
 
 include!("chain_tests/report_and_context.rs");
 
+include!("chain_tests/export_permissions.rs");
+
 include!("chain_tests/setup_parse.rs");
 
 include!("chain_tests/sessions.rs");
@@ -68,6 +70,8 @@ fn wait_for_background_save(store_root: &std::path::Path) {
 include!("chain_tests/notes.rs");
 
 include!("chain_tests/recovery.rs");
+
+include!("chain_tests/continue_cmd.rs");
 
 /// The handoff inputs the real `tick_pending` takes: a no-op terminal double
 /// (no `/setup` line is drained in these tests, so neither half runs) and

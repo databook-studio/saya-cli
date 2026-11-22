@@ -243,3 +243,22 @@ fn a_session_op_is_handed_on_with_its_argument() {
             if tokens == vec!["sql:analytics".to_owned()]
     ));
 }
+
+/// A hidden command still runs (K8): `/recovery list` is absent from the
+/// listing, the popup, the palette and the typo suggestion, and typing it maps
+/// to the same read operation it always did — the hide is presentation only.
+#[test]
+fn a_hidden_recovery_list_still_maps_to_its_read() {
+    use crate::commands::recovery::RecoveryCommand;
+    let harness = harness(ApprovalPolicy::Ask, false);
+    assert_eq!(
+        harness.ops.run(command("/recovery list")),
+        OpResult::Read(ReadOp::Recovery(RecoveryCommand::List)),
+        "a hidden command is still the operation it was"
+    );
+    assert!(
+        harness.port.calls().is_empty(),
+        "a read of the per-edit store never enters the run: {:?}",
+        harness.port.calls()
+    );
+}

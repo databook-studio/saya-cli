@@ -19,15 +19,85 @@ pub enum ExportMode {
     Refresh,
 }
 
+/// Which file one `/export` writes: rows as a data file, or today's Markdown
+/// report. The extension or `--format` selects it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    /// Rows as CSV.
+    Csv,
+    /// Rows as JSON.
+    Json,
+    /// Today's `/report` bytes: the Markdown document with provenance.
+    Markdown,
+}
+
+impl ExportFormat {
+    /// The format a `--format` word names; `None` for anything else, so an
+    /// unknown word is a usage error rather than a silent default.
+    pub(crate) fn parse(word: &str) -> Option<Self> {
+        match word {
+            "csv" => Some(Self::Csv),
+            "json" => Some(Self::Json),
+            "md" => Some(Self::Markdown),
+            _ => None,
+        }
+    }
+
+    /// The format a destination's extension names; `None` for an extension
+    /// that names no format (`/export out.txt` is refused by the writer).
+    pub(crate) fn of_path(path: &str) -> Option<Self> {
+        let lowered = path.to_lowercase();
+        if lowered.ends_with(".csv") {
+            Some(Self::Csv)
+        } else if lowered.ends_with(".json") {
+            Some(Self::Json)
+        } else if lowered.ends_with(".md") {
+            Some(Self::Markdown)
+        } else {
+            None
+        }
+    }
+
+    /// The `--format` word that names this format.
+    pub(crate) const fn word(self) -> &'static str {
+        match self {
+            Self::Csv => "csv",
+            Self::Json => "json",
+            Self::Markdown => "md",
+        }
+    }
+}
+
 /// The parsed arguments of one `/export`: the mode (`None` is the legacy
 /// form, which refreshes), whether an existing destination may be replaced,
-/// and the destination path — everything after the flags, whitespace
-/// included, so paths with spaces keep working.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// how many rows a Markdown report carries, the format stated with
+/// `--format`, and the destination path — everything after the flags,
+/// whitespace included, so paths with spaces keep working.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExportRequest {
     pub mode: Option<ExportMode>,
     pub overwrite: bool,
+    /// `--rows N` — the Markdown report's table bound.
+    pub rows: Option<usize>,
+    /// `--format` as stated; `None` lets the destination's extension select.
+    pub format: Option<ExportFormat>,
     pub path: String,
+    /// The deprecated `/report` spelling stated it (one release only).
+    pub via_report_alias: bool,
+}
+
+impl ExportRequest {
+    /// The format this request writes: `--format` when stated, else the
+    /// destination's extension. `None` names no format at all.
+    pub fn format(&self) -> Option<ExportFormat> {
+        self.format.or(ExportFormat::of_path(&self.path))
+    }
+
+    /// Whether this request writes today's Markdown report — a `.md`
+    /// destination, or `--format md`.
+    pub fn is_report(&self) -> bool {
+        self.format() == Some(ExportFormat::Markdown)
+    }
 }
 
 /// The `--rows` cap for `/report`: at most this many rows of the captured
@@ -36,14 +106,31 @@ pub struct ExportRequest {
 /// exceed it either.
 pub(crate) const MAX_REPORT_ROWS: usize = 100;
 
-/// The parsed arguments of one `/report`: the destination path (everything
-/// after the flags, verbatim), the row request, and whether an existing
-/// destination may be replaced.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReportRequest {
-    pub path: String,
-    pub rows: Option<usize>,
-    pub overwrite: bool,
+/// The parsed arguments of one `/permissions`, and which spelling stated it.
+///
+/// `/grants` is this command's one-release alias, so it produces **this**
+/// request with [`Self::via_grants_alias`] set: one view, two spellings, and
+/// the note rides the view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PermissionsRequest {
+    /// The deprecated `/grants` spelling stated it (one release only).
+    pub via_grants_alias: bool,
+}
+
+impl PermissionsRequest {
+    /// `/permissions`, the one read-only view.
+    pub(crate) const fn permissions() -> Self {
+        Self {
+            via_grants_alias: false,
+        }
+    }
+
+    /// `/grants`, the one-release alias of `/permissions`.
+    pub(crate) const fn grants() -> Self {
+        Self {
+            via_grants_alias: true,
+        }
+    }
 }
 
 /// One `/compact` request: whether the compaction rolls into a new session
