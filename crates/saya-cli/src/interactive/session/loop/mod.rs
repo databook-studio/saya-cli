@@ -60,3 +60,4 @@ include!("tests/turn_file.rs");
 include!("tests/setup_turn.rs");
 include!("tests/status_turn.rs");
 include!("tests/capacity_persist.rs");
+include!("tests/plain_env.rs");

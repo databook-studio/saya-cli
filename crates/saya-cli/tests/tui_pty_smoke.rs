@@ -92,3 +92,4 @@ include!("tui_pty_smoke/support/handoff.rs");
 include!("tui_pty_smoke/cases/setup_cancel.rs");
 include!("tui_pty_smoke/cases/setup_wizard.rs");
 include!("tui_pty_smoke/cases/first_run.rs");
+include!("tui_pty_smoke/cases/plain.rs");
