@@ -183,7 +183,10 @@ fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
         direct::Read::Turn => {}
     }
     // A command the surface does not answer itself is the session's own
-    // operation, read by the chat layer's one table (A9) — never a turn.
+    // operation, read by the chat layer's one table (A9) — never a turn. A
+    // `Coding` command and `/mode` are the exceptions: both are the session's
+    // own lines, read (and dispatched) by the run the surface is composed over
+    // (`/job show <id>` is T15's proved case), so they stay turns here.
     if let Ok(Some(command)) = parse_slash_command(line)
         && !matches!(command, SlashCommand::Coding(_) | SlashCommand::Mode(_))
     {

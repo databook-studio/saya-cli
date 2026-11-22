@@ -5,10 +5,15 @@
 //! A `--resume` LAUNCH derives the host posture header: the real
 //! binary, on a pty, with a recorded session whose pin binds a root. The
 //! piped REPL never prints the status line (it is TTY-gated), so the pty TUI
-//! is the observable header surface: the context line must name the route the
-//! resumed universe composed ("Host commands unsandboxed") and the deny list
-//! the user-layer config composed into it ("Denied: curl") — facts that ride
+//! is the observable header surface: the status line must carry the route the
+//! resumed universe composed (`host unsandboxed`) and the deny list the
+//! user-layer config composed into it (`deny: curl`) — facts that ride
 //! `SessionState` and are derived on a resume as well as on a fresh start.
+//!
+//! The words are the new surface's (T19 switched the launch over):
+//! `view::status_segments` states both as caveat segments on the one status
+//! line, where the old status bar said `Host commands unsandboxed` and
+//! `Denied: curl` on its own context line.
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use saya_cli::SessionState;
@@ -127,6 +132,11 @@ fn a_resumed_launch_paints_the_host_posture_the_universe_composed() {
         ),
     )
     .expect("the connections write");
+    // The launch opens the configured profile's connection (the new surface
+    // composes its session through the line front's opener), so the file must
+    // exist before the surface starts — a zero-byte file is a valid empty
+    // database.
+    std::fs::write(home.join("demo.sqlite3"), b"").expect("the demo db file is created");
 
     let project = home.join("project");
     std::fs::create_dir_all(&project).expect("the project dir");
@@ -174,12 +184,12 @@ fn a_resumed_launch_paints_the_host_posture_the_universe_composed() {
     let rx = reader_channel(reader);
     let mut parser = vt100::Parser::new(ROWS, COLS, 0);
 
-    // The context line's posture facts, from the state the launch derived:
+    // The status line's posture facts, from the state the launch derived:
     // the resumed universe composed the route (the pin re-binds), and the
     // config deny list composed into it. The workspace segment yields to fit
     // on a narrow row; the posture segments never do.
-    wait_for(&rx, &mut parser, "Host commands unsandboxed");
-    wait_for(&rx, &mut parser, "Denied: curl");
+    wait_for(&rx, &mut parser, "host unsandboxed");
+    wait_for(&rx, &mut parser, "deny: curl");
 }
 
 fn reader_channel(
