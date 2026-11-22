@@ -19,6 +19,7 @@ use saya_types::{EvidenceSource, ExecutionEvidence, QueryResult, ResultScope, Sq
 
 use super::direct_run::DirectDeps;
 use super::direct_trust::TrustStore;
+use super::live::LiveRuntime;
 use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::run_fixture::key;
@@ -68,7 +69,7 @@ impl Fixture {
             .expect("the fixture runtime loads");
         let trust = Arc::new(RecordingTrust::default());
         let deps = Arc::new(DirectDeps {
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(LiveRuntime::new(Arc::new(runtime))),
             state_db: SqliteStateStore::new(root.join("state.sqlite3")),
             format: RenderFormat::Text,
             trust: trust.clone(),

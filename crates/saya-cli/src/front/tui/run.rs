@@ -25,10 +25,12 @@ use super::msg::Msg;
 use super::run_clock::Clock;
 use super::run_cmd::{CmdPort, perform};
 use super::run_draw::Facts;
-use super::run_input;
+use super::run_handoff;
+use super::run_input::{self, InputGate};
 use super::run_panic::Restored;
 use super::run_screen::Screen;
 use super::update::update;
+use crate::slash::SlashCommand;
 
 /// The shortest gap between two frames: thirty a second, the ceiling the design
 /// gives the render loop.
@@ -53,6 +55,9 @@ pub(crate) struct Runtime<S: Screen, C: Clock, P: CmdPort> {
     /// The session's metrics collector, until the first frame is painted: the
     /// launch's own sample, recorded once and taken here.
     metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
+    /// The reader the launch started: stopped while a handoff owns the
+    /// terminal, and started again once the surface has it back.
+    input: Option<Arc<InputGate>>,
     /// When the launch began, so the first paint's sample measures what the
     /// surface this one replaces measured.
     entered: Instant,
@@ -82,6 +87,7 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             working: None,
             animating: Arc::new(AtomicBool::new(false)),
             metrics: None,
+            input: None,
             entered: Instant::now(),
             leaving: false,
         }
@@ -108,6 +114,13 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             self.model.open_trust();
         }
         self.facts = facts;
+        self
+    }
+
+    /// The reader whose keys this loop folds, so a handoff can stop it: the
+    /// wizard must be the only one reading stdin while it owns the terminal.
+    pub(crate) fn with_input(mut self, input: Arc<InputGate>) -> Self {
+        self.input = Some(input);
         self
     }
 
@@ -189,6 +202,13 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
         let busy = self.model.is_busy();
         let cmds = update(&mut self.model, msg);
         for cmd in cmds {
+            // `/setup` needs the terminal's mode pair as well as the port, and
+            // the terminal is the loop's: the handoff happens here, between the
+            // key that asked and the wizard that answers.
+            if matches!(cmd, super::msg::Cmd::Op(SlashCommand::Setup)) {
+                run_handoff::handoff(&mut self.screen, self.input.as_ref(), self.port.as_ref())?;
+                continue;
+            }
             perform(self.port.as_ref(), cmd);
         }
         self.dirty = true;
