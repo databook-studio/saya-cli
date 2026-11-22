@@ -55,6 +55,13 @@ fn pinned_mtime(path: &std::path::Path, ago: Duration) {
     file.set_modified(mtime).unwrap();
 }
 
+/// Where the jobs a session's record links keep their own records: the state
+/// root the delete operation is handed, beside the session store. A test that
+/// only lists or deletes an unlinked record never writes there.
+fn jobs(sessions: &std::path::Path) -> PathBuf {
+    sessions.parent().unwrap().join("coding")
+}
+
 #[cfg(unix)]
 struct RestorePermissions(std::path::PathBuf);
 
@@ -72,6 +79,10 @@ impl Drop for RestorePermissions {
 include!("sessions_tests/listing.rs");
 
 include!("sessions_tests/delete.rs");
+
+include!("sessions_tests/run_link.rs");
+
+include!("sessions_tests/run_link_entry.rs");
 
 include!("sessions_tests/cleanup_retry.rs");
 

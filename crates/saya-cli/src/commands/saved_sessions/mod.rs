@@ -8,10 +8,12 @@
 
 mod operations;
 pub(crate) mod render;
+mod run_link;
 pub(crate) mod subcommand;
 
 pub(crate) use operations::{delete_saved_session, list_sessions, unix_ms_now};
 pub(crate) use render::{render_delete, render_listing};
+pub(crate) use run_link::RUN_STILL_OPEN;
 pub(crate) use subcommand::run;
 
 /// Every refusal or failure of `saya sessions` is the documented usage
@@ -60,6 +62,9 @@ pub(crate) enum DeleteOutcome {
     NoSuchSession,
     /// A live process (or this one) holds the session's lock.
     Live { pid: u32 },
+    /// The job the session's record links is still open: its run holds the
+    /// folder's lease. Nothing was deleted, the session's record included.
+    LiveRun { job: String },
     /// The id is not a filename-safe session id.
     InvalidId,
     /// The target is the calling session itself; only the slash surface

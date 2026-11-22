@@ -8,7 +8,7 @@ fn delete_removes_only_that_session_and_its_state() {
     std::fs::write(sessions.join("other.json"), "{}").unwrap();
     std::fs::write(base.join("state.sqlite3"), "sentinel").unwrap();
     let store = FsSessionStore::new(&sessions);
-    let outcome = delete_saved_session(&store, &sessions, "a", None);
+    let outcome = delete_saved_session(&store, &sessions, &jobs(&sessions), "a", None);
     assert_eq!(outcome, DeleteOutcome::Deleted, "{outcome:?}");
     assert!(!sessions.join("a.json").exists(), "record removed");
     assert!(!sessions.join("a").exists(), "state dir removed");
@@ -37,7 +37,7 @@ fn a_tombstone_only_leftover_is_cleared_by_delete() {
     assert!(listing.rows.is_empty());
     // The same command finishes the pending deletion: everything the
     // tombstone covers is already gone, so this converges immediately.
-    let outcome = delete_saved_session(&store, &sessions, "ghost", None);
+    let outcome = delete_saved_session(&store, &sessions, &jobs(&sessions), "ghost", None);
     assert_eq!(outcome, DeleteOutcome::Deleted, "{outcome:?}");
     assert!(
         !base
@@ -59,7 +59,7 @@ fn deleting_an_absent_session_creates_nothing() {
     let base = sessions.parent().unwrap().to_path_buf();
     let before = dir_names(&sessions);
     let store = FsSessionStore::new(&sessions);
-    let outcome = delete_saved_session(&store, &sessions, "typo-id", None);
+    let outcome = delete_saved_session(&store, &sessions, &jobs(&sessions), "typo-id", None);
     assert_eq!(outcome, DeleteOutcome::NoSuchSession, "{outcome:?}");
     assert_eq!(dir_names(&sessions), before, "nothing created");
     assert!(
@@ -80,7 +80,7 @@ fn invalid_ids_are_refused_without_filesystem_effect() {
     let before = dir_names(&sessions);
     let store = FsSessionStore::new(&sessions);
     for id in ["../x", "a/b", ""] {
-        let outcome = delete_saved_session(&store, &sessions, id, None);
+        let outcome = delete_saved_session(&store, &sessions, &jobs(&sessions), id, None);
         assert_eq!(outcome, DeleteOutcome::InvalidId, "{id:?}");
         assert_eq!(dir_names(&sessions), before, "{id:?} changed nothing");
         assert!(!base.join("x.json").exists(), "{id:?} stayed inside");
@@ -99,7 +99,7 @@ fn the_current_session_is_refused_without_touching_data() {
     std::fs::write(sessions.join("a.json"), "{}").unwrap();
     std::fs::create_dir_all(sessions.join("a")).unwrap();
     let store = FsSessionStore::new(&sessions);
-    let outcome = delete_saved_session(&store, &sessions, "a", Some("a"));
+    let outcome = delete_saved_session(&store, &sessions, &jobs(&sessions), "a", Some("a"));
     assert_eq!(outcome, DeleteOutcome::CurrentSession, "{outcome:?}");
     assert!(sessions.join("a.json").exists(), "data untouched");
     assert!(sessions.join("a").exists(), "state dir untouched");
@@ -132,7 +132,7 @@ fn a_live_session_is_refused_and_left_intact() {
     let _guard = KillGuard(holder);
     std::fs::write(sessions.join("a").join("lock"), format!("{pid}\n")).unwrap();
     let store = FsSessionStore::new(&sessions);
-    let outcome = delete_saved_session(&store, &sessions, "a", None);
+    let outcome = delete_saved_session(&store, &sessions, &jobs(&sessions), "a", None);
     assert_eq!(outcome, DeleteOutcome::Live { pid }, "{outcome:?}");
     assert!(sessions.join("a.json").exists(), "data intact");
     assert!(
