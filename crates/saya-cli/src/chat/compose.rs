@@ -191,27 +191,17 @@ impl RunComposition {
         job: &NativeCodingJob,
         run: SessionRun,
     ) -> Result<RunPlugins, CodingError> {
-        let SessionRun {
-            connections,
-            allow_query_data,
-            memory,
-            memory_reachable,
-            capture,
-            learning,
-            budget,
-            ..
-        } = run;
         compose_plugins::run_plugins(
             application,
             job,
             PluginSetup {
-                connections,
-                allow_query_data,
-                memory,
-                memory_reachable,
-                capture,
-                learning,
-                budget,
+                connections: run.connections,
+                allow_query_data: run.allow_query_data,
+                memory: run.memory,
+                memory_reachable: run.memory_reachable,
+                capture: run.capture,
+                learning: run.learning,
+                budget: run.budget,
             },
         )
     }
