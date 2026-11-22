@@ -16,7 +16,7 @@ mod view;
 pub(crate) use line::{LineFront, SettledTurn};
 #[allow(unused_imports)]
 pub(crate) use view::{
-    Activity, Answer, Entry, Error, Helper, HelperState, Notice, ResultPreview, Step, StepState,
-    TranscriptView, TurnView, UserMessage, apply, elapsed_text, folded_summary, sql_one_line,
-    step_line,
+    Activity, Answer, Clarification, Command, CommandState, DiffLine, Edit, Entry, Error, Helper,
+    HelperState, Notice, ResultPreview, Step, StepState, Stop, TranscriptView, TurnView,
+    UserMessage, apply, elapsed_text, folded_summary, sql_one_line, step_line,
 };

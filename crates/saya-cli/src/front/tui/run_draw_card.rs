@@ -12,19 +12,27 @@ use ratatui::text::{Line, Span};
 use super::model::Model;
 use super::run_draw::Facts;
 use super::theme::{Token, style};
-use super::view::{Card, approval};
+use super::view::approval;
 
-/// The rows the card needs: its title, the body rows it shows, and the line
-/// that says why it is asked and which keys answer it.
+/// The rows the card needs: its title, the body rows it shows, the reason it is
+/// asked and the line that says which keys answer it.
 pub(crate) fn rows(model: &Model, screen_rows: u16) -> usize {
     model.card().map_or(0, |question| {
         let card = approval(question, model.mode(), screen_rows);
-        1 + card.shown(model.card_full()).len() + 1
+        1 + card.shown(model.card_full()).len()
+            + usize::from(card.because().is_some())
+            + usize::from(!card.keys().is_empty())
     })
 }
 
-/// The card itself: the call's own title, its body verbatim, its keys.
-pub(crate) fn card(model: &Model, facts: &Facts, screen_rows: u16) -> Vec<Line<'static>> {
+/// The card itself: the call's own title, its body verbatim, why it is asked,
+/// and the keys that answer it, fitted to `width` cells.
+pub(crate) fn card(
+    model: &Model,
+    facts: &Facts,
+    screen_rows: u16,
+    width: u16,
+) -> Vec<Line<'static>> {
     let Some(question) = model.card() else {
         return Vec::new();
     };
@@ -39,22 +47,19 @@ pub(crate) fn card(model: &Model, facts: &Facts, screen_rows: u16) -> Vec<Line<'
             style(Token::Fg, facts.scheme),
         )));
     }
-    lines.push(Line::from(Span::styled(
-        tail(&card),
-        style(Token::Dim, facts.scheme),
-    )));
-    lines
-}
-
-/// The card's last line: why it is asked, then the keys that answer it. A card
-/// that offers no key (a clarification) ends with the reason alone.
-fn tail(card: &Card) -> String {
-    let mut said = card.because().map(str::to_owned).unwrap_or_default();
-    if !card.keys().is_empty() {
-        if !said.is_empty() {
-            said.push_str(" · ");
-        }
-        said.push_str(card.keys());
+    // Why it is asked and how it is answered are two rows: on one row the
+    // reason is long enough to clip the keys off a narrow terminal.
+    if let Some(because) = card.because() {
+        lines.push(Line::from(Span::styled(
+            because.to_owned(),
+            style(Token::Dim, facts.scheme),
+        )));
     }
-    said
+    if !card.keys().is_empty() {
+        lines.push(Line::from(Span::styled(
+            card.keys_for(width as usize).to_owned(),
+            style(Token::Dim, facts.scheme),
+        )));
+    }
+    lines
 }

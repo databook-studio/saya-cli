@@ -101,6 +101,14 @@ pub(crate) use update::update;
 mod cards_keys_tests;
 
 #[cfg(test)]
+#[path = "a11y_fixture.rs"]
+pub(crate) mod a11y_fixture;
+
+#[cfg(test)]
+#[path = "a11y_tests.rs"]
+mod a11y_tests;
+
+#[cfg(test)]
 #[path = "update_fixture.rs"]
 mod update_fixture;
 
