@@ -134,6 +134,10 @@ mod compose_token_wallet_tests;
 mod compose_preflight_stop_tests;
 
 #[cfg(all(test, unix))]
+#[path = "compose_last_sql_tests.rs"]
+mod compose_last_sql_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_preferences_tests.rs"]
 mod compose_preferences_tests;
 

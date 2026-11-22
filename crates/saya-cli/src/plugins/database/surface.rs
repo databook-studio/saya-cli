@@ -50,11 +50,10 @@ pub(super) enum Surface {
 impl DatabasePlugin {
     /// The chat surface's database tools, over the database budget a turn of
     /// this run spends once it uses the database, plus the run's query-capture
-    /// hook when the front drives one. The hook reaches the tools the executor
-    /// hands the loop, so a chat query is captured exactly as the old chat turn
-    /// captured it; `None` installs nothing and every existing caller behaves as
-    /// before. `prompt` is what the run resolved once: the section this plugin
-    /// contributes to the run's system prompt is rendered from it.
+    /// hook when the front drives one. The executor installs a hook on the
+    /// tools either way: the front's own (when it drives one) behind the
+    /// record that the next turn's last-SQL hint reads
+    /// ([`super::DatabasePlugin::record_last_sql`]'s one live caller).
     pub(crate) fn for_chat(
         tools: Arc<DatabaseTools>,
         flags: ChatDatabaseFlags,
@@ -73,7 +72,7 @@ impl DatabasePlugin {
             recall: None,
             learning: None,
             last_receipt: Mutex::new(None),
-            last_sql: Mutex::new(None),
+            last_sql: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -90,7 +89,7 @@ impl DatabasePlugin {
             recall: None,
             learning: None,
             last_receipt: Mutex::new(None),
-            last_sql: Mutex::new(None),
+            last_sql: Arc::new(Mutex::new(None)),
         }
     }
 
