@@ -15,21 +15,16 @@ pub(crate) fn budget_dimension(reason: Option<CancellationReason>) -> Option<Bud
 }
 
 /// The dimension the request preflight refuses on, when a turn's first stop
-/// reason is the request projection's own.
+/// reason is the one the row names: the model window.
 ///
 /// A preflight refusal is latched on the turn's token by the engine before any
 /// request is admitted, and the turn comes back as partial output rather than as
 /// an error — so it is the turn's own stop the surface has to read, and it is a
 /// budget stop like the configured dimensions. Every other budget dimension on
 /// that token belongs to an owner that already states it (the plugin's armed
-/// policy, the question's own scope); this one has no other reader.
+/// policy, the question's own scope); the window has no other reader.
 pub(crate) fn preflight_dimension(reason: Option<CancellationReason>) -> Option<BudgetDimension> {
-    budget_dimension(reason).filter(|dimension| {
-        matches!(
-            dimension,
-            BudgetDimension::RequestContextWindow | BudgetDimension::RequestContextBytes
-        )
-    })
+    budget_dimension(reason).filter(|dimension| *dimension == BudgetDimension::RequestContextWindow)
 }
 
 /// The fixed truthful wording for a budget stop: the run stopped on its
