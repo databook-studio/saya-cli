@@ -1,4 +1,3 @@
-#[cfg(unix)]
 fn reply_finished(stream: &mut std::net::TcpStream, body: &str) {
     use std::io::Write;
     let done = format!("data: [{}]\n\n", "DONE");
@@ -15,7 +14,6 @@ fn reply_finished(stream: &mut std::net::TcpStream, body: &str) {
 /// record these rather than only the calls replayed in a later request:
 /// a clarification call ends its turn and is not replayed, but the model
 /// still made it.
-#[cfg(unix)]
 #[derive(Clone)]
 pub(crate) struct ServedCall {
     pub(crate) id: String,
@@ -23,7 +21,6 @@ pub(crate) struct ServedCall {
     pub(crate) arguments: serde_json::Value,
 }
 
-#[cfg(unix)]
 pub(crate) struct MockServer {
     pub(crate) address: String,
     pub(crate) requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -35,7 +32,6 @@ pub(crate) struct MockServer {
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
-#[cfg(unix)]
 impl MockServer {
     pub(crate) fn join(&mut self) {
         // The test is done with the mock: wake the accept loop instead of
@@ -48,7 +44,6 @@ impl MockServer {
     }
 }
 
-#[cfg(unix)]
 impl Drop for MockServer {
     fn drop(&mut self) {
         self.join();
@@ -60,7 +55,6 @@ impl Drop for MockServer {
 /// Clarify holds `delay` inside the thread before writing (source-held
 /// ACTIVE time); HoldOpen writes one marker chunk and keeps the socket
 /// open until `release` fires, so no new request can arrive meanwhile.
-#[cfg(unix)]
 pub(crate) fn spawn_script_server(
     listener: std::net::TcpListener,
     script: Vec<ScriptStep>,

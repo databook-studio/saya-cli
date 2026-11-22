@@ -1,5 +1,4 @@
 /// One reply the scriptable mock server sends per provider request.
-#[cfg(unix)]
 #[derive(Clone)]
 pub(crate) enum ScriptStep {
     Clarify {
@@ -34,7 +33,6 @@ pub(crate) enum ScriptStep {
 }
 
 /// The one scripted clarification: one focused question with two options.
-#[cfg(unix)]
 pub(crate) fn clarification_arguments() -> serde_json::Value {
     serde_json::json!({
         "question": "Which one?",
@@ -42,7 +40,6 @@ pub(crate) fn clarification_arguments() -> serde_json::Value {
     })
 }
 
-#[cfg(unix)]
 pub(crate) fn clarification_body(request_index: usize) -> String {
     let call = serde_json::json!({
         "choices": [{
@@ -62,7 +59,6 @@ pub(crate) fn clarification_body(request_index: usize) -> String {
 
 /// The id a scripted tool call gets: unique per request slot, and echoed by
 /// the loop on the tool result message so the golden can pair the two.
-#[cfg(unix)]
 pub(crate) fn tool_call_id(request_index: usize) -> String {
     format!("call-golden-{request_index}")
 }
@@ -70,7 +66,6 @@ pub(crate) fn tool_call_id(request_index: usize) -> String {
 /// One assistant turn carrying a single tool call. The finish reason makes
 /// the loop execute the call and continue; the next script slot answers the
 /// request that carries the tool result.
-#[cfg(unix)]
 pub(crate) fn tool_call_body(
     name: &str,
     arguments: &serde_json::Value,
@@ -89,7 +84,6 @@ pub(crate) fn tool_call_body(
     format!("data: {call}\n\n")
 }
 
-#[cfg(unix)]
 pub(crate) fn answer_body() -> String {
     concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"the-final-answer\"},",
@@ -100,7 +94,6 @@ pub(crate) fn answer_body() -> String {
     .to_owned()
 }
 
-#[cfg(unix)]
 pub(crate) fn answer_with_usage_body(input_tokens: u64) -> String {
     format!(
         concat!(
@@ -113,7 +106,6 @@ pub(crate) fn answer_with_usage_body(input_tokens: u64) -> String {
     )
 }
 
-#[cfg(unix)]
 pub(crate) fn answer_no_usage_body() -> String {
     concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"the-final-answer\"},",
@@ -122,7 +114,6 @@ pub(crate) fn answer_no_usage_body() -> String {
     .to_owned()
 }
 
-#[cfg(unix)]
 pub(crate) fn summary_body(text: &str) -> String {
     format!(
         concat!(
@@ -134,7 +125,6 @@ pub(crate) fn summary_body(text: &str) -> String {
 }
 
 /// A completion carrying `content` exactly, JSON-escaped into the SSE frame.
-#[cfg(unix)]
 pub(crate) fn json_content_body(content: &str) -> String {
     let delta = serde_json::json!({
         "choices": [{
@@ -145,7 +135,6 @@ pub(crate) fn json_content_body(content: &str) -> String {
     format!("data: {delta}\n\n")
 }
 
-#[cfg(unix)]
 pub(crate) fn harmless_body() -> String {
     "data: {\"content\":\"{\\\"proposals\\\": []}\"}\n\n".to_owned()
 }

@@ -1,7 +1,5 @@
-#[cfg(unix)]
 pub(crate) struct InteractiveChildGuard(pub(crate) Option<std::process::Child>);
 
-#[cfg(unix)]
 impl Drop for InteractiveChildGuard {
     fn drop(&mut self) {
         if let Some(mut child) = self.0.take() {
@@ -13,7 +11,6 @@ impl Drop for InteractiveChildGuard {
     }
 }
 
-#[cfg(unix)]
 pub(crate) fn drain_provider_request(stream: &mut std::net::TcpStream) -> String {
     use std::io::Read;
 
@@ -52,7 +49,6 @@ pub(crate) fn drain_provider_request(stream: &mut std::net::TcpStream) -> String
         bytes.extend_from_slice(&chunk[..count]);
     }
 }
-#[cfg(unix)]
 pub(crate) fn accept_provider(
     listener: &std::net::TcpListener,
     stop: &std::sync::atomic::AtomicBool,

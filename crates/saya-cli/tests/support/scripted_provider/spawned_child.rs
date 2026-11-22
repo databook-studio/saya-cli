@@ -1,5 +1,4 @@
 /// Waits until `needle` has appeared at least `count` times in `buffer`.
-#[cfg(unix)]
 pub(crate) fn wait_for_stream_count(
     buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
     needle: &[u8],
@@ -37,26 +36,33 @@ pub(crate) fn wait_for_stream_count(
     }
 }
 
-/// Waits for the child to exit, then asserts a clean status and removes
-/// the temp config/session roots. Pumps are joined after the process ends
-/// so trailing output is still captured.
-#[cfg(unix)]
+/// A spawned REPL child and its captured output. `exit` (or `finish`, which
+/// asserts a clean status first) waits for the process, joins the pumps so
+/// trailing output is still captured, and removes the temp roots.
 pub(crate) struct SpawnedChild {
     pub(crate) guard: InteractiveChildGuard,
     pub(crate) stdout_buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
     pub(crate) stderr_buf: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
-    pub(crate) stdin: std::process::ChildStdin,
+    /// `None` once `close_stdin` has dropped the pipe: the front then sees EOF.
+    stdin: Option<std::process::ChildStdin>,
     config_root: std::path::PathBuf,
     session_root: std::path::PathBuf,
     pumps: Option<(std::thread::JoinHandle<()>, std::thread::JoinHandle<()>)>,
 }
 
-#[cfg(unix)]
 impl SpawnedChild {
     pub(crate) fn send(&mut self, bytes: &[u8]) {
         use std::io::Write;
-        self.stdin.write_all(bytes).unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("stdin is open until it is closed");
+        stdin.write_all(bytes).unwrap();
+        stdin.flush().unwrap();
+    }
+    /// Closes the child's stdin. A piped front reads EOF as its quit signal, so
+    /// this is the whole exit path for a script under a closed pipe — no
+    /// Ctrl-C and no Ctrl-Break, which Windows does not spell the same way.
+    #[allow(dead_code)] // only the line front's e2e rows exit on a closed pipe
+    pub(crate) fn close_stdin(&mut self) {
+        self.stdin = None;
     }
     /// The per-run roots the child was given: goldens redact them before
     /// comparing, so a test may read them without changing what the child
@@ -67,7 +73,14 @@ impl SpawnedChild {
     pub(crate) fn session_root(&self) -> &std::path::Path {
         &self.session_root
     }
-    pub(crate) fn finish(mut self) {
+    /// Waits for the child to exit, then asserts a clean status.
+    pub(crate) fn finish(self) {
+        let status = self.exit();
+        assert!(status.success(), "child should exit cleanly");
+    }
+    /// Waits for the child to exit and hands back its own status, so a row can
+    /// assert the code (an EOF exit is `0`) rather than only success.
+    pub(crate) fn exit(mut self) -> std::process::ExitStatus {
         use std::time::{Duration, Instant};
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -78,18 +91,17 @@ impl SpawnedChild {
             std::thread::sleep(Duration::from_millis(20));
         }
         let status = self.guard.0.take().unwrap().wait().unwrap();
-        assert!(status.success(), "child should exit cleanly");
         if let Some((err_pump, out_pump)) = self.pumps.take() {
             let _ = err_pump.join();
             let _ = out_pump.join();
         }
         let _ = std::fs::remove_dir_all(&self.config_root);
         let _ = std::fs::remove_dir_all(&self.session_root);
+        status
     }
 }
 
 /// Spawns the REPL against `base_url` with `ceiling_secs` question budget.
-#[cfg(unix)]
 pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> SpawnedChild {
     spawn_child_with_config(
         base_url,
@@ -99,7 +111,6 @@ pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> Spawn
 }
 
 /// Spawns the REPL against `base_url` with the caller's full config TOML.
-#[cfg(unix)]
 pub(crate) fn spawn_child_with_config(
     base_url: &str,
     config_toml: &str,
@@ -110,7 +121,6 @@ pub(crate) fn spawn_child_with_config(
 
 /// The per-run config root `tag` gets. Exposed so a scenario can seed the
 /// child's state store before it starts, without duplicating the path rule.
-#[cfg(unix)]
 pub(crate) fn config_root_for(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "saya-cli-question-{tag}-{}",
@@ -120,7 +130,6 @@ pub(crate) fn config_root_for(tag: &str) -> std::path::PathBuf {
 
 /// Spawns the REPL against `base_url` with the caller's full config TOML and
 /// any extra CLI arguments (e.g. `--verbose` for the metrics-section rows).
-#[cfg(unix)]
 pub(crate) fn spawn_child_with_config_extra(
     base_url: &str,
     config_toml: &str,
@@ -207,7 +216,7 @@ pub(crate) fn spawn_child_with_config_extra(
         guard,
         stdout_buf,
         stderr_buf,
-        stdin,
+        stdin: Some(stdin),
         config_root,
         session_root,
         pumps: Some((stderr_pump, stdout_pump)),
