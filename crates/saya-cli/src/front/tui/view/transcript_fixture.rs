@@ -107,6 +107,7 @@ fn preview(refusal: Option<crate::agent::tools::CaptureRefusalReason>) -> Result
             executed_sql: SQL.to_owned(),
         },
         refusal,
+        evidence: None,
     }
 }
 

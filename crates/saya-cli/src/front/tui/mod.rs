@@ -22,6 +22,7 @@
 
 pub(crate) mod cards_keys;
 pub(crate) mod direct;
+pub(crate) mod direct_export;
 pub(crate) mod direct_run;
 pub(crate) mod direct_trust;
 pub(crate) mod focus;
@@ -174,3 +175,7 @@ mod direct_tests;
 #[cfg(test)]
 #[path = "direct_trust_tests.rs"]
 mod direct_trust_tests;
+
+#[cfg(test)]
+#[path = "direct_export_tests.rs"]
+mod direct_export_tests;
