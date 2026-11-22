@@ -64,6 +64,10 @@ mod workspace_tests;
 #[path = "open_tests.rs"]
 mod open_tests;
 
+#[cfg(test)]
+#[path = "open_stall_tests.rs"]
+mod open_stall_tests;
+
 /// One line session's open run.
 pub(crate) struct LineChat {
     /// The run, its transcript and its compaction, behind one lock: a rollover

@@ -114,6 +114,26 @@ mod turn_metrics_tests;
 mod compose_context_tests;
 
 #[cfg(all(test, unix))]
+#[path = "learning_provider_fixture.rs"]
+pub(crate) mod learning_provider_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "turn_extraction_wait_tests.rs"]
+mod turn_extraction_wait_tests;
+
+#[cfg(all(test, unix))]
+#[path = "turn_learning_soft_tests.rs"]
+mod turn_learning_soft_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_token_wallet_tests.rs"]
+mod compose_token_wallet_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_preferences_tests.rs"]
+mod compose_preferences_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_tests.rs"]
 mod compose_tests;
 
