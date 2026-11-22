@@ -8,17 +8,8 @@ use super::terminal_handoff::{
     SetupHandoff, TerminalModes, run_guided_setup, run_guided_setup_with, with_terminal_released,
 };
 use crate::cli::GlobalOptions;
-use crate::interactive::session::runtime::SessionRuntime;
-use crate::interactive::session::state::SessionState;
-use crate::interactive::tui::application::tests_support::{idle_app, unused_runtime};
-use crate::interactive::tui::loop_tick::pending::tick_pending;
-use crate::interactive::tui::transcript::BlockKind;
-use crate::interactive::tui::types::CompactOutcome;
-use crate::render::RenderFormat;
 use crate::setup::flow_options::FlowOptions;
 use crate::setup::probe::{DatabaseProbe, FlowProbes, ProbeResult, ProviderProbe};
-use saya_agent::ApprovalPolicy;
-use saya_store::FsSessionStore;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Cursor};
@@ -144,74 +135,3 @@ const FULL_SCRIPT: &str = "6\n1\n/tmp/saya-handoff-test.db\nteam\ny\n";
 include!("terminal_handoff_tests/handoff_reacquire.rs");
 
 include!("terminal_handoff_tests/guided_setup.rs");
-
-// ---------------------------------------------------------------------------
-// the `/setup` outcome rendering through the post-setup apply
-// ---------------------------------------------------------------------------
-
-include!("terminal_handoff_tests/setup_outcomes.rs");
-
-/// One fixture for the `tick_pending` gate: the pieces the live loop passes,
-/// over a throwaway root.
-struct PendingFixture {
-    app: crate::interactive::tui::types::App,
-    state: SessionState,
-    session: SessionRuntime,
-    runtime: crate::config::runtime::RuntimeConfig,
-    store: FsSessionStore,
-    root: PathBuf,
-}
-
-impl PendingFixture {
-    fn build(tag: &str) -> Self {
-        let root = temp_dir(tag);
-        let runtime = unused_runtime();
-        let session = SessionRuntime::acquire(
-            &runtime,
-            Some(&root),
-            true,
-            None,
-            "handoff-busy",
-            ApprovalPolicy::Ask,
-            &root.join("session-dirs"),
-        )
-        .expect("the pending-fixture session acquires");
-        let state = SessionState::new("handoff-busy", None, "model");
-        let store = FsSessionStore::new(root.join("store"));
-        Self {
-            app: idle_app(),
-            state,
-            session,
-            runtime,
-            store,
-            root,
-        }
-    }
-
-    /// The real queued-prompt drain with a `TerminalModes` double, exactly as
-    /// the live loop passes the guard.
-    fn drain(&mut self, modes: &mut dyn TerminalModes) -> io::Result<()> {
-        let options = GlobalOptions::default();
-        let mut setup = crate::interactive::tui::loop_tick::pending::SetupInputs {
-            modes,
-            options: &options,
-        };
-        tick_pending(
-            &mut self.app,
-            &mut self.state,
-            &self.runtime,
-            &self.store,
-            RenderFormat::Text,
-            &mut self.session,
-            &mut setup,
-        )
-    }
-}
-
-impl Drop for PendingFixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-include!("terminal_handoff_tests/pending_loop.rs");

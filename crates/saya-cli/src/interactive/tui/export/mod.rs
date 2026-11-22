@@ -121,3 +121,10 @@ pub(crate) use json::disambiguated_columns;
 #[cfg(test)]
 #[path = "export_tests.rs"]
 mod tests;
+
+// The writer's publication rules, ported from the deleted surface's `/export`
+// tests: a refusal, an atomic replace, no write through a link, and nothing
+// left behind on failure.
+#[cfg(test)]
+#[path = "publication_tests.rs"]
+mod publication_tests;

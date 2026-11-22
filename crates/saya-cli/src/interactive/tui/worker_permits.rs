@@ -63,15 +63,7 @@ pub(crate) struct WorkerPermit {
     counter: Arc<AtomicUsize>,
 }
 
-impl WorkerPermit {
-    /// A permit standing alone on its own counter, for tests that spawn a
-    /// worker off the admission path (completion and detach behaviour, not
-    /// the cap) and must not touch the process-wide pool.
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> WorkerPermit {
-        acquire_on(&Arc::new(AtomicUsize::new(0))).expect("a fresh counter admits")
-    }
-}
+impl WorkerPermit {}
 
 impl Drop for WorkerPermit {
     fn drop(&mut self) {
@@ -100,8 +92,7 @@ fn acquire_on(counter: &Arc<AtomicUsize>) -> Option<WorkerPermit> {
 
 /// Serializes the tests that touch the process-wide pool, so one test's
 /// permits never race another's held phase. Sync tests take it with
-/// [`test_permit_lock`]; an async test takes the same lock with
-/// [`test_permit_lock_async`] and may hold the guard across its awaits.
+/// [`test_permit_lock`], and may hold the guard across awaits.
 ///
 /// Acquiring the lock also hands the caller a **drained** pool: a permit
 /// acquired under the lock can outlive its holder's guard — a worker thread
@@ -113,13 +104,6 @@ fn acquire_on(counter: &Arc<AtomicUsize>) -> Option<WorkerPermit> {
 #[cfg(test)]
 pub(crate) fn test_permit_lock() -> tokio::sync::MutexGuard<'static, ()> {
     let guard = permit_lock().blocking_lock();
-    wait_for_drained_pool("a previous lock holder left a permit held");
-    guard
-}
-
-#[cfg(test)]
-pub(crate) async fn test_permit_lock_async() -> tokio::sync::MutexGuard<'static, ()> {
-    let guard = permit_lock().lock().await;
     wait_for_drained_pool("a previous lock holder left a permit held");
     guard
 }

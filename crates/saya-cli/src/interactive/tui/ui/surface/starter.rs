@@ -2,9 +2,10 @@
 //! deterministic prompts built from table and column metadata alone — never
 //! row data, never a model call, never I/O.
 //!
-//! Wiring: `application::picker::reload_at_refs` builds these from the active
-//! profile's schema cached in the state store (at startup, on resume, and
-//! when a newly loaded schema lands), and the empty state paints them.
+//! Wiring: the old surface's picker built these from the active profile's
+//! schema and painted them in its empty state; the new surface's pane
+//! (`front/tui/view/empty.rs`) carries the same field, read by the pane's
+//! tests until the run fills it.
 //!
 //! How the questions are picked, so the output can be reasoned about
 //! without running it: tables in name order across the tree, one question
@@ -18,6 +19,13 @@
 //! dialects store dates as text. Connectors that leave key metadata empty
 //! may nominate an identifier column as a measure; the question stays
 //! honest — it is built from metadata — just less curated.
+
+// Kept for the new surface's connected-database pane: `EmptyFacts` carries the
+// questions this picks from a cached schema, and the pane's tests read it
+// today. Nothing in the run fills that field yet, so the compiler would call
+// every helper here dead; the pane is where they land, and the allowance is
+// scoped to this leaf rather than to the module tree.
+#![allow(dead_code)]
 
 use saya_types::{SchemaTree, Table};
 

@@ -27,6 +27,9 @@ pub(crate) fn is_failure_summary(summary: &str) -> bool {
 /// Keys on [`is_failure_summary`], never a second definition, so the live
 /// tail and the flushed group detail cannot drift — and so a future change
 /// to the failure predicate moves both marks together.
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 pub(crate) fn live_completion_line(name: &str, summary: &str) -> String {
     let mark = if is_failure_summary(summary) {
         "✗"

@@ -83,6 +83,9 @@ impl Drop for SessionRuntime {
 
 enum QuestionLifecycle {
     Idle,
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     Active(QuestionScope),
     PendingClarification(QuestionScope),
 }
@@ -112,6 +115,9 @@ include!("accessors.rs");
 /// The task posture rides the swap: a consent-mode change is not a change of
 /// what the task may touch, so a `plan` session stays `plan` across an
 /// `/approvals`.
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 fn policy_carrying(
     mode: ApprovalPolicy,
     agent_mode: AgentMode,
@@ -222,10 +228,6 @@ mod tests {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "question_tests.rs"]
-mod question_tests;
 
 #[cfg(test)]
 #[path = "recovery_acquire_tests.rs"]

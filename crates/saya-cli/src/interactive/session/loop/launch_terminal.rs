@@ -18,6 +18,27 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     // when the surface ends. A raw stdin read in front of the interface would
     // pre-empt the alternate screen and leave the terminal broken.
     let runtime = std::sync::Arc::new(runtime);
+    // The ground the surface paints with, resolved once here — before the guard
+    // takes the terminal, because `auto` may ask it over OSC 11 and that reply
+    // must land before any key is read. `[ui] theme`/`--theme` select light or
+    // dark through the kept theme leaf; `output.color` and `NO_COLOR` switch
+    // colour off for the same leaf, which paints the answer body's markdown.
+    use std::io::IsTerminal as _;
+    let is_terminal = std::io::stdout().is_terminal();
+    let colour_on = crate::interactive::tui::decide_public(
+        runtime.resolved.output_color,
+        is_terminal,
+        std::env::var_os("NO_COLOR").is_some(),
+    );
+    crate::interactive::tui::set_color_enabled(colour_on);
+    let ground = crate::interactive::tui::resolve_startup_theme(
+        runtime.resolved.ui_theme,
+        colour_on,
+        is_terminal,
+        crate::interactive::tui::probe_terminal_theme,
+        std::env::var("COLORFGBG").ok().as_deref(),
+    );
+    crate::interactive::tui::set_theme(ground);
     // The session's facts, and the record this launch resumed: the one opener
     // reads its link exactly as the plain loop's first message does, so an
     // attach, a next epoch, a read-only record and a refusal all open the same
@@ -48,10 +69,7 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     let facts = surface_facts(
         &state,
         tui_trust_pending,
-        crate::front::tui::theme::scheme(
-            &colour_env,
-            crate::front::tui::theme::Scheme::Dark,
-        ),
+        crate::front::tui::theme::scheme_for(ground, &colour_env),
     );
     let commands = state.user_commands.clone();
     let metrics = session.session_metrics();

@@ -4,7 +4,7 @@ use crate::coding_test_support::{follow_up_fixture, follow_up_provider};
 use saya_agent::CancellationToken;
 use std::{
     fs,
-    sync::{Arc, OnceLock, atomic::Ordering, mpsc},
+    sync::{atomic::Ordering, mpsc},
     time::{Duration, Instant},
 };
 const TEST: &str = "interactive::tui::coding::worker::follow_up_tests::inactive_follow_up_delivers_child_controls_and_progress";
@@ -52,9 +52,6 @@ async fn exercise() {
         PanelSenders { activity, receipts },
         control_rx,
         saya_agent::ApprovalPolicy::Ask,
-        // No panel reads this fixture's job cell; the switch surface has its
-        // own tests.
-        Arc::new(OnceLock::new()),
         // The fixture opens no session's dependent: it states no session.
         None,
     );

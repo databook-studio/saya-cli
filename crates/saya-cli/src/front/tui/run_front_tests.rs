@@ -89,3 +89,19 @@ async fn the_surfaces_own_words_reach_the_queue_as_a_workers_word() {
     front.say("");
     assert!(queue.try_recv().is_err());
 }
+
+/// The old surface's pin — it states "never reads stdin, always has its
+/// modal" — moves here with the surface. `chat/compose.rs` reads the second
+/// half to decide whether a write-shaped tool is advertised at all, so a
+/// front that answered the default `false` would hide every tool whose call
+/// it can actually ask about. The first half is the surface's shape: the
+/// composer reads keys, nothing on this surface reads stdin.
+#[tokio::test]
+async fn the_tui_front_can_obtain_a_per_call_approval() {
+    let (front, _queue) = front();
+    assert!(
+        front.can_obtain_approval(),
+        "the TUI answers calls through its own card, so it can obtain a \
+         per-call approval; answering `false` hides every write-shaped tool"
+    );
+}

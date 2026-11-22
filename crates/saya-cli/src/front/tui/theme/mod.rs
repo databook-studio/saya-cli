@@ -20,7 +20,7 @@ pub(crate) use contrast::{
 #[allow(unused_imports)]
 pub(crate) use glyphs::{Charset, Glyph, charset, glyph};
 #[allow(unused_imports)]
-pub(crate) use launch::{NO_COLOR, scheme};
+pub(crate) use launch::{NO_COLOR, asks_for_no_colour, scheme, scheme_for};
 #[allow(unused_imports)]
 pub(crate) use tokens::{BYPASS_CHIP, Form, Scheme, Token, bypass_chip, form, style};
 

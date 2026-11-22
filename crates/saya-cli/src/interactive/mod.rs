@@ -4,12 +4,6 @@ pub(crate) use session::permissions::allow_refusal;
 // friendly refusal at the 4 MiB cap, shared by every save surface.
 pub(crate) mod compact_task;
 #[cfg(test)]
-#[path = "compact_task_tui_metrics_tests.rs"]
-mod compact_task_tui_metrics_tests;
-#[cfg(test)]
-#[path = "session/continuation/compaction/manual_bounds_tests.rs"]
-mod session_compact_bounds_tests;
-#[cfg(test)]
 #[path = "session/continuation/compaction/manual_tests.rs"]
 mod session_compact_tests;
 #[cfg(test)]
@@ -45,6 +39,9 @@ mod session_grants_tests;
 // decisions (scratch, fetch, command) beside the workspace file
 // family's own. Their tests ride the module itself
 // (`session_grant_families_tests.rs`).
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 pub(crate) mod session_prompt;
 // The old per-turn request body. The plain REPL's turn is a chat session turn
 // now (`front/line` + `session/line_chat`), so nothing calls it: the module is
@@ -70,16 +67,17 @@ pub(crate) mod turn_summary;
 pub(crate) mod session_workspace;
 pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
-// The old full-screen surface: kept compiled until X1-X4 delete it, and
-// reachable from this crate's tests only — the launch switches `saya` to the
-// new surface (T19), so nothing in the binary enters this one and its dead
-// ends are expected until the removal lands.
-#[allow(dead_code)]
+// What the new surface reuses from the old TUI: the composer's buffer and
+// completion, the wrap and fuzzy rules, the input history, the tables, the
+// clipboard attempt, the terminal guard and its `/setup` handoff, the export
+// writer, the query worker, the trust answer and the job plumbing. X1 deleted
+// the surface itself; nothing here is a second frame.
 pub(crate) mod tui;
 
 // The session's token accumulator — the answering and extraction totals
 // `/usage` reads — is the one a line turn's own stream folds into.
-pub(crate) use tui::types::SessionUsage;
+mod usage;
+pub(crate) use usage::SessionUsage;
 
 pub use session::commands::SessionAction;
 pub use session::turn_loop::run;

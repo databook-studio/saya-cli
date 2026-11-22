@@ -14,7 +14,19 @@ use std::{collections::BTreeSet, fs};
 
 use saya_agent::{AgentMode, ApprovalPolicy};
 
-use crate::interactive::tui::agent::approval_capabilities;
+use crate::chat::ChatFront;
+use crate::front::tui::run_front::Forward;
+
+/// What the new surface states about itself, read off its own front rather than
+/// a constant here: the TUI never reads stdin (its composer is keys), and it can
+/// always obtain a per-call approval through its card. The old surface's
+/// `tui_capabilities()` pair moved onto the front's `can_obtain_approval`,
+/// because that is the fact `SessionUniverse::definitions` consumes.
+fn tui_capabilities() -> (bool, bool) {
+    let (msgs, _queue) = tokio::sync::mpsc::unbounded_channel();
+    let front = Forward::new(msgs);
+    (false, front.can_obtain_approval())
+}
 
 #[path = "approval_surface_tests/test_support.rs"]
 mod test_support;
@@ -31,7 +43,7 @@ use test_support::{WRITE_SHAPED, advertised_set, compose, temp_dir, worktree};
 #[test]
 fn tui_states_it_cannot_read_stdin_but_can_obtain_approvals() {
     assert_eq!(
-        approval_capabilities(),
+        tui_capabilities(),
         (false, true),
         "the TUI never reads stdin and always has its modal"
     );
@@ -46,7 +58,7 @@ fn tui_shaped_session_under_ask_advertises_the_write_shaped_tools() {
     let project = worktree("tui-regression");
     let state = temp_dir("tui-regression-state");
     let universe = compose(&project, &state);
-    let (_, tui_can_obtain_approval) = approval_capabilities();
+    let (_, tui_can_obtain_approval) = tui_capabilities();
     let names = advertised_set(
         &universe,
         AgentMode::Build,
@@ -93,7 +105,7 @@ fn tui_and_repl_advertise_identical_sets_under_ask() {
     let project = worktree("tui-repl-parity");
     let state = temp_dir("tui-repl-parity-state");
     let universe = compose(&project, &state);
-    let (_, tui_can_obtain_approval) = approval_capabilities();
+    let (_, tui_can_obtain_approval) = tui_capabilities();
     let repl_can_obtain_approval = true;
     let tui: BTreeSet<String> = advertised_set(
         &universe,

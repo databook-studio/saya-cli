@@ -26,8 +26,7 @@ use super::live::LiveRuntime;
 use super::msg::Worker;
 use crate::front::ResultPreview;
 use crate::interactive::tui::{
-    CAP_REFUSAL, Followup, LastQuery, SqlTask, fill_save_from_last_query, parse_chart_args,
-    spawn_sql_task, try_acquire_worker_permit,
+    CAP_REFUSAL, LastQuery, SqlTask, spawn_sql_task, try_acquire_worker_permit,
 };
 use crate::render::{RenderFormat, TerminalEvent};
 
@@ -66,7 +65,7 @@ pub(crate) fn perform(deps: &DirectDeps, command: Direct) -> Worker {
 /// `/chart`: today's suggester and renderer, written where the operator asked
 /// — a reserved temp file otherwise — and said in one toast.
 fn chart(result: &QueryResult, args: &str) -> Worker {
-    let (kind, path_arg) = parse_chart_args(args);
+    let (kind, path_arg) = super::direct_chart_args::parse_chart_args(args);
     let mut spec = crate::chart::suggest_spec(result);
     if let Some(kind) = kind {
         spec.kind = kind;
@@ -135,7 +134,7 @@ fn investigation(
     command: crate::cli::InvestigationCommand,
     last_query: Option<LastQuery>,
 ) -> Worker {
-    let command = match fill_save_from_last_query(command, &last_query) {
+    let command = match super::direct_save::fill_save_from_last_query(command, &last_query) {
         Ok(command) => command,
         Err(message) => {
             return Worker {
@@ -191,13 +190,7 @@ fn query(deps: &DirectDeps, profile: Option<String>, sql: String) -> Worker {
     let connection = profile
         .clone()
         .or_else(|| runtime.resolved.profile_name.clone());
-    let task = SqlTask::new(
-        profile,
-        sql.clone(),
-        Followup::Sql {
-            connection: connection.clone(),
-        },
-    );
+    let task = SqlTask::new(profile, sql.clone());
     // The clone shares the envelope slot, so the answer below reads the
     // execution the spawned worker wrote.
     let events = spawn_sql_task(

@@ -7,16 +7,26 @@
 mod clip;
 mod columns;
 mod geometry;
-mod names;
 mod render;
 
 pub(crate) use clip::clip_table_block;
-pub(crate) use names::column_names;
 
-// Re-exported so the `#[path]` sibling test module (which resolves `super::`
-// to this module) keeps seeing the names the inline `tests` module saw.
-#[cfg(test)]
-pub(crate) use crate::interactive::tui::types::WideTableView;
+/// Presentation state for wide result tables. This is view state: the block
+/// text stays the full, untruncated table (what copy and persistence see), and
+/// these fields only change how a table is painted. `h_offset` is the first
+/// column index shown in the scroll region; `pin_first` holds column 0 in
+/// place while the rest scroll; `columns` restricts the view to named columns
+/// (`None` shows all).
+///
+/// It lived on the old TUI's `App` until X1 deleted that app; the new
+/// surface's result pane is this scroller's only reader, so the view state
+/// lives in the scroller's module.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct WideTableView {
+    pub(crate) h_offset: usize,
+    pub(crate) pin_first: bool,
+    pub(crate) columns: Option<Vec<String>>,
+}
 
 #[cfg(test)]
 #[path = "wide_tests.rs"]

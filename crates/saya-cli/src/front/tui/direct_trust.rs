@@ -72,17 +72,6 @@ pub(crate) fn answer(store: &dyn TrustStore, answer: TrustResolution) -> Worker 
                 }
             }
         }
-        // The `w <dir>` answer is today's modal's, and binds the directory it
-        // names — resolved by the same rule.
-        TrustResolution::Workspace(dir) => match session_trust::resolve_trusted_dir(&dir) {
-            Ok(resolved) => resolved,
-            Err(message) => {
-                return Worker {
-                    direct: Some(DirectOutcome::Error(message)),
-                    ..Worker::default()
-                };
-            }
-        },
     };
     match store.bind(&dir) {
         Ok(()) => Worker {
