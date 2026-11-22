@@ -46,7 +46,7 @@ pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
 pub(crate) use front::ChatFront;
 #[allow(unused_imports)]
-pub(crate) use link::{Resume, RunFacts, after_prepare};
+pub(crate) use link::{Resume, RunFacts, after_prepare, decide};
 #[allow(unused_imports)]
 pub(crate) use operator::SessionOperator;
 #[allow(unused_imports)]

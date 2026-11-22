@@ -93,6 +93,16 @@ fn lease_held(state_root: &Path, records: &Path) -> bool {
     super::in_place_lease::leased(state_root, record.root_id().as_str()).unwrap_or(true)
 }
 
+/// Whether the job works in place: it recorded the folder root it writes. A
+/// job that recorded none works in a managed checkout, which runs one turn per
+/// run and takes no further turn here.
+pub(crate) fn works_in_place(state_root: &Path, job: &JobId) -> bool {
+    super::root_checkout::InPlaceRootRecord::read(
+        &state_root.join(job.as_str()).join("inplace-root.json"),
+    )
+    .is_ok()
+}
+
 /// Removes the job's whole records directory, bounded and never following a
 /// link. An absent directory is already removed.
 pub(crate) fn delete_records(state_root: &Path, job: &JobId) -> Result<(), CodingError> {
