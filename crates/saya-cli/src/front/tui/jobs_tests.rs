@@ -35,11 +35,19 @@ fn slash_job_opens_the_drawer_and_sends_nothing() {
 }
 
 #[test]
-fn slash_job_with_an_argument_is_still_a_turn() {
+fn slash_job_with_an_argument_is_the_jobs_command_not_a_turn() {
     let mut model = model();
     model.insert("/job show fix-flaky");
     let cmds = update(&mut model, press(KeyCode::Enter));
-    assert_eq!(cmds, vec![Cmd::Send(String::from("/job show fix-flaky"))]);
+    assert_eq!(
+        cmds,
+        vec![Cmd::Job(crate::slash::JobRequest::job(
+            crate::cli::CodingCommand::Show {
+                id: String::from("fix-flaky")
+            }
+        ))],
+        "the job's own verb is the job surface's, read by today's plumbing"
+    );
 }
 
 #[test]

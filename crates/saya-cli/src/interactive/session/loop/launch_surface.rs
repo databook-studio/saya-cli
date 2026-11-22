@@ -10,6 +10,7 @@
 use std::time::Instant;
 
 use crate::front::tui::direct_run::DirectDeps;
+use crate::front::tui::jobs_open::JobDeps;
 use crate::front::tui::run_draw::Facts;
 use crate::front::tui::{Model, OpsDeps, Surface, channel, run as run_loop};
 use crate::interactive::session::line_chat::open_surface;
@@ -24,11 +25,13 @@ pub(super) struct Composed {
 /// Runs the surface over `composed`, and nothing on the terminal once it
 /// returns: the run is composed and opened on this thread, and the loop enters
 /// and leaves the terminal itself.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn run_surface(
     composed: Composed,
     model: Model,
     facts: Facts,
     direct: Arc<DirectDeps>,
+    jobs: Arc<JobDeps>,
     commands: crate::slash::user_commands::UserCommands,
     metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
     entered: Instant,
@@ -61,6 +64,7 @@ pub(super) fn run_surface(
             ops: opened.context(allow_bypass),
             deps,
             direct,
+            jobs,
             facts,
             metrics,
             entered,

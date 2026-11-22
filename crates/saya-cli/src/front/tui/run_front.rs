@@ -31,7 +31,7 @@ use crate::interactive::tui::CodingPanel;
 
 /// The surface one session drives: its events in, its calls answered.
 pub(crate) struct Forward {
-    msgs: UnboundedSender<Msg>,
+    pub(super) msgs: UnboundedSender<Msg>,
     /// The asks waiting for an answer, by the id they were put under.
     pending: Mutex<HashMap<u64, oneshot::Sender<Answer>>>,
     /// The run's jobs as today's job plumbing states them, and the waiting end
@@ -80,6 +80,16 @@ impl Forward {
         }
     }
 
+    /// Puts one line in the transcript, in the surface's own voice (`02`
+    /// §3.10): a job's control receipt, the words it settled with, or the note
+    /// a deprecated spelling owes.
+    pub(crate) fn note(&self, line: String) {
+        self.deliver(Worker {
+            direct: Some(super::direct::DirectOutcome::Notice(line)),
+            ..Worker::default()
+        });
+    }
+
     /// Hands one finished worker's answer to the loop: the rows a direct
     /// command returned, the sentence it ended in, or its own word about
     /// itself — one `Msg::Worker`, so a slow command can never read as a key.
@@ -87,8 +97,15 @@ impl Forward {
         let _ = self.msgs.send(Msg::Worker(worker));
     }
 
-    /// Asks the loop to leave: the one message that ends it (`/exit`).
+    /// Asks the loop to leave: the one message that ends it (`/exit`). A job of
+    /// this run is not orphaned by a quit: the surface says what the old one
+    /// said (`interactive::tui::JOB_RUNNING`) and leaves the job to settle, so a
+    /// cancelled helper's durable state is written before the process ends.
     pub(crate) fn quit(&self) {
+        if self.panel().as_ref().is_some_and(CodingPanel::is_active) {
+            self.say(crate::interactive::tui::JOB_RUNNING);
+            return;
+        }
         let _ = self.msgs.send(Msg::Quit);
     }
 

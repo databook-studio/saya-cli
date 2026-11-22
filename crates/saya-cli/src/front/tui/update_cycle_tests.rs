@@ -120,15 +120,18 @@ fn a_card_holds_the_switch_with_one_pinned_toast() {
     assert_eq!(model.mode(), PermissionMode::Ask, "the mode is untouched");
     assert!(!model.overlay_open(), "and no picker opens over the card");
 
-    // `/mode` typed behind the card cannot reach the update either: the card
-    // owns the keyboard, so Enter is none of its keys and nothing is submitted.
+    // `/mode` typed behind the card opens no picker: a pane never opens over a
+    // card that is waiting for an answer, and what the composer holds is the
+    // operator's own line — here the turn `/mode` is (K2 gives it its
+    // argument).
     model.insert("/mode");
     let enter_cmds = update(&mut model, enter());
-    assert!(
-        enter_cmds.is_empty(),
-        "Enter on a card answers nothing and sends nothing: {enter_cmds:?}"
+    assert_eq!(
+        enter_cmds,
+        vec![Cmd::Send(String::from("/mode"))],
+        "the typed line is sent and the card is not answered: {enter_cmds:?}"
     );
-    assert!(!model.overlay_open(), "the card still holds the keyboard");
+    assert!(!model.overlay_open(), "no picker opens over the card");
     assert!(model.card().is_some(), "the card is still there to answer");
     assert!(
         mode_lines(&model).is_empty(),

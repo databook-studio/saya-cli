@@ -17,6 +17,7 @@ use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use super::direct_run::DirectDeps;
+use super::jobs_open::JobDeps;
 use super::model::Model;
 use super::msg::Msg;
 use super::ops::OpsDeps;
@@ -50,6 +51,8 @@ pub(crate) struct Surface {
     pub(crate) deps: Arc<OpsDeps>,
     /// What a direct source's commands need from the launch.
     pub(crate) direct: Arc<DirectDeps>,
+    /// What opening a job needs from the launch (`/start`, `02` §8).
+    pub(crate) jobs: Arc<JobDeps>,
     /// The facts every frame is painted with.
     pub(crate) facts: Facts,
     /// The session's metrics collector, when local metrics are on.
@@ -71,15 +74,26 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         ops,
         deps,
         direct,
+        jobs,
         facts,
         metrics,
         entered,
     } = surface;
-    let port = Arc::new(SessionPort::new(session, front, ops, direct, deps));
+    let port = Arc::new(SessionPort::new(
+        session,
+        Arc::clone(&front),
+        ops,
+        direct,
+        deps,
+        jobs,
+    ));
     let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port)
         .with_facts(facts)
         .with_metrics(metrics, entered);
     run_input::spawn_input(msgs.clone());
+    // A job's worker reports on queues of its own, so the panel is looked at on
+    // a thread of its own: an idle surface paints no frame to read them on.
+    run_input::spawn_jobs(Arc::clone(&front));
     run_input::spawn_ticker(runtime.animating_flag(), msgs, super::view::TICK);
     runtime.run().await
 }

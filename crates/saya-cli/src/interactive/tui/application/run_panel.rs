@@ -102,7 +102,10 @@ impl App {
             .as_ref()
             .is_some_and(|panel| panel.is_active())
         {
-            self.transcript.push(super::super::transcript::BlockKind::System,"A job is still running. Use `/job cancel <job-id>`, then wait for settlement before quitting.");
+            self.transcript.push(
+                super::super::transcript::BlockKind::System,
+                super::super::JOB_RUNNING,
+            );
             return false;
         }
 

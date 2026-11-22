@@ -43,10 +43,12 @@ impl Session {
     pub fn finish(&mut self) -> Vec<u8> {
         let deadline = Instant::now() + DEADLINE;
         while Instant::now() < deadline {
-            // A quit can be deferred while the coding panel settles its job
-            // ("a coding job is still running"); re-arming and quitting again
-            // is idempotent, so keep offering the quit until the child exits.
-            self.send(b"\x03\x03");
+            // The surface's own quit spelled out: this surface's exit is its
+            // command (`/quit`, or `/exit`), and Ctrl+C is the turn cancel it
+            // was before it. A quit is deferred while a job of the run settles
+            // ("A job is still running…"), and offering it again is
+            // idempotent, so it is offered until the child exits.
+            self.send(b"\x03\x03/quit\r");
             let until = Instant::now() + Duration::from_millis(250);
             while Instant::now() < until {
                 if self

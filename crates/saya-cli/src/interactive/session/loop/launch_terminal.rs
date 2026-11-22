@@ -54,6 +54,16 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     );
     let commands = state.user_commands.clone();
     let metrics = session.session_metrics();
+    // A job this surface opens runs as the old surface ran one: over the same
+    // runtime, the same store, this session's folder, and the mode in force at
+    // the moment the surface took the terminal — the session itself is handed
+    // to the trust store below, so its policy is read here, once.
+    let jobs = std::sync::Arc::new(crate::front::tui::JobDeps::new(
+        std::sync::Arc::clone(&runtime),
+        state_db.clone(),
+        session.root(),
+        session.policy().mode(),
+    ));
     let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(
         session,
         std::sync::Arc::clone(&runtime),
@@ -66,7 +76,16 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         trust: std::sync::Arc::clone(&trust)
             as std::sync::Arc<dyn crate::front::tui::direct_trust::TrustStore>,
     });
-    let outcome = run_surface(composed, model, facts, direct, commands, metrics, entered);
+    let outcome = run_surface(
+        composed,
+        model,
+        facts,
+        direct,
+        jobs,
+        commands,
+        metrics,
+        entered,
+    );
     let mut session = trust
         .release()
         .ok_or("the surface ended without giving its session back")?;

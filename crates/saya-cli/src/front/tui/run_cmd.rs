@@ -7,12 +7,14 @@
 //! second way to send a turn.
 
 use std::sync::Arc;
+use std::sync::{Mutex, PoisonError};
 
 use saya_agent::PermissionMode;
 
 use super::direct::Direct;
 use super::direct_run::{DirectDeps, perform as perform_direct};
 use super::direct_trust;
+use super::jobs_open::JobDeps;
 use super::msg::Cmd;
 use super::ops::{self, Asked, OpsDeps};
 use super::run_front::Forward;
@@ -43,6 +45,9 @@ pub(crate) trait CmdPort: Send + Sync {
     /// Cancel the job this id names, through today's job plumbing (`02` §8's
     /// `x`, once its confirm has been answered).
     fn cancel_job(&self, id: String);
+    /// Perform one job verb (`02` §8): `/start` opens the run's one job through
+    /// today's worker, and the rest steer the job it opened.
+    fn job(&self, request: crate::slash::JobRequest);
     /// Perform one line the surface does not answer itself: a session
     /// operation, named by the chat layer's table ([`super::ops`]).
     fn op(&self, command: SlashCommand);
@@ -60,6 +65,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::Direct(command) => port.direct(command),
         Cmd::Trust => port.trust(),
         Cmd::CancelJob(id) => port.cancel_job(id),
+        Cmd::Job(request) => port.job(request),
         Cmd::Op(command) => port.op(command),
     }
 }
@@ -74,18 +80,24 @@ pub(crate) struct SessionPort {
     /// The chat layer's one table of operations, and the user's own commands
     /// that answer for their names in `/help`.
     deps: Arc<OpsDeps>,
+    /// What opening a job needs from the launch, and the one-release notes the
+    /// job spellings have already said in this session (`chat::ops_job`).
+    jobs: Arc<JobDeps>,
+    notes: Mutex<crate::chat::JobNotes>,
 }
 
 impl SessionPort {
     /// A port over one session, the front the session talks to, the run's
-    /// operations context, what its direct commands need from the launch, and
-    /// the table of operations its other commands state.
+    /// operations context, what its direct commands need from the launch, the
+    /// table of operations its other commands state, and what opening a job
+    /// needs.
     pub(crate) fn new(
         session: Arc<ChatSession>,
         front: Arc<Forward>,
         ops: OpsContext,
         direct: Arc<DirectDeps>,
         deps: Arc<OpsDeps>,
+        jobs: Arc<JobDeps>,
     ) -> Self {
         Self {
             session,
@@ -93,6 +105,8 @@ impl SessionPort {
             ops,
             direct,
             deps,
+            jobs,
+            notes: Mutex::new(crate::chat::JobNotes::default()),
         }
     }
 }
@@ -172,6 +186,23 @@ impl CmdPort for SessionPort {
         // a job of this run is one of the front's workers, and cancelling it is a
         // token or a control message, never a second job runner (`02` §8).
         self.front.cancel_job(&id);
+    }
+
+    fn job(&self, mut request: crate::slash::JobRequest) {
+        // The deprecated spelling's note is said once per session
+        // (`chat::ops_job`), in the transcript, before the verb is performed.
+        {
+            let mut notes = self.notes.lock().unwrap_or_else(PoisonError::into_inner);
+            crate::chat::claim_job_note(&mut notes, &mut request);
+        }
+        if let Some(note) = request.note() {
+            self.front.note(note.to_owned());
+        }
+        // A verb the panel could not take is the operator's business, and the
+        // front is how this port says anything.
+        if let Some(refusal) = self.front.job_command(request.command, self.jobs.as_ref()) {
+            self.front.say(refusal);
+        }
     }
 
     fn op(&self, command: SlashCommand) {

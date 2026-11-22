@@ -51,10 +51,7 @@ impl ApprovalDecider for PanelApproval {
         {
             return false;
         }
-        let text = format!(
-            "Approve job {} with this exact scope:\n{}\nUse `/job approve {}` or `/job deny {}`.",
-            self.id, arguments, self.id, self.id
-        );
+        let text = super::consent::text(&self.id, arguments);
         ask_operator(&self.sender, &self.token, text, WaitPolicy::PANEL).await
     }
 }
@@ -77,7 +74,7 @@ pub(super) fn panel_consent(approve: bool, policy: saya_agent::ApprovalPolicy) -
     approve || crate::commands::coding::consent_implied(policy)
 }
 
-pub(super) fn spawn(
+pub(crate) fn spawn(
     command: CodingCommand,
     runtime: RuntimeConfig,
     store: SqliteStateStore,

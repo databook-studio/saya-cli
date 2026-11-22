@@ -109,10 +109,12 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
         facts.charset,
     );
     if let (Some(area), true) = (regions.card, model.card().is_some()) {
+        // The body's cap is the *screen's* budget, so the card is laid out from
+        // the frame it is painted in — the region is what the cap already left.
         paint(
             frame,
             area,
-            run_draw_card::card(model, facts, area.height, area.width),
+            run_draw_card::card(model, facts, frame.area().height, area.width),
             facts.charset,
         );
     }
