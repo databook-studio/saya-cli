@@ -17,6 +17,7 @@ use ratatui::crossterm::event::KeyEvent;
 
 use super::direct;
 use super::focus_text;
+use super::history_keys;
 use super::jobs;
 use super::keys::{Intent, intent};
 use super::model::Model;
@@ -79,6 +80,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         // The queue is one deep, and Ctrl+G is how the operator takes the held
         // line back: it is dropped, never sent (`02` §7).
         Some(Intent::DropQueued) => model.drop_queued(),
+        // The history's own keys: a recall fills the line, a search reads the
+        // ring — neither sends anything (`02` §7).
+        Some(Intent::History(action)) => history_keys::press(model, action),
         Some(Intent::CancelTurn) => cmds.push(Cmd::CancelTurn),
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),

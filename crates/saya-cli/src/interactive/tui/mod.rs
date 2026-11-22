@@ -86,6 +86,11 @@ pub(crate) use session::{TrustOutcome, TuiSession, run};
 pub(crate) use complete::{Candidate, slash_candidates};
 #[allow(unused_imports)]
 pub(crate) use fuzzy::fuzzy_score;
+// The new front's composer keeps today's input history — the ring, its
+// `input_history` file and its `--param` redaction — rather than a second copy
+// of it: `Up`/`Down` recall what `push` recorded, and `Ctrl+R` searches it.
+#[allow(unused_imports)]
+pub(crate) use history::History;
 #[allow(unused_imports)]
 pub(crate) use input::InputBuffer;
 #[allow(unused_imports)]

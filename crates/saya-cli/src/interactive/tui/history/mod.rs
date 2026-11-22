@@ -13,6 +13,7 @@ const MAX_ENTRIES: usize = 1000;
 /// record — and it is cleared by the same two events that end navigation:
 /// `push` (a submit) and `reset` (any edit or cursor move after a key).
 #[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct History {
     entries: Vec<String>,
     cursor: Option<usize>,
@@ -23,11 +24,35 @@ pub(crate) struct History {
     omitted: usize,
 }
 #[allow(dead_code)]
+impl Default for History {
+    /// A ring with nothing behind it and nothing to save: no path, so a push
+    /// records in memory and never writes. The front's model opens on one,
+    /// and the launch loads the persisted ring over it ([`History::load`]).
+    fn default() -> Self {
+        Self::in_memory()
+    }
+}
+
+#[allow(dead_code)]
 impl History {
     pub(crate) fn load() -> Self {
         let path = crate::interactive::session::lifecycle::paths::default_history_file();
         let disabled = persistence::is_disabled_env();
         Self::from_path(path, disabled)
+    }
+
+    /// A ring that records what it is given and never touches the disk: the
+    /// model's own, replaced by [`History::load`] at launch.
+    pub(crate) fn in_memory() -> Self {
+        Self {
+            entries: Vec::new(),
+            cursor: None,
+            stash: None,
+            path: PathBuf::new(),
+            limit: MAX_ENTRIES,
+            disabled: false,
+            omitted: 0,
+        }
     }
 
     pub(crate) fn with_path(path: PathBuf) -> Self {

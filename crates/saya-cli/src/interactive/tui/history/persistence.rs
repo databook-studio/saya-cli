@@ -16,7 +16,10 @@ pub(super) fn is_disabled_env() -> bool {
 #[allow(dead_code)]
 impl History {
     pub(super) fn save(&self) {
-        if self.disabled {
+        // A ring with no path has nowhere to save to: the model opens on one
+        // and the launch loads the file's ring over it, so an in-memory ring
+        // records without writing beside the process (`History::in_memory`).
+        if self.disabled || self.path.as_os_str().is_empty() {
             return;
         }
         if let Some(p) = self.path.parent() {

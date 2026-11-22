@@ -17,6 +17,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::cards_keys::{self, CardIntent};
+use super::history_keys::{self, HistoryIntent};
 use super::model::Model;
 use super::overlay_keys;
 use crate::agent::tools::consent::Answer;
@@ -76,6 +77,9 @@ pub(crate) enum Intent {
     PaletteClose,
     /// Close the key sheet.
     HelpClose,
+    /// Walk, search or leave the composer's input history (`02` §7): `Up`,
+    /// `Down`, `Ctrl+R` and the keys the open search reads.
+    History(history_keys::HistoryIntent),
     /// Walk the block cursor one entry older (`02` §6).
     FocusUp,
     /// Walk the block cursor one entry newer.
@@ -128,6 +132,11 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
     if model.in_cursor_mode() {
         return cursor_key(key);
     }
+    // The open search owns the keys, exactly as a pane does: what the operator
+    // types is what it is looking for, never text on the line behind it.
+    if model.search().is_some() {
+        return history_keys::search_key(key);
+    }
     composer_key(model, key)
 }
 
@@ -179,6 +188,11 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
         // composer takes it, and from no seat it lands on the newest entry.
         KeyCode::Up if alt => Some(Intent::FocusUp),
         KeyCode::Down if alt => Some(Intent::FocusDown),
+        // The input history is the composer's own (`02` §7): `↑`/`↓` walk the
+        // ring today's surface keeps, and `Ctrl+R` searches it.
+        KeyCode::Up => Some(Intent::History(HistoryIntent::Previous)),
+        KeyCode::Down => Some(Intent::History(HistoryIntent::Next)),
+        KeyCode::Char('r') if ctrl => Some(Intent::History(HistoryIntent::Search)),
         KeyCode::Enter if alt => Some(Intent::Newline),
         KeyCode::Enter if !ctrl => Some(Intent::Submit),
         // Only a held line can be dropped; with nothing queued the press is
