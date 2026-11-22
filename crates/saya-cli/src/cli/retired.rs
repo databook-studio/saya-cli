@@ -63,13 +63,13 @@ const RETIRED_CODING_SUBCOMMANDS: &[(&str, &str)] = &[
     ),
     (
         "approve",
-        "`saya coding approve` is session-only: use `/approve <id>` in the \
+        "`saya coding approve` is session-only: use `/job approve <id>` in the \
          interactive session",
     ),
     (
         "deny",
-        "`saya coding deny` is session-only: use `/deny <id>` in the interactive \
-         session",
+        "`saya coding deny` is session-only: use `/job deny <id>` in the \
+         interactive session",
     ),
     (
         "follow-up",
@@ -77,22 +77,22 @@ const RETIRED_CODING_SUBCOMMANDS: &[(&str, &str)] = &[
     ),
     (
         "message",
-        "`saya coding message` is session-only: use `/message <id> <agent> \
+        "`saya coding message` is session-only: use `/job message <id> <agent> \
          <text>` in the interactive session",
     ),
     (
         "pause",
-        "`saya coding pause` is session-only: use `/pause <id> <agent>` in the \
-         interactive session",
-    ),
-    (
-        "continue",
-        "`saya coding continue` is session-only: use `/continue <id> <agent>` in \
+        "`saya coding pause` is session-only: use `/job pause <id> <agent>` in \
          the interactive session",
     ),
     (
+        "continue",
+        "`saya coding continue` is session-only: use `/job continue <id> <agent>` \
+         in the interactive session",
+    ),
+    (
         "cancel-child",
-        "`saya coding cancel-child` is session-only: use `/cancel-child <id> \
+        "`saya coding cancel-child` is session-only: use `/job cancel-child <id> \
          <agent>` in the interactive session",
     ),
     (

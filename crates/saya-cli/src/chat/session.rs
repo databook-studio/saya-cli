@@ -10,6 +10,7 @@ use super::{
     port::{RunPort, TurnOutcome, offer_turn},
     queue::{Enqueued, SendQueue},
 };
+use super::{ChatOutcome, ContinueRefusal};
 
 /// What a displacing send tells the surface: the waiting message never vanishes silently.
 const REPLACED: &str =
@@ -57,6 +58,9 @@ enum Decision {
 struct State {
     phase: SessionState,
     queue: SendQueue,
+    /// How the last turn ended, once one has run: what bare `/continue` reads
+    /// to know whether the run paused (`chat::ops_continue`).
+    last: Option<ChatOutcome>,
 }
 
 /// One chat session.
@@ -75,6 +79,7 @@ impl ChatSession {
             inner: Mutex::new(State {
                 phase: SessionState::Preparing,
                 queue: SendQueue::new(),
+                last: None,
             }),
         }
     }
@@ -128,6 +133,26 @@ impl ChatSession {
     /// settles back to `Ready`.
     pub(crate) async fn cancel(&self) {
         self.port.cancel_turn().await;
+    }
+
+    /// Bare `/continue`: the paused turn's continuation message, through the
+    /// same send path a typed line uses — or the one refusal, sending nothing.
+    ///
+    /// The two rules are [`ops_continue`](super::ops_continue)'s: nothing to
+    /// continue when the last turn did not pause, and refused (never queued)
+    /// while a turn runs. What is sent is the literal `Continue.`, so the next
+    /// turn is an ordinary turn of the same run.
+    pub(crate) async fn continue_turn(&self) -> Result<Admission, ContinueRefusal> {
+        let refusal = {
+            let state = self.lock();
+            super::ops_continue::refusal(state.last.as_ref(), state.phase)
+        };
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        Ok(self
+            .send(super::ops_continue::CONTINUE_MESSAGE.to_owned())
+            .await)
     }
 
     /// Closes the run. A turn in flight is not abandoned: the operator cancels it
@@ -205,7 +230,12 @@ impl ChatSession {
         let mut next = Some(message);
         while let Some(message) = next {
             match offer_turn(self.port.as_ref(), self.front.sink(), message).await {
-                TurnOutcome::Ended(outcome) => self.front.emit(ChatEvent::TurnEnded(outcome)),
+                TurnOutcome::Ended(outcome) => {
+                    // The session's own memory of how a turn ended: bare
+                    // `/continue` reads it, and nothing else does.
+                    self.lock().last = Some(outcome.clone());
+                    self.front.emit(ChatEvent::TurnEnded(outcome));
+                }
                 TurnOutcome::Refused(message) => self.front.emit(ChatEvent::Notice { message }),
                 TurnOutcome::Busy(message) => {
                     // The engine never released its slot. The message keeps its
@@ -248,3 +278,7 @@ mod tests;
 #[cfg(test)]
 #[path = "session_busy_tests.rs"]
 mod busy_tests;
+
+#[cfg(test)]
+#[path = "session_continue_tests.rs"]
+mod continue_tests;

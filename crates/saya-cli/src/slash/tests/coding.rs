@@ -1,7 +1,9 @@
 /// One parsed `/start` command, for the grammar tests below.
 fn start_command(line: &str) -> crate::cli::CodingCommand {
-    let Some(SlashCommand::Coding(command @ crate::cli::CodingCommand::Start { .. })) =
-        parse_slash_command(line).unwrap()
+    let Some(SlashCommand::Coding(crate::slash::JobRequest {
+        command: command @ crate::cli::CodingCommand::Start { .. },
+        ..
+    })) = parse_slash_command(line).unwrap()
     else {
         panic!("{line} parses to a start");
     };
@@ -137,8 +139,10 @@ fn start_carries_the_session_tools_words() {
         "/start --id job-a \"a task\" --tools read,grep",
         "/start --tools read,grep --id job-a \"a task\"",
     ] {
-        let Some(SlashCommand::Coding(crate::cli::CodingCommand::Start { tools, .. })) =
-            parse_slash_command(line).unwrap()
+        let Some(SlashCommand::Coding(crate::slash::JobRequest {
+            command: crate::cli::CodingCommand::Start { tools, .. },
+            ..
+        })) = parse_slash_command(line).unwrap()
         else {
             panic!("{line} parses to a start");
         };
@@ -150,14 +154,18 @@ fn start_carries_the_session_tools_words() {
 /// session threads to its worker; omitting it keeps the auto mode.
 #[test]
 fn slash_start_in_place() {
-    let Some(SlashCommand::Coding(crate::cli::CodingCommand::Start { in_place, .. })) =
-        parse_slash_command("/start --id job-a \"a task\" --write . --in-place --approve").unwrap()
+    let Some(SlashCommand::Coding(crate::slash::JobRequest {
+        command: crate::cli::CodingCommand::Start { in_place, .. },
+        ..
+    })) = parse_slash_command("/start --id job-a \"a task\" --write . --in-place --approve").unwrap()
     else {
         panic!("the in-place start parses");
     };
     assert!(in_place, "the stated mode is carried");
-    let Some(SlashCommand::Coding(crate::cli::CodingCommand::Start { in_place, .. })) =
-        parse_slash_command("/start --id job-a \"a task\" --write . --approve").unwrap()
+    let Some(SlashCommand::Coding(crate::slash::JobRequest {
+        command: crate::cli::CodingCommand::Start { in_place, .. },
+        ..
+    })) = parse_slash_command("/start --id job-a \"a task\" --write . --approve").unwrap()
     else {
         panic!("the plain start parses");
     };
@@ -168,8 +176,10 @@ fn slash_start_in_place() {
 /// stated together.
 #[test]
 fn slash_start_managed() {
-    let Some(SlashCommand::Coding(crate::cli::CodingCommand::Start { managed, .. })) =
-        parse_slash_command("/start --id job-a \"a task\" --write . --managed --approve").unwrap()
+    let Some(SlashCommand::Coding(crate::slash::JobRequest {
+        command: crate::cli::CodingCommand::Start { managed, .. },
+        ..
+    })) = parse_slash_command("/start --id job-a \"a task\" --write . --managed --approve").unwrap()
     else {
         panic!("the managed start parses");
     };
@@ -203,23 +213,52 @@ fn job_spellings_that_do_not_read_the_flag_refuse_it() {
     }
 }
 
-/// `/job` is the lifecycle command: an agent-shaped verb is refused by name,
-/// naming the spelling that works in the session.
+/// `/job` is the lifecycle command and the child controls' own spelling; the
+/// one launch with a spelling of its own is refused by name. Every child
+/// control runs under `/job` (row 171), so none of them is refused.
 #[test]
-fn job_refuses_the_agent_shaped_verbs() {
-    for (line, spelling) in [
-        ("/job approve job-a", "/approve <id>"),
-        ("/job start job-a \"a task\" --approve", "/start <task>"),
-        (
-            "/job follow-up job-a agent-a --expected-completion-sequence 1 \"x\" --approve",
-            "/follow-up <id> <agent>",
-        ),
-        ("/job cancel-child job-a child-a", "/cancel-child <id> <agent>"),
+fn job_refuses_only_the_launch_that_has_its_own_spelling() {
+    let error = parse_slash_command("/job start job-a \"a task\" --approve").unwrap_err();
+    assert!(
+        error.0.contains("/start <task>"),
+        "the refusal names the spelling that works: {error}"
+    );
+    for line in [
+        "/job approve job-a",
+        "/job deny job-a",
+        "/job message job-a agent-a hi",
+        "/job pause job-a agent-a",
+        "/job continue job-a agent-a",
+        "/job cancel-child job-a agent-a",
+        "/job follow-up job-a agent-a --expected-completion-sequence 1 \"x\" --approve",
     ] {
-        let error = parse_slash_command(line).unwrap_err();
         assert!(
-            error.0.contains(spelling),
-            "{line} names {spelling}: {error}"
+            parse_slash_command(line).is_ok(),
+            "{line} is /job's own verb: {:?}",
+            parse_slash_command(line).err()
+        );
+    }
+}
+
+/// The retired `/job` refusals named the top-level controls; the controls are
+/// `/job`'s verbs now, so only the launch keeps a spelling of its own.
+#[test]
+fn job_accepts_every_child_control_under_its_own_verb() {
+    for verb in [
+        "approve job-a",
+        "deny job-a",
+        "message job-a agent-a hi",
+        "pause job-a agent-a",
+        "continue job-a agent-a",
+        "cancel-child job-a agent-a",
+    ] {
+        let line = format!("/job {verb}");
+        let Ok(Some(SlashCommand::Coding(request))) = parse_slash_command(&line) else {
+            panic!("{line} parses to a job request");
+        };
+        assert!(
+            request.via_alias.is_none(),
+            "{line} is the canonical spelling, so it owes no note"
         );
     }
 }
@@ -229,7 +268,7 @@ fn job_refuses_the_agent_shaped_verbs() {
 #[test]
 fn retired_coding_slash_names_the_new_spellings() {
     let error = parse_slash_command("/coding start job-a \"a task\" --approve").unwrap_err();
-    for spelling in ["/start", "/follow-up", "/job", "/approve"] {
+    for spelling in ["/start", "/job", "/continue"] {
         assert!(
             error.0.contains(spelling),
             "the retired spelling names {spelling}: {error}"

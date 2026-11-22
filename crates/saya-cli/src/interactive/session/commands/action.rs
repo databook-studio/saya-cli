@@ -2,7 +2,7 @@
 // this enum is `PartialEq` but not `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
-    Coding(crate::cli::CodingCommand),
+    Coding(crate::slash::JobRequest),
     Message(String),
     /// `/mode <mode>` — a switch, carried to the loops. The switch needs the
     /// session's one policy, the journal, and the launch's bypass gate, so it

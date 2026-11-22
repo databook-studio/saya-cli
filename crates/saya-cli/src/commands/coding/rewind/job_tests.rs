@@ -183,6 +183,7 @@ fn both_adapters_resolve_the_same_rewind() {
     let Some(crate::SlashCommand::Coding(from_slash)) = from_slash else {
         panic!("the session parsed a coding subcommand");
     };
+    let from_slash = from_slash.command;
 
     let CodingCommand::Rewind { id, to, turn, .. } = command else {
         panic!("the CLI spelling is the rewind command");

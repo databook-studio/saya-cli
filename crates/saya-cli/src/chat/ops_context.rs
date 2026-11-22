@@ -136,9 +136,11 @@ pub(crate) enum SessionOp {
     Reload,
     /// `/setup`: hand the terminal to the guided setup.
     Setup,
-    /// `/start`, `/follow-up`, `/job …` and the six child controls: a job
-    /// beside the session's own run, never inside it.
-    Job(crate::cli::CodingCommand),
+    /// `/start`, `/follow-up`, `/job …` and the seven one-release top-level
+    /// spellings of its verbs: a job beside the session's own run, never
+    /// inside it. The request carries the alias that stated it, for the note
+    /// that alias owes once per session.
+    Job(crate::slash::JobRequest),
     /// `/undo`: restore the files the last turn edited, from the run's own
     /// checkpoint taken before that turn. The adapter runs it through the one
     /// rewind operation (`chat::ops_rewind`), never inside a turn.
@@ -146,6 +148,12 @@ pub(crate) enum SessionOp {
     /// `/rewind [<id>]`: the run's checkpoints listed newest first, or one of
     /// them restored — the same operation `/undo` and `saya job rewind` run.
     Rewind(RewindRequest),
+    /// Bare `/continue`: send the paused turn's continuation message. The one
+    /// session op that states a turn of the run: the adapter that owns the
+    /// session performs it through the same send path a typed line uses
+    /// (`chat::ops_continue`, `ChatSession::continue_turn`), and it refuses
+    /// while a turn runs.
+    ContinueTurn,
     /// `/exit`, `/quit`.
     Exit,
 }

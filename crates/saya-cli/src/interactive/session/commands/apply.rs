@@ -2,7 +2,16 @@ impl SessionState {
     pub fn apply(&mut self, command: SlashCommand, available: &[String]) -> SessionAction {
         use crate::chat::ops_status::{Note, Section};
         match command {
-            SlashCommand::Coding(command) => SessionAction::Coding(command),
+            // The alias's note is owed once per session (`chat::ops_job`).
+            SlashCommand::Coding(mut request) => {
+                self.claim_job_note(&mut request);
+                SessionAction::Coding(request)
+            }
+            // This engine's turns never pause, so the continuation turn has
+            // nothing to continue: the one sentence is the answer.
+            SlashCommand::ContinueTurn => {
+                SessionAction::Message(crate::chat::NOTHING_TO_CONTINUE.into())
+            }
             SlashCommand::Connect(name) => {
                 if !available.iter().any(|profile| profile == &name) {
                     return SessionAction::Error(format!("Unknown configured profile: {name}"));

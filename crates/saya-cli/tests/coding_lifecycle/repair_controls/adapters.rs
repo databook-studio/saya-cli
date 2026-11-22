@@ -63,7 +63,7 @@ async fn cli_follow_up_preserves_redaction_lineage_and_completion() {
     let SlashCommand::Coding(approved) = parse_slash_command(&tail).unwrap().unwrap() else {
         panic!("shared coding grammar");
     };
-    let output = dispatch_coding(&fixture.application, approved)
+    let output = dispatch_coding(&fixture.application, approved.command)
         .await
         .unwrap();
     assert_eq!(

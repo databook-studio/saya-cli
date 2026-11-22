@@ -9,9 +9,10 @@ fn descriptions_cover_exactly_the_catalogue() {
     // the popup reads its rows from the catalogue — one table, no local
     // copy — so this asserts the catalogue's names and descriptions are the
     // popup's: every name is unique, every name carries a description, and
-    // the count is today's 60 (45 commands and their 15 alias spellings —
-    // /report and /grants folded into their commands by K7, and the three
-    // hidden rows of K8 offered nowhere).
+    // the count is today's 60 (39 commands and their 21 alias spellings —
+    // /report and /grants folded into their commands by K7, the six job
+    // controls and /follow-up folded into /job by K4, and the three hidden
+    // rows of K8 offered nowhere).
     let entries: Vec<_> = crate::slash::catalog::entries().collect();
     assert_eq!(entries.len(), 60);
     for entry in &entries {

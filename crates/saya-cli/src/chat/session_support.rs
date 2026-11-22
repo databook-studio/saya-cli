@@ -91,6 +91,9 @@ struct Script {
     prepares: VecDeque<Result<Prepared, String>>,
     busy: usize,
     hold: bool,
+    /// The next turn ends on a progress guard — the pause `/continue`
+    /// continues — and the one after it answers normally.
+    pause: bool,
     cancelled: bool,
     closed: bool,
     calls: usize,
@@ -122,6 +125,12 @@ impl FakePort {
     /// Answers `times` turn calls with the engine's own `Busy`.
     pub(super) fn busy(&self, times: usize) {
         self.script().busy = times;
+    }
+
+    /// The next turn ends on a progress guard, as one that paused does; the
+    /// turn after it answers normally.
+    pub(super) fn pause_turns(&self) {
+        self.script().pause = true;
     }
 
     /// Waits until a turn has been asked for.
@@ -183,11 +192,16 @@ impl RunPort for FakePort {
             self.release.notified().await;
         }
         let cancelled = self.script().cancelled;
-        Ok(if cancelled {
-            ChatOutcome::Cancelled
-        } else {
-            ChatOutcome::Answered
-        })
+        if cancelled {
+            return Ok(ChatOutcome::Cancelled);
+        }
+        if std::mem::take(&mut self.script().pause) {
+            return Ok(ChatOutcome::Paused {
+                message: "stopped: the turn made no progress (raise the guard to continue)"
+                    .to_owned(),
+            });
+        }
+        Ok(ChatOutcome::Answered)
     }
 
     async fn cancel_turn(&self) {
