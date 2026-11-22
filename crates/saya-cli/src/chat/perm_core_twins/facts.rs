@@ -17,7 +17,8 @@ use serde_json::json;
 
 use super::*;
 use crate::approval_facts::{ApprovalFacts, HostFacts, call_facts};
-use crate::grant_token::grant_token;
+use crate::grant_token::{grant_token, session_answers_line};
+use crate::prompt_approval::approval_prompt;
 
 /// A session-shaped facts bundle: a bound workspace root and the host route
 /// composed over it — the two members the write and shell families read.
@@ -155,5 +156,84 @@ fn the_core_shell_key_is_a_prefix_and_the_ask_states_the_host_lane() {
             !body.contains("no network"),
             "a host call never promises the sandbox's confinement: {body}"
         );
+    }
+}
+
+/// The core ask is the facts body plus the shared answers line, byte for byte,
+/// for every name the live catalogue carries: the two frontends render one
+/// source and cannot state different facts for the same call.
+#[test]
+fn the_core_ask_is_the_facts_body_plus_the_shared_answers_line() {
+    let facts = session_facts();
+    let cases: [(ToolDefinition, serde_json::Value, Option<&str>); 3] = [
+        (
+            core_file_tool("write"),
+            json!({ "path": "notes.md", "content": "hello" }),
+            Some(WORKSPACE_WRITE_TOKEN),
+        ),
+        (
+            core_file_tool("edit"),
+            json!({ "path": "notes.md", "old_text": "a", "new_text": "b" }),
+            Some(WORKSPACE_WRITE_TOKEN),
+        ),
+        (
+            core_shell(),
+            json!({ "command": "cargo test" }),
+            Some("shell:cargo test"),
+        ),
+    ];
+    for (tool, arguments, grant) in cases {
+        let prompt = approval_prompt(&tool, &arguments, grant, &facts, None, None);
+        let body = call_facts(&tool.name, &arguments, grant, &facts, None, None)
+            .unwrap_or_else(|| panic!("{} carries facts", tool.name));
+        let answers = session_answers_line(grant);
+        assert_eq!(
+            prompt,
+            format!("{body}\n{answers} "),
+            "the {} prompt is the facts body plus the answers line, byte for byte",
+            tool.name
+        );
+        assert!(
+            prompt.contains(&answers) && answers.contains("[a] allow once"),
+            "the answers line is the shared one: {prompt}"
+        );
+    }
+}
+
+/// No composition facts, no claims: a core ask never states a bound the call
+/// cannot demonstrate — no sandbox, no budget, no row cap, no placeholder.
+#[test]
+fn no_core_ask_claims_a_bound_the_call_cannot_demonstrate() {
+    let facts = ApprovalFacts::default();
+    let cases = [
+        (
+            core_file_tool("write"),
+            json!({ "path": "notes.md", "content": "hello" }),
+        ),
+        (
+            core_file_tool("edit"),
+            json!({ "path": "notes.md", "old_text": "a", "new_text": "b" }),
+        ),
+        (core_shell(), json!({ "command": "cargo test" })),
+    ];
+    for (tool, arguments) in cases {
+        let prompt = approval_prompt(&tool, &arguments, None, &facts, None, None);
+        for claim in [
+            "sandbox:",
+            "remaining download budget",
+            "credential injection",
+            "rows to the model",
+            "s timeout",
+            "unavailable",
+            "(unknown",
+            "this session's workspace root",
+            "containment:",
+        ] {
+            assert!(
+                !prompt.contains(claim),
+                "{} claims {claim:?} with no composition behind it: {prompt}",
+                tool.name
+            );
+        }
     }
 }

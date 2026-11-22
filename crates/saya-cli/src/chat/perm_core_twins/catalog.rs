@@ -49,6 +49,11 @@ fn every_core_catalogue_name_is_governed_by_the_allow_list() {
             !is_database_tool(name),
             "{name:?} is a capability the job root composes itself, not a connection-tied tool"
         );
+        assert_ne!(
+            name.as_str(),
+            crate::commands::coding::READINESS_PROBE_TOOL,
+            "{name:?} is a real capability: the doctor's probe is the only exempt name"
+        );
     }
 }
 

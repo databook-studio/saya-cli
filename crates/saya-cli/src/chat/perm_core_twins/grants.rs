@@ -155,3 +155,54 @@ async fn a_once_yes_on_the_core_write_ask_leaves_no_grant_behind() {
     assert!(ask.approve(&Admits, &tool, &arguments).await);
     assert_eq!(front.asked(), 2, "the same call asks again");
 }
+
+/// A call that names no offerable token puts no grant on the question, so no
+/// session-wide answer is on offer for it — the ask never describes a grant the
+/// person is not being offered.
+#[tokio::test]
+async fn a_core_call_with_no_offerable_grant_puts_no_grant_on_the_question() {
+    let front = Scripted::answering(Answer::Session);
+    let operator = operator(&front);
+    let policy = live_shell(ApprovalPolicy::Ask, &operator, CommandRules::default());
+    // A compound command is not one plain segment: there is no prefix to grant.
+    let compound = json!({ "command": "cargo test && rm -rf x" });
+    assert!(
+        policy.approve(&compound).await,
+        "the call is still put to a person"
+    );
+    assert_eq!(
+        front.questions()[0].grant,
+        None,
+        "no key is guessed for a command that is not one plain segment"
+    );
+    assert!(
+        grants(&operator).is_empty(),
+        "a session-wide yes records nothing where no token was offered: {:?}",
+        grants(&operator).tokens()
+    );
+}
+
+/// The run's frozen decider cannot accumulate on the core write either: two
+/// calls of the same ungranted shape both deny, and only the launch's own seed
+/// pre-answers. `saya run` composes this decider, so the pin is the live one.
+#[tokio::test]
+async fn the_frozen_run_decider_cannot_accumulate_on_the_core_write() {
+    use crate::prompt_approval::TerminalApproval;
+
+    let tool = core_file_tool("write");
+    let arguments = json!({ "path": "notes.md", "content": "hello" });
+    let token = crate::grant_token::grant_token(&tool.name, &arguments, None, &rooted())
+        .expect("the core write is grantable");
+    let decider = TerminalApproval::frozen(ApprovalPolicy::Ask, &[], rooted());
+    let first = decider.approve(&tool, &arguments).await;
+    let second = decider.approve(&tool, &arguments).await;
+    assert!(
+        !first && !second,
+        "an ungranted headless ask denies, twice: {first} {second}"
+    );
+    let with_seed = TerminalApproval::frozen(ApprovalPolicy::Ask, &[token], rooted());
+    assert!(
+        with_seed.approve(&tool, &arguments).await,
+        "the seed pre-answers, and the seeds are the only grants a run holds"
+    );
+}
