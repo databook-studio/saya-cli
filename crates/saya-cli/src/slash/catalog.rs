@@ -308,4 +308,5 @@ pub(crate) const CATALOGUE: &[CommandSpec] = &[
         &[Alias { name: "quit", description: "Exit the REPL" }]),
 ];
 
+include!("catalog/documents.rs");
 include!("catalog/lookup.rs");
