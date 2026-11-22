@@ -42,6 +42,7 @@ pub(super) fn next_run(name: &str) -> SessionRun {
         learning: None,
         tasks: None,
         facts: None,
+        skipped_primary: None,
     }
 }
 

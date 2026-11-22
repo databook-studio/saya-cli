@@ -112,6 +112,27 @@ impl SurfaceTui {
 /// Launches the surface on a pty: `offline` is the smoke config with no
 /// provider answering, and `Some(provider)` points the launch at the mock.
 fn surface_tui(home: &Path, provider: Option<&MockProvider>) -> Result<SurfaceTui, String> {
+    surface_over(home, provider, true)
+}
+
+/// The same launch with the configured profile pointing at a SQLite file that
+/// is not there: the launch that must still open — as a session with no
+/// database — and say why.
+fn surface_tui_without_database(
+    home: &Path,
+    provider: Option<&MockProvider>,
+) -> Result<SurfaceTui, String> {
+    surface_over(home, provider, false)
+}
+
+/// `database_present` decides whether the profile's file exists: a profile
+/// naming a missing file is the stale-config case, and every other byte of the
+/// launch is the same.
+fn surface_over(
+    home: &Path,
+    provider: Option<&MockProvider>,
+    database_present: bool,
+) -> Result<SurfaceTui, String> {
     let config = home.join("config.toml");
     let memory = if provider.is_some() {
         "[memory]\nmode = 'off'\n"
@@ -134,7 +155,9 @@ fn surface_tui(home: &Path, provider: Option<&MockProvider>) -> Result<SurfaceTu
         ),
     )
     .expect("the surface connections write");
-    std::fs::write(home.join("demo.sqlite3"), b"").expect("the demo db file is created");
+    if database_present {
+        std::fs::write(home.join("demo.sqlite3"), b"").expect("the demo db file is created");
+    }
 
     let pty_system = native_pty_system();
     let pair = pty_system

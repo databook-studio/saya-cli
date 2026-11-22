@@ -146,6 +146,15 @@ impl Run {
     pub(super) fn model(&self) -> String {
         self.job.runtime_config().resolved.ai.model.clone()
     }
+
+    /// The configured profile this run opened without, when the composition
+    /// could not open it: a resumed run states none — its profile was decided
+    /// by the record it resumed, not by this launch.
+    pub(crate) fn skipped_primary(&self) -> Option<&str> {
+        self.composition
+            .as_ref()
+            .and_then(crate::chat::RunComposition::skipped_primary)
+    }
 }
 
 /// The port a session drives one run's turns through: the run's own counters

@@ -25,8 +25,9 @@ pub(crate) struct TurnInputs {
     pub(crate) ai: ResolvedAi,
     pub(crate) provider: Box<dyn ChatProvider>,
     pub(crate) registry: ConnectionRegistry,
-    /// Secondaries that failed to connect, surfaced as `skipped database`
-    /// assistant-text before recall.
+    /// Databases that could not be opened, by name, with the reason: the
+    /// secondaries a run skips, and the primary a session opened without —
+    /// surfaced as `skipped database` assistant-text before recall.
     pub(crate) failures: Vec<(String, String)>,
 }
 
@@ -67,7 +68,7 @@ pub(crate) async fn prepare_turn(
     let (registry, failures) = match profile.as_ref() {
         Some(primary_profile) => {
             let primary_name = profile_name.as_deref().unwrap_or("");
-            crate::connection::build_registry(
+            let built = crate::connection::build_registry(
                 (&runtime.secret_resolver(), &runtime.cache_scope),
                 runtime.resolved.query_timeout_seconds,
                 can_prompt,
@@ -76,7 +77,21 @@ pub(crate) async fn prepare_turn(
                 &secondaries,
                 metrics,
             )
-            .await?
+            .await;
+            match built {
+                Ok(built) => built,
+                // A session opens without its database rather than not at all:
+                // the profile is named as skipped, with the reason, and the
+                // registry stays empty — a session with no database, where the
+                // plugin never activates and `/connect` opens a new run over a
+                // profile that is there. A command that cannot run without its
+                // connection (`saya query`, `saya run`) builds the registry
+                // itself and still refuses.
+                Err(error) => (
+                    crate::connection::ConnectionRegistry::new(primary_name),
+                    vec![(primary_name.to_owned(), error.to_string())],
+                ),
+            }
         }
         None => (crate::connection::ConnectionRegistry::new(""), Vec::new()),
     };
@@ -87,3 +102,7 @@ pub(crate) async fn prepare_turn(
         failures,
     })
 }
+
+#[cfg(test)]
+#[path = "turn_inputs_tests.rs"]
+mod tests;
