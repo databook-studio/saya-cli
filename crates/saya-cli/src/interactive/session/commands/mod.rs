@@ -1,4 +1,4 @@
-use crate::agent::runtime::PromptOverrides;
+use crate::agent::turn_config::PromptOverrides;
 use crate::interactive::session::state::SessionState;
 use crate::slash::SlashCommand;
 use saya_agent::AgentOutput;

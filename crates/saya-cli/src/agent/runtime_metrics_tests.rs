@@ -3,7 +3,8 @@
 
 use super::preflight_tests::{RecordingSink, counting_source, runtime_for_source, temp_root};
 use crate::agent::question_scope::QuestionScope;
-use crate::agent::runtime::{PromptOverrides, SinkPrompt, run_prompt_with_sink_and_outcomes};
+use crate::agent::runtime::{SinkPrompt, run_prompt_with_sink_and_outcomes};
+use crate::agent::turn_config::PromptOverrides;
 use crate::local_metrics::{LocalMetrics, LocalPhaseSnapshot, phase_index};
 use crate::metrics_sink::MetricsSink;
 use saya_agent::{AgentEvent, AgentMetricPhase, AgentMode, ApprovalPolicy, CancellationToken};

@@ -33,7 +33,7 @@
 //! `Hooks::compose` builds one engine per surface from the same resolved
 //! table, the same bounds, and the same runner (AGENTS.md: one operation,
 //! multiple adapters). Every surface that runs tools is wired: the interactive
-//! session and `saya ask` (both through `agent::runtime::run_agent_turn`), a
+//! session and `saya ask` (both through the chat session's job turn), a
 //! coding job's root (`commands::coding::parent`) and each of its helpers
 //! (`agent::tools::child::compose`), and every step of a `saya run`
 //! (`commands::run`). A surface with no hook configured, or a mode that keeps

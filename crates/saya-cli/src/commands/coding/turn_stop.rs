@@ -24,7 +24,7 @@ fn sentence(class: CodingFailureClass) -> Option<String> {
         CodingFailureClass::ProviderError => Some(format!(
             "could not reach the provider — check that it is running and the configured \
              base_url is correct\n{}",
-            crate::agent::runtime::PROVIDER_UNREACHABLE_ADVICE
+            crate::agent::provider::PROVIDER_UNREACHABLE_ADVICE
         )),
         _ => None,
     }

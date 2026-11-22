@@ -116,7 +116,7 @@ pub(crate) enum Pass {
 /// this half changes nothing.
 pub(crate) async fn summarise(
     runtime: &RuntimeConfig,
-    overrides: &crate::agent::runtime::PromptOverrides,
+    overrides: &crate::agent::turn_config::PromptOverrides,
     turns: &[saya_store::RedactedTurn],
     history: &[saya_agent::ChatMessage],
     metrics: Option<&LocalMetrics>,
@@ -124,7 +124,7 @@ pub(crate) async fn summarise(
     let Some(plan) = manual::plan(turns, history) else {
         return Pass::Nothing;
     };
-    let ai = crate::agent::runtime::effective_ai(&runtime.resolved.ai, overrides);
+    let ai = crate::agent::turn_config::effective_ai(&runtime.resolved.ai, overrides);
     let resolver = runtime.secret_resolver();
     let provider = match provider::build(&ai, &resolver) {
         Ok(provider) => provider,

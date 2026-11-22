@@ -10,7 +10,7 @@ use saya_config::{ConfigFile, ConnectionsFile, ResolutionInput, resolve};
 
 use crate::agent::candidates::AttemptRunner;
 use crate::agent::question_scope::QuestionScope;
-use crate::agent::runtime::AgentRuntimeError;
+use crate::agent::turn_config::AgentRuntimeError;
 use crate::config::runtime::RuntimeConfig;
 
 /// A scripted [`AttemptRunner`]: returns the queued outputs in order and

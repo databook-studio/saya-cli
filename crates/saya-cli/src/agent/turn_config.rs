@@ -1,9 +1,9 @@
 //! What a turn is configured with, and what can go wrong assembling one.
 //!
-//! Split out of `runtime.rs` so that module holds only the turn flow itself.
-//! These four items are read from several places (`privacy_tests.rs` alone
-//! references them seven times), so `runtime` re-exports them and every existing
-//! path keeps working.
+//! The one home of these items: the turn flow in `runtime.rs` reads them and
+//! so does every other front (`privacy_tests.rs` alone references them seven
+//! times), which is why they are stated here once rather than re-exported from
+//! the module that happens to run the turn.
 
 use saya_config::{AiProvider, ResolvedAi};
 use thiserror::Error;
@@ -106,4 +106,28 @@ pub(crate) fn effective_ai(base: &ResolvedAi, overrides: &PromptOverrides) -> Re
         ai.allow_data_sharing = value;
     }
     ai
+}
+
+/// The next step a turn-assembly failure is followed by, when one is known.
+///
+/// An unresolvable secret reference is "what is configured did not work" — the
+/// profile is there but its password is not. `init` cannot supply a secret, so
+/// the next step is setting the env var (doctor lists the unresolved
+/// references). Only the secret case is annotated; a genuine connection failure
+/// is left untouched rather than given advice that might not fit. Applied at
+/// the `prepare_turn` seam so every front surfaces it.
+pub(crate) fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
+    match error {
+        AgentRuntimeError::Database(message)
+            if message.contains("secret reference")
+                && message.contains("could not be resolved") =>
+        {
+            AgentRuntimeError::Database(format!(
+                "{message}\nnext: set the referenced environment variable (or add it to a \
+                 .env.saya file passed with --env-file), then re-run; `saya config doctor` \
+                 lists unresolved secrets."
+            ))
+        }
+        other => other,
+    }
 }

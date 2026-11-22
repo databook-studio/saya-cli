@@ -2,8 +2,10 @@
 //!
 //! Glue between [`crate::contracts::recall`] (typed contracts) and
 //! [`AgentRequest::context_blocks`] (untrusted, labelled data in the user
-//! turn). Called from [`super::runtime::run_prompt_with_sink_and_outcomes`] just before the
-//! request is built; the wrapper, escaping, and user-turn placement are
+//! turn). Called from the chat turn's recall step
+//! ([`crate::plugins::database::recall`]) just before the request is built,
+//! and still from the old turn body kept for the old-session plumbing; the
+//! wrapper, escaping, and user-turn placement are
 //! `saya-agent`'s job (Phase 2a).
 //!
 //! Decisions recorded in the SPEC REVIEW:

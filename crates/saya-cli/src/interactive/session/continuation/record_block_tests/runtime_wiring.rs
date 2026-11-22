@@ -145,7 +145,7 @@ async fn run_record_turn(
     with_record: bool,
     allow_data_sharing: bool,
 ) -> (
-    Result<AgentOutput, crate::agent::runtime::AgentRuntimeError>,
+    Result<AgentOutput, crate::agent::turn_config::AgentRuntimeError>,
     Arc<Captured>,
 ) {
     let root = stamp("wiring");

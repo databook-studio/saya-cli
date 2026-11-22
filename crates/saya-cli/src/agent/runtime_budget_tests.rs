@@ -9,7 +9,8 @@
 //! real turn path and observed in the history the loop sends the provider.
 
 use super::super::turn_inputs::TurnInputs;
-use super::{AgentRuntimeError, run_prompt_with_inputs};
+use super::run_prompt_with_inputs;
+use crate::agent::turn_config::AgentRuntimeError;
 use crate::config::runtime::RuntimeConfig;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
 use async_trait::async_trait;

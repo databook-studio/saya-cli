@@ -2,7 +2,8 @@
 
 use super::{RecordingSink, assisted_memory, test_runtime};
 use crate::{
-    agent::runtime::{PromptOverrides, SinkPrompt, run_prompt_with_sink_and_outcomes},
+    agent::runtime::{SinkPrompt, run_prompt_with_sink_and_outcomes},
+    agent::turn_config::PromptOverrides,
     config::runtime::RuntimeConfig,
 };
 use saya_agent::{

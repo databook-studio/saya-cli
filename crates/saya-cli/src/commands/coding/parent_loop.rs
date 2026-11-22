@@ -94,7 +94,7 @@ impl NativeCodingJob {
         // the continuation blocks and keeps the request prefix the provider
         // caches.
         if session.project_context {
-            context_blocks = crate::agent::runtime::project_untrusted_context(
+            context_blocks = crate::agent::context::projection::project_untrusted_context(
                 &self.application.runtime,
                 Some(self.application.root_path()),
                 Some(&self.application.store),

@@ -2,7 +2,7 @@
 //! actual SQLite tool call, and a protocol-rejected first candidate.
 
 use super::super::question_scope::QuestionScope;
-use super::super::runtime::PromptOverrides;
+use super::super::turn_config::PromptOverrides;
 use super::run_with_candidates;
 use crate::config::runtime::RuntimeConfig;
 use async_trait::async_trait;

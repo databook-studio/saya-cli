@@ -1,5 +1,5 @@
 use super::registry::{ConnectionEntry, ConnectionRegistry};
-use crate::agent::runtime::AgentRuntimeError;
+use crate::agent::turn_config::AgentRuntimeError;
 use crate::local_metrics::LocalMetrics;
 use futures_util::stream::{self, StreamExt};
 use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase};

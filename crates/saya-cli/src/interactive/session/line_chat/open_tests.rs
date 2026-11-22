@@ -90,7 +90,7 @@ fn stale_session(label: &str) -> (PathBuf, LineSession) {
         runtime: Arc::new(runtime),
         store,
         mode: ApprovalPolicy::Ask,
-        overrides: crate::agent::runtime::PromptOverrides::default(),
+        overrides: crate::agent::turn_config::PromptOverrides::default(),
         format: RenderFormat::Text,
         sink: None,
         budget: DatabaseBudget::defaults(),

@@ -22,8 +22,8 @@ const MAX_TRACE_ERROR_BYTES: usize = 160;
 ///
 /// Called once at startup when `--verbose` is passed. Seeding the gate is what
 /// makes that flag reachable here: the alternative — threading a `verbose:
-/// bool` through `run_prompt_with_sink_and_outcomes` → `run_prompt_with_inputs`, every test
-/// that calls it, and `RuntimeConfig` — is a lot of plumbing for one boolean,
+/// bool` through the turn body and every test that calls it, plus
+/// `RuntimeConfig` — is a lot of plumbing for one boolean,
 /// and mutating the environment instead is `unsafe` under edition 2024. A
 /// later `get_or_init` sees the value already set and does not consult the
 /// environment, so the flag wins over an unset variable and agrees with a set

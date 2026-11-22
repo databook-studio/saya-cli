@@ -15,7 +15,7 @@
 
 use super::super::decide::CandidateExecutor;
 use super::super::question_scope::QuestionScope;
-use super::super::runtime::AgentRuntimeError;
+use super::super::turn_config::AgentRuntimeError;
 use super::AttemptRunner;
 use crate::{answering_receipts::AnsweringReceiptSink, config::runtime::RuntimeConfig};
 use async_trait::async_trait;
