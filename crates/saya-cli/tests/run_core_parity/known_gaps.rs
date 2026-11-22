@@ -67,16 +67,6 @@ pub(super) const KNOWN_GAPS: &[Gap] = &[
         "request_clarification",
         "no operator is attached to the job fixture, so the helper advertises no ask",
     ),
-    Gap::missing(
-        "job",
-        "list",
-        "`list` is evidence-gated on coding surfaces; chat always advertises it",
-    ),
-    Gap::missing(
-        "helper",
-        "list",
-        "`list` is evidence-gated on coding surfaces; chat always advertises it",
-    ),
     Gap::schema_differs(
         "job",
         "bounded_sql_query",
@@ -156,36 +146,6 @@ pub(super) const KNOWN_GAPS: &[Gap] = &[
         "helper",
         "contract_read",
         "coding surfaces do not compose the contract-memory tools",
-    ),
-    Gap::missing(
-        "job",
-        "http_fetch",
-        "coding surfaces use evidence-gated `web_fetch`, not the session's `http_fetch`",
-    ),
-    Gap::missing(
-        "helper",
-        "http_fetch",
-        "coding surfaces use evidence-gated `web_fetch`, not the session's `http_fetch`",
-    ),
-    Gap::missing(
-        "job",
-        "http_download",
-        "coding surfaces have no session download lane",
-    ),
-    Gap::missing(
-        "helper",
-        "http_download",
-        "coding surfaces have no session download lane",
-    ),
-    Gap::missing(
-        "job",
-        "run_command",
-        "coding surfaces use the sandboxed `shell`, not the session's unsandboxed `run_command`",
-    ),
-    Gap::missing(
-        "helper",
-        "run_command",
-        "coding surfaces use the sandboxed `shell`, not the session's unsandboxed `run_command`",
     ),
     Gap::missing(
         "chat",
@@ -200,12 +160,7 @@ pub(super) const KNOWN_GAPS: &[Gap] = &[
     Gap::missing(
         "chat",
         "web_fetch",
-        "chat uses `http_fetch`; `web_fetch` is the coding surface's evidence-gated fetch",
-    ),
-    Gap::missing(
-        "chat",
-        "rewind",
-        "`rewind` is attached only to the job root's own checkpoint store",
+        "every surface's `web_fetch` is evidence-gated, and this fixture's message names no URL",
     ),
     Gap::missing(
         "helper",
