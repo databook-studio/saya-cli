@@ -2,7 +2,7 @@
 //! a cancel, a failure and the model's clarifying question each land as their
 //! own entry (`02` §3.7-§3.9), never as a step of the activity group.
 
-use saya_agent::{AgentEvent, BudgetDimension};
+use saya_agent::{AgentEvent, BudgetDimension, KnowledgeOutcome};
 
 use super::reduce_fixture::fold;
 use super::{Clarification, Entry, Error, Stop};
@@ -55,6 +55,43 @@ fn a_pause_keeps_the_guards_own_sentence() {
             Entry::Stop(Stop::Paused { message: held }) if held == message
         )),
         "the pause carries the guard's sentence unchanged: {entries:?}"
+    );
+}
+
+/// The supplied-knowledge line the text front prints for the same event: the
+/// chat turn's recall is stated on the TUI's transcript too, in the one
+/// shaper's own words ("memory off · recall disabled"), and a recall that ran
+/// and found nothing stays silent.
+#[test]
+fn the_supplied_knowledge_line_lands_as_a_system_note() {
+    let off = fold(&[ChatEvent::Agent(AgentEvent::knowledge_supplied(
+        KnowledgeOutcome::Off,
+        Vec::new(),
+        0,
+    ))]);
+    let entries = off.turns()[0].entries().to_vec();
+    assert!(
+        entries.iter().any(|entry| matches!(
+            entry,
+            Entry::Notice(note) if note.message == "memory off · recall disabled"
+        )),
+        "the turn says what recall was, in the shaper's words: {entries:?}"
+    );
+
+    let found_nothing = fold(&[ChatEvent::Agent(AgentEvent::knowledge_supplied(
+        KnowledgeOutcome::Ran {
+            store_unavailable: false,
+        },
+        Vec::new(),
+        0,
+    ))]);
+    assert!(
+        !found_nothing.turns()[0]
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, Entry::Notice(_))),
+        "a recall that found nothing adds no line: {:?}",
+        found_nothing.turns()[0].entries()
     );
 }
 

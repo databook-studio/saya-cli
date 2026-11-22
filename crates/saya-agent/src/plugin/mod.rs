@@ -18,8 +18,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::{
-    AgentEventSink, AgentOutput, AnsweringLimits, ContextBlock, TokenUsage, ToolDefinition,
-    ToolExecutor,
+    AgentEvent, AgentEventSink, AgentOutput, AnsweringLimits, ContextBlock, TokenUsage,
+    ToolDefinition, ToolExecutor,
 };
 
 /// Which surface is running — the fact a plugin keys its activation on.
@@ -195,6 +195,20 @@ pub trait RunPlugin: Send + Sync {
     /// none — most plugins have nothing to recall.
     async fn context(&self, _ctx: &RunContext, _prompt: &str) -> Vec<ContextBlock> {
         Vec::new()
+    }
+
+    /// The single event reporting what this turn's [`Self::context`] supplied,
+    /// or `None` — the default — for a plugin that supplies nothing to report.
+    ///
+    /// Read once per turn, after `context` has run and before the first
+    /// provider request: this is where a plugin that recalled turns the recall
+    /// it just performed into the one event a surface shows ("memory supplied ·
+    /// 2 claims"), while the request is still being assembled. It describes
+    /// *this* turn only — asking twice for one turn must not produce a second
+    /// event — and the plugin's own recall receipt decides the outcome, so a
+    /// surface can never be told more than the plugin actually did.
+    fn knowledge_event(&self, _ctx: &RunContext) -> Option<AgentEvent> {
+        None
     }
 
     /// Called once when a turn starts, before the first request. The default

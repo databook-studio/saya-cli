@@ -34,6 +34,10 @@ pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportVie
 // old TUI's transcript was its other reader.
 #[cfg(test)]
 pub(crate) use render_clarification::clarification_text;
+
+// The supplied-knowledge line: the text/CLI adapter prints it and the TUI
+// transcript shows it, so both read one shaper's words.
+pub(crate) use render_memory::knowledge_supplied_text;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,

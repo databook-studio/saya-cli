@@ -44,10 +44,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use saya_agent::{
-    AgentEventSink, ContextBlock, RunContext, RunPlugin, RunSurface, TokenUsage, ToolDefinition,
-    ToolExecutor, TurnOutcome, TurnPolicy,
+    AgentEvent, AgentEventSink, ContextBlock, RunContext, RunPlugin, RunSurface, TokenUsage,
+    ToolDefinition, ToolExecutor, TurnOutcome, TurnPolicy,
 };
 
+use crate::agent::knowledge_event::knowledge_supplied_event;
 use crate::agent::tools::workspace::is_tool_name;
 use crate::agent::tools::{CaptureHook, DatabaseTools, clarification};
 use crate::contracts::RecallReceipt;
@@ -147,12 +148,12 @@ impl DatabasePlugin {
 
     /// Keeps `receipt` for the executor. One receipt per turn: the newest
     /// recall wins, exactly as the chat's turn reports its own.
-    fn store_receipt(&self, receipt: RecallReceipt) {
+    fn store_receipt(&self, receipt: Arc<RecallReceipt>) {
         let mut slot = match self.last_receipt.lock() {
             Ok(slot) => slot,
             Err(poisoned) => poisoned.into_inner(),
         };
-        *slot = Some(Arc::new(receipt));
+        *slot = Some(receipt);
     }
 
     /// The last-SQL hint block for this turn, or `None` when the run stated no
@@ -205,6 +206,14 @@ impl RunPlugin for DatabasePlugin {
         let mut blocks = Vec::new();
         if let Some(source) = self.recall.as_ref() {
             let (recalled, receipt) = source.recall(prompt).await;
+            let receipt = Arc::new(receipt);
+            // The tools' override detector reads the same receipt recall just
+            // assembled: the chat session shares this toolset through an `Arc`,
+            // so the turn's receipt is installed on it here, before any call
+            // the model makes can be judged against it.
+            if let Surface::Chat(chat) = &self.surface {
+                chat.tools.set_recall_receipt(Some(Arc::clone(&receipt)));
+            }
             self.store_receipt(receipt);
             blocks.extend(recalled);
         }
@@ -212,6 +221,26 @@ impl RunPlugin for DatabasePlugin {
             blocks.push(hint);
         }
         blocks
+    }
+
+    /// What this turn's recall supplied, as the one event a surface shows —
+    /// stated on the chat surface from the receipt `context()` just kept.
+    ///
+    /// The receipt is the single source of truth: a run that configured no
+    /// memory says `Off` (it did not look), a closed privacy gate says
+    /// `Skipped` (it was not allowed to), and a recall that ran — even one that
+    /// found nothing, or one whose store could not be read — says `Ran`. A chat
+    /// with no database never reaches here (the plugin does not activate), and
+    /// a job surface states none: its event stream is the job's own record.
+    fn knowledge_event(&self, _ctx: &RunContext) -> Option<AgentEvent> {
+        match &self.surface {
+            Surface::Chat(_) => Some(knowledge_supplied_event(
+                &self
+                    .last_receipt()
+                    .unwrap_or_else(|| Arc::new(RecallReceipt::configured_off())),
+            )),
+            Surface::Job(_) => None,
+        }
     }
 
     /// The plugin's own section of the run's system prompt: the database part of

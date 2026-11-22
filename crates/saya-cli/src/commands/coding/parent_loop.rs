@@ -124,6 +124,13 @@ impl NativeCodingJob {
                     .await;
             arming.arm_on_context(&blocks).await;
             context_blocks.extend(blocks);
+            // What the plugin's recall supplied is stated here — after the
+            // context is assembled and before the first request is sent, the
+            // order the old turn body stated it in. One event per turn, on the
+            // same sink the turn's other events ride.
+            if let Some(event) = plugins.knowledge_event() {
+                checkpointed.emit(event).await;
+            }
         }
         session.tools.start_shell_composition();
         // The text this turn asks with is the run's own request, and the

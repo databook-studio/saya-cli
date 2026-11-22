@@ -211,6 +211,18 @@ impl ActivePlugins {
         policy
     }
 
+    /// The turn's knowledge event: the first event an active plugin states for
+    /// it, or `None` when no active plugin supplies anything to report.
+    ///
+    /// Read once per turn, after [`Self::context`] and before the first
+    /// provider request. The registry takes the first, so two plugins cannot
+    /// both claim the turn's knowledge line.
+    pub fn knowledge_event(&self) -> Option<crate::AgentEvent> {
+        self.plugins
+            .iter()
+            .find_map(|plugin| plugin.knowledge_event(&self.ctx))
+    }
+
     /// Calls every active plugin's `on_turn_start` once, in order.
     pub async fn on_turn_start(&self) {
         for plugin in &self.plugins {

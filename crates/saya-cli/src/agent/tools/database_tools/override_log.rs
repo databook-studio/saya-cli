@@ -92,9 +92,24 @@ impl DatabaseTools {
         receipt: Option<Arc<RecallReceipt>>,
         override_log: Option<Arc<OverrideLog>>,
     ) -> Self {
-        self.recall_receipt = receipt;
+        self.recall_receipt = Mutex::new(receipt);
         self.override_log = override_log;
         self
+    }
+
+    /// Installs the turn's recall receipt on a toolset that is already shared.
+    /// The plugin owns the chat surface's tools behind an `Arc`, so it cannot
+    /// rebuild them to attach the receipt its `context()` hook just assembled;
+    /// this cell is that attachment point. Nothing else on the tools changes,
+    /// so a plugin that recalls nothing leaves the detector recording nothing.
+    pub(crate) fn set_recall_receipt(&self, receipt: Option<Arc<RecallReceipt>>) {
+        let mut slot = match self.recall_receipt.lock() {
+            Ok(slot) => slot,
+            // A poisoned lock still holds the slot: the receipt is a plain
+            // value, so write it rather than lose it to an unrelated panic.
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *slot = receipt;
     }
 
     /// Runs the override detector for one statement and records any findings
@@ -111,7 +126,11 @@ impl DatabaseTools {
         sql: &str,
         dialect: SqlDialect,
     ) {
-        let (Some(receipt), Some(log)) = (&self.recall_receipt, &self.override_log) else {
+        let slot = match self.recall_receipt.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let (Some(receipt), Some(log)) = (slot.as_ref(), &self.override_log) else {
             return;
         };
         let refs = sql_references(sql, dialect);

@@ -91,9 +91,11 @@ pub(crate) struct DatabaseTools {
     pub(super) supplied_objects: Vec<String>,
     /// The turn's recall receipt, shared with the override detector. `None` in
     /// tests that drive the executor without a receipt; an absent receipt means
-    /// no detection — never a guess. An `Arc` so the runtime and the
-    /// tools share one reference.
-    pub(super) recall_receipt: Option<Arc<RecallReceipt>>,
+    /// no detection — never a guess. A cell because the plugin holds its chat
+    /// toolset behind an `Arc` and installs the turn's receipt on exactly those
+    /// tools once recall has run. An `Arc` so the runtime and the tools share
+    /// one reference.
+    pub(super) recall_receipt: Mutex<Option<Arc<RecallReceipt>>>,
     /// Request-scoped log of override findings, drained by the runtime to emit
     /// one `KnowledgeOverridden` event. `None` in tests; an absent log
     /// means no event, never a side effect. An `Arc` so the runtime can drain

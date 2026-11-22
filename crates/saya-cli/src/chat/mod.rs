@@ -161,6 +161,28 @@ mod compose_recall_tests;
 #[path = "compose_sql_tests.rs"]
 mod compose_sql_tests;
 
+// The knowledge-event twins: the old turn body's supplied-knowledge and
+// override pins, on a composed session's own turn.
+#[cfg(all(test, unix))]
+#[path = "knowledge_fixture.rs"]
+mod knowledge_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_sinks.rs"]
+mod knowledge_sinks;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_supplied_tests.rs"]
+mod knowledge_supplied_tests;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_outcome_tests.rs"]
+mod knowledge_outcome_tests;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_overridden_tests.rs"]
+mod knowledge_overridden_tests;
+
 #[cfg(all(test, unix))]
 #[path = "compose_origin_tests.rs"]
 mod compose_origin_tests;
