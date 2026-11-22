@@ -17,9 +17,10 @@
 //!   redirection from a file stays covered.
 //! - A deny rule is evaluated first and applies in every mode. It is the one
 //!   statement the rules cannot widen, and it reads the program a command
-//!   really runs: a path by its basename (`/bin/rm`, `./rm`), through a
-//!   `command`/`builtin`/`exec` prefix, through an `env` with any of its
-//!   options, and into a shell's `-c` script, bounded in depth. A command it
+//!   really runs: a path by its basename, a `command`/`builtin`/`exec` prefix,
+//!   an `env` with any options, the launchers that run a later program
+//!   (`timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs`, `find -exec`), and
+//!   a script a shell runs with `-c` or `eval`, bounded in depth. A command it
 //!   cannot read, mentioning a denied program, is refused rather than allowed.
 //! - A leading `cd <dir> &&` (a directory inside the workspace, or a relative
 //!   one with no `..`, `$`, or `~`) is stripped for matching only. On the deny
@@ -35,6 +36,7 @@
 
 use std::{fmt, path::Path};
 
+mod launch;
 mod resolve;
 mod scan;
 
@@ -242,3 +244,7 @@ mod rules_deny_tests;
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;
+
+#[cfg(test)]
+#[path = "rules_wrapper_tests.rs"]
+mod rules_wrapper_tests;

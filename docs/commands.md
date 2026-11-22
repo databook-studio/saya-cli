@@ -186,8 +186,11 @@ arbitrary code execution as the user. The deny list bounds the direct ask
 only — a denied `curl` does not stop an allowed `make` from invoking curl,
 nor a renamed copy (`mycurl`, a symlink or copy of curl) asked under its own
 spelling: deny matches the program the ask runs, reading through
-`command`/`builtin`/`exec`, `env` with options, a path's basename, and a
-shell's `-c` script, never the content or the resolved identity of what runs.
+`command`/`builtin`/`exec`, `env` with options, a path's basename, a shell's
+`-c` script, `eval`'s script, the launchers that run a later program
+(`timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs`, `find`'s `-exec`), and
+an interpreter's inline code it cannot read, never the content or the resolved
+identity of what runs.
 
 `connection schema PROFILE` and interactive `/schema` authenticate and fetch
 live metadata before updating the local schema cache. If a later live attempt
@@ -228,10 +231,13 @@ live here.
   name — the `run_command` door, and the `shell` tool, whose copy of the list
   is a deny rule in the `[permissions]` set it decides first. The rule reads
   the program a command really runs, so a `command`/`builtin`/`exec` prefix,
-  an `env` with options, a path (`./curl`, `/usr/bin/curl`), and a shell's
-  `-c` script do not name it differently; a script past the recursion bound,
-  or one that cannot be read, is refused rather than allowed. Refusal-only:
-  it composes nothing. Session only; `saya ask` and `saya run` refuse it.
+  an `env` with options, a path (`./curl`, `/usr/bin/curl`), a launcher that
+  runs a later program (`timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs`,
+  `find`'s `-exec`), and a shell's or `eval`'s script do not name it
+  differently; a script past the recursion bound, one that cannot be read, and
+  an interpreter's inline code it cannot read (`python3 -c`, `perl -e`,
+  `awk '…'`) are refused rather than allowed. Refusal-only: it composes
+  nothing. Session only; `saya ask` and `saya run` refuse it.
 - `--allow-command <prefix>` (repeatable) allows a command prefix on the host
   without asking: matched word by word, so `cargo test` covers
   `cargo test -p x` and never `cargo testx`. Every segment of a compound
