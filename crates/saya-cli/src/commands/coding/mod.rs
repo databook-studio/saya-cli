@@ -39,6 +39,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod limits;
 mod origin;
 pub use follow_up::{ChildFollowUpRequest, ChildFollowUpStarted};
+mod diagnostic_notice;
 mod diagnostics;
 mod export;
 mod failure;

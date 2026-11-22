@@ -32,6 +32,30 @@ pub enum Fault {
     #[error("diagnostic recovery failed")]
     Recovery,
 }
+
+impl Fault {
+    /// A write the job may fail past. The diagnostic files carry no execution
+    /// authority, so a storage failure (a full disk, a refused append) leaves
+    /// the audit trail incomplete and the job keeps its own outcome. Every
+    /// refusal still fails closed: an unsafe path, an invalid record, a
+    /// contended lock and a corrupt history are tampering or self-corruption
+    /// signals, not capacity.
+    pub(super) fn degrades(self) -> bool {
+        matches!(self, Self::Storage)
+    }
+}
+
+impl From<saya_types::CodingDiagnosticFault> for Fault {
+    fn from(fault: saya_types::CodingDiagnosticFault) -> Self {
+        match fault {
+            saya_types::CodingDiagnosticFault::InvalidRecord => Self::InvalidRecord,
+            saya_types::CodingDiagnosticFault::UnsafePath => Self::UnsafePath,
+            saya_types::CodingDiagnosticFault::LockContended => Self::LockContended,
+            saya_types::CodingDiagnosticFault::Storage => Self::Storage,
+            saya_types::CodingDiagnosticFault::Recovery => Self::Recovery,
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Stream {

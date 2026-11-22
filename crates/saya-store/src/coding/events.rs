@@ -38,6 +38,7 @@ impl SqliteStateStore {
             event.event(),
             CodingEventKind::StateChanged { .. }
                 | CodingEventKind::SnapshotWarning { .. }
+                | CodingEventKind::DiagnosticsIncomplete { .. }
                 | CodingEventKind::ProgressReported { .. }
                 | CodingEventKind::ResultReported { .. }
                 | CodingEventKind::RunTerminated { .. }
