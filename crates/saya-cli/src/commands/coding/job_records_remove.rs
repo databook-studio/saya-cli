@@ -4,12 +4,13 @@
 //! A walk that classified a path and then entered it would have a window in
 //! which a directory swapped for a symlink redirects the walk at whatever the
 //! link names. So the tombstone is opened once with `O_DIRECTORY | O_NOFOLLOW`,
-//! and every child is entered with `openat` under the same flags, classified
-//! with `fstatat(.., AT_SYMLINK_NOFOLLOW)`, and removed by name with `unlinkat`.
-//! A link — at a child's name, or swapped in between the classification and the
-//! open — is unlinked as a name and its target is never reached. The bounds are
-//! the walk's own: [`MAX_DEPTH`] and [`MAX_ENTRIES`] per directory, and a bound
-//! that trips leaves the tombstone for the next delete rather than a half job.
+//! and every child is entered with `openat` under the same flags: entering is
+//! the gate, so a name the kernel will not open as a directory without following
+//! a link — a file, a link, a directory swapped for one — is removed by name
+//! with `unlinkat` and its target is never reached. `fstatat` with
+//! `AT_SYMLINK_NOFOLLOW` reads whether such a name is still there, and the walk
+//! is bounded by its own [`MAX_DEPTH`] and [`MAX_ENTRIES`] per directory, so a
+//! bound that trips leaves the tombstone for the next delete, never a half job.
 //!
 //! Every unsafe block here is a libc call over a descriptor this module owns,
 //! for the length of that call.
@@ -26,15 +27,6 @@ use std::{
     path::Path,
 };
 
-/// What a name holds, as the walk classifies it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Enters {
-    /// A real directory: entered with `openat` under `O_NOFOLLOW`.
-    Directory,
-    /// Anything else — a file, a link, a device: removed by its name alone.
-    Name,
-}
-
 /// Removes the entry `name` under `parent`, one of a job's tombstones. An entry
 /// that is already gone is already removed.
 pub(super) fn remove(parent: &Path, name: &str) -> Result<(), CodingError> {
@@ -50,12 +42,14 @@ pub(super) fn remove(parent: &Path, name: &str) -> Result<(), CodingError> {
             remove_contents(child.as_raw_fd(), MAX_DEPTH)?;
             unlink(fd, name, true)
         }
-        None => match classify(fd, name)? {
-            None => Ok(()),
+        None => {
             // Swapped for a link, or a plain file, since it was renamed: the
             // name goes, whatever it is now, and its target is untouched.
-            Some(_) => unlink(fd, name, false),
-        },
+            if exists(fd, name)? {
+                unlink(fd, name, false)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -99,11 +93,11 @@ fn open_child(dirfd: RawFd, name: &str) -> Result<Option<OwnedFd>, CodingError> 
     }
 }
 
-/// What `name` holds under `dirfd`, read without following a link.
-fn classify(dirfd: RawFd, name: &str) -> Result<Option<Enters>, CodingError> {
+/// Whether `name` is still there under `dirfd`, read without following a link.
+fn exists(dirfd: RawFd, name: &str) -> Result<bool, CodingError> {
     let name = cstring(name)?;
-    // SAFETY: `fstatat` writes the buffer it is given and nothing reads it
-    // unless it reports success; `dirfd` and `name` are valid for the call.
+    // SAFETY: `fstatat` writes the buffer it is given and nothing reads it at
+    // all; `dirfd` and `name` are valid for the call.
     let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
     let queried = unsafe {
         libc::fstatat(
@@ -113,20 +107,14 @@ fn classify(dirfd: RawFd, name: &str) -> Result<Option<Enters>, CodingError> {
             libc::AT_SYMLINK_NOFOLLOW,
         )
     };
-    if queried != 0 {
-        let error = io::Error::last_os_error();
-        return match error.kind() {
-            io::ErrorKind::NotFound => Ok(None),
-            _ => Err(CodingError::owner(error)),
-        };
+    if queried == 0 {
+        return Ok(true);
     }
-    // SAFETY: `fstatat` reported success, so it initialized the buffer.
-    let stat = unsafe { stat.assume_init() };
-    Ok(Some(if (stat.st_mode & libc::S_IFMT) == libc::S_IFDIR {
-        Enters::Directory
-    } else {
-        Enters::Name
-    }))
+    let error = io::Error::last_os_error();
+    match error.kind() {
+        io::ErrorKind::NotFound => Ok(false),
+        _ => Err(CodingError::owner(error)),
+    }
 }
 
 /// Removes the name `name` under `dirfd`: the entry itself, never what a link
@@ -156,16 +144,17 @@ fn remove_contents(dirfd: RawFd, depth: usize) -> Result<(), CodingError> {
     }
     let (names, cut) = read_names(dirfd)?;
     for name in &names {
-        match classify(dirfd, name)? {
+        // Entering is the gate: only a name the kernel opens as a directory
+        // without following a link is walked into. Everything else — a file, or
+        // a directory swapped for a link since it was read — is unlinked by its
+        // own name, and what a link points at is never reached.
+        match open_child(dirfd, name)? {
+            Some(child) => {
+                remove_contents(child.as_raw_fd(), depth - 1)?;
+                unlink(dirfd, name, true)?;
+            }
+            None if exists(dirfd, name)? => unlink(dirfd, name, false)?,
             None => {}
-            Some(Enters::Name) => unlink(dirfd, name, false)?,
-            Some(Enters::Directory) => match open_child(dirfd, name)? {
-                Some(child) => {
-                    remove_contents(child.as_raw_fd(), depth - 1)?;
-                    unlink(dirfd, name, true)?;
-                }
-                None => unlink(dirfd, name, false)?,
-            },
         }
     }
     // More names than one pass may take: the ones read are removed, and the
