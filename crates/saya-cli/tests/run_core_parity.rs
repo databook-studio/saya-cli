@@ -89,6 +89,40 @@ fn a_run_without_a_database_sends_no_database_text() {
     }
 }
 
+/// The rows this unit re-measured: chat, moved onto the run core. A
+/// regeneration rewrites the whole file, so every other committed row is
+/// checked against the fresh measurement first — a row that moved for a
+/// surface this unit did not touch is that surface's regression, and must be
+/// reviewed with its own change rather than published here.
+const REGENERATED: &[&str] = &["chat"];
+
+/// Every committed row outside [`REGENERATED`] is measured exactly as it was
+/// committed. Silent while no baseline is committed yet (a first write).
+fn assert_unregenerated_rows_are_unchanged(measured: &baseline::Baseline) {
+    let path = baseline::golden_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let committed: baseline::Baseline = serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("baseline {} is valid JSON: {error}", path.display()));
+    for row in &committed.surfaces {
+        if REGENERATED.contains(&row.surface.as_str()) {
+            continue;
+        }
+        let measured = measured
+            .surfaces
+            .iter()
+            .find(|surface| surface.surface == row.surface)
+            .unwrap_or_else(|| panic!("the baseline no longer measures {}", row.surface));
+        assert_eq!(
+            measured, row,
+            "{}'s row moved, and this unit regenerates only {REGENERATED:?}: review that \
+             surface's own change before regenerating its row",
+            row.surface
+        );
+    }
+}
+
 /// The request-size and prefix baseline: what each surface sends on its first
 /// request, and whether its second request repeats that prefix.
 #[test]
@@ -115,5 +149,6 @@ fn request_baseline_per_surface() {
     let baseline = baseline::Baseline::measure(&captures);
     baseline.print();
     baseline.assert_prefix_posture();
+    assert_unregenerated_rows_are_unchanged(&baseline);
     baseline.assert_golden();
 }
