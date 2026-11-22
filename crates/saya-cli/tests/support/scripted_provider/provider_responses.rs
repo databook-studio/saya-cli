@@ -15,7 +15,10 @@ pub(crate) enum ScriptStep {
     /// A plain text completion (the summariser's reply shape).
     Summary(String),
     /// `Summary` held for `delay` before it is written: the perf harness's
-    /// steady turn needs a known provider cost to subtract.
+    /// steady turn needs a known provider cost to subtract. Only that harness
+    /// constructs it, so the binaries that include this module for the scenario
+    /// rows see the variant as unused.
+    #[allow(dead_code)]
     DelayedSummary {
         text: String,
         delay: std::time::Duration,
@@ -23,6 +26,7 @@ pub(crate) enum ScriptStep {
     /// `count` content chunks written one at a time, `chunk_delay` apart: the
     /// perf harness's 1 000-token stream, slow enough that a surface's frame
     /// rate during it can be counted.
+    #[allow(dead_code)]
     StreamTokens {
         count: usize,
         chunk_delay: std::time::Duration,
