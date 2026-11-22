@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::model::Model;
 use super::run_draw::{self, Facts};
-use crate::interactive::tui::{TerminalGuard, restore_terminal};
+use crate::interactive::tui::{TerminalGuard, TerminalModes, restore_terminal};
 
 /// The terminal the runtime is drawn on.
 pub(crate) trait Screen: Send {
@@ -31,6 +31,16 @@ pub(crate) trait Screen: Send {
     /// a screen that can be put back from anywhere says how; one that cannot
     /// leaves the process's hook alone.
     fn restorer(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {
+        None
+    }
+
+    /// The terminal's mode pair, so plain line I/O can run in the normal screen
+    /// for a while and the surface can take the screen back afterwards (`/setup`
+    /// hands the terminal to the guided wizard). `Send`, because the wizard
+    /// runs on a thread of its own: it builds its own runtime for the probes,
+    /// which it cannot do on this one. `None` on a screen with no terminal of
+    /// its own — a test's — which hands nothing over.
+    fn modes(&mut self) -> Option<&mut (dyn TerminalModes + Send)> {
         None
     }
 }
@@ -86,5 +96,13 @@ impl Screen for TtyScreen {
         Some(Arc::new(|| {
             let _ = restore_terminal();
         }))
+    }
+
+    fn modes(&mut self) -> Option<&mut (dyn TerminalModes + Send)> {
+        // The guard is the old surface's own: its `release`/`reacquire` are the
+        // suspendable pair the handoff boundary was written against.
+        self.guard
+            .as_mut()
+            .map(|guard| guard as &mut (dyn TerminalModes + Send))
     }
 }

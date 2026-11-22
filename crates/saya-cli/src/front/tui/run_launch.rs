@@ -10,24 +10,27 @@
 //! function of its queue ([`super::run`]).
 
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use super::direct_run::DirectDeps;
+use super::live::LiveRuntime;
 use super::model::Model;
 use super::msg::Msg;
 use super::ops::OpsDeps;
 use super::run::Runtime;
 use super::run_clock::SystemClock;
-use super::run_cmd::SessionPort;
+use super::run_cmd_port::{PortParts, SessionPort};
 use super::run_draw::Facts;
 use super::run_front::Forward;
-use super::run_input;
+use super::run_input::{self, InputGate};
 use super::run_screen::TtyScreen;
 use crate::chat::{ChatSession, OpsContext};
+use crate::cli::GlobalOptions;
+use crate::interactive::SessionState;
 use crate::local_metrics::LocalMetrics;
 
 /// The surface's queue: the producers' end, and the loop's.
@@ -50,6 +53,14 @@ pub(crate) struct Surface {
     pub(crate) deps: Arc<OpsDeps>,
     /// What a direct source's commands need from the launch.
     pub(crate) direct: Arc<DirectDeps>,
+    /// The configuration in force, which `/reload` and the post-setup apply
+    /// swap. The same handle as `direct.runtime`'s.
+    pub(crate) runtime: Arc<LiveRuntime>,
+    /// The session's state, shared with the launch: a reload re-seeds it.
+    pub(crate) state: Arc<Mutex<SessionState>>,
+    /// The launch's own options: what `/reload` re-reads and what the guided
+    /// setup's flow is built from.
+    pub(crate) options: GlobalOptions,
     /// The facts every frame is painted with.
     pub(crate) facts: Facts,
     /// The session's metrics collector, when local metrics are on.
@@ -71,15 +82,29 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         ops,
         deps,
         direct,
+        runtime,
+        state,
+        options,
         facts,
         metrics,
         entered,
     } = surface;
-    let port = Arc::new(SessionPort::new(session, front, ops, direct, deps));
+    let port = Arc::new(SessionPort::new(PortParts {
+        session,
+        front,
+        ops,
+        direct,
+        deps,
+        options,
+        runtime,
+        state,
+    }));
+    let input = Arc::new(InputGate::new());
     let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port)
         .with_facts(facts)
-        .with_metrics(metrics, entered);
-    run_input::spawn_input(msgs.clone());
+        .with_metrics(metrics, entered)
+        .with_input(Arc::clone(&input));
+    run_input::spawn_input(msgs.clone(), input);
     run_input::spawn_ticker(runtime.animating_flag(), msgs, super::view::TICK);
     runtime.run().await
 }

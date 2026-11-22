@@ -91,15 +91,12 @@ fn tui_sql_then_investigation_save_survives_and_saves() {
 /// configuration is still in use — and the TUI stays responsive through all
 /// of it. The edited file is the same `home/config.toml` `interactive_tui`
 /// passed as `--config`, written while the child is running.
-/// Deferred, not re-pinned: `/reload` is a session operation the new surface
-/// does not perform in this release (T19 switched the launch over; the surface
-/// answers `/help`, `/mode`, `/job`, `/exit`, `/sql`, `/export`, `/chart` and
-/// `/investigation`, and says every other command is the line front's — see
-/// `front::tui::ops::ELSEWHERE`). This suite is the coverage the runtime swap
-/// owes: it runs again once that surface lands here, or is removed with the old
-/// surface (X1-X4) if the swap goes with it.
+/// The swap is the surface's own (`front::tui::reload` over the crate's one
+/// reload core): a changed file moves the configuration in force, a broken one
+/// keeps it and says the pinned sentence. The unchanged line, the plan's key and
+/// the failure sentence are the reload report's own words, so nothing here is a
+/// needle this surface invented.
 #[test]
-#[ignore = "the new surface has no /reload yet: the command says it is the line front's (T19)"]
 fn tui_reload_applies_edits_and_survives_a_broken_file() {
     let home = scratch_home("reload");
     let _cleanup = HomeGuard(home.clone());
@@ -140,7 +137,10 @@ fn tui_reload_applies_edits_and_survives_a_broken_file() {
         .expect("the pinned sentence paints");
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("open the command palette", INTERACTIVE)
         .expect("the TUI is still responsive after the failure");
     assert!(
         tui.still_running(),

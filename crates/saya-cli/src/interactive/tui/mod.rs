@@ -107,6 +107,14 @@ pub(crate) use types::WideTableView;
 #[allow(unused_imports)]
 pub(crate) use terminal::{TerminalGuard, restore_terminal};
 
+// `/setup`'s terminal handoff is the leaf this release keeps: the new front
+// releases the alternate screen, runs the same guided wizard in the normal one
+// and always comes back through it, rather than a second copy of the boundary.
+// A build of this module alone references none of it, so the re-exports read as
+// unused.
+#[allow(unused_imports)]
+pub(crate) use terminal_handoff::{SetupHandoff, TerminalModes, run_guided_setup};
+
 // A copy tries the OS clipboard tool and then the terminal's own OSC 52, and
 // the new front's `c` goes through this one attempt rather than a second copy
 // of it (T14's rule for the terminal). A build of this module alone references
