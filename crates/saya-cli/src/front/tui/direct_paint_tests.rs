@@ -25,7 +25,8 @@ const SAVE: &str =
 
 /// The id of the one document the save wrote, as the repository names it.
 fn saved_id(deps: &DirectDeps) -> String {
-    let root = &deps.runtime.investigations_root;
+    let runtime = deps.runtime.current();
+    let root = &runtime.investigations_root;
     let mut ids: Vec<String> = std::fs::read_dir(root)
         .unwrap_or_else(|error| panic!("the fixture's investigations root {root:?}: {error}"))
         .filter_map(Result::ok)
