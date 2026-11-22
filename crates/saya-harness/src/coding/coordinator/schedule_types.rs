@@ -16,10 +16,21 @@ pub struct ScheduledChild {
     pub(super) dependencies: Vec<AgentId>,
     pub(super) provider: String,
     pub(super) factory: Arc<dyn ChildFactory>,
+    /// The parent run's stream this child's tool calls join, when the caller
+    /// stated one. `None` — the default, and every one-shot batch — keeps the
+    /// child's events on its own progress channel.
+    pub(super) forward: Option<Arc<dyn saya_agent::AgentEventSink>>,
 }
 impl ScheduledChild {
     pub fn control(&self) -> super::super::child::ChildControl {
         self.control.clone()
+    }
+
+    /// The same node, whose child forwards its tool calls into the parent run's
+    /// `sink`, stamped with the child's id.
+    pub fn forwarding(mut self, sink: Arc<dyn saya_agent::AgentEventSink>) -> Self {
+        self.forward = Some(sink);
+        self
     }
     /// The trusted caller binds provider identity to this exact factory and routes
     /// all job children through the scheduler. Every child of a schedule shares
@@ -44,6 +55,7 @@ impl ScheduledChild {
             dependencies,
             provider,
             factory,
+            forward: None,
         })
     }
 }

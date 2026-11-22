@@ -237,6 +237,7 @@ impl CodingApplication {
             operation: tokio::sync::Mutex::new(()),
             active: tokio::sync::Mutex::new(None),
             progress: tokio::sync::broadcast::channel(128).0,
+            forward: std::sync::Mutex::new(None),
             application: Arc::clone(self),
             request,
             plan,

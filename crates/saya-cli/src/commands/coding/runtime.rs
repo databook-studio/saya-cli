@@ -72,6 +72,11 @@ pub struct NativeCodingJob {
     pub(super) active: tokio::sync::Mutex<Option<super::controls::LiveSession>>,
     pub(super) progress:
         tokio::sync::broadcast::Sender<saya_harness::coding::coordinator::ChildEvent>,
+    /// The stream a helper's own tool calls are forwarded into while a turn
+    /// runs: the front's sink for that turn, stated by the surface that runs it
+    /// and cleared when the turn ends. `None` — every job surface, and the gaps
+    /// between a chat's turns — forwards nothing.
+    pub(super) forward: std::sync::Mutex<Option<Arc<dyn saya_agent::AgentEventSink>>>,
     pub(super) cancellation: CancellationToken,
     /// The operator's approver for every egressing call this job makes — a
     /// `shell` run outside the sandbox, and a `web_fetch` — serialised so one
@@ -129,9 +134,29 @@ impl NativeCodingJob {
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }
+
     pub fn cancellation(&self) -> CancellationToken {
         self.cancellation.clone()
     }
+    /// The stream a helper's tool calls join right now, or `None` when the
+    /// surface running this job forwards nothing.
+    pub(crate) fn helper_forward(&self) -> Option<Arc<dyn saya_agent::AgentEventSink>> {
+        self.forward
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// States the stream a helper's tool calls join — the front's sink for the
+    /// turn about to run — or clears it. A surface that draws a helper's work
+    /// by its caller states one for the turn and clears it when the turn ends.
+    pub(crate) fn set_helper_forward(&self, sink: Option<Arc<dyn saya_agent::AgentEventSink>>) {
+        *self
+            .forward
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = sink;
+    }
+
     /// The job's private state directory: where the job's records live, and
     /// where a shell result too large for the model's inline bound saves its
     /// full captured output.

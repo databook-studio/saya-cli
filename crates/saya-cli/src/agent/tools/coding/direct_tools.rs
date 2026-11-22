@@ -3,16 +3,20 @@
 //! bound to W, behind the exact-write decider. `RootTools` (in
 //! `direct.rs`) is the enum the loop holds; this is its `WorkingCheckout`
 //! variant.
+//!
+//! The composition only — what the run then *advertises* of it, and the
+//! evidence the optional tools are filtered by, is `direct_advertise.rs`.
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use saya_agent::{ApprovalDecider, ToolDefinition, ToolError, ToolExecutor};
 
 use crate::agent::tools::child::ChildTools;
 use crate::agent::tools::child::decider::ExactWriteChildApproval;
-use crate::agent::tools::shell_policy::{self, BackgroundOwner};
+use crate::agent::tools::shell_policy::BackgroundOwner;
 use crate::agent::tools::web::{self, WebTools};
 use crate::interactive::session::tasks::{SessionTasks, TasksSet};
 use crate::mcp::client::McpTools;
@@ -85,7 +89,15 @@ pub(crate) struct DirectCodingTools {
     /// What the request itself states: its text, and whether web is configured.
     /// The optional tools (`list`, `delete`, the web pair, `helpers`) are
     /// advertised only when this evidence asks for them or the user named them.
-    pub(super) evidence: crate::agent::tools::advertisement::Evidence,
+    ///
+    /// The text is stated once: by the run's first turn, which is the request
+    /// as a chat session asks it ([`Self::note_request_text`]), and — for a run
+    /// whose turns nobody states — by the composition itself, the job's task. A
+    /// list that grew between two turns would move the request prefix the
+    /// provider caches, so a later turn never restates it.
+    pub(super) evidence: Mutex<crate::agent::tools::advertisement::Evidence>,
+    /// Whether the run's own text has been stated: the first turn's, once.
+    pub(super) evidence_stated: AtomicBool,
     /// The job's `[tools] allow` set. An explicit name re-advertises a tool the
     /// default set suppresses.
     pub(super) tools: saya_config::ResolvedTools,
@@ -194,7 +206,8 @@ impl DirectCodingTools {
             defs,
             background_started: AtomicBool::new(false),
             notebook_seen: AtomicBool::new(false),
-            evidence,
+            evidence: Mutex::new(evidence),
+            evidence_stated: AtomicBool::new(false),
             tools,
             db_lane: None,
         }
@@ -215,68 +228,6 @@ impl DirectCodingTools {
     pub(crate) fn attach_rewind(&mut self, rewind: RootRewind) {
         self.defs.push(RootRewind::definition());
         self.rewind = Some(rewind);
-    }
-
-    /// Whether this run has reached `name`: everything the composition
-    /// advertised, except the notebook edit where the workspace holds no
-    /// notebook, the two background readers before the run that started a
-    /// background shell, and — under a closed plan gate — everything the plan
-    /// posture does not reach. The one predicate the advertisement and the
-    /// dispatch gate both read, so the two cannot disagree about what the model
-    /// was offered.
-    pub(super) fn advertises(&self, name: &str) -> bool {
-        self.defs.iter().any(|definition| {
-            definition.name == name
-                && (name != "notebook_edit" || self.advertises_notebook())
-                && (!shell_policy::reaches_background(name)
-                    || self.background_started.load(Ordering::Acquire))
-                && self.plan_permits(definition)
-                && self.mode_permits(definition)
-                && crate::agent::tools::advertisement::advertised(&self.evidence, &self.tools, name)
-        })
-    }
-
-    /// Whether the notebook edit is advertised: the workspace holds a
-    /// notebook. Decided by the bounded presence check — the same contained,
-    /// gitignore-aware walk the searches use, stopped at the first `.ipynb`
-    /// name — at the start of each turn until it answers yes, and latched from
-    /// then on, so the list grows once for this cause and is stable
-    /// afterwards. A workspace the check could not finish offers no notebook
-    /// edit: the tool appears only on a definite yes.
-    pub(super) fn advertises_notebook(&self) -> bool {
-        if self.notebook_seen.load(Ordering::Acquire) {
-            return true;
-        }
-        if crate::agent::tools::workspace::notebook::present(self.workspace.workspace()) {
-            self.notebook_seen.store(true, Ordering::Release);
-            return true;
-        }
-        false
-    }
-
-    /// Whether the job's plan posture reaches `definition`. With no gate —
-    /// every job that never stated `--plan` — the whole composition is reached,
-    /// so nothing here filters. With a closed gate, only the read-shaped part
-    /// is: the session's own plan rule (`read_only_permits`), which is what
-    /// admits `read`, `list`, `glob`, `grep`, and the two session-local tools
-    /// `checklist` and `submit_plan`, and refuses the write family, `delete`,
-    /// the shell family, `helpers` and `web_fetch`. The operator's approval
-    /// opens the rest, and the gate never closes again.
-    fn plan_permits(&self, definition: &ToolDefinition) -> bool {
-        match &self.plan {
-            None => true,
-            Some(plan) => plan.is_open() || saya_agent::read_only_permits(&definition.effect),
-        }
-    }
-
-    /// The advertisement itself: the composed definitions this run has
-    /// reached, in composition order.
-    pub(super) fn advertised_definitions(&self) -> Vec<ToolDefinition> {
-        self.defs
-            .iter()
-            .filter(|definition| self.advertises(&definition.name))
-            .cloned()
-            .collect()
     }
 
     /// Starts the root shell's held composition, if this surface has one. The

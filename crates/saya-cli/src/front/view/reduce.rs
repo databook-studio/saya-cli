@@ -8,7 +8,7 @@ use saya_agent::AgentEvent;
 use serde_json::Value;
 
 use super::entry::{Activity, Answer, Entry, Notice, Step, StepState, TranscriptView, TurnView};
-use super::entry_blocks::{Clarification, Error, Stop};
+use super::entry_blocks::{Clarification, Error, Helper, HelperState, Stop};
 use super::entry_result::ResultPreview;
 use crate::chat::{ChatEvent, ChatOutcome};
 use crate::render::tool_groups::is_failure_summary;
@@ -34,10 +34,31 @@ pub(crate) fn apply(view: &mut TranscriptView, event: &ChatEvent) {
 fn apply_agent(turn: &mut TurnView, event: &AgentEvent) {
     match event {
         AgentEvent::ToolRequested {
-            name, arguments, ..
-        } => requested(turn, name, arguments),
-        AgentEvent::ToolCompleted { name, summary, .. } => completed(turn, name, summary),
-        AgentEvent::ToolDenied { name, reason, .. } => denied(turn, name, reason),
+            name,
+            arguments,
+            caller,
+            ..
+        } => match caller {
+            Some(caller) => helper_requested(turn, caller),
+            None => requested(turn, name, arguments),
+        },
+        AgentEvent::ToolCompleted {
+            name,
+            summary,
+            caller,
+        } => match caller {
+            Some(_) => {}
+            None => completed(turn, name, summary),
+        },
+        AgentEvent::ToolDenied {
+            name,
+            reason,
+            caller,
+            ..
+        } => match caller {
+            Some(_) => {}
+            None => denied(turn, name, reason),
+        },
         AgentEvent::AssistantText { text } => answer(turn).text.push_str(text),
         // The model stopped to ask instead of assuming: the question is a block
         // of the turn, and the operator's answer is the next turn (`02` §3.9).
@@ -81,6 +102,24 @@ fn answer(turn: &mut TurnView) -> &mut Answer {
         .expect("the answer was found above, or pushed there when absent")
 }
 
+/// One helper's work, opened by the first call the helper's own loop made.
+///
+/// A helper's calls fold into one block of their own, keyed by its caller id —
+/// never into the root's activity group, which is the root's own work (`02`
+/// §3.6). The block's brief stays empty: an event carries the caller and the
+/// call, not the assignment the helper was given.
+fn helper_requested(turn: &mut TurnView, caller: &str) {
+    match turn.helper_mut(caller) {
+        Some(helper) => helper.steps += 1,
+        None => turn.push(Entry::Helper(Helper {
+            id: caller.to_owned(),
+            question: String::new(),
+            steps: 1,
+            state: HelperState::Running,
+        })),
+    }
+}
+
 /// Opens one running step in the turn's activity block.
 fn requested(turn: &mut TurnView, tool: &str, arguments: &Value) {
     activity(turn).steps.push(Step {
@@ -107,6 +146,12 @@ fn completed(turn: &mut TurnView, tool: &str, summary: &str) {
     // readable, so the whole turn's lines stay on screen.
     activity.failed |= failed;
     settle(activity, tool, state);
+    // The call that launched the helpers returned, so the helpers it launched
+    // have ended: their own blocks settle here, because the forwarded stream
+    // carries their calls and never their completion.
+    if tool == "helpers" {
+        turn.settle_helpers();
+    }
 }
 
 /// Settles the run of the call the operator refused.

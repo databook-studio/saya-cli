@@ -205,6 +205,7 @@ impl CodingApplication {
             operation: tokio::sync::Mutex::new(()),
             active: tokio::sync::Mutex::new(None),
             progress: tokio::sync::broadcast::channel(128).0,
+            forward: std::sync::Mutex::new(None),
             // A resumed job gets its own one-prompt gate over the same operator.
             operator,
             // A resumed job composes its own egress, exactly as a fresh one

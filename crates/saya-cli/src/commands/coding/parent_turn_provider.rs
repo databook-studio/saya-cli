@@ -52,6 +52,9 @@ pub(crate) struct Scripted {
     bodies: Arc<Mutex<Vec<String>>>,
     arrived: Arc<AtomicUsize>,
     held: Arc<AtomicBool>,
+    /// The one request whose answer is held instead: the scripted helper's own
+    /// request, so a helper that is working is observable while it works.
+    held_at: Arc<AtomicUsize>,
     released: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<thread::JoinHandle<()>>,
@@ -72,12 +75,14 @@ impl Scripted {
         let bodies: Arc<Mutex<Vec<String>>> = Arc::default();
         let arrived = Arc::new(AtomicUsize::new(0));
         let held = Arc::new(AtomicBool::new(false));
+        let held_at = Arc::new(AtomicUsize::new(usize::MAX));
         let released = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
-        let (captured, seen, holding, open, done) = (
+        let (captured, seen, holding, holding_at, open, done) = (
             Arc::clone(&bodies),
             Arc::clone(&arrived),
             Arc::clone(&held),
+            Arc::clone(&held_at),
             Arc::clone(&released),
             Arc::clone(&stop),
         );
@@ -101,7 +106,9 @@ impl Scripted {
                 };
                 let turn = seen.fetch_add(1, Ordering::AcqRel);
                 captured.lock().unwrap().push(body);
-                if holding.load(Ordering::Acquire) && turn == 0 {
+                if (holding.load(Ordering::Acquire) && turn == 0)
+                    || turn == holding_at.load(Ordering::Acquire)
+                {
                     let deadline = Instant::now() + HOLD;
                     while !open.load(Ordering::Acquire) && Instant::now() < deadline {
                         thread::sleep(Duration::from_millis(5));
@@ -145,10 +152,18 @@ impl Scripted {
             bodies,
             arrived,
             held,
+            held_at,
             released,
             stop,
             worker: Some(worker),
         }
+    }
+
+    /// Holds the answer to `request` — the request at that index — until
+    /// `release`, so the loop that sent it is still running: a scripted
+    /// helper's own request is the second one.
+    pub(crate) fn hold_request(&self, request: usize) {
+        self.held_at.store(request, Ordering::Release);
     }
 
     /// Holds the first answer until `release`, so the turn that sent it is
