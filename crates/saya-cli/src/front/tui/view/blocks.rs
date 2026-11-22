@@ -170,13 +170,22 @@ pub(super) fn helper_rows(
     )]
 }
 
-/// Something the session itself has to say: one compact dim line (`02` §3.10).
+/// Something the session itself has to say: dim lines (`02` §3.10).
+///
+/// One line is the shape nearly every notice takes. A notice that carries
+/// lines of its own — `/help`'s listing, which the chat layer's read answers
+/// with — keeps them: every line is a row of its own, so the transcript shows
+/// the listing as it was written rather than as one run-on sentence.
 pub(super) fn system_line(
     notice: &Notice,
     facts: &TranscriptFacts,
     content: usize,
 ) -> Vec<Line<'static>> {
-    vec![plain(GUTTER, &notice.message, Token::Dim, facts, content)]
+    notice
+        .message
+        .lines()
+        .map(|line| plain(GUTTER, line, Token::Dim, facts, content))
+        .collect()
 }
 
 /// A block's header: its mark, the run of words beside it, each with its own

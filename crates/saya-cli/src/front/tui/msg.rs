@@ -56,6 +56,9 @@ pub(crate) enum Msg {
     Worker(Worker),
     /// The 250 ms tick that drives the spinner and expires a toast.
     Tick,
+    /// The surface is leaving: the run is closed and the terminal restored
+    /// (`/exit`, `/quit`). The loop ends on it, after painting nothing more.
+    Quit,
 }
 
 /// One side effect the runtime performs after an [`update`](super::update).
@@ -90,4 +93,7 @@ pub(crate) enum Cmd {
     /// Cancel the job this id names, through today's job plumbing (`02` §8's
     /// `x`, once the confirm has been answered).
     CancelJob(String),
+    /// One line the surface does not answer itself: a session operation, which
+    /// the chat layer's own table names ([`super::ops`]).
+    Op(crate::slash::SlashCommand),
 }

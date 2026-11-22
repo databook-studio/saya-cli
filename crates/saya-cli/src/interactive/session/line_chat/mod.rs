@@ -35,7 +35,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::interactive::turn_summary::ToolTally;
 
-pub(crate) use self::open::LineSession;
+pub(crate) use self::open::{LineSession, open_surface};
+
+#[allow(unused_imports)]
+pub(crate) use self::open::Opened;
 
 pub(crate) use self::begin::Begun;
 

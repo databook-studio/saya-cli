@@ -93,23 +93,4 @@ impl RawSession {
             }
         }
     }
-    /// Boundedly waits until `needle` has left the screen.
-    fn wait_gone(&mut self, needle: &str, within: Duration) {
-        let start = Instant::now();
-        loop {
-            if !self.screen().contains(needle) {
-                return;
-            }
-            assert!(
-                start.elapsed() < within,
-                "{needle:?} never left; screen: {}",
-                self.screen()
-            );
-            match self.pump() {
-                Ok(true) => panic!("the TUI exited while waiting for {needle:?} to leave"),
-                Ok(false) => {}
-                Err(e) => panic!("{e}"),
-            }
-        }
-    }
 }

@@ -2,7 +2,14 @@
 /// (the pty cannot be pre-scripted here — typed-ahead bytes before the
 /// release are consumed by crossterm, so each prompt is waited for), the
 /// profile lands in the user config dir, and the TUI comes back responsive.
+///
+/// Deferred, not re-pinned: `/setup` is a session operation the new surface
+/// does not perform in this release (T19 switched the launch over; the surface
+/// says every command it does not answer is the line front's — see
+/// `front::tui::ops::ELSEWHERE`). The terminal handoff this exercises is the
+/// old surface's, so the test runs again when that surface lands here.
 #[test]
+#[ignore = "the new surface has no /setup handoff yet: the command says it is the line front's (T19)"]
 fn setup_handoff_full_wizard_writes_config_and_returns() {
     let home = scratch_home("setup-full");
     let _cleanup = HomeGuard(home.clone());

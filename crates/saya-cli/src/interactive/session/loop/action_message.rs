@@ -74,14 +74,11 @@ fn handle_message(
             // The record this process resumed decides what its link means — the
             // run it names, a run of the record's own, or one sentence and a
             // refusal — and the decision is acted on once, here. The record is
-            // read with its compaction summary restored: the save drops it (the
-            // chat session states it), and what a run may carry depends on it.
-            let record = {
-                let mut record = state.redacted();
-                record.compaction_summary = state.compaction_summary.clone();
-                record
-            };
-            let chat = match LineChat::begin(parts, record, state_db) {
+            // read the one way both surfaces read it (`surface_record`).
+            let record = surface_record(state);
+            // One opener for both surfaces: the loop's first line asks the
+            // decision the full-screen launch asks, and enters the run it opens.
+            let chat = match LineChat::begin(parts, record) {
                 Ok(Begun::Open { chat, said }) => {
                     if let Some(said) = said {
                         session_emit::emit_action(

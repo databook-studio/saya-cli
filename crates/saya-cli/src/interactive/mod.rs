@@ -70,6 +70,11 @@ pub(crate) mod turn_summary;
 pub(crate) mod session_workspace;
 pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
+// The old full-screen surface: kept compiled until X1-X4 delete it, and
+// reachable from this crate's tests only — the launch switches `saya` to the
+// new surface (T19), so nothing in the binary enters this one and its dead
+// ends are expected until the removal lands.
+#[allow(dead_code)]
 pub(crate) mod tui;
 
 // The session's token accumulator — the answering and extraction totals

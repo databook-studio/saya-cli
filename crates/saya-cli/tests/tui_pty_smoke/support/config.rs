@@ -14,10 +14,18 @@ enum Memory {
 
 /// Writes a minimal, offline config + connections file under `home`. No
 /// `--env-file`, no provider key, and a single `demo` profile pointing at a
-/// scratch SQLite file that is never opened — the test sends no question. The
-/// profile name leads the status bar as `demo · smoke`. When `memory` is
+/// scratch SQLite file the test never queries. The profile name leads the
+/// status line as `demo │ smoke`. When `memory` is
 /// `Assisted` the config adds `[memory] mode = 'assisted'`, the suspect path
 /// for defect #51; `Off` keeps the original no-`[memory]` shape.
+///
+/// The database file is created empty — a valid empty SQLite database. T19
+/// switched `saya` to the new surface, which composes its session through the
+/// line front's own composition: the configured profile's connection is opened
+/// at launch, where the old surface left it unopened until the first query. A
+/// profile naming a missing file is a startup failure for both surfaces now
+/// ("SQLite connection failed"), so the fixture must hand the launch a real
+/// file — exactly what `interactive_tui` has always done.
 fn write_scratch_config(home: &Path, memory: Memory) -> ScratchConfig {
     let config = home.join("config.toml");
     let memory_section = match memory {
@@ -33,6 +41,7 @@ fn write_scratch_config(home: &Path, memory: Memory) -> ScratchConfig {
     .unwrap();
 
     let database = home.join("demo.sqlite3");
+    std::fs::write(&database, b"").expect("the demo db file is created");
     let connections = home.join("connections.toml");
     std::fs::write(
         &connections,

@@ -15,7 +15,14 @@ const MIXED_BOUND_VALUE: &str = "hello --param=x=y";
 /// can) or kill the session with exit 101 before anything paints. The
 /// run is a valid one — the original binding rides through — and neither
 /// value text reaches the screen, the history file, or the session files.
+///
+/// Deferred, not re-pinned — the same three surface differences as
+/// `tui_investigation_run_attached_param_value_never_persists_or_echoes`: no
+/// input history, no per-command transcript echo, and a settled frame that was
+/// observed holding a completed direct command's cells on the status line's row.
+/// The redaction stays pinned at unit level.
 #[test]
+#[ignore = "the new surface keeps no input history and paints no settled echo of a direct command (T19)"]
 fn tui_investigation_run_mixed_param_tokens_survive_and_leak_nothing() {
     let home = scratch_home("param-mixed");
     let _cleanup = HomeGuard(home.clone());
@@ -44,8 +51,10 @@ fn tui_investigation_run_mixed_param_tokens_survive_and_leak_nothing() {
         .expect("the run bound the original value (the sentinel row paints)");
     // Wait for the steady state before reading the screen: the draft is
     // cleared, and the redraw has blanked the cells past the shorter
-    // placeholder, so the typing-time echo never pollutes the assertion.
-    tui.wait_for("Ask a question or describe a change", INTERACTIVE)
+    // placeholder, so the typing-time echo never pollutes the assertion. The
+    // placeholder is the new surface's, which names the session's database
+    // (`view::composer`); T19 switched the launch over, so this needle moved.
+    tui.wait_for("Ask about demo or describe a change", INTERACTIVE)
         .expect("the input draft cleared after the submit");
     tui.wait_gone("hello", INTERACTIVE)
         .expect("the input box cleared the submitted line");

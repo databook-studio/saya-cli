@@ -18,7 +18,7 @@ use saya_store::RedactedSession;
 use super::boundary::{self, Bounded, Said, Turn};
 use super::boundary_fixture::{Fixture, next_run, session};
 use super::run::Run;
-use crate::chat::{ChatOutcome, Compaction, Rollover, Transcript};
+use crate::chat::{ChatFront, ChatOutcome, Compaction, Rollover, Transcript};
 
 /// The phrase every summarising request carries: the engine's own prompt.
 const SUMMARISE: &str = "Summarise the following earlier conversation turns";
@@ -91,7 +91,8 @@ async fn cross_boundary(fixture: Fixture, next: &str, tokens: u64) -> (usize, Sa
     // successor a compaction rolls into. No other handle to the job is kept —
     // the run object owns the folder's lease.
     let front = Arc::clone(&fixture.front);
-    let mut run = Some(Run::opened(fixture.run, &front, None).await);
+    let chat_front = Arc::clone(&front) as Arc<dyn ChatFront>;
+    let mut run = Some(Run::opened(fixture.run, Arc::clone(&chat_front), None).await);
     let composes = Cell::new(0);
     let (mut rolled, mut said) = (0, Said::Nothing);
     for prompt in FOUR {
@@ -126,7 +127,7 @@ async fn cross_boundary(fixture: Fixture, next: &str, tokens: u64) -> (usize, Sa
             } => {
                 rolled += 1;
                 said = line;
-                run = Some(Run::opened(*successor, &front, None).await);
+                run = Some(Run::opened(*successor, Arc::clone(&chat_front), None).await);
             }
             Bounded::Ended(line) => {
                 panic!("the run after the compaction could not open: {line:?}")

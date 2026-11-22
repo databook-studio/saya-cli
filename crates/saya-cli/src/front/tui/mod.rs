@@ -33,6 +33,7 @@ pub(crate) mod keys;
 pub(crate) mod model;
 pub(crate) mod model_overlay;
 pub(crate) mod msg;
+pub(crate) mod ops;
 pub(crate) mod run;
 pub(crate) mod run_clock;
 pub(crate) mod run_cmd;
@@ -41,6 +42,7 @@ pub(crate) mod run_draw_card;
 pub(crate) mod run_draw_overlay;
 pub(crate) mod run_front;
 pub(crate) mod run_input;
+pub(crate) mod run_launch;
 pub(crate) mod run_panic;
 pub(crate) mod run_screen;
 pub(crate) mod theme;
@@ -74,9 +76,9 @@ pub(crate) use model_overlay::Overlay;
 #[allow(unused_imports)]
 pub(crate) use msg::{Cmd, Msg, Worker};
 #[allow(unused_imports)]
-pub(crate) use run::Runtime;
+pub(crate) use ops::{Asked, OpsDeps};
 #[allow(unused_imports)]
-pub(crate) use run::run;
+pub(crate) use run::Runtime;
 #[allow(unused_imports)]
 pub(crate) use run_clock::{Clock, SystemClock};
 #[allow(unused_imports)]
@@ -85,6 +87,8 @@ pub(crate) use run_cmd::{CmdPort, SessionPort, perform};
 pub(crate) use run_draw::{Facts, Regions};
 #[allow(unused_imports)]
 pub(crate) use run_front::Forward;
+#[allow(unused_imports)]
+pub(crate) use run_launch::{Surface, channel, run};
 #[allow(unused_imports)]
 pub(crate) use run_screen::{Screen, TtyScreen};
 #[allow(unused_imports)]

@@ -14,21 +14,28 @@
 //! session states, and the rollover a compaction asks for builds the next one
 //! the same way: the same folder, the same mode, the same databases — only the
 //! job name differs, which is what makes the run that follows a new job.
+//!
+//! **One opener.** [`open_run`] composes and opens a run over a host and a front
+//! its caller stated, so the first run, the rollover's next one, the run a
+//! resumed record names and the one a read-only record prepares are one path:
+//! what a record's link decides ([`super::begin::decided`]) is the only thing
+//! that differs, never how a run is opened.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use saya_agent::{AgentEventSink, ApprovalPolicy, CancellationToken};
-use saya_store::SqliteStateStore;
+use saya_store::{RedactedSession, SqliteStateStore};
 
-use super::LineChat;
 use super::line::Line;
 use super::run::Run;
 use crate::agent::runtime::PromptOverrides;
 use crate::agent::system_prompt::memory_reachable;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::turn_inputs::prepare_turn;
-use crate::chat::{ChatFront, RunComposition, SessionRun, WorkspaceShape};
+use crate::chat::{
+    ChatFront, ChatSession, OpsContext, RunComposition, RunPort, SessionRun, WorkspaceShape,
+};
 use crate::commands::coding::CodingApplication;
 use crate::config::runtime::RuntimeConfig;
 use crate::front::LineFront;
@@ -96,19 +103,6 @@ pub(crate) struct LineSession {
     pub(crate) seed: Vec<(String, String)>,
 }
 
-/// Opens the session: composes and opens its run, and hands back the session
-/// driving it, already `Ready`.
-impl LineChat {
-    pub(crate) fn open(parts: LineSession) -> Result<Self, String> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| format!("the session's runtime could not be built: {error}"))?;
-        let line = runtime.block_on(assemble(parts, super::one_shot::OneShot::No))?;
-        Ok(LineChat::new(line, runtime))
-    }
-}
-
 /// The same composition, driven by a surface that already runs on a runtime:
 /// one line session, composed and prepared exactly as the plain loop's first
 /// message prepares it, owned by that runtime instead of one of its own.
@@ -121,31 +115,16 @@ impl LineChat {
 ///
 pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
     parts.state_root = super::one_shot::state_root(&parts)?;
-    assemble(parts, super::one_shot::OneShot::Yes).await
+    assemble(parts, true).await
 }
 
 /// Builds the host the session's run is composed over, and states the run's
 /// facts — asking nobody: the session's mode is the consent.
-async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
-    let (application, shape) = super::session_host::open_host(&parts).await?;
-    if one_shot == super::one_shot::OneShot::Yes {
-        super::one_shot::state_on(&application);
+async fn assemble(parts: LineSession, one_shot: bool) -> Result<Line, String> {
+    let hosted = host(&parts).await?;
+    if one_shot {
+        super::one_shot::state_on(&hosted.application);
     }
-    // The launch's own seeds ride the host the run composes over: a held token
-    // pre-answers the calls its family would have asked about, so the mode's
-    // advertisement states the family the session stated.
-    application.with_launch_grants(parts.grants.clone());
-    composed_over(application, shape, parts).await
-}
-
-/// The run a session composes, over a host its surface has already opened: the
-/// first run, the rollover's next one, and the run a read-only record's next
-/// line prepares all come through here.
-pub(super) async fn composed_over(
-    application: Arc<CodingApplication>,
-    shape: WorkspaceShape,
-    parts: LineSession,
-) -> Result<Line, String> {
     // The run's own counters, printed after every settled turn: the same
     // collector the answering turn hands its metrics sink, and the stop
     // instant a Ctrl-C is measured from. Its cancellation token is the scope's
@@ -153,15 +132,51 @@ pub(super) async fn composed_over(
     // brought the question's token states it, so the stop the question latched
     // is the stop this front waits on.
     let (front, metrics) = front_for(&parts);
-    let name = parts.session.clone();
-    let stated = session_run(
+    let (run, application, shape) = open_run(
         &parts,
+        hosted,
         Arc::clone(&front) as Arc<dyn ChatFront>,
-        name,
-        &shape,
+        metrics.clone(),
     )
     .await?;
-    let composed = RunComposition::compose_seeded(application, stated, parts.seed.clone())
+    Ok(Line::new(application, parts, front, shape, metrics, run))
+}
+
+/// The host a run is composed over: the application it composes on, and the
+/// shape of the folder it opened over.
+pub(super) struct Hosted {
+    application: Arc<CodingApplication>,
+    shape: WorkspaceShape,
+}
+
+/// The host `parts` state: the folder's shape first, because it decides which
+/// root the application opens over.
+pub(super) async fn host(parts: &LineSession) -> Result<Hosted, String> {
+    let (application, shape) = super::session_host::open_host(parts).await?;
+    Ok(Hosted { application, shape })
+}
+
+/// The run a surface states over `hosted`, composed and opened, with `front`
+/// receiving everything the session says. The application the run composed on
+/// comes back with it: a surface's own successor runs compose over that one.
+pub(super) async fn open_run(
+    parts: &LineSession,
+    hosted: Hosted,
+    front: Arc<dyn ChatFront>,
+    metrics: Option<Arc<LocalMetrics>>,
+) -> Result<(Run, Arc<CodingApplication>, WorkspaceShape), String> {
+    // The launch's own seeds ride the host the run composes over: a held token
+    // pre-answers the calls its family would have asked about, so the mode's
+    // advertisement states the family the session stated.
+    hosted.application.with_launch_grants(parts.grants.clone());
+    let stated = session_run(
+        parts,
+        Arc::clone(&front),
+        parts.session.clone(),
+        &hosted.shape,
+    )
+    .await?;
+    let composed = RunComposition::compose_seeded(hosted.application, stated, parts.seed.clone())
         .await
         .map_err(|error| error.to_string())?;
     // The composition states the operator on the host, which only the host's one
@@ -169,8 +184,52 @@ pub(super) async fn composed_over(
     // so a call of this run is put to the person at this terminal.
     let application = composed.job().application();
     composed.open().await.map_err(|error| error.to_string())?;
-    let run = Run::opened(composed, &front, metrics.clone()).await;
-    Ok(Line::new(application, parts, front, shape, metrics, run))
+    let run = Run::opened(composed, front, metrics).await;
+    Ok((run, application, hosted.shape))
+}
+
+/// The run the full-screen surface drives: the line loop's own composition —
+/// the same folder rule, the same grants, the same budget, the same seed — with
+/// the record the launch resumed read the same way the line loop reads it, so a
+/// record whose link attaches, prepares its next epoch, opens read-only or is
+/// refused opens that way on this surface too.
+pub(crate) async fn open_surface(
+    parts: LineSession,
+    record: &RedactedSession,
+    front: Arc<dyn ChatFront>,
+) -> Result<Opened, String> {
+    match super::begin::decided(&parts, record, front, None).await? {
+        super::begin::Decided::Open(open) => Ok(Opened { run: open.run }),
+        // A job this release takes no further turn on states its one sentence;
+        // the surface opens nothing and the launch reports it.
+        super::begin::Decided::Refused { sentence } => Err(sentence),
+    }
+}
+
+/// A run one surface outside the line loop drives, held for as long as that
+/// surface lives: the run owns the folder's lease, so it must outlive every
+/// handle taken from it.
+pub(crate) struct Opened {
+    run: Run,
+}
+
+impl Opened {
+    /// The chat session this run's turns are sent to.
+    pub(crate) fn chat(&self) -> Arc<ChatSession> {
+        self.run.chat()
+    }
+
+    /// The context an operation states a mode on: the run's own cell, with the
+    /// launch's answer about whether `bypass` is reachable at all.
+    pub(crate) fn context(&self, allow_bypass: bool) -> OpsContext {
+        OpsContext::new(self.run.mode_cell(), allow_bypass)
+    }
+
+    /// The port this run's turns run through, for the operations a surface
+    /// states without running a turn.
+    pub(crate) fn run_port(&self) -> Arc<dyn RunPort> {
+        self.run.run_port()
+    }
 }
 
 /// The surface every turn prints on, and the counters its scope records into:

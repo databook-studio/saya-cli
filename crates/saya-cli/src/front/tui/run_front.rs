@@ -87,6 +87,11 @@ impl Forward {
         let _ = self.msgs.send(Msg::Worker(worker));
     }
 
+    /// Asks the loop to leave: the one message that ends it (`/exit`).
+    pub(crate) fn quit(&self) {
+        let _ = self.msgs.send(Msg::Quit);
+    }
+
     /// Answers the call asked under `id`, which resumes the ask that is waiting
     /// for it. False when nothing waits there: the card was answered twice, or
     /// the asker gave up.

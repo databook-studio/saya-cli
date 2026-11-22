@@ -14,10 +14,12 @@ use super::direct::Direct;
 use super::direct_run::{DirectDeps, perform as perform_direct};
 use super::direct_trust;
 use super::msg::Cmd;
+use super::ops::{self, Asked, OpsDeps};
 use super::run_front::Forward;
 use crate::agent::tools::consent::Answer;
 use crate::chat::{ChatSession, OpsContext};
 use crate::interactive::tui::{TrustResolution, copy_to_native_clipboard, osc52_copy};
+use crate::slash::SlashCommand;
 
 /// What a command is performed on: the session that runs the turns, and the
 /// front that holds the operator's unanswered calls.
@@ -41,6 +43,9 @@ pub(crate) trait CmdPort: Send + Sync {
     /// Cancel the job this id names, through today's job plumbing (`02` §8's
     /// `x`, once its confirm has been answered).
     fn cancel_job(&self, id: String);
+    /// Perform one line the surface does not answer itself: a session
+    /// operation, named by the chat layer's table ([`super::ops`]).
+    fn op(&self, command: SlashCommand);
 }
 
 /// Performs one command on the port that can.
@@ -55,6 +60,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::Direct(command) => port.direct(command),
         Cmd::Trust => port.trust(),
         Cmd::CancelJob(id) => port.cancel_job(id),
+        Cmd::Op(command) => port.op(command),
     }
 }
 
@@ -65,22 +71,28 @@ pub(crate) struct SessionPort {
     front: Arc<Forward>,
     ops: OpsContext,
     direct: Arc<DirectDeps>,
+    /// The chat layer's one table of operations, and the user's own commands
+    /// that answer for their names in `/help`.
+    deps: Arc<OpsDeps>,
 }
 
 impl SessionPort {
     /// A port over one session, the front the session talks to, the run's
-    /// operations context, and what its direct commands need from the launch.
+    /// operations context, what its direct commands need from the launch, and
+    /// the table of operations its other commands state.
     pub(crate) fn new(
         session: Arc<ChatSession>,
         front: Arc<Forward>,
         ops: OpsContext,
         direct: Arc<DirectDeps>,
+        deps: Arc<OpsDeps>,
     ) -> Self {
         Self {
             session,
             front,
             ops,
             direct,
+            deps,
         }
     }
 }
@@ -160,5 +172,22 @@ impl CmdPort for SessionPort {
         // a job of this run is one of the front's workers, and cancelling it is a
         // token or a control message, never a second job runner (`02` §8).
         self.front.cancel_job(&id);
+    }
+
+    fn op(&self, command: SlashCommand) {
+        // The chat layer's table answers, and the surface says what it said: a
+        // refusal is the operator's business, and `/exit` asks the loop to
+        // leave. A stateless statement — no turn is entered either way.
+        match ops::perform(self.deps.as_ref(), command) {
+            Asked::Notice(words) => self.front.deliver(super::msg::Worker {
+                direct: Some(super::direct::DirectOutcome::Notice(words)),
+                ..super::msg::Worker::default()
+            }),
+            Asked::Error(words) => self.front.deliver(super::msg::Worker {
+                direct: Some(super::direct::DirectOutcome::Error(words)),
+                ..super::msg::Worker::default()
+            }),
+            Asked::Quit => self.front.quit(),
+        }
     }
 }

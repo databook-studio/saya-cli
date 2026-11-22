@@ -31,15 +31,6 @@ use std::sync::Arc;
 use super::LineSession;
 use crate::commands::coding::{CodingApplication, root_mode::session_state_root};
 
-/// Whether the composition is a surface's one-shot question: one message, one
-/// turn, one answer. A one-shot run inherits no continuation context, because
-/// there is nothing before its first turn for it to inherit.
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum OneShot {
-    Yes,
-    No,
-}
-
 /// The state root a one-turn ask records under: `None` when the configured one
 /// is already outside the folder it asks about, and a private root of its own
 /// when it is not.

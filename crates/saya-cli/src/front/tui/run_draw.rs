@@ -48,6 +48,14 @@ pub(crate) struct Facts {
     /// Whether the session bound no workspace and has not answered the trust
     /// question yet: the runtime opens the question on it (`02` §9.4).
     pub(crate) untrusted: bool,
+    /// The model's short id, for the status line's segment.
+    pub(crate) model: String,
+    /// Whether host commands run outside the sandbox, and whether query data
+    /// leaves the machine: the two conditions the status line caveats.
+    pub(crate) host_unsandboxed: bool,
+    pub(crate) sharing: bool,
+    /// The programs the session's deny list keeps out.
+    pub(crate) deny: Vec<String>,
 }
 
 impl Default for Facts {
@@ -62,6 +70,10 @@ impl Default for Facts {
             provider: true,
             workspace: None,
             untrusted: false,
+            model: String::new(),
+            host_unsandboxed: false,
+            sharing: false,
+            deny: Vec::new(),
         }
     }
 }
@@ -185,8 +197,8 @@ fn empty_facts(model: &Model, facts: &Facts) -> EmptyFacts {
     }
 }
 
-/// The status line's facts: the model's mode, database, queue and toast, and
-/// what the surface is doing right now.
+/// The status line's facts: the model's mode, database, queue and toast, the
+/// launch's posture facts, and what the surface is doing right now.
 fn status_facts(model: &Model, facts: &Facts) -> StatusFacts {
     StatusFacts {
         mode: model.mode(),
@@ -194,6 +206,11 @@ fn status_facts(model: &Model, facts: &Facts) -> StatusFacts {
             .database_name()
             .map(|name| vec![name.to_owned()])
             .unwrap_or_default(),
+        model: facts.model.clone(),
+        workspace: facts.workspace.clone(),
+        host_unsandboxed: facts.host_unsandboxed,
+        sharing: facts.sharing,
+        deny: facts.deny.clone(),
         activity: activity(model, facts),
         toast: model.toast().map(str::to_owned),
         scheme: facts.scheme,

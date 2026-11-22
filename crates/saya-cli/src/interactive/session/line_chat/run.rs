@@ -11,20 +11,23 @@ use saya_store::{RedactedSession, RunLink};
 
 use super::boundary::Said;
 use super::open::{LineSession, session_run};
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::chat::{
     ChatFront, ChatSession, Ending, JobPort, RunComposition, RunPort, SessionRun, WorkspaceShape,
 };
 use crate::commands::coding::NativeCodingJob;
-use crate::front::{LineFront, SettledTurn};
+use crate::front::SettledTurn;
 use crate::local_metrics::LocalMetrics;
 
 /// The run the session is on.
-pub(super) struct Run {
+pub(crate) struct Run {
     /// The composition the run was opened from, when the front composed it:
     /// a run the front resumed was handed its job already opened, and its
     /// rollover hands over the job alone.
     composition: Option<RunComposition>,
-    session: ChatSession,
+    /// The chat session driving it, by handle: the line loop sends a line to
+    /// it, and a surface whose loop owns the session drives the same one.
+    session: Arc<ChatSession>,
     port: Arc<JobPort>,
     job: Arc<NativeCodingJob>,
 }
@@ -33,9 +36,9 @@ impl Run {
     /// The run and the chat session driving it, over a composition already
     /// opened: the port states it and opens nothing, so the session's prepare
     /// is the composition's one open.
-    pub(super) async fn opened(
+    pub(crate) async fn opened(
         composition: RunComposition,
-        front: &Arc<LineFront>,
+        front: Arc<dyn ChatFront>,
         metrics: Option<Arc<LocalMetrics>>,
     ) -> Self {
         let job = Arc::clone(composition.job());
@@ -54,7 +57,7 @@ impl Run {
     /// one — its turns, its close, and the rollover that may follow.
     pub(super) async fn resumed(
         job: Arc<NativeCodingJob>,
-        front: &Arc<LineFront>,
+        front: Arc<dyn ChatFront>,
         metrics: Option<Arc<LocalMetrics>>,
     ) -> Self {
         let port = Arc::new(port(&job, metrics));
@@ -69,18 +72,40 @@ impl Run {
 
     /// The chat session driving one opened run, stated once for both ways the
     /// front opens one.
-    async fn chat_session(port: &Arc<JobPort>, front: &Arc<LineFront>) -> ChatSession {
-        let session = ChatSession::new(
+    async fn chat_session(port: &Arc<JobPort>, front: Arc<dyn ChatFront>) -> Arc<ChatSession> {
+        let session = Arc::new(ChatSession::new(
             Arc::clone(port) as Arc<dyn RunPort>,
-            Arc::clone(front) as Arc<dyn ChatFront>,
-        );
+            front,
+        ));
         session.open().await;
         session
     }
 
     /// The chat session a turn of this run is sent to.
-    pub(super) fn session(&self) -> &ChatSession {
+    pub(crate) fn session(&self) -> &ChatSession {
         &self.session
+    }
+
+    /// The chat session a surface outside this module drives: the same session,
+    /// by handle, for a surface whose loop owns it rather than sending a line.
+    pub(crate) fn chat(&self) -> Arc<ChatSession> {
+        Arc::clone(&self.session)
+    }
+
+    /// The run's one mode cell, as a surface that states a mode holds it: the
+    /// cell every call of this run reads. The composition's cell is the job's
+    /// own (`RunComposition` reads it back from the job), and a resumed run's
+    /// cell is the one the resume stated the session's mode on — so the job's
+    /// cell answers for both, and a mode stated on it reaches the next call.
+    pub(crate) fn mode_cell(&self) -> ModeCell {
+        self.job.approval_mode()
+    }
+
+    /// The port this run's turns run through, for the operations a surface
+    /// states without running a turn (the chat layer's `ChatOps` holds it and
+    /// never enters it).
+    pub(crate) fn run_port(&self) -> Arc<dyn RunPort> {
+        Arc::clone(&self.port) as Arc<dyn RunPort>
     }
 
     /// The run a rollover prepared, over the same port shape the first run had.
@@ -92,7 +117,7 @@ impl Run {
         Self {
             job: Arc::clone(composition.job()),
             composition: Some(composition),
-            session,
+            session: Arc::new(session),
             port,
         }
     }
