@@ -168,3 +168,9 @@ mod compact_latch_tests;
 #[cfg(test)]
 #[path = "workspace_shape_tests.rs"]
 mod workspace_shape_tests;
+
+// The permission pins the old turn body carried, re-homed on the shapes the
+// live catalogue advertises (see `perm_core_twins`).
+#[cfg(test)]
+#[path = "perm_core_twins.rs"]
+mod perm_core_twins;
