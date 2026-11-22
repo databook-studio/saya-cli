@@ -109,6 +109,9 @@ pub(super) async fn in_place_with_memory(
     build(case, endpoint, true, Some(memory), None).await
 }
 
+/// The in-place folder's name inside the throwaway root.
+const IN_PLACE_FOLDER: &str = "repo";
+
 async fn build(
     case: &str,
     endpoint: &str,
@@ -125,7 +128,7 @@ async fn build(
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
         .expect("the fixture root is private");
     let root = root.canonicalize().expect("the fixture root resolves");
-    let folder = root.join("repo");
+    let folder = root.join(IN_PLACE_FOLDER);
     fs::create_dir(&folder).expect("the fixture folder creates");
     fs::write(folder.join("tracked.txt"), b"original\n").expect("the fixture file writes");
     let programs = root.join("programs");
@@ -229,6 +232,14 @@ async fn sqlite_connection(root: &Path) -> ConnectionRegistry {
 
 /// Removes the throwaway root when it drops.
 pub(super) struct RootGuard(PathBuf);
+
+impl RootGuard {
+    /// The run's working checkout: the folder a job opened in place binds, and
+    /// the root its shell composition proves the sandbox over.
+    pub(super) fn checkout_root(&self) -> PathBuf {
+        self.0.join(IN_PLACE_FOLDER)
+    }
+}
 
 /// The `git` this machine runs, found on `PATH`: the fixture's Git service
 /// holds no repository, so the binary only has to exist.
