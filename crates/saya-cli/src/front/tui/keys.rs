@@ -144,16 +144,39 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
 /// global key that would otherwise act on a state the operator cannot see
 /// behind the card. Enter is deliberately none of them, so a press meant for
 /// the composer during a card can never consent.
+///
+/// Every other press is the composer's, exactly as it was before the card
+/// arrived: a call can land mid-sentence, and the line the operator was typing
+/// — `/job approve <id>` among them, which is how a job's consent is given by
+/// name (`02` §8) — must still be typeable and still be sent by Enter.
 fn card_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
         KeyCode::BackTab => Some(Intent::Refused(CARD_HOLDS_MODE)),
         KeyCode::Tab if shift => Some(Intent::Refused(CARD_HOLDS_MODE)),
-        _ => match cards_keys::card_intent(model.card()?, key)? {
-            CardIntent::Answer(answer) => Some(Intent::AnswerCard(answer)),
-            CardIntent::View => Some(Intent::ViewCard),
-            CardIntent::Scroll(rows) => Some(Intent::ScrollCard(rows)),
+        _ => match cards_keys::card_intent(model.card()?, key) {
+            Some(CardIntent::Answer(answer)) => Some(Intent::AnswerCard(answer)),
+            Some(CardIntent::View) => Some(Intent::ViewCard),
+            Some(CardIntent::Scroll(rows)) => Some(Intent::ScrollCard(rows)),
+            None => composer_fallback(model, key),
         },
+    }
+}
+
+/// A press the card does not answer, read as the composer reads it — and only
+/// as far as the line goes. `/` and `?` would open a pane over the call the
+/// operator is being asked about, so they are the characters they were before
+/// a pane existed; a pane's chord and every other key that would act on a
+/// state the card is covering are not requests while it is open.
+fn composer_fallback(model: &Model, key: KeyEvent) -> Option<Intent> {
+    match composer_key(model, key) {
+        Some(Intent::OpenPalette | Intent::OpenHelp) => match key.code {
+            KeyCode::Char(character) => Some(Intent::Insert(character)),
+            _ => None,
+        },
+        intent @ (Some(Intent::Insert(_)) | Some(Intent::Newline) | Some(Intent::Backspace))
+        | intent @ Some(Intent::Submit) => intent,
+        _ => None,
     }
 }
 

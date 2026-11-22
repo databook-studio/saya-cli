@@ -25,6 +25,10 @@ use crate::interactive::tui::{CodingMessage, CodingPanel};
 /// worker's own message, and a drawer row is one line.
 const MAX_SUMMARY: usize = 120;
 
+/// The longest facts one consent states, in characters: the proposal is
+/// bounded where it is built, and the operator answers for every row of it.
+const MAX_FACTS: usize = 16 * 1024;
+
 /// What the surface says when an `x` reaches no job of this run.
 pub(crate) const NO_SUCH_JOB: &str = "no job of that id is running in this surface";
 
@@ -65,7 +69,11 @@ impl JobDesk {
                 Some(JobReport::Listed(self.rows.clone()))
             }
             CodingMessage::Approval { text, respond } => {
-                let question = self.question(job, summary(&text));
+                // A job's scope question is not a one-line call: its facts are
+                // the consent's own rows — the job, the paths, one row per
+                // database identity — so the card states them as they were
+                // written, never folded into a summary.
+                let question = self.question(job, facts(&text));
                 let id = question.id;
                 self.waiting.insert(id, Waiting::Scope(respond));
                 self.owed(job, id);
@@ -171,6 +179,19 @@ fn summary(line: &str) -> String {
         .take(MAX_SUMMARY)
         .collect::<String>()
         .trim()
+        .to_owned()
+}
+
+/// One consent text as the card's facts state it: redacted, its own rows kept —
+/// a consent is a list an operator reads row by row, not one line — and
+/// bounded.
+fn facts(text: &str) -> String {
+    saya_types::redact(text)
+        .chars()
+        .filter(|character| *character == '\n' || !character.is_control())
+        .take(MAX_FACTS)
+        .collect::<String>()
+        .trim_end()
         .to_owned()
 }
 

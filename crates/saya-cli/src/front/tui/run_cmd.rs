@@ -39,6 +39,9 @@ pub(crate) trait CmdPort: Send + Sync {
     /// Cancel the job this id names, through today's job plumbing (`02` §8's
     /// `x`, once its confirm has been answered).
     fn cancel_job(&self, id: String);
+    /// Perform one job verb (`02` §8): `/start` opens the run's one job through
+    /// today's worker, and the rest steer the job it opened.
+    fn job(&self, request: crate::slash::JobRequest);
     /// Perform one line the surface does not answer itself: a session
     /// operation, named by the chat layer's table ([`super::ops`]).
     fn op(&self, command: SlashCommand);
@@ -63,6 +66,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::Direct(command) => port.direct(command),
         Cmd::Trust => port.trust(),
         Cmd::CancelJob(id) => port.cancel_job(id),
+        Cmd::Job(request) => port.job(request),
         Cmd::Op(command) => port.op(command),
     }
 }

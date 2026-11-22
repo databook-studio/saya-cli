@@ -55,11 +55,6 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     );
     let commands = state.user_commands.clone();
     let metrics = session.session_metrics();
-    let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(
-        session,
-        std::sync::Arc::clone(&runtime),
-        launch,
-    ));
     // The configuration in force from here on: a `/reload` (or the apply a
     // closed guided setup runs) swaps what the next read sees, and the direct
     // commands share the same handle. The session's state is shared the same
@@ -67,6 +62,23 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     let live = std::sync::Arc::new(crate::front::tui::LiveRuntime::new(std::sync::Arc::clone(
         &runtime,
     )));
+    // A job this surface opens runs as the old surface ran one: over the same
+    // runtime, the same store, this session's folder, and the mode in force at
+    // the moment the surface took the terminal — the session itself is handed
+    // to the trust store below, so its policy is read here, once. The runtime is
+    // the launch's live one, so a job opened after a `/reload` composes over the
+    // configuration then in force, exactly as a direct command reads it.
+    let jobs = std::sync::Arc::new(crate::front::tui::JobDeps::new(
+        std::sync::Arc::clone(&live),
+        state_db.clone(),
+        session.root(),
+        session.policy().mode(),
+    ));
+    let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(
+        session,
+        std::sync::Arc::clone(&runtime),
+        launch,
+    ));
     let state = std::sync::Arc::new(std::sync::Mutex::new(state));
     let direct = std::sync::Arc::new(crate::front::tui::direct_run::DirectDeps {
         runtime: std::sync::Arc::clone(&live),
@@ -80,6 +92,7 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         model,
         facts,
         direct,
+        jobs,
         commands,
         metrics,
         entered,

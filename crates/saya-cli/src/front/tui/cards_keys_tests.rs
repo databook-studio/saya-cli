@@ -218,24 +218,40 @@ fn v_opens_the_whole_body_in_the_model_and_the_arrows_move_it() {
 }
 
 #[test]
-fn enter_over_a_card_neither_answers_it_nor_sends_the_composer() {
+fn enter_over_a_card_never_answers_it_and_still_sends_the_composer() {
     let question = helper_question();
     let mut model = model_with(question);
     update(&mut model, Msg::Paste("count the orders".to_owned()));
 
     let cmds = update(&mut model, Msg::Key(key(KeyCode::Enter)));
 
-    assert!(
-        cmds.is_empty(),
-        "Enter over a card asks the runtime for nothing: {cmds:?}"
-    );
+    // Enter is the composer's key, never the card's: a call can land while the
+    // operator is typing the next line, and that line is what Enter sends.
     assert_eq!(
-        model.composer(),
-        "count the orders",
-        "the typed line stays where it was: Enter sent nothing"
+        cmds,
+        vec![Cmd::Send(String::from("count the orders"))],
+        "Enter sends the typed line and never answers the card"
     );
+    assert_eq!(model.composer(), "", "the line was sent, not swallowed");
     assert!(
         model.card().is_some(),
         "the card is still waiting for an answer that was not given"
     );
+}
+
+#[test]
+fn typing_over_a_card_reaches_the_composer_and_never_answers_it() {
+    // A job's consent is given by name as well as by key (`02` §8): the
+    // operator types `/job approve <id>` while the card asks.
+    let mut model = model_with(helper_question());
+    update(&mut model, Msg::Key(key(KeyCode::Char('/'))));
+    update(&mut model, Msg::Key(key(KeyCode::Char('j'))));
+    update(&mut model, Msg::Key(key(KeyCode::Char('o'))));
+    update(&mut model, Msg::Key(key(KeyCode::Char('b'))));
+    assert_eq!(
+        model.composer(),
+        "/job",
+        "the composer is where typing goes"
+    );
+    assert!(model.card().is_some(), "and the card is untouched");
 }

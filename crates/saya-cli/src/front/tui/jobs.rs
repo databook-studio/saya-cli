@@ -18,7 +18,9 @@ use super::model::Model;
 use super::model_overlay::Overlay;
 use super::msg::Cmd;
 use super::view::jobs::{CARD_FIRST, Drawer, Job, State, WAITING_FOR_OPERATOR};
+use crate::agent::tools::consent::Answer;
 use crate::chat::Question;
+use crate::interactive::tui::NO_PENDING;
 
 /// What a job's plumbing reports to the surface, on the queue's worker slot.
 #[derive(Debug, Clone, PartialEq)]
@@ -113,6 +115,41 @@ impl Model {
             }),
         }
     }
+}
+
+/// One job line, read on the surface's side (`02` §8). `/approve` and `/deny`
+/// are the consent card's own answers spelled out, so they are answered through
+/// that card — never around it — and every other verb is the job's own command.
+pub(crate) fn line(model: &mut Model, request: crate::slash::JobRequest, cmds: &mut Vec<Cmd>) {
+    match &request.command {
+        crate::cli::CodingCommand::Approve { id } => consent(model, id, Answer::Once, cmds),
+        crate::cli::CodingCommand::Deny { id } => consent(model, id, Answer::Deny, cmds),
+        _ => cmds.push(Cmd::Job(request)),
+    }
+}
+
+/// The consent one job asked for, answered by name: the same `Cmd::Answer` any
+/// card gives, so the job's own waiting end is resumed and the slot is handed
+/// on. A consent queued behind another card is never jumped — an approval is
+/// the operator's, and the card they are looking at comes first.
+fn consent(model: &mut Model, id: &str, answer: Answer, cmds: &mut Vec<Cmd>) {
+    let call = model
+        .jobs()
+        .rows
+        .iter()
+        .find(|row| row.id == id)
+        .and_then(|row| row.call);
+    let Some(call) = call else {
+        model.say(NO_PENDING);
+        return;
+    };
+    if model.card().map(|card| card.id) != Some(call) {
+        model.say(CARD_FIRST);
+        return;
+    }
+    model.take_card();
+    model.answered(call);
+    cmds.push(Cmd::Answer(call, answer));
 }
 
 /// One press on the drawer, carried out (`02` §8). Only `x`'s answered confirm

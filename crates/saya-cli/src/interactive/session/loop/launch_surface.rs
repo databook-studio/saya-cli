@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::front::tui::direct_run::DirectDeps;
+use crate::front::tui::jobs_open::JobDeps;
 use crate::front::tui::run_draw::Facts;
 use crate::front::tui::{LiveRuntime, Model, OpsDeps, Surface, channel, run as run_loop};
 use crate::interactive::session::line_chat::open_surface;
@@ -41,6 +42,8 @@ pub(super) struct SurfaceLaunch {
     pub(super) runtime: Arc<LiveRuntime>,
     /// The session's state, shared with the launch: a reload re-seeds it.
     pub(super) state: Arc<Mutex<SessionState>>,
+    /// What opening a job needs from the launch (`/start`, `02` §8).
+    pub(super) jobs: Arc<JobDeps>,
 }
 
 /// Runs the surface over the launch's parts, and nothing on the terminal once it
@@ -52,6 +55,7 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
         model,
         facts,
         direct,
+        jobs,
         commands,
         metrics,
         entered,
@@ -102,6 +106,7 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
             ops: opened.context(allow_bypass),
             deps,
             direct,
+            jobs,
             runtime: live,
             state,
             options,

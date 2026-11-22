@@ -146,6 +146,22 @@ pub(crate) fn spawn_input(
     })
 }
 
+/// How often the surface looks at the run's job panel: a job's worker reports
+/// on its own thread, so its words arrive at a pace of their own.
+pub(crate) const JOBS_PERIOD: Duration = Duration::from_millis(25);
+
+/// Looks at the run's job panel on a thread of its own, once per
+/// [`JOBS_PERIOD`]: a job's queues are `std::sync` ones and an idle surface
+/// paints nothing, so no frame of the loop would ever read them. Ends when the
+/// loop's queue closes — the surface is gone, and so is every job it owns.
+pub(crate) fn spawn_jobs(front: Arc<super::run_front::Forward>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        while front.pump() {
+            std::thread::sleep(JOBS_PERIOD);
+        }
+    })
+}
+
 /// Sends one [`Msg::Tick`] per `period` while `animating` is set, and nothing at
 /// all while it is not.
 ///

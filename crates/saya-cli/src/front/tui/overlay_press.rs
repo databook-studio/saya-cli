@@ -41,13 +41,16 @@ where
     }
 }
 
-/// Enter on the palette (`02` §11's `↵ insert`): the selected command takes the
-/// composer's place, so the line Enter then runs is the composer's own — the
-/// same line, and the same dispatch, an operator's typed command has.
+/// Enter on the palette (`02` §11's `↵ insert`): the line the operator ends up
+/// with is the one that runs — a chosen name and a typed one take one path, and
+/// one dispatch.
 ///
-/// A command the catalogue says needs an argument stops there: the composer
-/// holds `/<name> ` for the operator to finish. One that asks for nothing
-/// mandatory runs at once.
+/// A query that already names the command *and* carries the rest of the line —
+/// `/start --id pty-job …`, `/approve pty-job`, which is how a job's consent is
+/// given by name (`02` §8) — is that whole line, so it goes into the composer as
+/// it was typed and runs. A command the catalogue says needs an argument stops
+/// at `/<name> ` for the operator to finish; one that asks for nothing mandatory
+/// runs at once.
 ///
 /// A line the catalogue cannot name — a command whose arguments were typed into
 /// the pane with it — is the operator's own line, so it takes the composer too
@@ -56,27 +59,39 @@ where
 /// does not match it. A bare `/` with nothing after it stays in the pane, since
 /// there is no line to run.
 fn run(model: &mut Model, cmds: &mut Vec<Cmd>) {
-    let Some((query, selected)) = model.palette().map(|palette| {
-        let selected = palette
-            .selected_entry()
-            .map(|entry| (entry.name, entry.takes_arguments()));
-        (palette.query().to_owned(), selected)
+    let Some((typed, entry)) = model.palette().map(|palette| {
+        (
+            palette.query().to_owned(),
+            palette
+                .selected_entry()
+                .map(|entry| (entry.name, entry.takes_arguments())),
+        )
     }) else {
         return;
     };
-    if query.trim().is_empty() && selected.is_none() {
+    if typed.trim().is_empty() && entry.is_none() {
         return;
     }
     model.close_overlay();
     model.take_composer();
-    match selected {
-        Some((name, takes_arguments)) => {
-            model.insert(&format!("/{name} "));
-            if takes_arguments {
-                return;
-            }
-        }
-        None => model.insert(&format!("/{query}")),
+    let Some((name, takes_arguments)) = entry else {
+        // Nothing matched: the line is still the operator's, whole — and the
+        // parser answers a line it cannot read, in its own words.
+        model.insert(&format!("/{typed}"));
+        submit(model, cmds);
+        return;
+    };
+    if let Some(tail) = typed
+        .strip_prefix(name)
+        .filter(|tail| !tail.trim().is_empty())
+    {
+        model.insert(&format!("/{name}{tail}"));
+        submit(model, cmds);
+        return;
+    }
+    model.insert(&format!("/{name} "));
+    if takes_arguments {
+        return;
     }
     submit(model, cmds);
 }

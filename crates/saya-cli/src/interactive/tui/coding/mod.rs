@@ -1,3 +1,5 @@
+mod consent;
+mod pump;
 mod worker;
 use super::{transcript::BlockKind, types::App};
 use crate::agent::tools::shell_policy::ModeCell;
@@ -19,6 +21,16 @@ mod receipt_tests;
 /// stays available either way.
 pub(crate) const CONTROL_FULL: &str =
     "Job control mailbox is full or closed; cancellation remains available";
+/// What a surface says when an approval is asked for a job that has none
+/// pending: the panel's own words, so both surfaces refuse in one sentence.
+pub(crate) const NO_PENDING: &str = "No pending approval for that job";
+/// What a surface says when a job's worker went away without a result.
+pub(crate) const WORKER_GONE: &str =
+    "Job worker ended without a settled result; inspect recovery before continuing.";
+/// What a panel's worker has said between two looks, as a surface reads it.
+pub(crate) use pump::Said;
+/// Opening a job is today's worker, re-exported.
+pub(crate) use worker::spawn as spawn_job;
 
 pub(crate) enum CodingMessage {
     Activity(String),
@@ -38,13 +50,8 @@ pub(crate) enum CodingMessage {
 pub(crate) struct CodingPanel {
     id: Option<String>,
     rx: mpsc::Receiver<CodingMessage>,
-    /// Control receipts (queued / pause / continue / cancel outcomes and
-    /// pause acknowledgements) on their own bounded queue: `poll_coding`
-    /// drains activity first and pushes receipts last, so a receipt is the
-    /// newest block of its tick and the next frame — which runs before the
-    /// next drain — always paints it. Sharing the activity queue let a
-    /// same-tick burst of progress events scroll a receipt above the
-    /// viewport before any frame drew it.
+    /// Control receipts on their own bounded queue, drained after activity so a
+    /// receipt is the newest block of its tick and the next frame paints it.
     receipts: mpsc::Receiver<CodingMessage>,
     done: mpsc::Receiver<Result<String, String>>,
     commands: tokio::sync::mpsc::Sender<CodingCommand>,
@@ -52,17 +59,13 @@ pub(crate) struct CodingPanel {
     pending: Option<oneshot::Sender<bool>>,
     worker: Option<JoinHandle<()>>,
     active: bool,
-    /// The running job's one permission-mode cell, published by the worker the
-    /// moment it has built the job: the handle the session's switch states a
-    /// mode on, so Shift+Tab and `/mode` reach the job they are typed over. A
-    /// command that runs no root — `/job show`, an export — never fills it.
+    /// The running job's one permission-mode cell, published by the worker once
+    /// it has built the job: the handle a mode switch reaches it through.
     job_mode: Arc<OnceLock<ModeCell>>,
 }
 impl CodingPanel {
-    /// Cancels the job this id names, through the panel's own control path: the
-    /// running job's own token when it is the one, the control mailbox
-    /// otherwise. The old TUI's `App::coding_command` and the new surface's
-    /// drawer `x` both read this, so a job is cancelled one way.
+    /// Cancels the job this id names: its own token when it is the one, the
+    /// control mailbox otherwise. Both surfaces cancel a job through this.
     pub(crate) fn cancel(&mut self, id: &str) -> Result<(), &'static str> {
         if self.id.as_deref() == Some(id) {
             self.cancellation.cancel();
@@ -112,7 +115,7 @@ impl Drop for CodingPanel {
 }
 /// The receipt a start shows so the user can name the job later with
 /// `/job show <id>`. A non-start control names no new job.
-fn started_line(command: &CodingCommand) -> Option<String> {
+pub(crate) fn started_line(command: &CodingCommand) -> Option<String> {
     match command {
         CodingCommand::Start { id, .. } => Some(format!("Started job {id}")),
         _ => None,
@@ -139,13 +142,9 @@ impl App {
                 CodingCommand::Approve { id } | CodingCommand::Deny { id }
                     if panel.id.as_deref() == Some(id) =>
                 {
-                    panel
-                        .pending
-                        .take()
-                        .ok_or("No pending approval for that job")
-                        .map(|reply| {
-                            let _ = reply.send(matches!(&command, CodingCommand::Approve { .. }));
-                        })
+                    panel.pending.take().ok_or(NO_PENDING).map(|reply| {
+                        let _ = reply.send(matches!(&command, CodingCommand::Approve { .. }));
+                    })
                 }
                 CodingCommand::Cancel { id } => panel.cancel(id),
                 _ => panel.commands.try_send(command).map_err(|_| CONTROL_FULL),
@@ -230,7 +229,7 @@ impl App {
             }
             Err(mpsc::TryRecvError::Disconnected) if panel.active => {
                 panel.active = false;
-                self.transcript.push(BlockKind::Error,"Job worker ended without a settled result; inspect recovery before continuing.");
+                self.transcript.push(BlockKind::Error, WORKER_GONE);
             }
             Err(_) => {}
         }

@@ -12,6 +12,7 @@
 //! take two different routes.
 
 use super::direct;
+use super::jobs;
 use super::model::Model;
 use super::msg::Cmd;
 use crate::slash::param_redact::redact_param_values;
@@ -46,21 +47,28 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     // The displayed copy of the line — the transcript's echo — carries the same
     // redaction, so a value the ring never persists is never echoed either.
     let shown = redact_param_values(line);
-    // A line the surface answers itself: bare `/mode` opens the picker and bare
-    // `/job` opens the jobs drawer, neither of them sending anything
-    // (`02` §8). Both are read before the slash dispatch, because the crate's
-    // parser answers `/job` with its verbs — and bare `/job` has none.
-    if line == SLASH_MODE {
-        model.open_mode_picker();
-        return;
-    }
-    if line == SLASH_JOB {
-        model.open_jobs();
-        return;
-    }
-    if line == SLASH_HELP {
-        model.open_help();
-        return;
+    // A line the surface answers itself: bare `/mode` opens the picker, bare
+    // `/job` opens the jobs drawer and bare `/help` opens `02` §11's key sheet,
+    // none of them sending anything (`02` §8). All three are read before the
+    // slash dispatch, because the crate's parser answers `/job` with its verbs
+    // — and bare `/job` has none.
+    //
+    // A pane never opens over a card that is waiting for an answer: the card is
+    // what the operator is looking at, and the one line that acts on it is the
+    // job's consent by name (`02` §8).
+    if model.card().is_none() {
+        if line == SLASH_MODE {
+            model.open_mode_picker();
+            return;
+        }
+        if line == SLASH_JOB {
+            model.open_jobs();
+            return;
+        }
+        if line == SLASH_HELP {
+            model.open_help();
+            return;
+        }
     }
     // A line the surface answers itself — `/sql`, `/export`, `/chart`,
     // `/investigation` — is one command, never a turn (`03` §4.1). Every other
@@ -84,15 +92,22 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
         direct::Read::Turn => {}
     }
     // A command the surface does not answer itself is the session's own
-    // operation, read by the chat layer's one table (A9) — never a turn. A
-    // `Coding` command and `/mode` are the exceptions: both are the session's
-    // own lines, read (and dispatched) by the run the surface is composed over
-    // (`/job show <id>` is T15's proved case), so they stay turns here.
-    if let Ok(Some(command)) = parse_slash_command(line)
-        && !matches!(command, SlashCommand::Coding(_) | SlashCommand::Mode(_))
-    {
-        cmds.push(Cmd::Op(command));
-        return;
+    // operation, read by the chat layer's one table (A9) — never a turn. A job
+    // line is the job's own surface instead: `/start` proposes a job whose
+    // consent is a card on this surface, the verbs steer the job that runs, and
+    // `/approve`/`/deny` answer that card by name (`02` §8). `/mode` stays a
+    // turn here: it is read (and dispatched) by the run the surface is composed
+    // over.
+    match parse_slash_command(line) {
+        Ok(Some(SlashCommand::Coding(request))) => {
+            jobs::line(model, request, cmds);
+            return;
+        }
+        Ok(Some(command)) if !matches!(command, SlashCommand::Mode(_)) => {
+            cmds.push(Cmd::Op(command));
+            return;
+        }
+        _ => {}
     }
     if model.is_busy() {
         if model.queue(text).is_some() {

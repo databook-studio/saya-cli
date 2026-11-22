@@ -74,6 +74,12 @@ mod worker_permits;
 mod worker_permits_tests;
 pub(crate) mod wrap;
 
+/// What both surfaces say to a quit while a job of the session still runs: a
+/// job is a worker this session owns, and a quit would orphan it — so the
+/// operator cancels it, or waits for it to settle.
+pub(crate) const JOB_RUNNING: &str =
+    "A job is still running. Use `/job cancel <job-id>`, then wait for settlement before quitting.";
+
 #[allow(unused_imports)]
 pub(crate) use session::{TrustOutcome, TuiSession, run};
 
@@ -151,10 +157,14 @@ pub(crate) use dispatch::parse_chart_args;
 // The new surface's jobs drawer reads today's job plumbing rather than a second
 // copy of it: the panel a job runs under and the messages its worker queues —
 // its activity, and the calls it puts to the operator, which the drawer lists
-// and the card answers. A build of this module alone references neither, so the
-// re-exports read as unused.
+// and the card answers — plus the look that reads them and the worker itself,
+// which is how `/start` opens a job here. A build of this module alone
+// references none of them, so the re-exports read as unused.
 #[allow(unused_imports)]
-pub(crate) use coding::{CodingMessage, CodingPanel};
+pub(crate) use coding::{
+    CONTROL_FULL, CodingMessage, CodingPanel, NO_PENDING, Said, WORKER_GONE, spawn_job,
+    started_line,
+};
 
 // `/investigation save` keeps the TUI's save-without-SQL fill — the latest
 // query the surface shows, on the connection that ran it — as one function.

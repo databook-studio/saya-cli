@@ -30,6 +30,7 @@ mod focus_text;
 pub(crate) mod history_keys;
 pub(crate) mod jobs;
 mod jobs_desk;
+pub(crate) mod jobs_open;
 pub(crate) mod keys;
 pub(crate) mod live;
 pub(crate) mod model;
@@ -78,6 +79,8 @@ pub(crate) use focus::EntryPath;
 pub(crate) use jobs::{JobReport, press as jobs_press};
 #[allow(unused_imports)]
 pub(crate) use jobs_desk::{JobDesk, NO_SUCH_JOB};
+#[allow(unused_imports)]
+pub(crate) use jobs_open::JobDeps;
 #[allow(unused_imports)]
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
@@ -158,6 +161,10 @@ mod update_palette_tests;
 mod update_help_tests;
 
 #[cfg(test)]
+#[path = "update_card_pane_tests.rs"]
+mod update_card_pane_tests;
+
+#[cfg(test)]
 #[path = "update_cycle_tests.rs"]
 mod update_cycle_tests;
 
@@ -188,6 +195,10 @@ mod jobs_run_tests;
 #[cfg(test)]
 #[path = "jobs_desk_tests.rs"]
 mod jobs_desk_tests;
+
+#[cfg(test)]
+#[path = "jobs_open_tests.rs"]
+mod jobs_open_tests;
 
 #[cfg(test)]
 #[path = "run_fixture.rs"]

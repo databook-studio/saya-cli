@@ -16,6 +16,11 @@ use crate::cli::GlobalOptions;
 use crate::interactive::tui::{SetupHandoff, TerminalModes, run_guided_setup};
 use crate::setup::flow_options::FlowOptions;
 
+/// What `/setup` says when the run is still working: the wizard takes the whole
+/// screen, and a streaming turn behind it would be drawn under the wizard.
+pub(crate) const WHILE_BUSY: &str =
+    "the run is still working: cancel it before the guided setup takes the terminal";
+
 /// Runs the guided setup over the real stdin/stdout with the terminal released,
 /// built from the launch's options exactly as the old surface built it.
 pub(crate) fn run(

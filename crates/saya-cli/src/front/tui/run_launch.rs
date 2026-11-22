@@ -17,6 +17,7 @@ use saya_agent::{AgentMetric, AgentMetricOutcome, AgentMetricPhase};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use super::direct_run::DirectDeps;
+use super::jobs_open::JobDeps;
 use super::live::LiveRuntime;
 use super::model::Model;
 use super::msg::Msg;
@@ -53,6 +54,8 @@ pub(crate) struct Surface {
     pub(crate) deps: Arc<OpsDeps>,
     /// What a direct source's commands need from the launch.
     pub(crate) direct: Arc<DirectDeps>,
+    /// What opening a job needs from the launch (`/start`, `02` §8).
+    pub(crate) jobs: Arc<JobDeps>,
     /// The configuration in force, which `/reload` and the post-setup apply
     /// swap. The same handle as `direct.runtime`'s.
     pub(crate) runtime: Arc<LiveRuntime>,
@@ -82,6 +85,7 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         ops,
         deps,
         direct,
+        jobs,
         runtime,
         state,
         options,
@@ -91,13 +95,14 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
     } = surface;
     let port = Arc::new(SessionPort::new(PortParts {
         session,
-        front,
+        front: Arc::clone(&front),
         ops,
         direct,
         deps,
         options,
         runtime,
         state,
+        jobs,
     }));
     let input = Arc::new(InputGate::new());
     let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port)
@@ -105,6 +110,9 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         .with_metrics(metrics, entered)
         .with_input(Arc::clone(&input));
     run_input::spawn_input(msgs.clone(), input);
+    // A job's worker reports on queues of its own, so the panel is looked at on
+    // a thread of its own: an idle surface paints no frame to read them on.
+    run_input::spawn_jobs(Arc::clone(&front));
     run_input::spawn_ticker(runtime.animating_flag(), msgs, super::view::TICK);
     runtime.run().await
 }

@@ -1,12 +1,11 @@
 //! The real port: the session's API, the front's pending asks, and the launch's
-//! own configuration and state — what each command the surface decides on is
-//! actually performed on.
+//! own configuration and state — what each command is actually performed on.
 //!
 //! It is a second file because it is a second concern: [`super::run_cmd`] states
 //! what a performer must offer, and this is the only implementation of it a run
 //! uses. Everything here is today's code called, never re-written: a turn runs
 //! through the chat session's own `send`, a direct command through
-//! [`super::direct_run`], a reload through the crate's reload core.
+//! [`super::direct_run`], and a reload through the crate's reload core.
 
 use std::io;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -16,6 +15,7 @@ use saya_agent::PermissionMode;
 use super::direct::Direct;
 use super::direct_run::{DirectDeps, perform as perform_direct};
 use super::direct_trust;
+use super::jobs_open::JobDeps;
 use super::live::LiveRuntime;
 use super::msg::Worker;
 use super::ops::{self, Asked, OpsDeps};
@@ -33,15 +33,10 @@ use crate::interactive::tui::{
 };
 use crate::slash::SlashCommand;
 
-/// What `/setup` says when the run is still working: the wizard takes the whole
-/// screen, and a streaming turn behind it would be drawn under the wizard.
-pub(crate) const SETUP_WHILE_BUSY: &str =
-    "the run is still working: cancel it before the guided setup takes the terminal";
-
 /// Everything the real port is built from: the session's API, the front's
 /// pending asks, the chat layer's one author of a mode switch, what the launch's
-/// direct commands need, the launch's own options, and the configuration and
-/// session state a reload moves.
+/// direct commands need, the launch's own options, the configuration and
+/// session state a reload moves, and what opening a job needs.
 pub(crate) struct PortParts {
     pub(crate) session: Arc<ChatSession>,
     pub(crate) front: Arc<Forward>,
@@ -51,12 +46,14 @@ pub(crate) struct PortParts {
     pub(crate) options: GlobalOptions,
     pub(crate) runtime: Arc<LiveRuntime>,
     pub(crate) state: Arc<Mutex<SessionState>>,
+    /// What opening a job needs from the launch (`/start`, `02` §8).
+    pub(crate) jobs: Arc<JobDeps>,
 }
 
 /// The real port.
 pub(crate) struct SessionPort {
     session: Arc<ChatSession>,
-    front: Arc<Forward>,
+    pub(super) front: Arc<Forward>,
     ops: OpsContext,
     direct: Arc<DirectDeps>,
     deps: Arc<OpsDeps>,
@@ -68,6 +65,11 @@ pub(crate) struct SessionPort {
     /// The session's state, shared with the launch: a reload re-seeds it, and
     /// the record the launch saves afterwards carries the re-seed.
     state: Arc<Mutex<SessionState>>,
+    /// What opening a job needs from the launch (`/start`, `02` §8).
+    pub(super) jobs: Arc<JobDeps>,
+    /// The one-release notes the job spellings have already said in this
+    /// session (`chat::ops_job`).
+    pub(super) notes: Mutex<crate::chat::JobNotes>,
 }
 
 impl SessionPort {
@@ -82,6 +84,7 @@ impl SessionPort {
             options,
             runtime,
             state,
+            jobs,
         } = parts;
         Self {
             session,
@@ -92,6 +95,8 @@ impl SessionPort {
             options,
             runtime,
             state,
+            jobs,
+            notes: Mutex::new(crate::chat::JobNotes::default()),
         }
     }
 
@@ -205,6 +210,12 @@ impl CmdPort for SessionPort {
         self.front.cancel_job(&id);
     }
 
+    fn job(&self, request: crate::slash::JobRequest) {
+        // The verb and its one-release note are the job surface's own code
+        // (`super::jobs_open`), stated beside the worker it opens.
+        self.perform_job(request);
+    }
+
     fn op(&self, command: SlashCommand) {
         // The chat layer's table answers, and the surface says what it said: a
         // refusal is the operator's business, `/exit` asks the loop to leave,
@@ -226,7 +237,7 @@ impl CmdPort for SessionPort {
         // streaming behind it would be painted under the wizard. A run in
         // flight is the operator's to cancel, and this says so.
         if self.session.state() == Phase::Busy {
-            self.front.say(SETUP_WHILE_BUSY);
+            self.front.say(setup::WHILE_BUSY);
             return Ok(());
         }
         let outcome = setup::run(modes, &self.options);

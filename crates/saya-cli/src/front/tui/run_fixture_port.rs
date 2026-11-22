@@ -57,6 +57,8 @@ pub(crate) enum Call {
     Trust(TrustResolution),
     /// The job this id names, cancelled through the job plumbing.
     CancelJob(String),
+    /// One job verb of this run (`02` §8).
+    Job(crate::slash::JobRequest),
     /// One line the surface does not answer itself: a session operation.
     Op(crate::slash::SlashCommand),
     /// The configuration re-read (`/reload`, and the apply a closed guided setup
@@ -135,6 +137,10 @@ impl CmdPort for FakePort {
 
     fn cancel_job(&self, id: String) {
         self.record(Call::CancelJob(id));
+    }
+
+    fn job(&self, request: crate::slash::JobRequest) {
+        self.record(Call::Job(request));
     }
 
     fn op(&self, command: crate::slash::SlashCommand) {

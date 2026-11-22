@@ -93,6 +93,11 @@ pub(crate) enum Cmd {
     /// Cancel the job this id names, through today's job plumbing (`02` §8's
     /// `x`, once the confirm has been answered).
     CancelJob(String),
+    /// One job verb of this run (`02` §8): `/start` opens the run's one job
+    /// through today's worker, and the rest steer the job it opened. The
+    /// consent a start asks for is the card's own question — `/approve` and
+    /// `/deny` are that card's answers, never a verb of their own.
+    Job(crate::slash::JobRequest),
     /// One line the surface does not answer itself: a session operation, which
     /// the chat layer's own table names ([`super::ops`]).
     Op(crate::slash::SlashCommand),
