@@ -84,20 +84,28 @@ pub(super) struct Composed {
 
 /// An in-place session with no database configured.
 pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, false, None, None).await
+    build(case, endpoint, false, None, None, None).await
 }
 
 /// The same, with one seeded SQLite database named `primary`: a chat that has a
 /// database to read and to ask about.
 pub(super) async fn in_place_with_database(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, true, None, None).await
+    build(case, endpoint, true, None, None, None).await
 }
 
 /// The same, with a `[web_search]` backend configured: the session's run holds
 /// the whole web lane, because the configuration — not a URL in the message —
 /// is what advertises the web tools.
 pub(super) async fn in_place_with_web_search(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, false, None, Some("https://search.example")).await
+    build(
+        case,
+        endpoint,
+        false,
+        None,
+        Some("https://search.example"),
+        None,
+    )
+    .await
 }
 
 /// The same, with `memory` as the session's resolved memory mode: a chat whose
@@ -107,7 +115,18 @@ pub(super) async fn in_place_with_memory(
     endpoint: &str,
     memory: MemoryMode,
 ) -> Fixture {
-    build(case, endpoint, true, Some(memory), None).await
+    build(case, endpoint, true, Some(memory), None, None).await
+}
+
+/// The same, with the run's context byte budget stated by the test: the one
+/// bound the untrusted-context projection reads, so a test can make the
+/// projection outgrow it and see what the reserve keeps for history.
+pub(super) async fn in_place_with_budget(
+    case: &str,
+    endpoint: &str,
+    context_byte_budget: usize,
+) -> Fixture {
+    build(case, endpoint, false, None, None, Some(context_byte_budget)).await
 }
 
 /// The in-place folder's name inside the throwaway root.
@@ -119,6 +138,7 @@ async fn build(
     database: bool,
     memory: Option<MemoryMode>,
     web_search: Option<&str>,
+    byte_budget: Option<usize>,
 ) -> Fixture {
     use std::os::unix::fs::PermissionsExt;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -144,6 +164,9 @@ async fn build(
         runtime.resolved.web_search.backend = Some(saya_config::WebSearchBackend::Searxng {
             endpoint: endpoint.into(),
         });
+    }
+    if let Some(budget) = byte_budget {
+        runtime.resolved.ai.context_byte_budget = budget;
     }
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.model = "composition".into();

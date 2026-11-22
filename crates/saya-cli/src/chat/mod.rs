@@ -106,6 +106,14 @@ mod helpers_transcript_tests;
 mod helpers_cancel_tests;
 
 #[cfg(all(test, unix))]
+#[path = "turn_metrics_tests.rs"]
+mod turn_metrics_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_context_tests.rs"]
+mod compose_context_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_tests.rs"]
 mod compose_tests;
 
