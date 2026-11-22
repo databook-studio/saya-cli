@@ -2,7 +2,7 @@
 
 #[path = "candidate_integration/apply.rs"]
 mod apply;
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 #[path = "candidate_integration/apply_support.rs"]
 mod apply_support;
 #[path = "candidate_integration/candidate.rs"]
@@ -17,11 +17,11 @@ mod proof;
 mod support_active;
 
 #[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 #[path = "managed_worktree_creation/create_support.rs"]
 mod create_support;
 
 #[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 #[path = "worktree_inventory_support.rs"]
 mod support;

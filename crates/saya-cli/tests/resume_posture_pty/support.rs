@@ -6,7 +6,7 @@
 //! session's save looks like. A case states only the launch and the words it
 //! waits for.
 
-#![allow(dead_code)]
+#![allow(dead_code)] // shared test harness: this target uses part of it
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use saya_cli::SessionState;

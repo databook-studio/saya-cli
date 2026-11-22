@@ -10,7 +10,7 @@ use serde_json::Value;
 mod extensions;
 #[cfg(unix)]
 #[path = "coding_capabilities/provider.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod provider;
 #[cfg(unix)]
 #[allow(dead_code)] // the Linux counterpart uses only part of the fixture
@@ -22,7 +22,7 @@ mod sqlite_fixture;
 mod stage2_support;
 #[cfg(unix)]
 #[path = "coding_application/support.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod support;
 #[cfg(unix)]
 impl provider::Provider {

@@ -18,16 +18,16 @@ use std::time::Duration;
 // The three context-efficiency modules and the REPL harness are shared by
 // path; this binary uses only part of each, so silence the unused remainder.
 #[path = "coding_context_efficiency/fixture.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod fixture;
 #[path = "mvp/session_question_budget/harness.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod harness;
 #[path = "coding_context_efficiency/provider.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod provider;
 #[path = "coding_context_efficiency/script.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod script;
 
 #[path = "run_core_parity/baseline.rs"]
@@ -45,7 +45,7 @@ mod matrix;
 #[path = "run_core_parity/no_database.rs"]
 mod no_database;
 #[path = "mvp/db_goldens/normalise.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod normalise;
 
 /// The scripted provider's own lifetime; the shared provider module reads it
