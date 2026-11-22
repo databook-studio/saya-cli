@@ -185,8 +185,9 @@ not apply here. Under bypass, a hostile workspace file is effectively
 arbitrary code execution as the user. The deny list bounds the direct ask
 only — a denied `curl` does not stop an allowed `make` from invoking curl,
 nor a renamed copy (`mycurl`, a symlink or copy of curl) asked under its own
-spelling: deny matches the exact program name named in the ask, never content
-or resolved identity.
+spelling: deny matches the program the ask runs, reading through
+`command`/`builtin`/`exec`, `env` with options, a path's basename, and a
+shell's `-c` script, never the content or the resolved identity of what runs.
 
 `connection schema PROFILE` and interactive `/schema` authenticate and fetch
 live metadata before updating the local schema cache. If a later live attempt
@@ -225,7 +226,11 @@ live here.
   program names: a user-stated refusal evaluated before every grant, every
   approval prompt, and bypass, at every session door that execs a program by
   name — the `run_command` door, and the `shell` tool, whose copy of the list
-  is a deny rule in the `[permissions]` set it decides first. Refusal-only:
+  is a deny rule in the `[permissions]` set it decides first. The rule reads
+  the program a command really runs, so a `command`/`builtin`/`exec` prefix,
+  an `env` with options, a path (`./curl`, `/usr/bin/curl`), and a shell's
+  `-c` script do not name it differently; a script past the recursion bound,
+  or one that cannot be read, is refused rather than allowed. Refusal-only:
   it composes nothing. Session only; `saya ask` and `saya run` refuse it.
 - `--allow-command <prefix>` (repeatable) allows a command prefix on the host
   without asking: matched word by word, so `cargo test` covers

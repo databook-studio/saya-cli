@@ -26,12 +26,12 @@ impl Operator for AlwaysApprove {
     }
 }
 
-fn approving_prompt() -> Prompt {
+pub(super) fn approving_prompt() -> Prompt {
     crate::agent::tools::shell_policy::prompt(Arc::new(AlwaysApprove), Caller::Session)
 }
 
 /// The rules a launch stating `--deny <programs>` hands the session's shell.
-fn launched(programs: &[&str]) -> CommandRules {
+pub(super) fn launched(programs: &[&str]) -> CommandRules {
     let deny = SessionDeny::from_names(programs.iter().map(|program| (*program).to_owned()))
         .expect("a bare name builds");
     deny::shell_rules(&CommandRules::default(), &deny).expect("the deny list converts")
@@ -39,7 +39,11 @@ fn launched(programs: &[&str]) -> CommandRules {
 
 /// The session's shell policy over those rules, with a sandbox lane present so
 /// the asking modes have somewhere to reroute a call they cannot refuse.
-fn shell(mode: ApprovalPolicy, prompt: Option<Prompt>, rules: &CommandRules) -> ShellPolicy {
+pub(super) fn shell(
+    mode: ApprovalPolicy,
+    prompt: Option<Prompt>,
+    rules: &CommandRules,
+) -> ShellPolicy {
     ShellPolicy::new(mode, prompt, true, rules.clone(), None)
 }
 

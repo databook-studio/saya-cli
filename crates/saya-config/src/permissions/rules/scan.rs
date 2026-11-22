@@ -1,6 +1,5 @@
 //! Reading a shell command string: segmentation, tokens, substitutions, and
-//! the leading `cd`/assignment normalization the matcher applies before it
-//! compares prefixes.
+//! the leading `cd` the matcher strips before it compares prefixes.
 //!
 //! The scanner is deliberately textual. It expands nothing; it records the
 //! facts that make a stated prefix untrue (a substitution, an unsafe redirect,
@@ -197,50 +196,4 @@ fn cd_within(dir: &str, workspace: Option<&Path>) -> bool {
             .unwrap_or(false);
     }
     true
-}
-
-/// Strips the leading shapes a program can hide behind for the deny side. The
-/// first non-assignment token is the program; a segment made only of
-/// assignments matches nothing. A bare `env` is skipped the same way — it sets
-/// the environment and execs the rest — but only when a token follows it, since
-/// `env` alone is a program in its own right. A token that is only the
-/// characters opening a subshell or a command substitution (`(`, `$(`, a
-/// backtick) names no program and is skipped, and the program token then loses
-/// those characters, so `$(curl x)` and `$( curl x )` both name `curl` exactly
-/// as `curl x` does. Nothing else is normalized: `command rm` and `./rm` still
-/// name no bare program.
-pub(super) fn strip_wrappers(tokens: &[String]) -> Vec<String> {
-    let mut start = 0;
-    while let Some(token) = tokens.get(start) {
-        let hides_a_program = is_env_assignment(token)
-            || (token == "env" && start + 1 < tokens.len())
-            || is_opener_only(token);
-        if !hides_a_program {
-            break;
-        }
-        start += 1;
-    }
-    let mut rest = tokens[start..].to_vec();
-    if let Some(program) = rest.first_mut() {
-        *program = program.trim_start_matches(['(', '$', '`']).to_owned();
-    }
-    rest
-}
-
-/// Whether the token is nothing but the characters that open a subshell or a
-/// command substitution, which name no program of their own.
-fn is_opener_only(token: &str) -> bool {
-    !token.is_empty()
-        && token
-            .chars()
-            .all(|character| matches!(character, '(' | '$' | '`'))
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

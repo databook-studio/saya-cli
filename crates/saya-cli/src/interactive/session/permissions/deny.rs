@@ -18,9 +18,10 @@
 //!
 //! Deny bounds only the direct ask: a denied `curl` does not stop an allowed
 //! `make` from invoking curl, nor a renamed copy (`mycurl`, a symlink or copy
-//! of curl) asked under its own spelling — deny matches the exact program
-//! name named in the ask, never content or resolved identity. The refusal
-//! says so, or the list becomes its own comforting fiction.
+//! of curl) asked under its own spelling — deny matches the program the ask
+//! names, reading through the wrappers, options, assignments, paths, and shell
+//! scripts that name that same program, never the content or the resolved
+//! identity of what finally runs.
 
 use std::collections::BTreeSet;
 

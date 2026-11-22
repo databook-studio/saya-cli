@@ -16,12 +16,15 @@
 //!   redirect to `/dev/null` and an fd duplication (`2>&1`, `>&2`). Input
 //!   redirection from a file stays covered.
 //! - A deny rule is evaluated first and applies in every mode. It is the one
-//!   statement the rules cannot widen, and it matches an absolute program by
-//!   its basename (`/bin/rm` matches deny `rm`).
+//!   statement the rules cannot widen, and it reads the program a command
+//!   really runs: a path by its basename (`/bin/rm`, `./rm`), through a
+//!   `command`/`builtin`/`exec` prefix, through an `env` with any of its
+//!   options, and into a shell's `-c` script, bounded in depth. A command it
+//!   cannot read, mentioning a denied program, is refused rather than allowed.
 //! - A leading `cd <dir> &&` (a directory inside the workspace, or a relative
 //!   one with no `..`, `$`, or `~`) is stripped for matching only. On the deny
 //!   side, and only there, the shapes a program can hide behind are stripped
-//!   too: leading `NAME=value` assignments, a bare `env`, and the openers of a
+//!   too: leading `NAME=value` assignments, wrappers, and the openers of a
 //!   subshell or a command substitution (`(`, `$(`, a backtick) on the program
 //!   token itself. On the allow side an assignment or `env` makes the segment
 //!   match nothing, because it can change what the program does.
@@ -32,9 +35,11 @@
 
 use std::{fmt, path::Path};
 
+mod resolve;
 mod scan;
 
-use scan::{scan, strip_leading_cd, strip_wrappers, tokens};
+use resolve::mentions_program;
+use scan::{scan, strip_leading_cd, tokens};
 
 /// At most this many rules per list (`allow`, `deny`).
 pub const MAX_COMMAND_RULES: usize = 64;
@@ -81,6 +86,12 @@ impl CommandRule {
         &self.text
     }
 
+    /// The program a rule names — its first token — for the fail-closed reading
+    /// of a command whose script the deny side could not read.
+    fn program(&self) -> &str {
+        self.tokens.first().map(String::as_str).unwrap_or_default()
+    }
+
     fn matches(&self, segment: &[String]) -> bool {
         segment.len() >= self.tokens.len()
             && self
@@ -90,9 +101,9 @@ impl CommandRule {
                 .all(|(rule, token)| rule == token)
     }
 
-    /// Deny matching, which additionally names an absolute program by its
-    /// basename: `/bin/rm -rf x` is denied by `rm`. `command rm` and `\rm`
-    /// stay different prefixes — the rule is a prefix, not a sandbox.
+    /// Deny matching, which additionally names a program by the basename of the
+    /// path it arrives as: `/bin/rm -rf x` and `./rm` are denied by `rm`.
+    /// `\rm` stays a different prefix — the rule is a prefix, not a sandbox.
     fn matches_deny(&self, segment: &[String]) -> bool {
         let Some((first, rest)) = segment.split_first() else {
             return false;
@@ -100,10 +111,7 @@ impl CommandRule {
         let Some((rule_first, rule_rest)) = self.tokens.split_first() else {
             return false;
         };
-        let first_matches = rule_first == first
-            || (is_absolute_program(first)
-                && Path::new(first).file_name().and_then(|name| name.to_str())
-                    == Some(rule_first.as_str()));
+        let first_matches = rule_first == first || names_by_path(first, rule_first);
         first_matches
             && rest.len() >= rule_rest.len()
             && rule_rest
@@ -165,17 +173,32 @@ pub fn decide<'a>(
     let scan = scan(command);
     let mut segments = scan.segments;
     strip_leading_cd(&mut segments, workspace);
-    // The two sides read the segment differently. Deny strips a leading
-    // assignment so `FOO=1 rm` cannot hide behind one. Allow does not: an
-    // assignment can change what the program does, so it is not covered by
-    // the prefix the operator stated.
+    // The two sides read the segment differently. Deny resolves the program a
+    // command really runs (wrappers, options, assignments, a shell's script);
+    // allow reads the tokens as written, because an assignment or a wrapper can
+    // change what the program does, so it is not covered by the prefix the
+    // operator stated.
     let raw: Vec<Vec<String>> = segments.iter().map(|segment| tokens(segment)).collect();
-    let deny: Vec<Vec<String>> = raw.iter().map(|tokens| strip_wrappers(tokens)).collect();
+    let deny = resolve::read(&segments);
     // Deny first, and regardless of substitution or readability: the refusal
     // does not depend on the allow side being parseable.
     for rule in &rules.deny {
-        if deny.iter().any(|segment| rule.matches_deny(segment)) {
+        if deny
+            .segments
+            .iter()
+            .any(|segment| rule.matches_deny(segment))
+        {
             return CommandDecision::Deny(rule);
+        }
+    }
+    // Fail closed: where a script was past the recursion bound, or could not be
+    // read, a command that mentions a denied program anywhere is refused —
+    // never allowed because the deny side ran out of ways to look.
+    if deny.undecided {
+        for rule in &rules.deny {
+            if mentions_program(command, rule.program()) {
+                return CommandDecision::Deny(rule);
+            }
         }
     }
     if scan.substitution || scan.unbalanced || scan.unsafe_redirect {
@@ -193,12 +216,23 @@ pub fn decide<'a>(
     CommandDecision::Unmatched
 }
 
-/// Whether `program` names a path rather than a bare name. A leading `/` is
-/// absolute in the shell command language on every host, even where the host's
-/// path syntax does not call it so: the deny side matches `/bin/rm` by its
-/// basename wherever the rules are read.
-fn is_absolute_program(program: &str) -> bool {
-    Path::new(program).is_absolute() || program.starts_with('/')
+/// Whether `program` names `name` by the basename of the path it is written
+/// as: what a path runs is its last component, so `/bin/rm`, `./rm`, and
+/// `bin/../rm` all name `rm`. A bare `rmx` names neither.
+fn names_by_path(program: &str, name: &str) -> bool {
+    is_path(program)
+        && Path::new(program)
+            .file_name()
+            .and_then(|file| file.to_str())
+            == Some(name)
+}
+
+/// Whether `program` is written as a path. A leading `/` is absolute in the
+/// shell command language on every host, even where the host's path syntax does
+/// not call it so: the deny side matches `/bin/rm` by its basename wherever the
+/// rules are read.
+fn is_path(program: &str) -> bool {
+    Path::new(program).is_absolute() || program.contains('/')
 }
 
 #[cfg(test)]
