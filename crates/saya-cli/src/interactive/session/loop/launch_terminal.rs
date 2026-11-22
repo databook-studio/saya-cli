@@ -29,7 +29,29 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         format,
     );
     let model = surface_model(&state, fresh);
-    let facts = surface_facts(&state, tui_trust_pending);
+    // `NO_COLOR` is read here, once, and handed to the pure resolver: any
+    // non-empty value selects the no-colour column (02 §12 rule 4, no-color.org),
+    // and nothing later in the process reads it again.
+    let colour_env: std::collections::BTreeMap<String, String> =
+        std::env::var(crate::front::tui::theme::NO_COLOR)
+            .ok()
+            .map(|value| {
+                [(
+                    String::from(crate::front::tui::theme::NO_COLOR),
+                    value,
+                )]
+                .into_iter()
+                .collect()
+            })
+            .unwrap_or_default();
+    let facts = surface_facts(
+        &state,
+        tui_trust_pending,
+        crate::front::tui::theme::scheme(
+            &colour_env,
+            crate::front::tui::theme::Scheme::Dark,
+        ),
+    );
     let commands = state.user_commands.clone();
     let metrics = session.session_metrics();
     let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(

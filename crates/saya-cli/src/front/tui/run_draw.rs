@@ -23,7 +23,7 @@ use ratatui::widgets::Paragraph;
 use super::model::Model;
 use super::run_draw_card;
 use super::run_draw_overlay;
-use super::theme::{Charset, Scheme, style};
+use super::theme::{Charset, Scheme, ascii_line, style};
 use super::view::{
     ActivityState, Database, EmptyFacts, Row, StatusFacts, TranscriptFacts, empty_rows,
     rows as composer_rows, status_line, transcript_rows,
@@ -93,25 +93,36 @@ pub(crate) struct Regions {
 pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
     let regions = regions(model, facts, frame.area());
     let transcript = transcript(model, facts, regions.transcript);
-    paint(frame, regions.transcript, transcript);
+    paint(frame, regions.transcript, transcript, facts.charset);
     // A pane that is open takes the transcript's rows: nothing else on the
     // frame gives way, so the operator keeps the mode in force and their draft.
     if let Some((area, rows)) =
         run_draw_overlay::overlay(model, facts, regions.transcript, frame.area().width)
     {
-        paint(frame, area, rows);
+        paint(frame, area, rows, facts.charset);
     }
     let width = regions.status.width as usize;
     paint(
         frame,
         regions.status,
         vec![status_line(&status_facts(model, facts), width)],
+        facts.charset,
     );
     if let (Some(area), true) = (regions.card, model.card().is_some()) {
-        paint(frame, area, run_draw_card::card(model, facts, area.height));
+        paint(
+            frame,
+            area,
+            run_draw_card::card(model, facts, area.height, area.width),
+            facts.charset,
+        );
     }
     let width = regions.composer.width as usize;
-    paint(frame, regions.composer, composer(model, facts, width));
+    paint(
+        frame,
+        regions.composer,
+        composer(model, facts, width),
+        facts.charset,
+    );
 }
 
 /// The grid's regions for `area`, in the order the panes sit.
@@ -153,8 +164,15 @@ fn column(area: Rect) -> Rect {
     middle
 }
 
-/// Paints one region's rows, clipping anything longer than the region.
-fn paint(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+/// Paints one region's rows, clipping anything longer than the region. Under
+/// `--ascii` every row is turned seven-bit first, so a glyph no pane owns — a
+/// table's border, a copy `·`, a `…` — cannot reach a terminal that cannot
+/// draw it.
+fn paint(frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>, charset: Charset) {
+    let lines = match charset {
+        Charset::Utf8 => lines,
+        Charset::Ascii => lines.into_iter().map(ascii_line).collect(),
+    };
     frame.render_widget(Paragraph::new(lines), area);
 }
 

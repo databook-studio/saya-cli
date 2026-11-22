@@ -146,9 +146,13 @@ pub(super) fn surface_model(state: &crate::interactive::session::state::SessionS
 
 /// The facts every frame is painted with: the workspace this session bound, the
 /// posture its launch derived — the same view the old status bar reads, so the
-/// two surfaces state it in one place — and the trust question when it is still
-/// open.
-pub(super) fn surface_facts(state: &crate::interactive::session::state::SessionState, trust_pending: bool) -> Facts {
+/// two surfaces state it in one place — the trust question when it is still
+/// open, and the token column the launch resolved once from its environment.
+pub(super) fn surface_facts(
+    state: &crate::interactive::session::state::SessionState,
+    trust_pending: bool,
+    scheme: crate::front::tui::theme::Scheme,
+) -> Facts {
     let view = crate::interactive::session_prompt::status_segments(state);
     Facts {
         untrusted: trust_pending,
@@ -157,6 +161,7 @@ pub(super) fn surface_facts(state: &crate::interactive::session::state::SessionS
         host_unsandboxed: view.host_composed,
         sharing: view.sharing_on,
         deny: view.denied_programs,
+        scheme,
         ..Facts::default()
     }
 }

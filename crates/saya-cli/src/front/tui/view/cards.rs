@@ -21,6 +21,7 @@ use crate::agent::tools::coding::plan_gate;
 use crate::agent::tools::consent::Caller;
 use crate::chat::Question;
 use crate::interactive::session::permissions::mode::name;
+use crate::interactive::tui::wrap::cell_width;
 
 /// The most body rows a docked card shows at the design's 80x24: the card's
 /// chrome — title, why it is asked, keys and borders — takes the rows above
@@ -54,6 +55,11 @@ pub(crate) struct Card {
     /// The answer field of a clarification card, as its placeholder.
     field: Option<String>,
     keys: String,
+    /// The keys row's shorter spellings, for a terminal narrower than the full
+    /// row: the compact form drops the answer verbs, the terse one the grant's
+    /// token. A key never leaves the row (`02` §5).
+    compact: String,
+    terse: String,
     /// The body rows this card may show before `v` opens the rest.
     cap: usize,
 }
@@ -89,6 +95,19 @@ impl Card {
         &self.keys
     }
 
+    /// The keys row fitted to `width` cells: the full words when they fit, then
+    /// the compact spelling, then the one without the grant's token. The row
+    /// shortens in words; no key is ever cut off it.
+    pub(crate) fn keys_for(&self, width: usize) -> &str {
+        if cell_width(&self.keys) <= width {
+            &self.keys
+        } else if cell_width(&self.compact) <= width {
+            &self.compact
+        } else {
+            &self.terse
+        }
+    }
+
     /// The body rows this card shows: all of them once the operator asked for
     /// the whole body (`v`), and never more than the cap before that. The rows
     /// are a prefix of [`Card::body`], so what is shown is what was said.
@@ -116,20 +135,33 @@ pub(crate) fn approval(question: &Question, mode: PermissionMode, screen_rows: u
     let body = rows(&question.facts);
     let cap = body_cap(screen_rows);
     let withheld = body.len() > cap;
-    let (title, because, keys) = match kind {
-        Kind::Plan => (
-            format!("Approve plan? · {}", question.caller),
-            None,
-            plan_keys(withheld),
-        ),
+    let (title, because, keys, compact, terse) = match kind {
+        Kind::Plan => {
+            let keys = plan_keys(withheld);
+            (
+                format!("Approve plan? · {}", question.caller),
+                None,
+                keys.clone(),
+                keys.clone(),
+                keys,
+            )
+        }
         Kind::Approval => (
             format!("Approve? · {}", question.caller),
             Some(because(mode, question)),
             approval_keys(question.grant.as_deref(), withheld),
+            approval_compact(question.grant.as_deref(), withheld),
+            approval_terse(question.grant.as_deref(), withheld),
         ),
         // A clarification is never built from a `Question`: its text is the
         // model's own words, not a tool call's facts.
-        Kind::Question => (String::from("Question"), None, String::new()),
+        Kind::Question => (
+            String::from("Question"),
+            None,
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
     };
     Card {
         kind,
@@ -138,6 +170,8 @@ pub(crate) fn approval(question: &Question, mode: PermissionMode, screen_rows: u
         because,
         field: None,
         keys,
+        compact,
+        terse,
         cap,
     }
 }
@@ -153,6 +187,8 @@ pub(crate) fn clarification(text: &str, screen_rows: u16) -> Card {
         because: None,
         field: Some(String::from("Type a number or your own answer")),
         keys: String::new(),
+        compact: String::new(),
+        terse: String::new(),
         cap: body_cap(screen_rows),
     }
 }
@@ -203,12 +239,32 @@ fn approval_keys(grant: Option<&str>, withheld: bool) -> String {
 }
 
 /// The plan's keys row: the two answers opening or keeping closed the write
-/// surface, and `v` for a plan longer than the card.
+/// surface, and `v` for a plan longer than the card. It is short enough for the
+/// narrowest frame, so its compact form is the full one.
 fn plan_keys(withheld: bool) -> String {
     format!(
         "y approve plan · n keep planning{}",
         if withheld { "   v view all" } else { "" }
     )
+}
+
+/// The approval's keys row at a narrow width: the answers' own verbs go, the
+/// keys and the grant stay.
+fn approval_compact(grant: Option<&str>, withheld: bool) -> String {
+    let mut row = String::from("y allow once");
+    if let Some(token) = grant {
+        row.push_str(&format!("   s {token} session"));
+    }
+    row.push_str("   n deny");
+    row.push_str(view_hint(withheld));
+    row
+}
+
+/// The approval's keys row at the narrowest width: the grant's token goes too,
+/// because a key that answers is worth more than the word it records.
+fn approval_terse(grant: Option<&str>, withheld: bool) -> String {
+    let token = grant.map(|_| "   s session").unwrap_or_default();
+    format!("y allow once{token}   n deny{}", view_hint(withheld))
 }
 
 /// The `v` hint. `v` always works — it opens the whole body — and says so
