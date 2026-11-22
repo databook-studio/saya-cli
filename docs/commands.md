@@ -122,7 +122,10 @@ header (active profile, any included databases, provider/model, approval mode,
 workspace root, host lane, and privacy/cloud data-sharing state) followed by the
 `saya> ` input marker,
 with command history recall (Up/Down) and standard line editing. Piped input
-uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
+uses a plain line reader so scripts and CI behave predictably. `--plain` (or
+`SAYA_PLAIN=1`) runs that same line REPL on a terminal instead of the
+full-screen TUI, over the same chat session, and `--turn-file` is unchanged by
+it. Interactive prompts carry bounded prior user/assistant
 turns, and `--continue`/`--resume` reconstruct redacted history with saved
 provider settings; a successful resume also retires the old session's SQL
 capture, last query, and agent-capture gap, so a re-run entry binds to the

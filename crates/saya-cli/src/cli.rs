@@ -150,6 +150,10 @@ pub struct GlobalOptions {
         alias = "output-format"
     )]
     pub format: FormatArg,
+    /// Run the plain line REPL on a terminal instead of the full-screen TUI
+    /// (`SAYA_PLAIN=1` asks for the same thing).
+    #[arg(long, global = true)]
+    pub plain: bool,
     /// Run without any terminal interaction (CI-safe; approvals deny).
     #[arg(long, global = true)]
     pub non_interactive: bool,

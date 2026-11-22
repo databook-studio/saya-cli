@@ -113,6 +113,18 @@ impl InteractiveTui {
 /// one writable sqlite `demo` profile (the query path must be able to
 /// create its file), the same scratch-HOME isolation every rung uses.
 fn interactive_tui(home: &Path) -> Result<InteractiveTui, String> {
+    interactive_launch(home, &[], &[])
+}
+
+/// The same live session, with the launch arguments and environment the
+/// caller states. The plain-surface cases need exactly this: a launch that
+/// differs only in how it asks for its surface (`--plain`, `SAYA_PLAIN=1`),
+/// driven by the same pty, parser and writer as every interactive case.
+fn interactive_launch(
+    home: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<InteractiveTui, String> {
     let config = home.join("config.toml");
     std::fs::write(&config, "[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n")
         .expect("interactive config writes");
@@ -141,7 +153,7 @@ fn interactive_tui(home: &Path) -> Result<InteractiveTui, String> {
         .map_err(|e| format!("could not allocate pty: {e}"))?;
     let child = pair
         .slave
-        .spawn_command(tui_command(home, &config, &connections))
+        .spawn_command(spawned_command(home, &config, &connections, args, env))
         .map_err(|e| format!("could not spawn saya on pty: {e}"))?;
     drop(pair.slave);
     let writer = pair
@@ -161,6 +173,23 @@ fn interactive_tui(home: &Path) -> Result<InteractiveTui, String> {
         raw: Vec::new(),
         cursor_replies: 0,
     })
+}
+
+/// The shared launch command, with the case's own arguments and environment
+/// appended: a case that states `--plain` differs in nothing else.
+fn spawned_command(
+    home: &Path,
+    config: &Path,
+    connections: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> CommandBuilder {
+    let mut cmd = tui_command(home, config, connections);
+    cmd.args(args.iter().copied());
+    for (key, value) in env {
+        cmd.env(*key, *value);
+    }
+    cmd
 }
 
 /// Answers the startup trust question (`[y] trust this folder`) and waits until

@@ -23,9 +23,12 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
     // pre-empt the alternate screen and leave the terminal broken); the
     // plain REPL renders it as the line prompt, asked here before the loop.
     // Terminal-attached TUI sessions defer the question (no stdin read
-    // here); every other terminal session asks it here, on stderr.
+    // here); every other terminal session asks it here, on stderr. A
+    // `--plain` launch is one of those: it keeps the line front, so its
+    // question is the line prompt, asked before the loop.
+    let plain = plain_requested(&cli.options);
     let terminal_probe = io::stdin().is_terminal();
-    let tui_surface = terminal_probe && cli.options.turn_file.is_none();
+    let tui_surface = terminal_probe && !plain && cli.options.turn_file.is_none();
     let trusted_dir: Option<std::path::PathBuf> = if tui_surface {
         None
     } else {
@@ -285,6 +288,7 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
         session,
         fresh,
         terminal_probe,
+        plain,
         trusted_echo,
         tui_trust_pending,
         launch,

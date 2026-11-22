@@ -72,5 +72,7 @@ mod command_surface;
 mod help_text;
 #[path = "cli_help/open_removed.rs"]
 mod open_removed;
+#[path = "cli_help/plain_flag.rs"]
+mod plain_flag;
 #[path = "cli_help/run_flags.rs"]
 mod run_flags;
