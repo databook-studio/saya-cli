@@ -2,7 +2,7 @@
 #![cfg(unix)]
 #[path = "parity_readiness/doctor.rs"]
 mod doctor;
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 #[path = "coding_application/support.rs"]
 mod native;
 #[path = "parity_readiness/support.rs"]

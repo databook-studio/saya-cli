@@ -10,7 +10,6 @@ use crate::agent::tools::DrainedObservations;
 
 /// The decision produced by evaluating a turn's proposal worthiness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum GatingDecision {
     /// The turn contains proposal-worthy facts; proceed with structured extraction.
     RunExtraction,
@@ -20,25 +19,22 @@ pub enum GatingDecision {
 
 impl GatingDecision {
     /// True when extraction should run.
-    #[allow(dead_code)]
     pub fn is_run(&self) -> bool {
         matches!(self, Self::RunExtraction)
     }
 
     /// True when extraction should be skipped.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // read only by this module's own gating test
     pub fn is_skip(&self) -> bool {
         matches!(self, Self::Skip { .. })
     }
 }
 
 /// Evaluates whether a completed turn warrants structured extraction.
-#[allow(dead_code)]
 pub struct ProposalGating;
 
 impl ProposalGating {
     /// Evaluates proposal-worthiness against the turn record, observations, and override state.
-    #[allow(dead_code)]
     pub fn evaluate(
         record: &TurnRecord,
         observations: &DrainedObservations,
@@ -80,7 +76,6 @@ impl ProposalGating {
 }
 
 /// Checks if prompt contains keywords or phrases indicative of semantic assertions.
-#[allow(dead_code)]
 pub(crate) fn contains_assertion_intent(prompt: &str) -> bool {
     let lower = prompt.to_lowercase();
     const PATTERNS: &[&str] = &[

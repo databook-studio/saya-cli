@@ -109,7 +109,6 @@ impl RootRun {
         super::super::live_runs::run_opened(&self.job);
     }
 
-    #[allow(dead_code)] // only `run_next_turn` reads it, and that entry is not wired yet
     pub(super) fn session(&self) -> Option<Arc<super::parent_turn::RootSession>> {
         self.lock().clone()
     }

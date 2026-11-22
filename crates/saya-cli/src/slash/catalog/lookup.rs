@@ -17,7 +17,7 @@ pub(crate) fn all() -> impl Iterator<Item = &'static CommandSpec> {
 /// the popup offers [`entries`] and the suggester offers
 /// [`suggestible_names`], so the full set is the catalogue tests' own view —
 /// the parser's 63 names, hidden rows included.
-#[allow(dead_code)]
+#[allow(dead_code)] // the catalogue tests' own view: no production lookup wants every name
 pub(crate) fn names() -> impl Iterator<Item = &'static str> {
     all().flat_map(CommandSpec::names)
 }

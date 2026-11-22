@@ -1,9 +1,7 @@
-// `Decision.fanout` is part of the decision contract (exercised by the decide
-// tests) but not yet consumed by the production caller; the rest of the module
-// is wired in via `candidates`.
+// The module is wired in via `candidates`; `Decision.fanout` is the one field
+// no production caller reads yet, and it carries the allowance itself.
 pub(crate) mod candidates;
 pub(crate) mod context;
-#[allow(dead_code)]
 pub(crate) mod decide;
 pub(crate) mod extraction_trace;
 pub(crate) mod file_sources;

@@ -1,6 +1,6 @@
 use super::{InputBuffer, char_to_byte_idx};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // the buffer's editing keys: the new composer drives its own, the leaf's tests these
 impl InputBuffer {
     /// Deletes the character before the cursor (no-op at start).
     pub(crate) fn backspace(&mut self) {

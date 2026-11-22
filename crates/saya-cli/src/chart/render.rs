@@ -5,7 +5,6 @@ use saya_types::QueryResult;
 
 use super::{ChartKind, ChartSpec, cell_to_f64, is_numeric_column, normalize_row};
 
-#[allow(dead_code)]
 const PALETTE: &[&str] = &[
     "#9d8bf5", "#6a9bcc", "#7fae6b", "#e0a458", "#e5695f", "#57c7c7", "#c98bd6", "#d4a27f",
 ];
@@ -46,7 +45,6 @@ fn cell_to_string(value: &serde_json::Value) -> String {
 }
 
 /// Builds a self-contained HTML document string containing an interactive Chart.js chart.
-#[allow(dead_code)]
 pub(crate) fn render_html(result: &QueryResult, spec: &ChartSpec) -> Result<String, String> {
     if result.rows.is_empty() {
         return Err("no rows to chart".into());

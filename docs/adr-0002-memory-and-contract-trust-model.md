@@ -138,7 +138,7 @@ validated against live schema, and is data rather than instructions.
 
 They are **never** concatenated into the base system prompt. This is a concrete
 constraint on the code, not an aspiration: the current
-[`AgentRequest`](../crates/saya-agent/src/protocol/contracts.rs) exposes only
+[`AgentRequest`](../crates/saya-agent/src/protocol/contracts/chat/session.rs) exposes only
 `system_prompt` as an out-of-band channel, so a separate context channel must exist
 before any recall ships.
 

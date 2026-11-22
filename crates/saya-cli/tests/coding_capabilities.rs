@@ -6,7 +6,7 @@ mod provider;
 #[path = "coding_application/sqlite_fixture.rs"]
 mod sqlite_fixture;
 #[path = "coding_application/support.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 mod support;
 
 use provider::Provider;

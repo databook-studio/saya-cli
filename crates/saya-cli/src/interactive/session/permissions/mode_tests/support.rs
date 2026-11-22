@@ -27,7 +27,7 @@ fn root_for(tag: &str) -> PathBuf {
 
 /// The fixture runtime: no profiles, no endpoints, nothing composed that
 /// could touch the machine. A hand-built `RuntimeConfig` is the established
-/// shape for a session-level test (`recovery_acquire_tests`, `question_tests`).
+/// shape for a session-level test (`recovery_acquire_tests`).
 fn test_runtime() -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {

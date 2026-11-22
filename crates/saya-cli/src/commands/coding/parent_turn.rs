@@ -75,7 +75,7 @@ impl NativeCodingJob {
     /// toolset, hooks, ledger and — in place — lease stay held, so a message
     /// can be another turn of this run instead of a resume. `run()` is this
     /// plus the owner's end-of-run work and the one finish.
-    #[allow(dead_code)] // the attached front end of a later unit is its caller
+    #[allow(dead_code)] // no production caller: `run()` opens through `open_root`, and only the turn tests call this wrapper
     pub(crate) async fn run_open(
         self: &Arc<Self>,
         sink: &dyn AgentEventSink,
@@ -147,7 +147,7 @@ impl NativeCodingJob {
     /// An explicit input a surface states before the turn it applies to:
     /// `None` — the default — is a turn with no turn-scoped budget, which is
     /// every job turn today.
-    #[allow(dead_code)] // the chat surface of phase 4.6 is its production caller
+    #[allow(dead_code)] // called by the turn tests only: `open_root_session` states a run's policy through `RootRun`
     pub(crate) fn set_turn_policy(&self, policy: Option<TurnPolicy>) {
         self.root_run.set_turn_policy(policy);
     }
@@ -166,7 +166,6 @@ impl NativeCodingJob {
 }
 
 /// The closed refusal a run that cannot take another turn states.
-#[allow(dead_code)] // only `run_next_turn` names it, and that entry is not wired yet
 fn not_continuable(job: &NativeCodingJob, detail: &str) -> CodingError {
     CodingError::NotResumable {
         job: job.job_id().as_str().to_owned(),

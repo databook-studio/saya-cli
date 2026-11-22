@@ -9,7 +9,6 @@ use saya_types::{
 };
 
 /// Ingests resolved proposals into the [`KnowledgeItemStore`] and returns [`ProposedClaimDto`]s.
-#[allow(dead_code)]
 pub async fn ingest_proposals(
     store: &dyn KnowledgeItemStore,
     proposals: Vec<ResolvedProposal>,

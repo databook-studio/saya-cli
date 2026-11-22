@@ -32,7 +32,6 @@ pub(super) const CHAT: RunContext = RunContext {
     database_profiles: 1,
 };
 
-#[allow(dead_code)] // the fixture carries helpers only some of its callers seed with
 pub(super) mod seed {
     use saya_store::{SchemaStore, SqliteStateStore};
     use saya_types::{

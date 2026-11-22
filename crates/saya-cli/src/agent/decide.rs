@@ -34,6 +34,8 @@ pub(crate) struct Decision {
     pub probe_broke_tie: bool,
     /// Per-candidate: `Some(true)` flagged as fanned out, `Some(false)` cleared,
     /// `None` when no sound probe could be built or the probe did not run.
+    #[allow(dead_code)]
+    // contract-shaped: the decide tests set it, no production caller reads it yet
     pub fanout: Vec<Option<bool>>,
 }
 

@@ -10,7 +10,6 @@ use saya_types::ClaimOrigin;
 /// - For `AssistantInferred` proposals:
 ///   - Drops the proposal if an identical (slot, value) claim was already supplied for this object.
 ///   - Drops the proposal if the slot is single-valued and a claim for that slot is already in `supplied`.
-#[allow(dead_code)]
 pub fn filter_anti_self_reinforcement(
     proposals: Vec<ResolvedProposal>,
     supplied: &[SuppliedContract],
@@ -62,7 +61,7 @@ pub fn filter_anti_self_reinforcement(
 }
 
 /// Filters proposals against supplied contract DTOs (for integration with [`TurnRecord`]).
-#[allow(dead_code)]
+#[allow(dead_code)] // read only by the ingest filtering test; the runner calls the non-DTO twin
 pub fn filter_anti_self_reinforcement_dto(
     proposals: Vec<ResolvedProposal>,
     supplied: &[SuppliedContractDto],

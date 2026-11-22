@@ -76,13 +76,13 @@ impl TurnStop {
     }
 
     /// Whether this stop is a pause a further message continues.
-    #[allow(dead_code)] // the attached surface of phase 4.6 reads it; the turn tests read it today
+    #[allow(dead_code)] // no production reader yet: only `turn_stop_tests` asks this
     pub(crate) const fn paused(&self) -> bool {
         matches!(self, Self::Paused { .. })
     }
 
     /// The one line that says what ended the turn.
-    #[allow(dead_code)] // the attached surface of phase 4.6 reads it; the turn tests read it today
+    #[allow(dead_code)] // no production reader yet: only `turn_stop_tests` prints it
     pub(crate) fn message(&self) -> &str {
         match self {
             Self::Budget { message, .. } | Self::Paused { message } | Self::Failed { message } => {
@@ -93,7 +93,7 @@ impl TurnStop {
 
     /// The dimension the question budget stopped on, when that is what stopped
     /// the turn.
-    #[allow(dead_code)] // the attached surface of phase 4.6 reads it; the turn tests read it today
+    #[allow(dead_code)] // no production reader yet: only `turn_stop_tests` reads it
     pub(crate) const fn dimension(&self) -> Option<BudgetDimension> {
         match self {
             Self::Budget { dimension, .. } => Some(*dimension),

@@ -98,8 +98,9 @@ impl TerminalApproval {
     /// The session turn's decider. The plain REPL asks through the line
     /// front's `ask` now (`front/line/ask.rs`, over the same
     /// `terminal_choice` and answers line); the one-shot `ask` path's decider
-    /// is `frozen`. Kept until the deletion unit removes the old turn body.
-    #[allow(dead_code)]
+    /// is `frozen`. Its callers are the old request body
+    /// (`interactive::session_request`, kept for 0.5.1), the universe's
+    /// write-effect pins and the grant-lifecycle tests.
     pub(crate) fn from_session_with_cancellation(
         policy: SessionPolicy,
         can_prompt: bool,

@@ -198,7 +198,6 @@ pub(super) fn facts(text: &str) -> String {
 impl Forward {
     /// Puts one call a job asks to the operator: the question the card shows,
     /// and today's plumbing's own waiting end, resolved by the same answer.
-    #[allow(dead_code)]
     pub(crate) fn ask_job(
         &self,
         job: String,
@@ -215,7 +214,6 @@ impl Forward {
 
     /// Takes one message from a job's worker and hands what it comes to to the
     /// loop: the rows, or the call the card must ask.
-    #[allow(dead_code)]
     pub(crate) fn deliver_job(&self, job: &str, message: CodingMessage) {
         let report = self.desk_lock().read(job, message);
         if let Some(report) = report {
@@ -241,7 +239,6 @@ impl Forward {
     /// Takes the panel a job of this run reports through. The old TUI's `App`
     /// owns one per running command; this surface's launch (T19) hands it here,
     /// so one panel serves whichever surface is live.
-    #[allow(dead_code)]
     pub(crate) fn attach_job_panel(&self, panel: CodingPanel) {
         *self.panel() = Some(panel);
     }

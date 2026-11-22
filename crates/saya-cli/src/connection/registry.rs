@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use crate::local_metrics::LocalMetrics;
 
 /// Represents a live database connection entry.
-#[allow(dead_code)]
 pub(crate) struct ConnectionEntry {
     /// The database connector implementation.
     pub(crate) connector: Box<dyn DatabaseConnector>,
@@ -41,7 +40,6 @@ impl fmt::Debug for ConnectionEntry {
 }
 
 /// A typed registry of live database connections for multi-database agent navigation.
-#[allow(dead_code)]
 pub(crate) struct ConnectionRegistry {
     primary: String,
     names: Vec<String>,
@@ -49,7 +47,6 @@ pub(crate) struct ConnectionRegistry {
     leases: HashMap<String, Mutex<()>>,
 }
 
-#[allow(dead_code)]
 impl ConnectionRegistry {
     /// Creates an empty registry whose primary connection is `primary`.
     pub(crate) fn new(primary: impl Into<String>) -> Self {

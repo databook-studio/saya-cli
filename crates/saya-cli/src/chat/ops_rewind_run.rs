@@ -21,7 +21,6 @@ pub(crate) struct RunCheckpoints {
 
 impl RunCheckpoints {
     /// The checkpoints of `job`.
-    #[allow(dead_code)] // a surface that owns a run's job hands it in; no front runs these two commands yet
     pub(crate) fn new(job: Arc<NativeCodingJob>) -> Self {
         Self { job }
     }

@@ -16,7 +16,6 @@ mod json;
 pub(crate) const MAX_JSON_DIAGNOSTIC_BYTES: usize = 128;
 
 /// Parses a model extraction output string into typed `ExtractedProposal` records.
-#[allow(dead_code)]
 pub fn parse_extraction_response(
     raw: &str,
     table: &TurnObjectTable,

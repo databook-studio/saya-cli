@@ -8,7 +8,6 @@ use saya_agent::{ChatMessage, ChatRequest};
 use super::turn_record::TurnRecord;
 
 /// Builds a structured extraction `ChatRequest` for the given `TurnRecord`.
-#[allow(dead_code)]
 pub fn build_extraction_prompt(record: &TurnRecord, model: &str) -> ChatRequest {
     let system_prompt = r#"You are SAYA's precision schema knowledge extractor.
 Analyze the user conversation, executed actions, and assistant response to extract factual semantic knowledge about database tables and columns.
