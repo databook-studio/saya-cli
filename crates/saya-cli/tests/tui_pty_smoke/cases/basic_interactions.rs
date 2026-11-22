@@ -109,7 +109,7 @@ fn tui_reload_applies_edits_and_survives_a_broken_file() {
         .expect("the pinned sentence paints");
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
         .expect("the TUI is still responsive after the failure");
     assert!(
         tui.still_running(),
