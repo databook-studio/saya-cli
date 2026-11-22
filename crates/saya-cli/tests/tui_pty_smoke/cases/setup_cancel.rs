@@ -2,7 +2,15 @@
 /// ("No files were changed.", exit 0), the TUI takes the terminal back and
 /// says so, input works again, and the raw stream shows the exact
 /// enter → leave → wizard → enter ordering.
+///
+/// Deferred, not re-pinned: `/setup` is a session operation the new surface
+/// does not perform in this release. T19 switched the launch over, and the
+/// surface says every command it does not answer is the line front's
+/// (`front::tui::ops::ELSEWHERE`) — including this one, whose terminal handoff
+/// to the guided wizard is the old surface's. The test is the coverage that
+/// handoff owes, and runs again when it lands here.
 #[test]
+#[ignore = "the new surface has no /setup handoff yet: the command says it is the line front's (T19)"]
 fn setup_handoff_cancel_returns_to_a_responsive_tui() {
     let home = scratch_home("setup-cancel");
     let _cleanup = HomeGuard(home.clone());

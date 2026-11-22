@@ -17,72 +17,61 @@ fn assert_splash_and_status_named(screen: &vt100::Screen, label: &str) {
 
 /// Like [`assert_splash_and_status`] but checks a profile name other than
 /// `demo` — used by rung 3, which points at the docker pagila profile.
-/// Every rung launches outside any worktree, so the startup trust modal is
-/// open on the settled screen: the splash paints first (the positives
-/// below) and the question rides inside the interface (the modal
-/// positive), never as a raw stdin read in front of it.
+/// Every rung launches outside any worktree, so the startup trust question is
+/// open on the settled screen: the surface paints first (the positives
+/// below) and the question rides inside it (the pane positive), never as a raw
+/// stdin read in front of it.
+///
+/// The needles are the NEW surface's words (T19 switched the launch over):
+/// the status line's idle word is `? help` (`view::status::ActivityState`), and
+/// the mode chip, the database and the model are one row of `│`-separated
+/// segments (`view::status_fit::SEP`) where the old splash had an `AI ready`
+/// line and a `Database <name>` column. The question and its two exits are the
+/// new pane's (`view::trust::{TITLE, ANSWERS}`).
 fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str) {
     let text = screen_text(screen);
 
     // Positive: the first screen the REPL paints must be present — asserted on
-    // what survives a squeeze, not on the branding.
-    //
-    // The startup trust modal takes most of the pane, so the home screen drops
-    // the Getting-started column here; the welcome and the Status readiness
-    // lines still paint. The status bar's `? for help` is the keyboard hint
-    // that must outlive every layout. The offline config is Ollama with model
-    // `smoke`, so the AI line reads ready.
+    // what survives a squeeze, not on the branding. The status line's `? help`
+    // is the keyboard hint that must outlive every layout.
     assert_in(
         &text,
-        "? for help",
+        "? help",
         &format!("keyboard hint missing from {label} — it must outlive decoration"),
         &text,
     );
+
+    // Positive: the status line painted end to end — the mode chip, the active
+    // profile and the model this launch configured. The offline config is model
+    // `smoke`, so the model segment must be there.
     assert_in(
         &text,
-        "AI        ready — ollama, model smoke",
-        &format!("splash AI readiness line missing from {label}"),
-        &text,
-    );
-    assert_in(
-        &text,
-        &format!("Database  {profile}"),
-        &format!("splash database line missing from {label}"),
+        &format!("read-only │ {profile} │ smoke"),
+        &format!("status line (mode · database · model) missing from {label}"),
         &text,
     );
 
-    // Positive: the status bar names the active profile, followed by the
-    // bar's own separator (the splash's database list also names it, so the
-    // bare name alone would not prove the bar painted).
-    assert_in(
-        &text,
-        &format!("{profile} · "),
-        &format!("status bar profile `{profile} · ` missing from {label}"),
-        &text,
-    );
-
-    // Positive: the startup trust modal is open — the TUI's rendering of
-    // the one trust decision, beside the splash, never before it. The
+    // Positive: the startup trust question is open — the surface's rendering of
+    // the one trust decision, beside the first paint, never before it. The
     // launch dir is outside every worktree with no `--workspace`, so the
-    // decision fires; the modal carries the shared prompt's body and all
-    // three exits.
+    // decision fires; the pane carries the shared prompt's body and both exits.
     assert_in(
         &text,
         "trust this folder?",
-        &format!("trust modal title missing from {label}"),
+        &format!("trust pane title missing from {label}"),
         &text,
     );
     assert_in(
         &text,
         "Trust this folder as the session",
-        &format!("trust modal body missing from {label}"),
+        &format!("trust pane body missing from {label}"),
         &text,
     );
-    for exit in ["[t]rust once", "[w]orkspace", "[c]ontinue unbound"] {
+    for exit in ["[y] trust this folder", "[n] continue unbound"] {
         assert_in(
             &text,
             exit,
-            &format!("trust modal exit {exit} missing from {label}"),
+            &format!("trust pane exit {exit} missing from {label}"),
             &text,
         );
     }
@@ -109,10 +98,10 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
         &text,
     );
     // Negative: the pre-TUI raw stdin prompt must not pre-empt the
-    // interface. The modal carries the same words, so this pins the
+    // interface. The pane carries the same words, so this pins the
     // rendering boundary: the question arrives inside the alternate
     // screen (the title above proves it), never as a bare line on the
-    // plain terminal before the splash paints.
+    // plain terminal before the first paint.
     assert_not_in(
         &text,
         "Trust this folder as the session workspace? [t]rust once",

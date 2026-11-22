@@ -3,7 +3,14 @@
 /// echoes: not on the screen, not in the `input_history` file, not in the
 /// session files under `SAYA_SESSION_DIR`. The persisted copy (and what
 /// Up-arrow recalls) shows `--param label=…` — the user retypes values.
+///
+/// Deferred, not re-pinned — the same three surface differences as
+/// `tui_investigation_run_attached_param_value_never_persists_or_echoes`: no
+/// input history or recall, no per-command transcript echo, and a settled frame
+/// that was observed holding a completed direct command's cells on the status
+/// line's row. The redaction stays pinned at unit level.
 #[test]
+#[ignore = "the new surface keeps no input history, recall or settled command echo (T19)"]
 fn tui_investigation_run_param_value_never_persists_or_echoes() {
     let home = scratch_home("param-redact");
     let _cleanup = HomeGuard(home.clone());

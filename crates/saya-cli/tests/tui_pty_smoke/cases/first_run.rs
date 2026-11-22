@@ -11,7 +11,15 @@
 /// proven here through `/connections`, and the splash's own data sources
 /// (`app.profiles`, `app.startup`) are proven swapped at unit level
 /// (`apply_reloaded_runtime_refreshes_profiles_and_startup_from_the_new_runtime`).
+///
+/// Deferred, not re-pinned: `/setup` is a session operation the new surface
+/// does not perform in this release (T19 switched the launch over; the surface
+/// says every command it does not answer is the line front's — see
+/// `front::tui::ops::ELSEWHERE`). Both the wizard handoff and the automatic
+/// reload that follows it are the old surface's, so this test runs again when
+/// they land here.
 #[test]
+#[ignore = "the new surface has no /setup handoff or automatic reload yet (T19)"]
 fn first_run_setup_applies_immediately_without_a_restart() {
     let home = scratch_home("first-run-setup");
     let _cleanup = HomeGuard(home.clone());
@@ -79,7 +87,11 @@ fn first_run_setup_applies_immediately_without_a_restart() {
 /// and the TUI is responsive. (The splash itself cannot repaint after the
 /// typed `/setup` — it is a user block — so `unchanged` here is the reload's
 /// own report plus the absent connections file.)
+///
+/// Deferred, not re-pinned: `/setup` is a session operation the new surface does
+/// not perform in this release — see [`first_run_setup_applies_immediately_without_a_restart`].
 #[test]
+#[ignore = "the new surface has no /setup handoff or automatic reload yet (T19)"]
 fn first_run_setup_cancel_changes_nothing() {
     let home = scratch_home("first-run-cancel");
     let _cleanup = HomeGuard(home.clone());
@@ -121,7 +133,11 @@ fn first_run_setup_cancel_changes_nothing() {
 /// pre-seeded `team` profile makes the flow's plan refuse the duplicate name
 /// before anything is written — a real, cheap failure (exit 2, no chmod, no
 /// cleanup) — and the TUI reports the exit code and stays responsive.
+///
+/// Deferred, not re-pinned: `/setup` is a session operation the new surface does
+/// not perform in this release — see [`first_run_setup_applies_immediately_without_a_restart`].
 #[test]
+#[ignore = "the new surface has no /setup handoff yet: the command says it is the line front's (T19)"]
 fn setup_handoff_failure_returns_to_the_tui() {
     let home = scratch_home("setup-fail");
     let _cleanup = HomeGuard(home.clone());

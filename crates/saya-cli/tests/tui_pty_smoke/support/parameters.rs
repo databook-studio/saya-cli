@@ -108,6 +108,10 @@ fn write_param_redact_config(home: &Path) {
         "default_profile = 'demo'\n\n[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n",
     )
     .expect("param-redact config writes");
+    // The launch opens the configured profile's connection (T19 put the surface
+    // on the line front's composition), so the file must exist before the
+    // surface starts — a zero-byte file is a valid empty database.
+    std::fs::write(home.join("demo.sqlite3"), b"").expect("the demo db file is created");
     std::fs::write(
         home.join("connections.toml"),
         format!(

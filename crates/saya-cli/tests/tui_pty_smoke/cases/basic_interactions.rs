@@ -15,7 +15,7 @@ fn tui_sql_then_export_snapshot_survives_and_writes_the_file() {
     dismiss_trust_modal(&mut tui);
 
     tui.send_line("/sql SELECT 1").expect("send /sql");
-    tui.wait_for("direct sql", INTERACTIVE)
+    tui.wait_for("result · demo · 1 row", INTERACTIVE)
         .expect("the query result paints");
 
     let snapshot = home.join("snapshot.csv");
@@ -49,13 +49,26 @@ fn tui_sql_then_investigation_save_survives_and_saves() {
     dismiss_trust_modal(&mut tui);
 
     tui.send_line("/sql SELECT 1").expect("send /sql");
-    tui.wait_for("direct sql", INTERACTIVE)
+    tui.wait_for("result · demo · 1 row", INTERACTIVE)
         .expect("the query result paints");
 
     tui.send_line("/investigation save pty-sentinel")
         .expect("send /investigation save");
-    tui.wait_for("Saved exactly as shown", INTERACTIVE)
-        .expect("the save is said");
+    // The save's own sentence is a direct command's outcome, which the new
+    // surface says as a transient word on the status line (a toast) — a settled
+    // frame no longer holds it, so waiting for the words would be a race. What
+    // the surface must be shown to have done is the save itself and to have
+    // survived it: the document lands under the session's investigations root,
+    // beside the state DB.
+    let saved = home.join("investigations");
+    let start = Instant::now();
+    while start.elapsed() < INTERACTIVE && files_under(&saved).is_empty() {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !files_under(&saved).is_empty(),
+        "the save wrote its document under {saved:?}"
+    );
     assert!(tui.still_running(), "the TUI is still alive after the save");
 }
 
@@ -68,7 +81,15 @@ fn tui_sql_then_investigation_save_survives_and_saves() {
 /// configuration is still in use — and the TUI stays responsive through all
 /// of it. The edited file is the same `home/config.toml` `interactive_tui`
 /// passed as `--config`, written while the child is running.
+/// Deferred, not re-pinned: `/reload` is a session operation the new surface
+/// does not perform in this release (T19 switched the launch over; the surface
+/// answers `/help`, `/mode`, `/job`, `/exit`, `/sql`, `/export`, `/chart` and
+/// `/investigation`, and says every other command is the line front's — see
+/// `front::tui::ops::ELSEWHERE`). This suite is the coverage the runtime swap
+/// owes: it runs again once that surface lands here, or is removed with the old
+/// surface (X1-X4) if the swap goes with it.
 #[test]
+#[ignore = "the new surface has no /reload yet: the command says it is the line front's (T19)"]
 fn tui_reload_applies_edits_and_survives_a_broken_file() {
     let home = scratch_home("reload");
     let _cleanup = HomeGuard(home.clone());

@@ -163,12 +163,16 @@ fn interactive_tui(home: &Path) -> Result<InteractiveTui, String> {
     })
 }
 
-/// Answers the startup trust modal (`[t]rust once`) and waits until it is
-/// gone, so the keys after it go to the input buffer, not the modal.
+/// Answers the startup trust question (`[y] trust this folder`) and waits until
+/// it is gone, so the keys after it go to the input buffer, not the pane.
+///
+/// T19 switched `saya` to the new surface, whose trust pane reads `y` where the
+/// old modal read `t` (`view::trust::ANSWERS`). The key is the same decision —
+/// bind this folder as the session workspace — so only the needle moved.
 fn dismiss_trust_modal(tui: &mut InteractiveTui) {
     tui.wait_for("trust this folder?", INTERACTIVE)
-        .expect("the startup trust modal is up");
-    tui.send("t").expect("the trust answer");
+        .expect("the startup trust question is up");
+    tui.send("y").expect("the trust answer");
     tui.wait_gone("trust this folder?", INTERACTIVE)
-        .expect("the trust modal closed");
+        .expect("the trust question closed");
 }
