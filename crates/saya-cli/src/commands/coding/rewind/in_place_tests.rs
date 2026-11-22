@@ -127,7 +127,8 @@ async fn out_of_scope_foreign_change_untouched() {
     record(&fixture, "foreign.txt", None, 1);
     write(&fixture, "foreign.txt", "foreign\n");
     fixture.job.capture_rewind().await;
-    // Change both after the checkpoint: only `tracked.txt` is in scope.
+    // Change both after the checkpoint: only `tracked.txt` is in scope, and
+    // the change there is another run's, so it is reported and left standing.
     write(&fixture, "tracked.txt", "three\n");
     write(&fixture, "foreign.txt", "changed\n");
     pause(&fixture).await;
@@ -137,7 +138,16 @@ async fn out_of_scope_foreign_change_untouched() {
         .rewind(fixture.job.job_id(), Some(1), false)
         .await
         .expect("the rewind restores what the scope admits");
-    assert_eq!(read(&fixture, "tracked.txt").unwrap(), "two\n");
+    assert_eq!(
+        read(&fixture, "tracked.txt").unwrap(),
+        "three\n",
+        "an in-scope path another run changed since is reported, never overwritten"
+    );
+    assert_eq!(
+        report["foreign_paths"],
+        serde_json::json!(["tracked.txt"]),
+        "and the report names it"
+    );
     assert_eq!(
         read(&fixture, "foreign.txt").unwrap(),
         "changed\n",

@@ -70,7 +70,8 @@ pub(crate) fn restore(
         }
         recorded.push(&path.path);
         if before.foreign.iter().any(|changed| changed == &path.path)
-            || super::own_writes::changed_since(&workspace, &path.path, &last_written)?
+            || (before.own_writes
+                && super::own_writes::changed_since(&workspace, &path.path, &last_written)?)
         {
             report.foreign.push(path.path.clone());
             continue;
@@ -100,7 +101,8 @@ pub(crate) fn restore(
             continue;
         }
         if before.foreign.iter().any(|changed| changed == path)
-            || super::own_writes::changed_since(&workspace, path, &last_written)?
+            || (before.own_writes
+                && super::own_writes::changed_since(&workspace, path, &last_written)?)
         {
             report.foreign.push(path.clone());
             continue;
@@ -146,6 +148,22 @@ pub(crate) fn restore(
             size: 0,
         });
         report.removed += 1;
+    }
+    if before.own_writes {
+        // The restore wrote bytes on this run's behalf: they are what it last
+        // wrote at those paths, so a later rewind compares against them rather
+        // than against a version the run never wrote.
+        let written: Vec<(String, Option<String>)> = report
+            .changes
+            .iter()
+            .map(|change| {
+                (
+                    change.path.clone(),
+                    change.sha256.as_ref().map(|sha| sha.as_str().to_owned()),
+                )
+            })
+            .collect();
+        store.record_own_writes(&written)?;
     }
     Ok(report)
 }
