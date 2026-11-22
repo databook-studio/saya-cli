@@ -19,9 +19,14 @@ pub(crate) const USAGE: &str = "usage:";
 /// What the pane says when the query matches nothing: the empty row.
 pub(crate) const NO_MATCH: &str = "no command matches";
 
+/// The rows the pane asks the frame for: the chrome's three and nine command
+/// rows. The catalogue is longer than any terminal, so the list scrolls rather
+/// than the pane growing.
+pub(crate) const ROWS: usize = 12;
+
 /// The palette: the query typed into it, the row selected in the list it
 /// yields, and the glyph set it draws with.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Palette {
     /// The query text, as typing left it.
     pub(crate) query: String,

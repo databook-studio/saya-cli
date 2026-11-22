@@ -14,7 +14,10 @@ use super::model::Model;
 use super::model_overlay::Overlay;
 use super::run_draw::{Facts, lines};
 use super::view::jobs_rows::{Placement, SHEET_ROWS, placement, side_width};
-use super::view::{MODE_PICKER_ROWS, TRUST_ROWS, jobs_rows, mode_picker, trust};
+use super::view::{
+    Context, HELP_ROWS, MODE_PICKER_ROWS, PALETTE_ROWS, TRUST_ROWS, help_rows, jobs_rows,
+    mode_picker, palette_rows, trust,
+};
 
 /// The overlay the model has open, as the rows it covers and the lines it
 /// paints there, or nothing when no pane is open.
@@ -42,6 +45,27 @@ pub(crate) fn overlay(
             (
                 anchored(area, height),
                 trust::rows(width, height as usize, facts.charset),
+            )
+        }
+        // `02` §11's two panes sit where the picker does, for the same reason,
+        // and both take the glyph set the frame draws with rather than the
+        // UTF-8 default each of them carries.
+        Overlay::Palette(palette) => {
+            let height = (PALETTE_ROWS as u16).min(area.height);
+            let mut pane = palette.clone();
+            pane.charset = facts.charset;
+            (
+                anchored(area, height),
+                palette_rows(&pane, width, height as usize),
+            )
+        }
+        Overlay::Help => {
+            let height = (HELP_ROWS as u16).min(area.height);
+            let mut context = Context::of(model);
+            context.charset = facts.charset;
+            (
+                anchored(area, height),
+                help_rows(context, width, height as usize),
             )
         }
         // The drawer takes the transcript's right-hand side from 100 columns up

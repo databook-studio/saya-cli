@@ -26,6 +26,14 @@ pub(super) const fn ctrl_g() -> Chord {
     }
 }
 
+/// Ctrl+K, the chord that opens `02` §11's command palette.
+pub(super) const fn ctrl_k() -> Chord {
+    Chord {
+        code: KeyCode::Char('k'),
+        modifiers: KeyModifiers::CONTROL,
+    }
+}
+
 /// The presses the card answers, and the ones it must not: what the sheet is
 /// asked about in either direction.
 pub(super) fn probes() -> Vec<Chord> {

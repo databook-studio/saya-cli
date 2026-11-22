@@ -11,13 +11,15 @@ use saya_agent::PermissionMode;
 use super::model::Model;
 use super::msg::Cmd;
 use super::update::update;
-use super::update_fixture::{enter, escape, mode_lines, picker_open, press, typed};
+use super::update_fixture::{enter, escape, mode_lines, picker_open, press};
 use crate::front::tui::view::mode_words;
 
 #[test]
 fn slash_mode_with_no_argument_opens_the_picker_and_sends_nothing() {
     let mut model = Model::default();
-    typed(&mut model, "/mode");
+    // Set whole: `/` on an empty composer opens the palette (`02` §11), so the
+    // line reaches the composer as text.
+    model.insert("/mode");
 
     let cmds = update(&mut model, enter());
 

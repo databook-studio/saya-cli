@@ -82,6 +82,7 @@ include!("tui_pty_smoke/support/interactive.rs");
 include!("tui_pty_smoke/support/provider.rs");
 include!("tui_pty_smoke/support/surface.rs");
 include!("tui_pty_smoke/cases/surface.rs");
+include!("tui_pty_smoke/cases/overlays.rs");
 include!("tui_pty_smoke/cases/turn.rs");
 include!("tui_pty_smoke/cases/basic_interactions.rs");
 include!("tui_pty_smoke/support/parameters.rs");

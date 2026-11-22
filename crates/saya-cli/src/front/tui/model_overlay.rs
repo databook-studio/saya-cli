@@ -2,10 +2,10 @@
 //! them.
 //!
 //! One pane at a time: it takes the keyboard before the card and the composer
-//! ([`super::keys`]), and it is painted over the transcript
+//! ([`super::overlay_keys`]), and it is painted over the transcript
 //! ([`super::run_draw_overlay`]). `/mode`'s picker is the first
-//! ([`Overlay::Mode`]); the palette, help, sessions and jobs panes T10-T17 built
-//! join it beside it.
+//! ([`Overlay::Mode`]); `02` §11's command palette and key sheet
+//! ([`Overlay::Palette`], [`Overlay::Help`]) sit beside it.
 //!
 //! The pane's own state lives with the pane (`view::mode_picker`); what this
 //! module holds is the model's half — which pane is open, how the keyboard walks
@@ -15,6 +15,7 @@ use saya_agent::PermissionMode;
 
 use super::model::Model;
 use super::view::ModePicker;
+use super::view::Palette;
 use super::view::mode_words;
 
 /// A pane that owns the screen and the keyboard until it closes.
@@ -22,6 +23,12 @@ use super::view::mode_words;
 pub(crate) enum Overlay {
     /// `/mode` with no argument: the six modes on one screen (`02` §8).
     Mode(ModePicker),
+    /// The command palette (`02` §11): `Ctrl+K`, or `/` typed into an empty
+    /// composer. Its query and its selection are the pane's own.
+    Palette(Palette),
+    /// The key sheet (`02` §11): `?` typed into an empty composer, or `/help`.
+    /// It draws the state the model is in, so it holds nothing of its own.
+    Help,
     /// The background jobs drawer (`02` §8): `Ctrl+J` or `/job`. Its rows and
     /// its selection live on the model, because they are the run's jobs and
     /// stay current while the drawer is closed.
@@ -46,7 +53,7 @@ impl Model {
     pub(crate) fn mode_picker(&self) -> Option<&ModePicker> {
         match self.overlay.as_ref()? {
             Overlay::Mode(picker) => Some(picker),
-            Overlay::Jobs | Overlay::Trust => None,
+            Overlay::Palette(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
         }
     }
 
@@ -54,8 +61,36 @@ impl Model {
     pub(crate) fn mode_picker_mut(&mut self) -> Option<&mut ModePicker> {
         match self.overlay.as_mut()? {
             Overlay::Mode(picker) => Some(picker),
-            Overlay::Jobs | Overlay::Trust => None,
+            Overlay::Palette(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
         }
+    }
+
+    /// The command palette, while it is the pane that is open.
+    pub(crate) fn palette(&self) -> Option<&Palette> {
+        match self.overlay.as_ref()? {
+            Overlay::Palette(palette) => Some(palette),
+            Overlay::Mode(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
+        }
+    }
+
+    /// The command palette, while it is the pane that is open, to be walked.
+    pub(crate) fn palette_mut(&mut self) -> Option<&mut Palette> {
+        match self.overlay.as_mut()? {
+            Overlay::Palette(palette) => Some(palette),
+            Overlay::Mode(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
+        }
+    }
+
+    /// Opens `02` §11's command palette on an empty query: every command the
+    /// catalogue lists is offered until the operator narrows it.
+    pub(crate) fn open_palette(&mut self) {
+        self.overlay = Some(Overlay::Palette(Palette::default()));
+    }
+
+    /// Opens `02` §11's key sheet: the keys valid in the state the model is in,
+    /// read at paint time rather than captured here.
+    pub(crate) fn open_help(&mut self) {
+        self.overlay = Some(Overlay::Help);
     }
 
     /// Opens the workspace-trust question (`02` §9.4): the one decision a

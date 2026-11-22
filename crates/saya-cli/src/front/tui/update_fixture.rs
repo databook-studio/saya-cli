@@ -30,6 +30,11 @@ pub(super) fn shift_tab() -> Msg {
     key(KeyCode::BackTab, KeyModifiers::SHIFT)
 }
 
+/// Ctrl+K, the chord that opens `02` §11's command palette.
+pub(super) fn ctrl_k() -> Msg {
+    key(KeyCode::Char('k'), KeyModifiers::CONTROL)
+}
+
 /// Types `text` into the composer, one key press at a time.
 pub(super) fn typed(model: &mut Model, text: &str) -> Vec<Cmd> {
     let mut cmds = Vec::new();
@@ -62,10 +67,13 @@ pub(super) fn press(code: KeyCode) -> Msg {
     key(code, KeyModifiers::NONE)
 }
 
-/// A model with `/mode` typed into the composer and the picker opened by it.
+/// A model with `/mode` in the composer and the picker opened by it.
 pub(super) fn picker_open() -> Model {
     let mut model = Model::default();
-    typed(&mut model, "/mode");
+    // The line is the composer's, set whole: `/` typed into an empty composer
+    // is the palette's own key (`02` §11), so a slash command reaches the
+    // composer as text rather than a character at a time.
+    model.insert("/mode");
     let cmds = update(&mut model, enter());
     assert!(
         cmds.is_empty(),
