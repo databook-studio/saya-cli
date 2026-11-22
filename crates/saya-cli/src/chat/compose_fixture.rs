@@ -179,6 +179,9 @@ pub(super) struct Ceilings {
     /// The model's known request window: small enough and the turn refuses at
     /// preflight, before any provider request.
     pub(super) context_window_tokens: Option<u64>,
+    /// The output reservation the configured window must leave room for: the
+    /// second half of a window small enough to refuse.
+    pub(super) max_output_tokens: Option<u32>,
 }
 
 /// The same, with the session's memory on and the database budget its turns
@@ -255,7 +258,7 @@ async fn build(
     runtime.resolved.ai.retry_delays_ms.clear();
     runtime.resolved.ai.timeout_seconds = 5;
     runtime.resolved.ai.idle_timeout_seconds = 5;
-    runtime.resolved.ai.max_output_tokens = Some(4096);
+    runtime.resolved.ai.max_output_tokens = ceilings.max_output_tokens.or(Some(4096));
     let effective = runtime
         .resolved
         .endpoints

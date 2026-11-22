@@ -130,6 +130,10 @@ mod turn_learning_soft_tests;
 mod compose_token_wallet_tests;
 
 #[cfg(all(test, unix))]
+#[path = "compose_preflight_stop_tests.rs"]
+mod compose_preflight_stop_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_preferences_tests.rs"]
 mod compose_preferences_tests;
 

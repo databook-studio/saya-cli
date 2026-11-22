@@ -10,7 +10,7 @@
 use super::parent_arming::{TurnArming, stated_delay, stop_the_turn};
 use super::parent_turn::RootSession;
 use super::{CodingError, NativeCodingJob, map_root_error};
-use crate::budget_wording::budget_dimension;
+use crate::budget_wording::{budget_dimension, preflight_dimension};
 use crate::commands::coding::TurnStop;
 use saya_agent::{
     AgentError, AgentEventSink, AgentOutput, AgentRequest, ApprovalDecider, ToolExecutor,
@@ -260,6 +260,12 @@ impl NativeCodingJob {
                     .as_ref()
                     .and_then(|scope| budget_dimension(scope.cancellation_token().reason()))
                     .or_else(|| arming.stop_dimension())
+                    // A turn the engine refused before admission stated its own
+                    // stop on its token and handed back partial output: no
+                    // plugin budget armed and the question's scope spent
+                    // nothing, so this is the only reader of that stop. It is
+                    // still the budget stop, never an answer.
+                    .or_else(|| preflight_dimension(cancellation.reason()))
                 {
                     self.root_run
                         .note_turn_stop(Some(TurnStop::budget(dimension)));
