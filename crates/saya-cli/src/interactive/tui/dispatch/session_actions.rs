@@ -131,6 +131,7 @@ pub(super) fn apply_session_action(
             let (ok, message) = crate::interactive::session::commands::sessions_delete_text(
                 store,
                 &crate::interactive::session::lifecycle::paths::default_session_dir(),
+                &crate::commands::coding::job_records::root(),
                 &id,
                 Some(&state.id),
             );

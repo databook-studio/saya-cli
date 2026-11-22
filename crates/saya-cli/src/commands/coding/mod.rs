@@ -28,6 +28,7 @@ mod delegate;
 mod delegate_batch;
 mod follow_up;
 mod helper_shape;
+pub(crate) mod job_records;
 mod joined_accounting;
 pub(crate) mod lane;
 pub(crate) mod lifecycle;

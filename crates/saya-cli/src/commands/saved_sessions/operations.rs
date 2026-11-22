@@ -2,11 +2,12 @@
 //! store's own history paging, and deletion through the harness lifecycle
 //! owner — the same owner the interactive session holds its lock with.
 
-use super::{DeleteOutcome, LISTING_BOUND, SessionListing, SessionRow};
+use super::{DeleteOutcome, LISTING_BOUND, SessionListing, SessionRow, run_link};
+use crate::commands::coding::job_records;
 use saya_harness::HarnessError;
 use saya_store::{
-    DeleteStatus, FsSessionStore, MAX_SESSION_HISTORY_PAGE_SIZE, SessionHistoryQuery, SessionStore,
-    StoreError,
+    DeleteStatus, FsSessionStore, MAX_SESSION_BYTES, MAX_SESSION_HISTORY_PAGE_SIZE,
+    RedactedSession, RunLink, SessionHistoryQuery, SessionStore, StoreError,
 };
 use std::path::Path;
 use std::{fs::symlink_metadata, time::UNIX_EPOCH};
@@ -53,14 +54,18 @@ pub(crate) async fn list_sessions(store: &FsSessionStore) -> Result<SessionListi
 }
 
 /// Deletes exactly one saved session through the harness lifecycle owner:
-/// its record, state directory, staged temps, and quarantined copies.
-/// Nothing is touched for an absent or invalid id, a live session, or the
-/// calling session itself; the slash surface passes its own id as
-/// `current_session_id` so a session cannot delete itself underneath its
-/// owner.
+/// its record, state directory, staged temps, and quarantined copies, and —
+/// when the record links the session's own finished run — the job that run is
+/// on, through [`job_records::delete_records`].
+///
+/// Nothing is touched for an absent or invalid id, a live session, a job whose
+/// folder lease a live process still holds, or the calling session itself; the
+/// slash surface passes its own id as `current_session_id` so a session cannot
+/// delete itself underneath its owner.
 pub(crate) fn delete_saved_session(
     store: &FsSessionStore,
     sessions_root: &Path,
+    jobs_root: &Path,
     id: &str,
     current_session_id: Option<&str>,
 ) -> DeleteOutcome {
@@ -94,11 +99,59 @@ pub(crate) fn delete_saved_session(
     if !exists {
         return DeleteOutcome::NoSuchSession;
     }
+    // What the record links is read before anything is removed: a run that is
+    // still open refuses the whole delete, and a job that is not the session's
+    // to remove is left where it is.
+    let link = stored_link(sessions_root, id);
+    let facts = link
+        .as_ref()
+        .map(|link| job_records::facts(jobs_root, &link.job))
+        .unwrap_or_default();
+    let linked = run_link::decide(link.as_ref(), facts);
+    if let run_link::LinkedRun::Refused { job } = &linked {
+        return DeleteOutcome::LiveRun {
+            job: job.as_str().to_owned(),
+        };
+    }
     match saya_harness::session_lifecycle::delete_session(store, sessions_root, id) {
-        Ok(DeleteStatus::Complete) => DeleteOutcome::Deleted,
-        Ok(DeleteStatus::Pending { remaining }) => DeleteOutcome::Pending { remaining },
+        Ok(DeleteStatus::Complete) => {
+            remove_linked_job(jobs_root, &linked).unwrap_or(DeleteOutcome::Deleted)
+        }
+        Ok(DeleteStatus::Pending { remaining }) => {
+            remove_linked_job(jobs_root, &linked).unwrap_or(DeleteOutcome::Pending { remaining })
+        }
         Err(HarnessError::LockHeld { pid }) => DeleteOutcome::Live { pid },
         Err(error) => DeleteOutcome::Failed(error.to_string()),
+    }
+}
+
+/// The run link a saved record carries, read before anything is removed, and
+/// read plainly: a record the store cannot parse is quarantined by the store's
+/// own load, and a delete must never move a record it is about to delete. A
+/// record that cannot be read links no job — a delete acts on what it can
+/// prove, never on a guess about a job.
+fn stored_link(sessions_root: &Path, id: &str) -> Option<RunLink> {
+    let path = sessions_root.join(format!("{id}.json"));
+    let metadata = symlink_metadata(&path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_SESSION_BYTES as u64 {
+        return None;
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    serde_json::from_slice::<RedactedSession>(&bytes).ok()?.run
+}
+
+/// Removes the job a deleted record linked, when the link's decision says so.
+/// A job that cannot be removed is a reported failure that states what was
+/// already deleted, so the operator is never told nothing happened.
+fn remove_linked_job(jobs_root: &Path, linked: &run_link::LinkedRun) -> Option<DeleteOutcome> {
+    let run_link::LinkedRun::Delete { job } = linked else {
+        return None;
+    };
+    match job_records::delete_records(jobs_root, job) {
+        Ok(()) => Some(DeleteOutcome::Deleted),
+        Err(error) => Some(DeleteOutcome::Failed(format!(
+            "its job {job} could not be removed: {error}"
+        ))),
     }
 }
 
