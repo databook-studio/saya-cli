@@ -28,12 +28,26 @@ pub(super) fn text(id: &str, arguments: &Value) -> String {
     if let Some(paths) = write_paths(arguments) {
         rows.push(format!("write: {}", paths.join(", ")));
     }
+    if let Some(where_it_runs) = runs(arguments) {
+        rows.push(format!("runs: {where_it_runs}"));
+    }
     for (name, identity) in profiles(arguments) {
         rows.push(format!("\"{name}\" {}", stated(&identity)));
     }
     rows.push(format!("Use `/job approve {id}` or `/job deny {id}`."));
     rows.push(arguments.to_string());
     bounded(rows.join("\n"))
+}
+
+/// Where the job this proposal opens will run: the session's own folder, beside
+/// its run, or a checkout of its own. A proposal that states no mode invents
+/// neither.
+fn runs(arguments: &Value) -> Option<&'static str> {
+    match arguments.get("mode").and_then(Value::as_str) {
+        Some("in_place") => Some("in this folder, alongside the session"),
+        Some(_) => Some("in a separate checkout"),
+        None => None,
+    }
 }
 
 /// The paths this proposal would let the job write. An in-place proposal states

@@ -240,6 +240,20 @@ impl RewindStore {
         Ok(record)
     }
 
+    /// Records what one restore left at each path it touched, merged over what
+    /// earlier restores left: the run's own last write at each path.
+    pub(crate) fn record_own_writes(
+        &self,
+        written: &[(String, Option<String>)],
+    ) -> Result<(), CodingError> {
+        super::own_writes::record(&self.root, written)
+    }
+
+    /// What earlier restores left at each path.
+    pub(crate) fn own_writes(&self) -> std::collections::BTreeMap<String, Option<String>> {
+        super::own_writes::read(&self.root)
+    }
+
     /// Records that the checkout was rewound to `turn`, for the next run to
     /// state in its context.
     pub(crate) fn record_rewind(&self, turn: u32, now_ms: i64) -> Result<(), CodingError> {

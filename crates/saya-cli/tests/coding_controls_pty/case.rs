@@ -6,25 +6,18 @@ use saya_types::{DatabaseProfile, JobId, JobState};
 /// card names every database profile it touches, `/approve` admits it, and the
 /// session steers the helpers it spawns.
 ///
-/// Deferred, not re-pinned — and the approval assertions here were deliberately
-/// left exactly as they were. The consent card itself now lands on this
-/// surface's card slot (TX5): the run shows "Approve job pty-job", its task, the
-/// paths it may write and one row per database identity, `y`/`n` and
-/// `/approve <id>` answer it, and a consent queued behind an open card waits its
-/// turn (`front::tui::jobs_open_tests`, `interactive::tui::coding::consent`).
+/// The consent card itself lands on this surface's card slot (TX5): the run
+/// shows "Approve job pty-job", its task, the paths it may write and one row
+/// per database identity, `y`/`n` and `/approve <id>` answer it, and a consent
+/// queued behind an open card waits its turn (`front::tui::jobs_open_tests`,
+/// `interactive::tui::coding::consent`).
 ///
-/// What this suite still cannot reach is the job *running*: this surface's own
-/// session run is a coding job over the same folder
-/// (`chat::compose::RunComposition`), it holds the one-live-job in-place lease
-/// from open, and a second in-place job over that folder is refused with
-/// "another job is already running in this folder" before the run's `helpers`
-/// writes can be steered and before the receipts this suite reads are produced.
-/// Letting the two coexist — the session's run stepping aside for a job of the
-/// run, or the job opening over a managed checkout — is a shape of its own, not
-/// a wording this lane may move: nothing about the consent, the proposal's
-/// identity list or the pause/continue receipts is a needle here.
+/// The job runs alongside this surface's own session run (TX6): the session's
+/// run is a coding job over the same folder (`chat::compose::RunComposition`),
+/// the folder's lease names that session, and a job the session opens over its
+/// own folder is admitted as its dependent. So the job's `helpers` calls run
+/// here, and the receipts this suite reads are produced.
 #[test]
-#[ignore = "the surface's own session run holds the in-place folder lease, so a job of the same folder is refused before its helpers run (TX5)"]
 fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     let mut provider = Provider::new();
     let config = config(&provider);

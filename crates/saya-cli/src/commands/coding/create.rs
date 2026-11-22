@@ -212,12 +212,18 @@ impl CodingApplication {
         // before-images and holds the one-live-job lease over its folder; a
         // job that only reads takes neither, so another session may hold the
         // folder's lease while this run reads it. A managed checkout needs
-        // neither part either way.
+        // neither part either way. The lease names the session this job is a
+        // job of when a surface stated one, so the session's own folder admits
+        // it beside the session's run.
+        let parent = self.session_parent();
+        let owner = parent.as_deref().unwrap_or(request.job_id.as_str());
         let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
             &plan,
             &records,
             &self.state_root,
             request.has_write_scope()?,
+            owner,
+            parent.as_deref(),
         )?;
         let (root_steering, root_mailbox) = saya_agent::agent_mailbox();
         Ok(Arc::new(NativeCodingJob {

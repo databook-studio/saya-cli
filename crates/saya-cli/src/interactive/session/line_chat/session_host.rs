@@ -72,6 +72,10 @@ pub(super) async fn open_host(
         },
     }
     .map_err(|error| error.to_string())?;
+    // The run this session composes is the session's own: its folder's lease
+    // names the session, so a job the session opens over the same folder is
+    // admitted beside it instead of refused.
+    application.set_session_parent(Some(&parts.session));
     Ok((application, shape))
 }
 

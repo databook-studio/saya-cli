@@ -126,7 +126,7 @@ pub(super) fn parse_start(tail: &str) -> Result<SlashCommand, SlashParseError> {
                         .map(str::to_owned),
                 );
             }
-            "plan" | "in-place" | "managed" | "approve" => {
+            "plan" | "in-place" | "managed" | "checkout" | "approve" => {
                 if inline.is_some() {
                     return Err(SlashParseError(format!("`--{name}` takes no value")));
                 }
@@ -208,7 +208,9 @@ impl StartWords {
             "plan" => self.plan = true,
             "approve" => self.approve = true,
             "in-place" => self.in_place = true,
-            "managed" => self.managed = true,
+            // `--checkout` is the opt-in isolation's own spelling; `--managed`
+            // is the older name of the same one checkout mode.
+            "managed" | "checkout" => self.managed = true,
             _ => {}
         }
     }

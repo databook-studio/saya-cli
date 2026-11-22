@@ -42,6 +42,16 @@ pub(crate) struct Checkpoint {
     pub(crate) first_words: Option<String>,
 }
 
+/// What one restore changed, and what it left as it stands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Restored {
+    /// The workspace-relative paths written back.
+    pub(crate) restored: Vec<String>,
+    /// The paths left untouched because another run changed them since this
+    /// run last wrote them: never overwritten, always named.
+    pub(crate) changed_elsewhere: Vec<String>,
+}
+
 /// What `/undo` and `/rewind` ask of the run.
 ///
 /// The run answers with its own checkpoint store, oldest first, and restores
@@ -52,8 +62,8 @@ pub(crate) trait Checkpoints: Send + Sync {
     /// lists them in.
     async fn checkpoints(&self) -> Result<Vec<Checkpoint>, String>;
 
-    /// Restores `turn` and answers the workspace-relative paths it wrote back.
-    async fn restore(&self, turn: u32) -> Result<Vec<String>, String>;
+    /// Restores `turn` and answers what the restore changed.
+    async fn restore(&self, turn: u32) -> Result<Restored, String>;
 }
 
 /// Why one of the two commands changed nothing.
@@ -182,15 +192,32 @@ fn listing(all: &[Checkpoint]) -> String {
     text
 }
 
-/// What a restore answers: the files it put back, by name.
-fn restored(lead: &str, turn: u32, paths: &[String]) -> String {
-    if paths.is_empty() {
+/// What a restore answers: the files it put back, by name, and the files it
+/// left as they stand because another run changed them since.
+fn restored(lead: &str, turn: u32, paths: &Restored) -> String {
+    if paths.restored.is_empty() && paths.changed_elsewhere.is_empty() {
         return format!("{lead}: checkpoint {turn} already holds every file, so nothing changed");
     }
-    format!(
+    if paths.restored.is_empty() {
+        return format!(
+            "{lead}: checkpoint {turn} changed nothing — {}",
+            skipped(&paths.changed_elsewhere)
+        );
+    }
+    let mut text = format!(
         "{lead}: restored {} from checkpoint {turn}",
-        paths.join(", ")
-    )
+        paths.restored.join(", ")
+    );
+    if !paths.changed_elsewhere.is_empty() {
+        text.push_str("; ");
+        text.push_str(&skipped(&paths.changed_elsewhere));
+    }
+    text
+}
+
+/// The one sentence a skipped path gets: never overwritten, always named.
+fn skipped(paths: &[String]) -> String {
+    format!("changed since by another run: {}", paths.join(", "))
 }
 
 #[cfg(test)]

@@ -23,6 +23,10 @@ use std::path::Path;
 pub(crate) struct Before<'a> {
     pub(crate) images: Option<&'a BeforeImageStore>,
     pub(crate) foreign: &'a [String],
+    /// Whether every path is first compared with what this run last wrote there,
+    /// from its own checkpoint records. `false` only for the operator's forced
+    /// rewind, which states that another run's change may be overwritten.
+    pub(crate) own_writes: bool,
 }
 
 /// `current_paths` is every path the checkout currently changes against the
@@ -33,7 +37,10 @@ pub(crate) struct Before<'a> {
 /// scope, parsed: nothing outside it is read, written, or removed. `only`, when
 /// stated, restricts both passes to those exact paths; every other changed path
 /// is left as it stands. `foreign` names paths a concurrent editor changed:
-/// they are reported and never touched.
+/// they are reported and never touched. With `own_writes`, a path whose current
+/// bytes are not what this run last wrote there — the digest its newest
+/// checkpoint records, or its recorded absence — is reported the same way, so a
+/// folder two runs share is never rewound over another run's write.
 pub(crate) fn restore(
     store: &RewindStore,
     checkout_root: &Path,
@@ -46,6 +53,11 @@ pub(crate) fn restore(
     let checkpoint = store.images(turn)?;
     let before_entries = before_entries(before.images)?;
     let workspace = Workspace::open(checkout_root).map_err(CodingError::owner)?;
+    let last_written = before
+        .own_writes
+        .then(|| super::own_writes::last_written(store))
+        .transpose()?
+        .unwrap_or_default();
     let mut report = RestoreReport::default();
     let mut recorded: Vec<&str> = Vec::with_capacity(checkpoint.len());
     for path in &checkpoint {
@@ -57,7 +69,10 @@ pub(crate) fn restore(
             continue;
         }
         recorded.push(&path.path);
-        if before.foreign.iter().any(|changed| changed == &path.path) {
+        if before.foreign.iter().any(|changed| changed == &path.path)
+            || (before.own_writes
+                && super::own_writes::changed_since(&workspace, &path.path, &last_written)?)
+        {
             report.foreign.push(path.path.clone());
             continue;
         }
@@ -85,7 +100,10 @@ pub(crate) fn restore(
         if !wanted(only, path) || recorded.contains(&path.as_str()) || !write_scope.contains(path) {
             continue;
         }
-        if before.foreign.iter().any(|changed| changed == path) {
+        if before.foreign.iter().any(|changed| changed == path)
+            || (before.own_writes
+                && super::own_writes::changed_since(&workspace, path, &last_written)?)
+        {
             report.foreign.push(path.clone());
             continue;
         }
@@ -130,6 +148,22 @@ pub(crate) fn restore(
             size: 0,
         });
         report.removed += 1;
+    }
+    if before.own_writes {
+        // The restore wrote bytes on this run's behalf: they are what it last
+        // wrote at those paths, so a later rewind compares against them rather
+        // than against a version the run never wrote.
+        let written: Vec<(String, Option<String>)> = report
+            .changes
+            .iter()
+            .map(|change| {
+                (
+                    change.path.clone(),
+                    change.sha256.as_ref().map(|sha| sha.as_str().to_owned()),
+                )
+            })
+            .collect();
+        store.record_own_writes(&written)?;
     }
     Ok(report)
 }

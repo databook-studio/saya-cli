@@ -26,6 +26,40 @@ async fn undo_restores_the_files_the_last_turn_edited_and_names_them() {
 }
 
 #[tokio::test]
+async fn undo_names_a_file_another_run_changed_since_and_leaves_it() {
+    let (_scratch, folder) = case("undo-changed", "second\n");
+    let run = two_turns(folder).with_changed_elsewhere(&[EDITED]);
+    let words = undo(&run, false).await.expect("undo runs");
+    assert!(
+        words.contains(&format!("changed since by another run: {EDITED}")),
+        "the skipped file is named as another run's change: {words}"
+    );
+    assert_eq!(
+        run.text(),
+        "second\n",
+        "and it is never overwritten: the other run's bytes stand"
+    );
+}
+
+/// The same rule for `/rewind <id>`, which reaches the same restore.
+#[tokio::test]
+async fn rewind_names_a_file_another_run_changed_since() {
+    let (_scratch, folder) = case("rewind-changed", "second\n");
+    let run = two_turns(folder).with_changed_elsewhere(&[EDITED]);
+    let words = super::rewind(
+        &run,
+        &crate::slash::RewindRequest::Restore("1".into()),
+        false,
+    )
+    .await
+    .expect("the rewind runs");
+    assert!(
+        words.contains(&format!("changed since by another run: {EDITED}")),
+        "the skipped file is named as another run's change: {words}"
+    );
+}
+
+#[tokio::test]
 async fn undo_with_no_edited_turn_says_so() {
     let (_scratch, folder) = case("undo-empty", "second\n");
     let run = FakeRun::new(folder, Vec::new());

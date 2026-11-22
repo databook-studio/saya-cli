@@ -127,7 +127,8 @@ async fn out_of_scope_foreign_change_untouched() {
     record(&fixture, "foreign.txt", None, 1);
     write(&fixture, "foreign.txt", "foreign\n");
     fixture.job.capture_rewind().await;
-    // Change both after the checkpoint: only `tracked.txt` is in scope.
+    // Change both after the checkpoint: only `tracked.txt` is in scope, and
+    // the change there is another run's, so it is reported and left standing.
     write(&fixture, "tracked.txt", "three\n");
     write(&fixture, "foreign.txt", "changed\n");
     pause(&fixture).await;
@@ -137,7 +138,16 @@ async fn out_of_scope_foreign_change_untouched() {
         .rewind(fixture.job.job_id(), Some(1), false)
         .await
         .expect("the rewind restores what the scope admits");
-    assert_eq!(read(&fixture, "tracked.txt").unwrap(), "two\n");
+    assert_eq!(
+        read(&fixture, "tracked.txt").unwrap(),
+        "three\n",
+        "an in-scope path another run changed since is reported, never overwritten"
+    );
+    assert_eq!(
+        report["foreign_paths"],
+        serde_json::json!(["tracked.txt"]),
+        "and the report names it"
+    );
     assert_eq!(
         read(&fixture, "foreign.txt").unwrap(),
         "changed\n",
@@ -233,5 +243,55 @@ async fn checkpoint_restore_uses_before_image() {
         read(&fixture, "b.txt").unwrap(),
         "orig-b\n",
         "a path the checkpoint does not hold returns to its before-image, never removed"
+    );
+}
+
+/// `/undo` in a folder another run shares: a file whose current content is not
+/// what this run last wrote is never overwritten. The restore names it as
+/// skipped and restores the rest.
+#[tokio::test]
+async fn undo_skips_a_file_another_run_changed_since() {
+    let fixture = fixture_with(
+        "undo-skip",
+        vec![".".into()],
+        &[("other.txt", b"original other\n")],
+    )
+    .await;
+    // The run's first turn edits both files, and checkpoints the state.
+    record(&fixture, "tracked.txt", Some(b"original\n"), 1);
+    record(&fixture, "other.txt", Some(b"original other\n"), 1);
+    write(&fixture, "tracked.txt", "one\n");
+    write(&fixture, "other.txt", "one other\n");
+    fixture.job.capture_rewind().await;
+    // A second turn edits them again: that checkpoint holds what the run last
+    // wrote at each path.
+    write(&fixture, "tracked.txt", "two\n");
+    write(&fixture, "other.txt", "two other\n");
+    fixture.job.capture_rewind().await;
+    // Another run over the shared folder writes one of them after that.
+    write(&fixture, "other.txt", "another run\n");
+    pause(&fixture).await;
+
+    let run = crate::chat::RunCheckpoints::new(std::sync::Arc::clone(&fixture.job));
+    let words = crate::chat::undo(&run, false)
+        .await
+        .expect("the run's second checkpoint admits an undo");
+    assert!(
+        words.contains("changed since by another run: other.txt"),
+        "the skipped file is named as another run's change: {words}"
+    );
+    assert!(
+        words.contains("tracked.txt"),
+        "and the rest is restored by name: {words}"
+    );
+    assert_eq!(
+        read(&fixture, "tracked.txt").unwrap(),
+        "one\n",
+        "the file this run last wrote returns to the older checkpoint"
+    );
+    assert_eq!(
+        read(&fixture, "other.txt").unwrap(),
+        "another run\n",
+        "the other run's bytes stand: a rewind never overwrites another run's write"
     );
 }

@@ -55,6 +55,8 @@ async fn exercise() {
         // No panel reads this fixture's job cell; the switch surface has its
         // own tests.
         Arc::new(OnceLock::new()),
+        // The fixture opens no session's dependent: it states no session.
+        None,
     );
     let task = tokio::task::spawn_local(work);
     let started = wait_for(

@@ -21,6 +21,7 @@ impl CodingApplication {
         git: &Path,
         program_dir: &Path,
         requested: RootMode,
+        checkout: bool,
         token: &CancellationToken,
     ) -> Result<(Arc<Self>, Option<&'static str>), CodingError> {
         open_start(
@@ -31,6 +32,7 @@ impl CodingApplication {
             git,
             program_dir,
             requested,
+            checkout,
             token,
         )
         .await
@@ -42,6 +44,7 @@ impl CodingApplication {
         store: SqliteStateStore,
         repository: &Path,
         requested: RootMode,
+        checkout: bool,
         token: &CancellationToken,
     ) -> Result<(Arc<Self>, Option<&'static str>), CodingError> {
         let (state_root, program_dir) = session_inputs(&runtime)?;
@@ -54,6 +57,7 @@ impl CodingApplication {
             &git,
             &program_dir,
             requested,
+            checkout,
             token,
         )
         .await

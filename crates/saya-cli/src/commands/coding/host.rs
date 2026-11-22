@@ -85,6 +85,10 @@ pub struct CodingApplication {
     /// answer, and no outcome view recorded afterwards. `false` for every
     /// surface whose job outlives its turn.
     pub(super) one_turn: std::sync::atomic::AtomicBool,
+    /// The session this application's job is a job of, when the surface opening
+    /// it states one: the folder's lease names that session, so a job it opens
+    /// over its own folder is admitted alongside its run instead of refused.
+    pub(super) session_parent: std::sync::Mutex<Option<String>>,
 }
 impl CodingApplication {
     /// Opens the application over `repository`, falling back to an in-place
@@ -210,6 +214,7 @@ impl CodingApplication {
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
             workspace: std::sync::atomic::AtomicBool::new(mode != RootMode::NoWorkspace),
             one_turn: std::sync::atomic::AtomicBool::new(false),
+            session_parent: std::sync::Mutex::new(None),
         }))
     }
     pub async fn open_default(

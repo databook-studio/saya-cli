@@ -170,6 +170,9 @@ impl App {
             self.state_db.clone(),
             root.to_owned(),
             approval_policy,
+            // This surface composes no session run of its own, so a job it
+            // opens is nobody's dependent and names no session.
+            None,
         ));
     }
     pub(crate) fn poll_coding(&mut self) {

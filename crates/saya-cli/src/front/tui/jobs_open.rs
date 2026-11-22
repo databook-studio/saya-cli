@@ -30,13 +30,14 @@ use crate::interactive::tui::{CodingMessage, CodingPanel, Said, started_line};
 use crate::slash::JobRequest;
 
 /// What opening a job needs from the launch: the configuration in force, the
-/// state store its records and its receipts go to, the folder it roots at, and
-/// the session's approval mode — the mode the old surface handed its panel, so a
-/// job asks exactly where it did.
+/// state store its records and its receipts go to, the folder it roots at, the
+/// session it belongs to, and the session's approval mode — the mode the old
+/// surface handed its panel, so a job asks exactly where it did.
 pub(crate) struct JobDeps {
     runtime: Arc<LiveRuntime>,
     store: SqliteStateStore,
     root: PathBuf,
+    session: String,
     policy: ApprovalPolicy,
 }
 
@@ -45,11 +46,14 @@ impl JobDeps {
     /// same cell a direct command reads, so a job opened after a `/reload`
     /// composes over the configuration then in force. `root` is the session's
     /// own folder — the one the line front's opener states, with the same
-    /// fallback when a session bound none.
+    /// fallback when a session bound none. `session` is that session's own id:
+    /// the folder's lease names it, so a job this surface opens over the same
+    /// folder is admitted beside the session's run.
     pub(crate) fn new(
         runtime: Arc<LiveRuntime>,
         store: SqliteStateStore,
         root: Option<&Path>,
+        session: &str,
         policy: ApprovalPolicy,
     ) -> Self {
         let root = root
@@ -60,6 +64,7 @@ impl JobDeps {
             runtime,
             store,
             root,
+            session: session.to_owned(),
             policy,
         }
     }
@@ -73,6 +78,7 @@ impl JobDeps {
             self.store.clone(),
             self.root.clone(),
             self.policy,
+            Some(self.session.clone()),
         )
     }
 }
