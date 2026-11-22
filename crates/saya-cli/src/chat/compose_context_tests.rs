@@ -62,7 +62,7 @@ async fn first_request(
     // `AGENTS.md` at its root, and the preference is stored under its identity.
     let folder = composed.root.checkout_root();
     std::fs::write(folder.join("AGENTS.md"), guidance).expect("the fixture writes its AGENTS.md");
-    let worktree = worktree_id_for(&composed.application.root_path())
+    let worktree = worktree_id_for(composed.application.root_path())
         .expect("the run's folder derives a worktree id");
     composed
         .application
