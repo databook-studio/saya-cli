@@ -42,7 +42,7 @@ use crate::agent::tools::consent::Operator;
 use crate::agent::tools::shell_policy::ModeCell;
 use crate::commands::coding::{
     CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, JobOrigin, Launch,
-    NativeCodingJob, TurnInputs,
+    NativeCodingJob, RunPlugins, TurnInputs,
 };
 use crate::connection::ConnectionRegistry;
 use crate::plugins::database::DatabaseBudget;
@@ -181,6 +181,29 @@ impl RunComposition {
             operator,
             mode,
         })
+    }
+
+    /// The plugins a run the front resumed activates, out of the same registry
+    /// a composed run's are composed from: a resumed session keeps the database
+    /// plugin it had, on the same connections and under the same budget.
+    pub(crate) fn resumed_plugins(
+        application: &CodingApplication,
+        job: &NativeCodingJob,
+        run: SessionRun,
+    ) -> Result<RunPlugins, CodingError> {
+        compose_plugins::run_plugins(
+            application,
+            job,
+            PluginSetup {
+                connections: run.connections,
+                allow_query_data: run.allow_query_data,
+                memory: run.memory,
+                memory_reachable: run.memory_reachable,
+                capture: run.capture,
+                learning: run.learning,
+                budget: run.budget,
+            },
+        )
     }
 
     /// Opens the run and runs no turn. After it the run holds its provider,

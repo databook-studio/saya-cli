@@ -29,9 +29,11 @@ use crate::agent::system_prompt::memory_reachable;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::turn_inputs::prepare_turn;
 use crate::chat::{ChatFront, RunComposition, SessionRun, WorkspaceShape};
+use crate::commands::coding::CodingApplication;
 use crate::config::runtime::RuntimeConfig;
 use crate::front::LineFront;
 use crate::interactive::turn_summary::tally_handle;
+use crate::local_metrics::LocalMetrics;
 use crate::plugins::database::DatabaseBudget;
 use crate::render::RenderFormat;
 
@@ -125,7 +127,6 @@ pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
 /// Builds the host the session's run is composed over, and states the run's
 /// facts — asking nobody: the session's mode is the consent.
 async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
-    let config: &RuntimeConfig = &parts.runtime;
     let (application, shape) = super::session_host::open_host(&parts).await?;
     if one_shot == super::one_shot::OneShot::Yes {
         super::one_shot::state_on(&application);
@@ -134,23 +135,24 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
     // pre-answers the calls its family would have asked about, so the mode's
     // advertisement states the family the session stated.
     application.with_launch_grants(parts.grants.clone());
+    composed_over(application, shape, parts).await
+}
+
+/// The run a session composes, over a host its surface has already opened: the
+/// first run, the rollover's next one, and the run a read-only record's next
+/// line prepares all come through here.
+pub(super) async fn composed_over(
+    application: Arc<CodingApplication>,
+    shape: WorkspaceShape,
+    parts: LineSession,
+) -> Result<Line, String> {
     // The run's own counters, printed after every settled turn: the same
     // collector the answering turn hands its metrics sink, and the stop
     // instant a Ctrl-C is measured from. Its cancellation token is the scope's
     // own — the run keeps the one it was opened with — and a surface that
     // brought the question's token states it, so the stop the question latched
     // is the stop this front waits on.
-    let stop = parts.cancellation.clone().unwrap_or_default();
-    let scope = match parts.cancellation.is_some() {
-        true => crate::agent::question_scope::QuestionScope::ask(config, stop),
-        false => crate::agent::question_scope::QuestionScope::session(config, stop),
-    };
-    let metrics = scope.metrics();
-    let front = match parts.sink.clone() {
-        Some(sink) => LineFront::over(sink, parts.can_prompt, tally_handle()),
-        None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
-    };
-    let front = Arc::new(front.with_scope(scope));
+    let (front, metrics) = front_for(&parts);
     let name = parts.session.clone();
     let stated = session_run(
         &parts,
@@ -169,6 +171,23 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
     composed.open().await.map_err(|error| error.to_string())?;
     let run = Run::opened(composed, &front, metrics.clone()).await;
     Ok(Line::new(application, parts, front, shape, metrics, run))
+}
+
+/// The surface every turn prints on, and the counters its scope records into:
+/// stated once for the composed run and for the resumed one.
+pub(super) fn front_for(parts: &LineSession) -> (Arc<LineFront>, Option<Arc<LocalMetrics>>) {
+    let config: &RuntimeConfig = &parts.runtime;
+    let stop = parts.cancellation.clone().unwrap_or_default();
+    let scope = match parts.cancellation.is_some() {
+        true => crate::agent::question_scope::QuestionScope::ask(config, stop),
+        false => crate::agent::question_scope::QuestionScope::session(config, stop),
+    };
+    let metrics = scope.metrics();
+    let front = match parts.sink.clone() {
+        Some(sink) => LineFront::over(sink, parts.can_prompt, tally_handle()),
+        None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
+    };
+    (Arc::new(front.with_scope(scope)), metrics)
 }
 
 /// The run a session states — the first one, and every one a rollover prepares

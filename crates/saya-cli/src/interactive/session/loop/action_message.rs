@@ -40,7 +40,7 @@ fn handle_message(
                 .ok_or("the session has no folder to open a run over")?;
             // The session's turns spend `[limits.database]` once they use it.
             let budget = crate::plugins::database::DatabaseBudget::of(&runtime);
-            let chat = LineChat::open(LineSession {
+            let parts = LineSession {
                 session: state.id.clone(),
                 folder,
                 runtime,
@@ -70,7 +70,34 @@ fn handle_message(
                 // boundary: a resumed session replays its kept tail exactly as
                 // the run before it did.
                 seed: state.replayed_pairs(),
-            })?;
+            };
+            // The record this process resumed decides what its link means — the
+            // run it names, a run of the record's own, or one sentence and a
+            // refusal — and the decision is acted on once, here. The record is
+            // read with its compaction summary restored: the save drops it (the
+            // chat session states it), and what a run may carry depends on it.
+            let record = {
+                let mut record = state.redacted();
+                record.compaction_summary = state.compaction_summary.clone();
+                record
+            };
+            let chat = match LineChat::begin(parts, record, state_db) {
+                Ok(Begun::Open { chat, said }) => {
+                    if let Some(said) = said {
+                        session_emit::emit_action(
+                            SessionAction::Message(said),
+                            format,
+                            state,
+                            store,
+                        )?;
+                    }
+                    *chat
+                }
+                // One sentence, and the process leaves: the refusal is the
+                // job's, and this surface takes no further turn on it.
+                Ok(Begun::Refused { sentence }) => return Err(sentence.into()),
+                Err(error) => return Err(error.into()),
+            };
             // The record names the run the session belongs to: lineage only.
             state.run = chat.run_link();
             let said = chat.send(line.to_owned())?;

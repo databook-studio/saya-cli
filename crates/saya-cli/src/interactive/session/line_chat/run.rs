@@ -20,7 +20,10 @@ use crate::local_metrics::LocalMetrics;
 
 /// The run the session is on.
 pub(super) struct Run {
-    composition: RunComposition,
+    /// The composition the run was opened from, when the front composed it:
+    /// a run the front resumed was handed its job already opened, and its
+    /// rollover hands over the job alone.
+    composition: Option<RunComposition>,
     session: ChatSession,
     port: Arc<JobPort>,
     job: Arc<NativeCodingJob>,
@@ -37,17 +40,42 @@ impl Run {
     ) -> Self {
         let job = Arc::clone(composition.job());
         let port = Arc::new(port(&job, metrics));
-        let session = ChatSession::new(
-            Arc::clone(&port) as Arc<dyn RunPort>,
-            Arc::clone(front) as Arc<dyn ChatFront>,
-        );
-        session.open().await;
+        let session = Self::chat_session(&port, front).await;
         Self {
-            composition,
+            composition: Some(composition),
             session,
             port,
             job,
         }
+    }
+
+    /// The run a resume prepared: the engine handed back the job the record
+    /// links, at its next epoch, and the front drives it exactly as a composed
+    /// one — its turns, its close, and the rollover that may follow.
+    pub(super) async fn resumed(
+        job: Arc<NativeCodingJob>,
+        front: &Arc<LineFront>,
+        metrics: Option<Arc<LocalMetrics>>,
+    ) -> Self {
+        let port = Arc::new(port(&job, metrics));
+        let session = Self::chat_session(&port, front).await;
+        Self {
+            composition: None,
+            session,
+            port,
+            job,
+        }
+    }
+
+    /// The chat session driving one opened run, stated once for both ways the
+    /// front opens one.
+    async fn chat_session(port: &Arc<JobPort>, front: &Arc<LineFront>) -> ChatSession {
+        let session = ChatSession::new(
+            Arc::clone(port) as Arc<dyn RunPort>,
+            Arc::clone(front) as Arc<dyn ChatFront>,
+        );
+        session.open().await;
+        session
     }
 
     /// The chat session a turn of this run is sent to.
@@ -63,7 +91,7 @@ impl Run {
     ) -> Self {
         Self {
             job: Arc::clone(composition.job()),
-            composition,
+            composition: Some(composition),
             session,
             port,
         }
@@ -164,6 +192,12 @@ pub(super) fn hand_over(run: Option<Run>) -> Ending {
         port,
         job,
     } = run.expect("the boundary hands over the run the session is on");
-    drop((session, port, job));
-    Ending::new(composition)
+    drop((session, port));
+    match composition {
+        Some(composition) => {
+            drop(job);
+            Ending::new(composition)
+        }
+        None => Ending::adopted(job),
+    }
 }
