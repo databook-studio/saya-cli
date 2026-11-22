@@ -46,28 +46,36 @@ fn the_binary_on_a_pty_opens_the_new_surface() {
     );
 }
 
-/// `/help` paints the command listing: the chat layer's one table answers the
-/// read (`chat::ops`), and the surface lands the words in the transcript.
+/// `/help` opens `02` §11's key sheet instead of printing the catalogue into
+/// the transcript: the sheet's own words paint, and the listing's rows — which
+/// used to land in the transcript, keeping only their tail on screen — are
+/// nowhere.
 #[test]
-fn help_paints_the_command_listing() {
+fn help_opens_the_key_sheet_and_not_a_listing() {
     let home = scratch_home("surface-help");
     let _cleanup = HomeGuard(home.clone());
     let mut tui = match surface_tui(&home, None) {
         Ok(tui) => tui,
         Err(reason) => {
-            eprintln!("skipping help_paints_the_command_listing: {reason}");
+            eprintln!("skipping help_opens_the_key_sheet: {reason}");
             return;
         }
     };
     tui.dismiss_trust();
     tui.send_line("/help").expect("send /help");
-    // The listing is longer than the pane, and the transcript keeps its newest
-    // rows: the tail of the Session category is what the operator sees, and its
-    // `help` row is the proof the listing came from the catalogue.
-    tui.wait_for("Show help for slash commands", INTERACTIVE)
-        .expect("a catalogue row paints");
-    tui.wait_for("Exit the REPL", INTERACTIVE)
-        .expect("the listing's exit row paints");
+    tui.wait_for("Conversation", INTERACTIVE)
+        .expect("the sheet's first column paints");
+    tui.wait_for("Ctrl+K", INTERACTIVE)
+        .expect("the sheet names the palette's key");
+    let screen = tui.screen();
+    assert!(
+        !screen.contains("Exit the REPL"),
+        "the catalogue is not printed into the transcript: {screen}"
+    );
+    // Esc closes the sheet: the composer is back, and the surface answered.
+    tui.send("\x1b").expect("press Esc");
+    tui.wait_for("Message", INTERACTIVE)
+        .expect("the composer is back after /help");
     assert!(tui.still_running(), "the surface is alive after /help");
 }
 

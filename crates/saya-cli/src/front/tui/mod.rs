@@ -34,6 +34,8 @@ pub(crate) mod model;
 pub(crate) mod model_overlay;
 pub(crate) mod msg;
 pub(crate) mod ops;
+pub(crate) mod overlay_keys;
+pub(crate) mod overlay_press;
 pub(crate) mod run;
 pub(crate) mod run_clock;
 pub(crate) mod run_cmd;
@@ -47,6 +49,7 @@ pub(crate) mod run_panic;
 pub(crate) mod run_screen;
 pub(crate) mod theme;
 pub(crate) mod update;
+pub(crate) mod update_submit;
 pub(crate) mod view;
 
 // This `pub(crate)` surface is the surface's boundary: the runtime above it
@@ -119,6 +122,14 @@ mod focus_tests;
 #[cfg(test)]
 #[path = "update_mode_tests.rs"]
 mod update_mode_tests;
+
+#[cfg(test)]
+#[path = "update_palette_tests.rs"]
+mod update_palette_tests;
+
+#[cfg(test)]
+#[path = "update_help_tests.rs"]
+mod update_help_tests;
 
 #[cfg(test)]
 #[path = "update_cycle_tests.rs"]

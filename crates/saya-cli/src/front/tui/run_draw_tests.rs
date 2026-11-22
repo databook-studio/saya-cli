@@ -154,6 +154,69 @@ fn the_jobs_drawer_says_the_same_words_with_colour_off() {
 }
 
 #[test]
+fn the_open_palette_is_painted_over_the_transcript() {
+    let mut model = Model::default();
+    model.begin_turn(String::from("how many orders did we get?"));
+    model.open_palette();
+    model
+        .palette_mut()
+        .expect("the palette is the open pane")
+        .push('e');
+
+    let rows = painted(&model, &Facts::default(), 100, 30);
+    let title = row_of(&rows, "╭ Commands");
+    let export = row_of(&rows, "/export");
+    let usage = row_of(&rows, "usage: /");
+    let keys = row_of(&rows, "insert · Tab complete · Esc close");
+    let status = row_of(&rows, "? help");
+
+    assert!(
+        rows[title].contains("> e"),
+        "the border names the query: {}",
+        rows[title]
+    );
+    assert!(title < export, "the frame opens above its rows");
+    assert!(export < usage, "the usage row follows the list");
+    assert!(usage < keys, "the key row closes the frame");
+    assert!(
+        keys < status,
+        "the palette sits over the transcript, above the status line"
+    );
+    assert!(
+        status < row_of(&rows, "╭ Message"),
+        "and the composer keeps the rows below it"
+    );
+}
+
+#[test]
+fn the_open_help_sheet_is_painted_over_the_transcript() {
+    let mut model = Model::default();
+    model.begin_turn(String::from("how many orders did we get?"));
+    model.open_help();
+
+    let rows = painted(&model, &Facts::default(), 100, 30);
+    let title = row_of(&rows, "╭ Help");
+    let conversation = row_of(&rows, "Conversation");
+    let navigation = row_of(&rows, "Navigation");
+    let status = row_of(&rows, "? help");
+
+    assert!(title < conversation, "the sheet opens above its columns");
+    assert!(conversation < navigation, "02 §11's columns read in order");
+    assert!(
+        navigation < status,
+        "the sheet sits over the transcript, above the status line"
+    );
+    assert!(
+        rows.iter().any(|row| row.contains("Ctrl+K")),
+        "the sheet names the palette's own key: {rows:#?}"
+    );
+    assert!(
+        status < row_of(&rows, "╭ Message"),
+        "and the composer keeps the rows below it"
+    );
+}
+
+#[test]
 fn the_open_mode_picker_is_painted_over_the_transcript() {
     let mut model = Model::default();
     model.begin_turn(String::from("how many orders did we get?"));

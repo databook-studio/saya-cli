@@ -21,22 +21,13 @@ use super::jobs;
 use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
+use super::overlay_press;
+use super::update_submit::{send, submit};
 use super::view::ModePicker;
 use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 use crate::front::apply;
 use crate::interactive::session::permissions::mode::next_in_cycle;
-use crate::slash::{SlashCommand, parse_slash_command};
-
-/// What the surface says when a queued line is replaced by a newer one.
-const QUEUED_REPLACED: &str = "queued line replaced — the earlier one was dropped";
-
-/// The one slash command the surface answers itself: bare `/mode` opens the
-/// picker (`02` §8). K2 gives `/mode <name>` its argument.
-const SLASH_MODE: &str = "/mode";
-
-/// The other one: bare `/job` opens the background jobs drawer (`02` §8).
-const SLASH_JOB: &str = "/job";
 
 /// Folds one message into the model, and answers what the runtime must do.
 pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -105,6 +96,19 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         }
         Some(Intent::ModeSet) => choose(model, cmds),
         Some(Intent::ModeCancel) => model.close_overlay(),
+        // The panes that own the screen (`02` §11): opening one, walking it, and
+        // running the command the palette chooses.
+        Some(
+            intent @ (Intent::OpenPalette
+            | Intent::OpenHelp
+            | Intent::PaletteUp
+            | Intent::PaletteDown
+            | Intent::PaletteInsert(_)
+            | Intent::PaletteBackspace
+            | Intent::PaletteRun
+            | Intent::PaletteClose
+            | Intent::HelpClose),
+        ) => overlay_press::press(model, intent, cmds),
         Some(Intent::FocusUp) => model.move_focus(false),
         Some(Intent::FocusDown) => model.move_focus(true),
         Some(Intent::FocusExpand) => model.fold_focus(None),
@@ -147,67 +151,6 @@ fn copy(model: &mut Model, cmds: &mut Vec<Cmd>) {
     }
     model.say(focus_text::toast(word, &text));
     cmds.push(Cmd::Copy(text));
-}
-
-/// Enter: send the composer, or hold it behind the turn already running.
-fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
-    let text = model.take_composer();
-    if text.trim().is_empty() {
-        return;
-    }
-    // A line the surface answers itself: bare `/mode` opens the picker and bare
-    // `/job` opens the jobs drawer, neither of them sending anything
-    // (`02` §8). Both are read before the slash dispatch, because the crate's
-    // parser answers `/job` with its verbs — and bare `/job` has none.
-    let line = text.trim();
-    if line == SLASH_MODE {
-        model.open_mode_picker();
-        return;
-    }
-    if line == SLASH_JOB {
-        model.open_jobs();
-        return;
-    }
-    // A line the surface answers itself — `/sql`, `/export`, `/chart`,
-    // `/investigation` — is one command, never a turn (`03` §4.1). Every other
-    // line is a turn's.
-    match direct::read(model, &text) {
-        direct::Read::Cmd(cmd) => {
-            cmds.push(cmd);
-            return;
-        }
-        direct::Read::Said(words) => {
-            model.say(words);
-            return;
-        }
-        direct::Read::Turn => {}
-    }
-    // A command the surface does not answer itself is the session's own
-    // operation, read by the chat layer's one table (A9) — never a turn. A
-    // `Coding` command and `/mode` are the exceptions: both are the session's
-    // own lines, read (and dispatched) by the run the surface is composed over
-    // (`/job show <id>` is T15's proved case), so they stay turns here.
-    if let Ok(Some(command)) = parse_slash_command(line)
-        && !matches!(command, SlashCommand::Coding(_) | SlashCommand::Mode(_))
-    {
-        cmds.push(Cmd::Op(command));
-        return;
-    }
-    if model.is_busy() {
-        if model.queue(text).is_some() {
-            model.say(QUEUED_REPLACED);
-        }
-        return;
-    }
-    send(model, text, cmds);
-}
-
-/// Sends one message: the turn opens here, because the operator's own words
-/// are the one thing the event stream never carries.
-fn send(model: &mut Model, text: String, cmds: &mut Vec<Cmd>) {
-    model.begin_turn(text.clone());
-    model.start_turn();
-    cmds.push(Cmd::Send(text));
 }
 
 /// One answer to the open card: the call is answered, and the turn that asked

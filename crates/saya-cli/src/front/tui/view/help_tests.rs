@@ -9,7 +9,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::help::{self, Context};
 use super::help_fixture::{
-    busy, chords, ctrl_g, idle, model_in, plain, probes, queued, row, with_card,
+    busy, chords, ctrl_g, ctrl_k, idle, model_in, plain, probes, queued, row, with_card,
     with_ungranted_card, words,
 };
 use super::help_keys::{SHORTCUTS, When};
@@ -227,6 +227,17 @@ fn every_key_the_sheet_shows_is_handled_by_the_keymap() {
     assert!(
         SHORTCUTS.iter().any(|shortcut| shortcut.when == When::Card),
         "the table carries the card's own keys"
+    );
+    // The two keys that open the panes themselves are listed, and the keymap
+    // answers both: a sheet that hid them would hide the way to what it says.
+    let idle_chords = chords(&idle());
+    assert!(
+        idle_chords.contains(&ctrl_k()),
+        "the sheet lists Ctrl+K: {idle_chords:?}"
+    );
+    assert!(
+        idle_chords.contains(&plain(KeyCode::Char('?'))),
+        "the sheet lists `?`: {idle_chords:?}"
     );
     assert_eq!(
         Context::of(&Model::default()),

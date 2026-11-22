@@ -66,12 +66,53 @@ pub(crate) fn entries_in(table: &[CommandSpec], query: &str) -> Vec<Entry> {
     scored.into_iter().map(|(_, entry)| entry).collect()
 }
 
+impl Entry {
+    /// Whether the command asks for something the operator must supply.
+    ///
+    /// The synopsis says it: a `<placeholder>` or a bare choice word outside the
+    /// `[…]` of an optional form is a required argument, while a command whose
+    /// remaining forms are all bracketed — `/mode [ask|plan|…]`, `/chart [type]
+    /// [path]` — runs as it is. A trailing note in parentheses (`/exit  (alias
+    /// /quit)`) is prose, not a form.
+    pub(crate) fn takes_arguments(&self) -> bool {
+        let synopsis = self
+            .usage
+            .strip_prefix('/')
+            .and_then(|usage| usage.strip_prefix(self.name))
+            .unwrap_or_default();
+        let mut depth = 0usize;
+        for token in synopsis.split_whitespace() {
+            let mut required = String::new();
+            for character in token.chars() {
+                match character {
+                    '[' => depth += 1,
+                    ']' => depth = depth.saturating_sub(1),
+                    _ if depth == 0 => required.push(character),
+                    _ => {}
+                }
+            }
+            let Some(first) = required.chars().next() else {
+                continue;
+            };
+            if first == '<' || first.is_alphanumeric() {
+                return true;
+            }
+        }
+        false
+    }
+}
+
 /// The best score any spelling of `spec` earns for `query`, and the alias that
 /// earned it when the canonical name did not.
+///
+/// A spelling the query *is* outranks every spelling it merely begins: an
+/// operator who types `mode` means `/mode`, not `/model`, and since the palette
+/// is where a slash command is now typed, the command they named has to be the
+/// row Enter stands on.
 fn best(spec: &CommandSpec, query: &str) -> Option<(i32, Option<&'static str>)> {
-    let mut best = fuzzy_score(spec.name, query).map(|score| (score, None));
+    let mut best = score(spec.name, query).map(|score| (score, None));
     for candidate in spec.aliases {
-        if let Some(score) = fuzzy_score(candidate.name, query)
+        if let Some(score) = score(candidate.name, query)
             && best.is_none_or(|(found, _)| score > found)
         {
             best = Some((score, Some(candidate.name)));
@@ -79,3 +120,19 @@ fn best(spec: &CommandSpec, query: &str) -> Option<(i32, Option<&'static str>)> 
     }
     best
 }
+
+/// One spelling's score for `query`, with an exact match lifted clear of every
+/// partial one.
+fn score(spelling: &str, query: &str) -> Option<i32> {
+    let score = fuzzy_score(spelling, query)?;
+    Some(if spelling.eq_ignore_ascii_case(query) {
+        score + EXACT
+    } else {
+        score
+    })
+}
+
+/// What an exact spelling is worth on top of the matcher's own score: enough to
+/// outrank a longer name the query is a prefix of, which the matcher scores the
+/// same.
+const EXACT: i32 = 1000;

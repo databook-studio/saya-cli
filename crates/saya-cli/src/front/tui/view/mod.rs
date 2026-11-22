@@ -102,7 +102,7 @@ pub(crate) use composer_frame::rows;
 #[allow(unused_imports)]
 pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]
-pub(crate) use help::{Context, rows as help_rows};
+pub(crate) use help::{Context, ROWS as HELP_ROWS, rows as help_rows};
 #[allow(unused_imports)]
 pub(crate) use jobs::{CARD_FIRST, DETAIL_UNIT, Drawer, Job, NO_JOBS, State as JobState, TITLE};
 #[allow(unused_imports)]
@@ -113,7 +113,7 @@ pub(crate) use jobs_rows::{
 #[allow(unused_imports)]
 pub(crate) use mode_picker::{ModePicker, ROWS as MODE_PICKER_ROWS, rows as mode_picker_rows};
 #[allow(unused_imports)]
-pub(crate) use palette::Palette;
+pub(crate) use palette::{Palette, ROWS as PALETTE_ROWS};
 #[allow(unused_imports)]
 pub(crate) use palette_rows::rows as palette_rows;
 #[allow(unused_imports)]

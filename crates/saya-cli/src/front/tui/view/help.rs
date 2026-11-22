@@ -24,6 +24,10 @@ pub(crate) const TITLE: &str = "Help";
 /// The narrowest sheet drawn: below this not even its border fits.
 const MIN_WIDTH: usize = 12;
 
+/// The rows the sheet asks the frame for: its two borders, the columns' three
+/// headings, and a row for each key an idle surface answers.
+pub(crate) const ROWS: usize = 16;
+
 /// The facts the sheet reads: which state the surface is in, and the glyph set
 /// it draws with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -14,13 +14,19 @@ fn tui_sql_then_export_snapshot_survives_and_writes_the_file() {
     };
     dismiss_trust_modal(&mut tui);
 
-    tui.send_line("/sql SELECT 1").expect("send /sql");
+    // `/` opens `02` §11's palette, so a command is chosen there and its
+    // argument typed into the composer the choice fills.
+    tui.send("/").expect("open the palette");
+    tui.send("sql\r").expect("choose /sql");
+    tui.send_line("SELECT 1").expect("send the query");
     tui.wait_for("result · demo · 1 row", INTERACTIVE)
         .expect("the query result paints");
 
     let snapshot = home.join("snapshot.csv");
-    tui.send_line(&format!("/export --snapshot {}", snapshot.display()))
-        .expect("send /export");
+    tui.send("/").expect("open the palette");
+    tui.send("export\r").expect("choose /export");
+    tui.send_line(&format!("--snapshot {}", snapshot.display()))
+        .expect("finish the export command");
     tui.wait_for("Exported", INTERACTIVE)
         .expect("the export is said");
     assert!(
@@ -48,12 +54,16 @@ fn tui_sql_then_investigation_save_survives_and_saves() {
     };
     dismiss_trust_modal(&mut tui);
 
-    tui.send_line("/sql SELECT 1").expect("send /sql");
+    tui.send("/").expect("open the palette");
+    tui.send("sql\r").expect("choose /sql");
+    tui.send_line("SELECT 1").expect("send the query");
     tui.wait_for("result · demo · 1 row", INTERACTIVE)
         .expect("the query result paints");
 
-    tui.send_line("/investigation save pty-sentinel")
-        .expect("send /investigation save");
+    tui.send("/").expect("open the palette");
+    tui.send("investigation\r").expect("choose /investigation");
+    tui.send_line("save pty-sentinel")
+        .expect("finish the save command");
     // The save's own sentence is a direct command's outcome, which the new
     // surface says as a transient word on the status line (a toast) — a settled
     // frame no longer holds it, so waiting for the words would be a race. What

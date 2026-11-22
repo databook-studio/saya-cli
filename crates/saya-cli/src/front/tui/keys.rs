@@ -7,16 +7,19 @@
 //! the question they were reading behind.
 //!
 //! The card owns the keyboard while it is open, and its own answers are read
-//! there ([`super::cards_keys`]); the composer owns it otherwise.
+//! there ([`super::cards_keys`]); the composer owns it otherwise. A pane that
+//! owns the screen reads its keys in [`super::overlay_keys`].
+//!
+//! Two of the composer's own keys open a pane rather than type: `Ctrl+K` opens
+//! the command palette, and `?` — like `/` — opens it only while the composer is
+//! empty, so a draft keeps the character it asked for (`02` §11).
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::cards_keys::{self, CardIntent};
-use super::direct_trust;
 use super::model::Model;
-use super::model_overlay::Overlay;
+use super::overlay_keys;
 use crate::agent::tools::consent::Answer;
-use crate::interactive::tui::TrustResolution;
 
 /// What the surface says when a mode switch is asked for over an open card.
 /// The card asks for an answer first, and the wording says so.
@@ -55,6 +58,24 @@ pub(crate) enum Intent {
     ModeSet,
     /// Close the picker without stating anything.
     ModeCancel,
+    /// Open `02` §11's command palette (`Ctrl+K`, or `/` on an empty composer).
+    OpenPalette,
+    /// Open `02` §11's key sheet (`?` on an empty composer).
+    OpenHelp,
+    /// Add this character to the palette's query.
+    PaletteInsert(char),
+    /// Remove the palette's last query character.
+    PaletteBackspace,
+    /// Move the palette's selection one row up.
+    PaletteUp,
+    /// Move the palette's selection one row down.
+    PaletteDown,
+    /// Run the command the palette's selected row names.
+    PaletteRun,
+    /// Close the palette without running anything.
+    PaletteClose,
+    /// Close the key sheet.
+    HelpClose,
     /// Walk the block cursor one entry older (`02` §6).
     FocusUp,
     /// Walk the block cursor one entry newer.
@@ -99,7 +120,7 @@ pub(crate) enum Intent {
 /// What `key` means to `model` now, or nothing at all.
 pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
     if let Some(overlay) = model.overlay() {
-        return overlay_key(model, overlay, key);
+        return overlay_keys::key(model, overlay, key);
     }
     if model.card().is_some() {
         return card_key(model, key);
@@ -108,65 +129,6 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
         return cursor_key(key);
     }
     composer_key(model, key)
-}
-
-/// The open pane's keys: while one is up it owns the keyboard, so no press can
-/// reach the composer behind it.
-fn overlay_key(model: &Model, overlay: &Overlay, key: KeyEvent) -> Option<Intent> {
-    match overlay {
-        Overlay::Mode(_) => mode_key(key),
-        Overlay::Jobs => jobs_key(model.jobs().is_confirming(), key),
-        Overlay::Trust => trust_key(key),
-    }
-}
-
-/// The jobs drawer's keys (`02` §8): `↑↓` walk its rows, `↵` opens the selected
-/// job, `a` opens the card for the call it is waiting on, `x` asks before it
-/// cancels, and Esc closes the drawer. While the confirm asks, only `y`, `n` and
-/// Esc are read — the ask owns the keyboard, exactly as T12's `d` does.
-fn jobs_key(confirming: bool, key: KeyEvent) -> Option<Intent> {
-    if confirming {
-        return match key.code {
-            KeyCode::Char('y') => Some(Intent::JobsCancelYes),
-            KeyCode::Char('n') => Some(Intent::JobsCancelNo),
-            KeyCode::Esc => Some(Intent::JobsCancelNo),
-            _ => None,
-        };
-    }
-    match key.code {
-        KeyCode::Up => Some(Intent::JobsUp),
-        KeyCode::Down => Some(Intent::JobsDown),
-        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::ALT) => Some(Intent::JobsOpen),
-        KeyCode::Char('a') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(Intent::JobsApprove)
-        }
-        KeyCode::Char('x') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            Some(Intent::JobsCancelAsk)
-        }
-        KeyCode::Esc => Some(Intent::JobsClose),
-        _ => None,
-    }
-}
-
-/// The workspace-trust question's keys (`02` §9.4): `y` binds the launch folder
-/// and `n` continues without one — the two answers today's modal gives through
-/// `t` and `c`, read through the same resolution (`direct_trust::press`).
-fn trust_key(key: KeyEvent) -> Option<Intent> {
-    match direct_trust::press(key.code)? {
-        TrustResolution::TrustCwd => Some(Intent::TrustAccept),
-        _ => Some(Intent::TrustDecline),
-    }
-}
-
-/// `/mode`'s picker: ↑↓ choose, Enter set, Esc cancel (`02` §8).
-fn mode_key(key: KeyEvent) -> Option<Intent> {
-    match key.code {
-        KeyCode::Up => Some(Intent::ModeUp),
-        KeyCode::Down => Some(Intent::ModeDown),
-        KeyCode::Enter if !key.modifiers.contains(KeyModifiers::ALT) => Some(Intent::ModeSet),
-        KeyCode::Esc => Some(Intent::ModeCancel),
-        _ => None,
-    }
 }
 
 /// The card's keys: its own answers (`cards_keys`), and a refusal of the one
@@ -227,6 +189,16 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
         // The jobs drawer has a chord of its own, so no word of a message has to
         // give up its `j` (`02` §8).
         KeyCode::Char('j') if ctrl => Some(Intent::OpenJobs),
+        // `02` §11's two panes: the palette has a chord, and both it and the key
+        // sheet open from `/` and `?` only while the composer holds nothing — a
+        // draft keeps the character it asked for.
+        KeyCode::Char('k') if ctrl => Some(Intent::OpenPalette),
+        KeyCode::Char('/') if !ctrl && !alt && model.composer().is_empty() => {
+            Some(Intent::OpenPalette)
+        }
+        KeyCode::Char('?') if !ctrl && !alt && model.composer().is_empty() => {
+            Some(Intent::OpenHelp)
+        }
         KeyCode::Esc if model.is_busy() => Some(Intent::CancelTurn),
         KeyCode::Backspace => Some(Intent::Backspace),
         KeyCode::Char(character) if !ctrl && !alt => Some(Intent::Insert(character)),

@@ -89,6 +89,23 @@ fn a_canonical_name_ranks_its_own_row_and_notes_no_alias() {
     );
 }
 
+/// The command a query spells exactly ranks first: `mode` is `/mode`, not the
+/// `/model` its letters also begin.
+#[test]
+fn an_exact_spelling_outranks_a_longer_name_it_begins() {
+    let entries = querying("mode").entries();
+    assert_eq!(
+        entries[0].name,
+        "mode",
+        "the row the operator named is the row Enter stands on: {:?}",
+        entries.iter().map(|entry| entry.name).collect::<Vec<_>>()
+    );
+    assert!(
+        !entries.is_empty(),
+        "a query that names a command offers it"
+    );
+}
+
 /// The guard: every row the palette offers is a name the catalogue's lookup
 /// answers with that same canonical name.
 #[test]

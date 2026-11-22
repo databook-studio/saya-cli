@@ -25,9 +25,9 @@ fn ctrl_j_opens_the_drawer_and_tells_the_session_nothing() {
 #[test]
 fn slash_job_opens_the_drawer_and_sends_nothing() {
     let mut model = model();
-    for character in "/job".chars() {
-        update(&mut model, press(KeyCode::Char(character)));
-    }
+    // Set whole: `/` on an empty composer is the palette's key (`02` §11), so a
+    // slash line reaches the composer as text.
+    model.insert("/job");
     let cmds = update(&mut model, press(KeyCode::Enter));
     assert!(cmds.is_empty(), "`/job` is not a turn: {cmds:?}");
     assert!(model.jobs_open(), "bare `/job` opens the drawer");
@@ -37,9 +37,7 @@ fn slash_job_opens_the_drawer_and_sends_nothing() {
 #[test]
 fn slash_job_with_an_argument_is_still_a_turn() {
     let mut model = model();
-    for character in "/job show fix-flaky".chars() {
-        update(&mut model, press(KeyCode::Char(character)));
-    }
+    model.insert("/job show fix-flaky");
     let cmds = update(&mut model, press(KeyCode::Enter));
     assert_eq!(cmds, vec![Cmd::Send(String::from("/job show fix-flaky"))]);
 }

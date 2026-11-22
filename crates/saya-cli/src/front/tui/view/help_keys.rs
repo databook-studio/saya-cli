@@ -93,6 +93,9 @@ const ESCAPE: Chord = bare(KeyCode::Esc);
 const BACKSPACE: Chord = bare(KeyCode::Backspace);
 const SHIFT_TAB: Chord = shift(KeyCode::BackTab);
 const CTRL_G: Chord = ctrl('g');
+/// The palette's chord, and the sheet's own opener: both read by the composer.
+const CTRL_K: Chord = ctrl('k');
+const QUESTION: Chord = bare(KeyCode::Char('?'));
 const YES: Chord = bare(KeyCode::Char('y'));
 const ALSO_YES: Chord = bare(KeyCode::Char('a'));
 const SESSION: Chord = bare(KeyCode::Char('s'));
@@ -205,6 +208,20 @@ pub(crate) const SHORTCUTS: &[Shortcut] = &[
         action: "drop the line held behind the running turn",
         group: Group::Navigation,
         when: When::Queued,
+    },
+    Shortcut {
+        label: "Ctrl+K",
+        chords: &[CTRL_K],
+        action: "open the command palette",
+        group: Group::Navigation,
+        when: When::Composer,
+    },
+    Shortcut {
+        label: "?",
+        chords: &[QUESTION],
+        action: "open this sheet",
+        group: Group::Navigation,
+        when: When::Composer,
     },
     Shortcut {
         label: "↑, ↓",
