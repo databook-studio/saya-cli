@@ -75,8 +75,27 @@ fn apply_agent(turn: &mut TurnView, event: &AgentEvent) {
                 answer.text.clear();
             }
         }
-        // Metrics, recovery and knowledge events are progress and evidence;
-        // the status line and the inspectors read them, not the turn's blocks.
+        // What recall supplied this turn: the same shaper the text front
+        // prints, so a line front and the TUI say the same words. An event that
+        // shapes to nothing (recall ran and found nothing, nothing dropped)
+        // adds no line.
+        AgentEvent::KnowledgeSupplied {
+            outcome,
+            contracts,
+            dropped_by_bounds,
+        } => {
+            let text =
+                crate::render::knowledge_supplied_text(*outcome, contracts, *dropped_by_bounds);
+            let text = text.trim_end();
+            if !text.is_empty() {
+                turn.push(Entry::Notice(Notice {
+                    message: text.to_owned(),
+                }));
+            }
+        }
+        // Metrics, recovery and the remaining knowledge events are progress and
+        // evidence; the status line and the inspectors read them, not the
+        // turn's blocks.
         _ => {}
     }
 }

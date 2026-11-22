@@ -263,6 +263,17 @@ impl RootGuard {
     pub(super) fn checkout_root(&self) -> PathBuf {
         self.0.join(IN_PLACE_FOLDER)
     }
+
+    /// The state store the session opened: the file a test may make
+    /// unavailable, or read beside the run.
+    pub(super) fn state_store_path(&self) -> PathBuf {
+        self.0.join("state.sqlite3")
+    }
+
+    /// The seeded SQLite database the session reads.
+    pub(super) fn database_path(&self) -> PathBuf {
+        self.0.join("main.sqlite3")
+    }
 }
 
 /// The `git` this machine runs, found on `PATH`: the fixture's Git service
