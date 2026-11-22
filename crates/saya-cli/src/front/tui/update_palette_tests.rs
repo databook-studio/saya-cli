@@ -12,6 +12,7 @@ use super::model::Model;
 use super::msg::Cmd;
 use super::update::update;
 use super::update_fixture::{ctrl_k, enter, escape, press, typed};
+use crate::cli::CodingCommand;
 use crate::slash::SlashCommand;
 
 /// The name the palette's selected row carries, if the palette is open.
@@ -188,4 +189,46 @@ fn a_slash_with_a_draft_is_typed_into_it() {
 
     assert!(!model.overlay_open(), "a draft keeps its own characters");
     assert_eq!(model.composer(), "/sql select 1/");
+}
+
+#[test]
+fn a_line_that_is_the_whole_command_runs_from_the_palette_as_it_would_typed() {
+    // A job's line carries its own arguments — the start's id, task and write
+    // paths — so the pane's Enter must hand the line on whole, rather than
+    // filling the composer with a name the tail would then be lost from.
+    let line = "/start --id pty-job 'controlled task with helpers' --write a.txt";
+    let mut model = Model::default();
+    update(&mut model, ctrl_k());
+    typed(&mut model, line.trim_start_matches('/'));
+
+    let chosen = update(&mut model, enter());
+
+    let mut hand_typed = Model::default();
+    hand_typed.insert(line);
+    assert_eq!(
+        chosen,
+        update(&mut hand_typed, enter()),
+        "the pane's line and the typed line take one submit"
+    );
+    let [Cmd::Job(request)] = &chosen[..] else {
+        panic!("a start is the job's own command, never a turn: {chosen:?}");
+    };
+    let CodingCommand::Start {
+        id,
+        task,
+        write_paths,
+        ..
+    } = &request.command
+    else {
+        panic!("a start is a start: {request:?}");
+    };
+    assert_eq!(id, "pty-job", "the id the line stated");
+    assert_eq!(task, "controlled task with helpers", "and its task");
+    assert_eq!(
+        write_paths,
+        &[String::from("a.txt")],
+        "and the paths it may write, none of them dropped"
+    );
+    assert!(!model.overlay_open(), "the pane gives the surface back");
+    assert_eq!(model.composer(), "", "and leaves no line behind");
 }

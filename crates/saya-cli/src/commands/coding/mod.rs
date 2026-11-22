@@ -29,6 +29,10 @@ mod delegate_batch;
 mod follow_up;
 mod helper_shape;
 pub(crate) mod job_records;
+/// The unix half of a job-record removal, kept apart so every unsafe block the
+/// walk needs sits in one small module of its own.
+#[cfg(unix)]
+mod job_records_remove;
 mod joined_accounting;
 pub(crate) mod lane;
 pub(crate) mod lifecycle;

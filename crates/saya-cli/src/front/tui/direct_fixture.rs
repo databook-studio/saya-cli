@@ -19,6 +19,7 @@ use saya_types::{EvidenceSource, ExecutionEvidence, QueryResult, ResultScope, Sq
 
 use super::direct_run::DirectDeps;
 use super::direct_trust::TrustStore;
+use super::live::LiveRuntime;
 use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::run_fixture::key;
@@ -68,12 +69,28 @@ impl Fixture {
             .expect("the fixture runtime loads");
         let trust = Arc::new(RecordingTrust::default());
         let deps = Arc::new(DirectDeps {
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(LiveRuntime::new(Arc::new(runtime))),
             state_db: SqliteStateStore::new(root.join("state.sqlite3")),
             format: RenderFormat::Text,
             trust: trust.clone(),
         });
         Self { root, deps, trust }
+    }
+
+    /// The same dependencies, with the investigations root inside the
+    /// fixture's own tree. A composed runtime resolves that root from the
+    /// environment (`SAYA_INVESTIGATIONS_DIR`), else beside the state DB — so a
+    /// test that saves a document must point it here, or it writes the
+    /// operator's real root.
+    pub(crate) fn investigation_deps(&self) -> Arc<DirectDeps> {
+        let mut runtime = (*self.deps.runtime.current()).clone();
+        runtime.investigations_root = self.root.join("investigations");
+        Arc::new(DirectDeps {
+            runtime: Arc::new(super::live::LiveRuntime::new(Arc::new(runtime))),
+            state_db: self.deps.state_db.clone(),
+            format: self.deps.format,
+            trust: self.deps.trust.clone(),
+        })
     }
 
     /// The surface's model, on the fixture's connection.

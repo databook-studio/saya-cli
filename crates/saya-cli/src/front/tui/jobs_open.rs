@@ -21,29 +21,31 @@ use saya_store::SqliteStateStore;
 
 use super::direct::DirectOutcome;
 use super::jobs_desk::NO_SUCH_JOB;
+use super::live::LiveRuntime;
 use super::msg::Worker;
 use super::run_front::Forward;
 use crate::cli::CodingCommand;
-use crate::config::runtime::RuntimeConfig;
 use crate::interactive::tui::{CodingMessage, CodingPanel, Said, started_line};
 
-/// What opening a job needs from the launch: the composed runtime the worker
-/// composes over, the state store its records and its receipts go to, the
-/// folder it roots at, and the session's approval mode — the mode the old
-/// surface handed its panel, so a job asks exactly where it did.
+/// What opening a job needs from the launch: the configuration in force, the
+/// state store its records and its receipts go to, the folder it roots at, and
+/// the session's approval mode — the mode the old surface handed its panel, so a
+/// job asks exactly where it did.
 pub(crate) struct JobDeps {
-    runtime: Arc<RuntimeConfig>,
+    runtime: Arc<LiveRuntime>,
     store: SqliteStateStore,
     root: PathBuf,
     policy: ApprovalPolicy,
 }
 
 impl JobDeps {
-    /// A job's dependencies. `root` is the session's own folder — the one the
-    /// line front's opener states, with the same fallback when a session bound
-    /// none.
+    /// A job's dependencies. `runtime` is the launch's live configuration — the
+    /// same cell a direct command reads, so a job opened after a `/reload`
+    /// composes over the configuration then in force. `root` is the session's
+    /// own folder — the one the line front's opener states, with the same
+    /// fallback when a session bound none.
     pub(crate) fn new(
-        runtime: Arc<RuntimeConfig>,
+        runtime: Arc<LiveRuntime>,
         store: SqliteStateStore,
         root: Option<&Path>,
         policy: ApprovalPolicy,
@@ -65,7 +67,7 @@ impl JobDeps {
     fn open(&self, command: CodingCommand) -> CodingPanel {
         crate::interactive::tui::spawn_job(
             command,
-            self.runtime.as_ref().clone(),
+            self.runtime.current().as_ref().clone(),
             self.store.clone(),
             self.root.clone(),
             self.policy,

@@ -67,6 +67,7 @@ impl Fixture {
                 learning: None,
                 tasks: None,
                 facts: None,
+                skipped_primary: None,
             },
             root,
         }

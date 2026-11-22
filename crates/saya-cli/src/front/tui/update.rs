@@ -17,6 +17,7 @@ use ratatui::crossterm::event::KeyEvent;
 
 use super::direct;
 use super::focus_text;
+use super::history_keys;
 use super::jobs;
 use super::keys::{Intent, intent};
 use super::model::Model;
@@ -35,8 +36,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Key(key) => press(model, key, &mut cmds),
         // A paste lands as text and nothing else: a `\r` inside a pasted block
-        // must never send it.
-        Msg::Paste(text) => model.insert(&text),
+        // must never send it. While a search owns the line, the text narrows the
+        // query, exactly as the same characters typed would.
+        Msg::Paste(text) => model.paste(&text),
         // The panes lay themselves out from the frame they are handed, so a
         // new size changes nothing the model holds.
         Msg::Resize { .. } => {}
@@ -79,6 +81,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         // The queue is one deep, and Ctrl+G is how the operator takes the held
         // line back: it is dropped, never sent (`02` §7).
         Some(Intent::DropQueued) => model.drop_queued(),
+        // The history's own keys: a recall fills the line, a search reads the
+        // ring — neither sends anything (`02` §7).
+        Some(Intent::History(action)) => history_keys::press(model, action),
         Some(Intent::CancelTurn) => cmds.push(Cmd::CancelTurn),
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),

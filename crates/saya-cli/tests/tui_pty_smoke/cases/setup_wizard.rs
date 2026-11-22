@@ -3,13 +3,11 @@
 /// release are consumed by crossterm, so each prompt is waited for), the
 /// profile lands in the user config dir, and the TUI comes back responsive.
 ///
-/// Deferred, not re-pinned: `/setup` is a session operation the new surface
-/// does not perform in this release (T19 switched the launch over; the surface
-/// says every command it does not answer is the line front's — see
-/// `front::tui::ops::ELSEWHERE`). The terminal handoff this exercises is the
-/// old surface's, so the test runs again when that surface lands here.
+/// The handoff is the kept leaf (`interactive::tui::terminal_handoff`), reused
+/// by the new surface exactly as the old one used it: release, wizard,
+/// reacquire. What is asserted is that it comes back, that the file landed, and
+/// that the surface answers again afterwards.
 #[test]
-#[ignore = "the new surface has no /setup handoff yet: the command says it is the line front's (T19)"]
 fn setup_handoff_full_wizard_writes_config_and_returns() {
     let home = scratch_home("setup-full");
     let _cleanup = HomeGuard(home.clone());
@@ -26,8 +24,10 @@ fn setup_handoff_full_wizard_writes_config_and_returns() {
     dismiss_trust_modal(&mut tui);
 
     tui.send_line("/setup").expect("send /setup");
-    // The first Enter is consumed by the completion popup (a bare command's
-    // accept), so a second one submits.
+    // `/` opens the palette, the typed letters narrow it to `/setup`, and the
+    // first Enter runs the choice — which submits the line it filled. The
+    // second Enter is typed-ahead: the handoff drops what was queued before it
+    // released the terminal.
     tui.send("\r").expect("submit /setup");
     tui.wait_for(FIRST_PROMPT, INTERACTIVE)
         .expect("the wizard took the terminal");
@@ -65,7 +65,10 @@ fn setup_handoff_full_wizard_writes_config_and_returns() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("open the command palette", INTERACTIVE)
         .expect("input works again after the handoff");
     assert!(
         tui.still_running(),

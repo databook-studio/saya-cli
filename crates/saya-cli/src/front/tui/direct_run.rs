@@ -22,8 +22,8 @@ use saya_types::QueryResult;
 use super::direct::{Direct, DirectOutcome};
 use super::direct_export::export;
 use super::direct_trust::TrustStore;
+use super::live::LiveRuntime;
 use super::msg::Worker;
-use crate::config::runtime::RuntimeConfig;
 use crate::front::ResultPreview;
 use crate::interactive::tui::{
     CAP_REFUSAL, Followup, LastQuery, SqlTask, fill_save_from_last_query, parse_chart_args,
@@ -38,7 +38,9 @@ pub(crate) const WORKER_GONE: &str = "the command's worker ended without reporti
 /// runs against, the state store `/investigation` writes through, the render
 /// format, and the store a workspace answer binds through.
 pub(crate) struct DirectDeps {
-    pub(crate) runtime: Arc<RuntimeConfig>,
+    /// The configuration in force, read fresh per command: a reload swaps it,
+    /// and the command that starts afterwards runs on the new one.
+    pub(crate) runtime: Arc<LiveRuntime>,
     pub(crate) state_db: SqliteStateStore,
     pub(crate) format: RenderFormat,
     pub(crate) trust: Arc<dyn TrustStore>,
@@ -121,6 +123,13 @@ fn chart(result: &QueryResult, args: &str) -> Worker {
 
 /// `/investigation`: the crate's own command, today's save fill, and the shared
 /// dispatcher's captured output.
+///
+/// What the command printed is the command's *answer*, not the surface's word
+/// about itself: a run prints the rows it replayed and the evidence line under
+/// them, and a save prints the document it wrote. Both are several lines, and
+/// several lines are a transcript entry (`02` §3.10) — handed back as the
+/// surface's transient toast they would be flattened onto the one status row,
+/// where the operator could never read them.
 fn investigation(
     deps: &DirectDeps,
     command: crate::cli::InvestigationCommand,
@@ -136,10 +145,11 @@ fn investigation(
         }
     };
     crate::commands::capture_output_start();
+    let runtime = deps.runtime.current();
     let outcome = crate::interactive::session::lifecycle::resume::block_on(
         crate::commands::run_investigation(
             command,
-            &deps.runtime,
+            &runtime,
             deps.format,
             // The surface never reads stdin: a missing secret is an error
             // rather than a prompt inside the alternate screen.
@@ -151,8 +161,9 @@ fn investigation(
     let body = if out.trim().is_empty() { err } else { out };
     let body = body.trim_end().to_owned();
     match outcome {
+        // A command that succeeded says what it printed, in the transcript.
         Ok(0) => Worker {
-            message: body,
+            direct: (!body.is_empty()).then_some(DirectOutcome::Notice(body)),
             ..Worker::default()
         },
         Ok(_) => Worker {
@@ -176,9 +187,10 @@ fn query(deps: &DirectDeps, profile: Option<String>, sql: String) -> Worker {
             ..Worker::default()
         };
     };
+    let runtime = deps.runtime.current();
     let connection = profile
         .clone()
-        .or_else(|| deps.runtime.resolved.profile_name.clone());
+        .or_else(|| runtime.resolved.profile_name.clone());
     let task = SqlTask::new(
         profile,
         sql.clone(),
@@ -190,7 +202,7 @@ fn query(deps: &DirectDeps, profile: Option<String>, sql: String) -> Worker {
     // execution the spawned worker wrote.
     let events = spawn_sql_task(
         permit,
-        Arc::clone(&deps.runtime),
+        Arc::clone(&runtime),
         task.clone(),
         CancellationToken::new(),
     );

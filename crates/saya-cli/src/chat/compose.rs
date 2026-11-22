@@ -83,6 +83,11 @@ pub(crate) struct SessionRun {
     /// The session facts this run's requests carry — the compaction narrative
     /// and the continuation record — when a session states them.
     pub(crate) facts: Option<Arc<super::SessionFacts>>,
+    /// The profile the session was configured on that this run is *not*
+    /// attached to, when it could not be opened: the run is a session with no
+    /// database, and a surface says so rather than naming a profile it does
+    /// not hold (`/connect` opens a new run over one that is there).
+    pub(crate) skipped_primary: Option<String>,
 }
 
 /// One session's composed run: the job that runs it, what its one open is given,
@@ -96,6 +101,9 @@ pub(crate) struct RunComposition {
     operator: Arc<SessionOperator>,
     /// The run's one mode cell.
     mode: ModeCell,
+    /// The configured profile this run opened without, when it could not be
+    /// opened at all.
+    skipped_primary: Option<String>,
 }
 
 impl RunComposition {
@@ -133,6 +141,7 @@ impl RunComposition {
             learning,
             tasks,
             facts,
+            skipped_primary,
         } = run;
         // The surface's own fact, stated beside the operator that answers its
         // asks: a front with nobody to ask cannot reach a write-shaped call, so
@@ -180,6 +189,7 @@ impl RunComposition {
             })),
             operator,
             mode,
+            skipped_primary,
         })
     }
 
@@ -230,6 +240,12 @@ impl RunComposition {
     /// "yes for this run" store every lane of the run records into.
     pub(crate) fn operator(&self) -> &Arc<SessionOperator> {
         &self.operator
+    }
+
+    /// The configured profile this run opened without, when it could not be
+    /// opened: what a surface says instead of naming it.
+    pub(crate) fn skipped_primary(&self) -> Option<&str> {
+        self.skipped_primary.as_deref()
     }
 
     fn inputs(&self) -> MutexGuard<'_, Option<TurnInputs>> {

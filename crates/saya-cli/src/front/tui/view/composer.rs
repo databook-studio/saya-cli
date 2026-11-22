@@ -47,6 +47,20 @@ pub(crate) const COMPACT_IDLE_HINT: &str = "Enter send · Ctrl+K commands";
 /// contrasts 100x30 with 80x24, and 80 is the compact one.
 pub(crate) const COMPACT_WIDTH: usize = 100;
 
+/// The hint row a reverse search draws in place of the state's own: the keys
+/// that act on a search, and nothing else.
+pub(crate) const SEARCH_HINT: &str = "Enter accept · Ctrl+R older · Esc cancel";
+
+/// The prompt a reverse search draws on the composer's line (`Ctrl+R`): what is
+/// being looked for, and the entry it found — or `(no match)` when its query
+/// reaches nothing, so an operator sees the search is empty rather than stale.
+pub(crate) fn search_prompt(model: &Model) -> Option<String> {
+    let search = model.search()?;
+    let found = model.search_found();
+    let found = found.as_deref().unwrap_or("(no match)");
+    Some(format!("(reverse-i-search)`{}`: {found}", search.query()))
+}
+
 /// The state `02` §7's table describes for this model.
 ///
 /// A record and a pause are properties of the run, so they outrank the

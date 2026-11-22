@@ -165,8 +165,9 @@ fn a_run_in_the_tui_prints_the_pointer_to_saya_run() {
             "{line} says the one pointer line"
         );
         assert!(
-            entries(&model).is_empty(),
-            "{line} writes nothing into the transcript"
+            matches!(entries(&model).as_slice(), [Entry::UserMessage(message)] if message.text == *line),
+            "{line} is echoed as the operator's own line and nothing else: {:?}",
+            entries(&model)
         );
     }
 }
@@ -183,8 +184,9 @@ fn a_chart_with_no_result_says_so_in_a_toast() {
         "the surface says there is nothing to chart, in today's words"
     );
     assert!(
-        entries(&model).is_empty(),
-        "nothing was written into the transcript"
+        matches!(entries(&model).as_slice(), [Entry::UserMessage(message)] if message.text == "/chart"),
+        "nothing but the operator's own line was written into the transcript: {:?}",
+        entries(&model)
     );
 }
 

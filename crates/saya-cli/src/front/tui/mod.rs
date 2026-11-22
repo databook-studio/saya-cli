@@ -27,27 +27,35 @@ pub(crate) mod direct_run;
 pub(crate) mod direct_trust;
 pub(crate) mod focus;
 mod focus_text;
+pub(crate) mod history_keys;
 pub(crate) mod jobs;
 mod jobs_desk;
 pub(crate) mod jobs_open;
 pub(crate) mod keys;
+pub(crate) mod live;
 pub(crate) mod model;
+pub(crate) mod model_history;
 pub(crate) mod model_overlay;
+pub(crate) mod model_turn;
 pub(crate) mod msg;
 pub(crate) mod ops;
 pub(crate) mod overlay_keys;
 pub(crate) mod overlay_press;
+pub(crate) mod reload;
 pub(crate) mod run;
 pub(crate) mod run_clock;
 pub(crate) mod run_cmd;
+pub(crate) mod run_cmd_port;
 pub(crate) mod run_draw;
 pub(crate) mod run_draw_card;
 pub(crate) mod run_draw_overlay;
 pub(crate) mod run_front;
+pub(crate) mod run_handoff;
 pub(crate) mod run_input;
 pub(crate) mod run_launch;
 pub(crate) mod run_panic;
 pub(crate) mod run_screen;
+pub(crate) mod setup;
 pub(crate) mod theme;
 pub(crate) mod update;
 pub(crate) mod update_submit;
@@ -76,6 +84,8 @@ pub(crate) use jobs_open::JobDeps;
 #[allow(unused_imports)]
 pub(crate) use keys::{CARD_HOLDS_MODE, Intent, intent};
 #[allow(unused_imports)]
+pub(crate) use live::LiveRuntime;
+#[allow(unused_imports)]
 pub(crate) use model::Model;
 #[allow(unused_imports)]
 pub(crate) use model_overlay::Overlay;
@@ -88,11 +98,15 @@ pub(crate) use run::Runtime;
 #[allow(unused_imports)]
 pub(crate) use run_clock::{Clock, SystemClock};
 #[allow(unused_imports)]
-pub(crate) use run_cmd::{CmdPort, SessionPort, perform};
+pub(crate) use run_cmd::{CmdPort, perform};
+#[allow(unused_imports)]
+pub(crate) use run_cmd_port::{PortParts, SessionPort};
 #[allow(unused_imports)]
 pub(crate) use run_draw::{Facts, Regions};
 #[allow(unused_imports)]
 pub(crate) use run_front::Forward;
+#[allow(unused_imports)]
+pub(crate) use run_input::{InputGate, spawn_input};
 #[allow(unused_imports)]
 pub(crate) use run_launch::{Surface, channel, run};
 #[allow(unused_imports)]
@@ -147,8 +161,24 @@ mod update_palette_tests;
 mod update_help_tests;
 
 #[cfg(test)]
+#[path = "update_card_pane_tests.rs"]
+mod update_card_pane_tests;
+
+#[cfg(test)]
 #[path = "update_cycle_tests.rs"]
 mod update_cycle_tests;
+
+#[cfg(test)]
+#[path = "history_echo_tests.rs"]
+mod history_echo_tests;
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod history_tests;
+
+#[cfg(test)]
+#[path = "reload_tests.rs"]
+mod reload_tests;
 
 #[cfg(test)]
 #[path = "jobs_fixture.rs"]
@@ -201,6 +231,10 @@ mod run_front_tests;
 #[cfg(test)]
 #[path = "direct_fixture.rs"]
 mod direct_fixture;
+
+#[cfg(test)]
+#[path = "direct_paint_tests.rs"]
+mod direct_paint_tests;
 
 #[cfg(test)]
 #[path = "direct_tests.rs"]

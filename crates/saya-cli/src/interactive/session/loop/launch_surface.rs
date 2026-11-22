@@ -7,12 +7,13 @@
 // (`line_chat::open_surface`), and the builders below state only what the
 // surface itself needs — the model it opens on, the facts every frame is painted
 // with, the record its run is opened for, and the parts it is composed from.
+use std::sync::Mutex;
 use std::time::Instant;
 
 use crate::front::tui::direct_run::DirectDeps;
 use crate::front::tui::jobs_open::JobDeps;
 use crate::front::tui::run_draw::Facts;
-use crate::front::tui::{Model, OpsDeps, Surface, channel, run as run_loop};
+use crate::front::tui::{LiveRuntime, Model, OpsDeps, Surface, channel, run as run_loop};
 use crate::interactive::session::line_chat::open_surface;
 
 /// What a launch hands the surface: the session its run is composed from, and
@@ -22,20 +23,46 @@ pub(super) struct Composed {
     pub(super) record: saya_store::RedactedSession,
 }
 
-/// Runs the surface over `composed`, and nothing on the terminal once it
+/// Everything the surface is started with: the session it opens, the model it
+/// opens on, what its commands need, and the configuration and session state a
+/// reload moves. A struct rather than ten positional parameters, so the launch
+/// reads by name.
+pub(super) struct SurfaceLaunch {
+    pub(super) composed: Composed,
+    pub(super) model: Model,
+    pub(super) facts: Facts,
+    pub(super) direct: Arc<DirectDeps>,
+    pub(super) commands: crate::slash::user_commands::UserCommands,
+    pub(super) metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
+    pub(super) entered: Instant,
+    /// The launch's own options: `/reload`'s same-launch re-read, and the flow
+    /// the guided setup runs.
+    pub(super) options: GlobalOptions,
+    /// The configuration in force, shared with `direct`.
+    pub(super) runtime: Arc<LiveRuntime>,
+    /// The session's state, shared with the launch: a reload re-seeds it.
+    pub(super) state: Arc<Mutex<SessionState>>,
+    /// What opening a job needs from the launch (`/start`, `02` §8).
+    pub(super) jobs: Arc<JobDeps>,
+}
+
+/// Runs the surface over the launch's parts, and nothing on the terminal once it
 /// returns: the run is composed and opened on this thread, and the loop enters
 /// and leaves the terminal itself.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn run_surface(
-    composed: Composed,
-    model: Model,
-    facts: Facts,
-    direct: Arc<DirectDeps>,
-    jobs: Arc<JobDeps>,
-    commands: crate::slash::user_commands::UserCommands,
-    metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
-    entered: Instant,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::error::Error>> {
+    let SurfaceLaunch {
+        composed,
+        model,
+        facts,
+        direct,
+        jobs,
+        commands,
+        metrics,
+        entered,
+        options,
+        runtime: live,
+        state,
+    } = launch;
     let Composed { parts, record } = composed;
     let (msgs, queue) = channel();
     let front = Arc::new(crate::front::tui::run_front::Forward::new(msgs.clone()));
@@ -43,6 +70,10 @@ pub(super) fn run_surface(
         .enable_all()
         .build()?;
     runtime.block_on(async move {
+        // The profile the launch configured and the run could not open: the
+        // session opened anyway, with no database attached, and said so in the
+        // transcript (`session_run`'s notice). The status line names what the
+        // run is talking to, so it names the absence rather than the profile.
         let opened = open_surface(
             parts,
             &record,
@@ -50,10 +81,21 @@ pub(super) fn run_surface(
         )
         .await
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        let mut model = model;
+        // The composer's history is the file today's surface keeps: the ring is
+        // loaded once, here at launch, so the first `↑` recalls the lines an
+        // earlier session submitted (`SAYA_HISTORY` still turns it off).
+        model.open_history();
+        if let Some(skipped) = opened.skipped_primary()
+            && model.database.as_deref() == Some(skipped)
+        {
+            model.database = None;
+        }
         let allow_bypass = model.allow_bypass;
         let deps = Arc::new(OpsDeps {
             chat: crate::chat::ChatOps::new(opened.run_port(), opened.context(allow_bypass)),
             commands: commands.clone(),
+            runtime: Arc::clone(&live),
         });
         run_loop(Surface {
             model,
@@ -65,6 +107,9 @@ pub(super) fn run_surface(
             deps,
             direct,
             jobs,
+            runtime: live,
+            state,
+            options,
             facts,
             metrics,
             entered,

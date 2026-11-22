@@ -16,13 +16,12 @@ const MIXED_BOUND_VALUE: &str = "hello --param=x=y";
 /// run is a valid one — the original binding rides through — and neither
 /// value text reaches the screen, the history file, or the session files.
 ///
-/// Deferred, not re-pinned — the same three surface differences as
-/// `tui_investigation_run_attached_param_value_never_persists_or_echoes`: no
-/// input history, no per-command transcript echo, and a settled frame that was
-/// observed holding a completed direct command's cells on the status line's row.
-/// The redaction stays pinned at unit level.
+/// Counted from the real TUI, not deferred: the new surface keeps the input
+/// history, echoes the submitted line — redacted — as the turn its rows land
+/// in, and settles the run's table. The redactor must still survive the mixed
+/// spelling, and neither value text reaches the screen, the history file, or
+/// the session files.
 #[test]
-#[ignore = "the new surface keeps no input history and paints no settled echo of a direct command (T19)"]
 fn tui_investigation_run_mixed_param_tokens_survive_and_leak_nothing() {
     let home = scratch_home("param-mixed");
     let _cleanup = HomeGuard(home.clone());

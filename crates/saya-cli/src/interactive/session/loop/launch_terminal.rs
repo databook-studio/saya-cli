@@ -4,11 +4,12 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         store,
         state_db,
         format,
-        mut state,
+        state,
         session,
         fresh,
         tui_trust_pending,
         launch,
+        cli,
         ..
     } = ctx;
     let entered = std::time::Instant::now();
@@ -54,12 +55,21 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     );
     let commands = state.user_commands.clone();
     let metrics = session.session_metrics();
+    // The configuration in force from here on: a `/reload` (or the apply a
+    // closed guided setup runs) swaps what the next read sees, and the direct
+    // commands share the same handle. The session's state is shared the same
+    // way, so a reload's re-seed reaches the record this launch saves.
+    let live = std::sync::Arc::new(crate::front::tui::LiveRuntime::new(std::sync::Arc::clone(
+        &runtime,
+    )));
     // A job this surface opens runs as the old surface ran one: over the same
     // runtime, the same store, this session's folder, and the mode in force at
     // the moment the surface took the terminal — the session itself is handed
-    // to the trust store below, so its policy is read here, once.
+    // to the trust store below, so its policy is read here, once. The runtime is
+    // the launch's live one, so a job opened after a `/reload` composes over the
+    // configuration then in force, exactly as a direct command reads it.
     let jobs = std::sync::Arc::new(crate::front::tui::JobDeps::new(
-        std::sync::Arc::clone(&runtime),
+        std::sync::Arc::clone(&live),
         state_db.clone(),
         session.root(),
         session.policy().mode(),
@@ -69,14 +79,15 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         std::sync::Arc::clone(&runtime),
         launch,
     ));
+    let state = std::sync::Arc::new(std::sync::Mutex::new(state));
     let direct = std::sync::Arc::new(crate::front::tui::direct_run::DirectDeps {
-        runtime: std::sync::Arc::clone(&runtime),
+        runtime: std::sync::Arc::clone(&live),
         state_db: state_db.clone(),
         format,
         trust: std::sync::Arc::clone(&trust)
             as std::sync::Arc<dyn crate::front::tui::direct_trust::TrustStore>,
     });
-    let outcome = run_surface(
+    let outcome = run_surface(SurfaceLaunch {
         composed,
         model,
         facts,
@@ -85,7 +96,16 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         commands,
         metrics,
         entered,
-    );
+        options: cli.options.clone(),
+        runtime: live,
+        state: std::sync::Arc::clone(&state),
+    });
+    // The surface is done with the state: a reload's re-seed is already in it,
+    // and what the launch saves below reads that.
+    let mut state = state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     let mut session = trust
         .release()
         .ok_or("the surface ended without giving its session back")?;

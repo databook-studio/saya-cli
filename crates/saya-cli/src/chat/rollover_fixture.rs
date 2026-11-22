@@ -76,6 +76,7 @@ pub(super) fn next_run(front: Arc<dyn ChatFront>, session: &str) -> SessionRun {
         learning: None,
         tasks: None,
         facts: None,
+        skipped_primary: None,
     }
 }
 

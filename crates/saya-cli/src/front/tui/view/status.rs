@@ -160,7 +160,7 @@ fn tail_spans(right: &Right, scheme: Scheme) -> Option<Vec<Span<'static>>> {
 fn right(facts: &StatusFacts) -> Right {
     if let Some(toast) = &facts.toast {
         return Right::Toast {
-            text: toast.clone(),
+            text: one_row(toast),
             paint: style(Token::Info, facts.scheme),
         };
     }
@@ -169,4 +169,16 @@ fn right(facts: &StatusFacts) -> Right {
         hint: facts.activity.hint(),
         paint: style(facts.activity.token(), facts.scheme),
     }
+}
+
+/// A toast is one row: its lines read as one run of words, so a message that
+/// carries lines of its own can never paint them down the transcript's rows or
+/// wrap over the row under this one. Much of it may still be cut by the fitting
+/// above; that is a cut the row's own ellipsis states, not a second pane.
+fn one_row(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }

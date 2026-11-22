@@ -73,7 +73,7 @@ pub(crate) struct Facts {
 /// finished: a folder that is not there answers all three, and a job that
 /// recorded no in-place root works in a managed checkout.
 pub(crate) fn facts(state_root: &Path, job: &JobId, finished: bool) -> Facts {
-    let present = state_root.join(job.as_str()).is_dir();
+    let present = job_records::present(state_root, job);
     Facts {
         finished,
         job_dir_missing: !present,

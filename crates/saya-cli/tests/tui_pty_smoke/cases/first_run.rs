@@ -1,25 +1,16 @@
-/// The whole first-run path inside one TUI session: the first screen
-/// reads `Database  none yet` (an EMPTY config home, no connections file),
-/// `/setup` runs the sqlite wizard through the handoff, and back in the TUI
-/// the automatic reload applies the written profile — the close block
-/// reports it and `/connections` lists `team` from the same refreshed
-/// profile list the first screen reads. No restart, no shell command.
+/// The whole first-run path inside one TUI session: the status row reads
+/// `no database` (an EMPTY config home, no connections file), `/setup` runs the
+/// sqlite wizard through the handoff, and back in the surface the automatic
+/// reload applies the written profile — the close block reports it, and
+/// `/connections` lists `team` from the configuration the reload put in force.
+/// No restart, no shell command.
 ///
-/// The splash itself cannot repaint after `/setup` in this session: the
-/// typed `/setup` line is a user block (`submit.rs`), so the empty state
-/// yields to the transcript for good. The refreshed list it would read is
-/// proven here through `/connections`, and the splash's own data sources
-/// (`app.profiles`, `app.startup`) are proven swapped at unit level
-/// (`apply_reloaded_runtime_refreshes_profiles_and_startup_from_the_new_runtime`).
-///
-/// Deferred, not re-pinned: `/setup` is a session operation the new surface
-/// does not perform in this release (T19 switched the launch over; the surface
-/// says every command it does not answer is the line front's — see
-/// `front::tui::ops::ELSEWHERE`). Both the wizard handoff and the automatic
-/// reload that follows it are the old surface's, so this test runs again when
-/// they land here.
+/// The status row itself does not repaint after `/setup`: a direct command's
+/// words are the surface's transient notice, so the refreshed list is proven
+/// here through `/connections` — which reads the configuration in force, not a
+/// copy taken at launch — and the swap itself at unit level
+/// (`front::tui::reload_tests`).
 #[test]
-#[ignore = "the new surface has no /setup handoff or automatic reload yet (T19)"]
 fn first_run_setup_applies_immediately_without_a_restart() {
     let home = scratch_home("first-run-setup");
     let _cleanup = HomeGuard(home.clone());
@@ -27,7 +18,7 @@ fn first_run_setup_applies_immediately_without_a_restart() {
     let db = home.join("team.db");
     std::fs::write(&db, b"").expect("the empty sqlite file creates");
     // `setup_tui` writes only the user config.toml; connections.toml stays
-    // absent, so the first screen reads `none yet`.
+    // absent, so the status row reads `no database`.
     let mut tui = match setup_tui(&home) {
         Ok(tui) => tui,
         Err(reason) => {
@@ -36,12 +27,17 @@ fn first_run_setup_applies_immediately_without_a_restart() {
         }
     };
     dismiss_trust_modal(&mut tui);
-    tui.wait_for("Database  none yet", INTERACTIVE)
+    // The new surface has one `│`-separated status row and no `Database`
+    // column: an absent database is the `no database` segment of that row, which
+    // is this surface's word for the old splash's `Database  none yet`.
+    tui.wait_for("no database", INTERACTIVE)
         .expect("the first screen reads the absent database");
 
     tui.send_line("/setup").expect("send /setup");
-    // The first Enter is consumed by the completion popup (a bare command's
-    // accept), so a second one submits.
+    // `/` opens the palette, the typed letters narrow it to `/setup`, and the
+    // first Enter runs the choice — which submits the line it filled. The
+    // second Enter is typed-ahead: the handoff drops what was queued before it
+    // released the terminal.
     tui.send("\r").expect("submit /setup");
     tui.wait_for(FIRST_PROMPT, INTERACTIVE)
         .expect("the wizard took the terminal");
@@ -74,7 +70,10 @@ fn first_run_setup_applies_immediately_without_a_restart() {
         .expect("the profile list follows the swap");
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("open the command palette", INTERACTIVE)
         .expect("the TUI is still responsive after the applied setup");
     assert!(
         tui.still_running(),
@@ -84,14 +83,9 @@ fn first_run_setup_applies_immediately_without_a_restart() {
 
 /// A cancelled wizard (EOF at the first prompt) changes nothing: the close
 /// block says so through the reload's unchanged line, no file was written,
-/// and the TUI is responsive. (The splash itself cannot repaint after the
-/// typed `/setup` — it is a user block — so `unchanged` here is the reload's
-/// own report plus the absent connections file.)
-///
-/// Deferred, not re-pinned: `/setup` is a session operation the new surface does
-/// not perform in this release — see [`first_run_setup_applies_immediately_without_a_restart`].
+/// and the surface is responsive. `unchanged` is the reload's own report plus
+/// the absent connections file.
 #[test]
-#[ignore = "the new surface has no /setup handoff or automatic reload yet (T19)"]
 fn first_run_setup_cancel_changes_nothing() {
     let home = scratch_home("first-run-cancel");
     let _cleanup = HomeGuard(home.clone());
@@ -103,7 +97,7 @@ fn first_run_setup_cancel_changes_nothing() {
         }
     };
     dismiss_trust_modal(&mut tui);
-    tui.wait_for("Database  none yet", INTERACTIVE)
+    tui.wait_for("no database", INTERACTIVE)
         .expect("the first screen before setup");
 
     tui.send_line("/setup").expect("send /setup");
@@ -121,7 +115,10 @@ fn first_run_setup_cancel_changes_nothing() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("open the command palette", INTERACTIVE)
         .expect("input works again after the cancelled setup");
     assert!(
         tui.still_running(),
@@ -132,12 +129,8 @@ fn first_run_setup_cancel_changes_nothing() {
 /// A wizard FAILURE returns the TUI to the user with the error block: a
 /// pre-seeded `team` profile makes the flow's plan refuse the duplicate name
 /// before anything is written — a real, cheap failure (exit 2, no chmod, no
-/// cleanup) — and the TUI reports the exit code and stays responsive.
-///
-/// Deferred, not re-pinned: `/setup` is a session operation the new surface does
-/// not perform in this release — see [`first_run_setup_applies_immediately_without_a_restart`].
+/// cleanup) — and the surface reports the exit code and stays responsive.
 #[test]
-#[ignore = "the new surface has no /setup handoff yet: the command says it is the line front's (T19)"]
 fn setup_handoff_failure_returns_to_the_tui() {
     let home = scratch_home("setup-fail");
     let _cleanup = HomeGuard(home.clone());
@@ -165,8 +158,10 @@ fn setup_handoff_failure_returns_to_the_tui() {
     dismiss_trust_modal(&mut tui);
 
     tui.send_line("/setup").expect("send /setup");
-    // The first Enter is consumed by the completion popup (a bare command's
-    // accept), so a second one submits.
+    // `/` opens the palette, the typed letters narrow it to `/setup`, and the
+    // first Enter runs the choice — which submits the line it filled. The
+    // second Enter is typed-ahead: the handoff drops what was queued before it
+    // released the terminal.
     tui.send("\r").expect("submit /setup");
     tui.wait_for(FIRST_PROMPT, INTERACTIVE)
         .expect("the wizard took the terminal");
@@ -189,7 +184,10 @@ fn setup_handoff_failure_returns_to_the_tui() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("Tombstone a contract claim", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("open the command palette", INTERACTIVE)
         .expect("input works again after the failed handoff");
     assert!(
         tui.still_running(),

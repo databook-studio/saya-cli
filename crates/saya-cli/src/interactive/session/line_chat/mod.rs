@@ -60,6 +60,10 @@ mod boundary_fixture;
 #[path = "workspace_tests.rs"]
 mod workspace_tests;
 
+#[cfg(test)]
+#[path = "open_tests.rs"]
+mod open_tests;
+
 /// One line session's open run.
 pub(crate) struct LineChat {
     /// The run, its transcript and its compaction, behind one lock: a rollover

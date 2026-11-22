@@ -7,11 +7,13 @@ use std::time::{Duration, Instant};
 
 use saya_agent::PermissionMode;
 
+use std::io;
+
 use super::direct::Direct;
 use super::run_clock::Clock;
 use super::run_cmd::CmdPort;
 use crate::agent::tools::consent::Answer;
-use crate::interactive::tui::TrustResolution;
+use crate::interactive::tui::{TerminalModes, TrustResolution};
 
 /// A clock a test turns by hand: the rate limit is the one thing that reads it,
 /// so a test that wants "no frame before 33 ms" never waits for one.
@@ -59,6 +61,11 @@ pub(crate) enum Call {
     Job(crate::slash::JobRequest),
     /// One line the surface does not answer itself: a session operation.
     Op(crate::slash::SlashCommand),
+    /// The configuration re-read (`/reload`, and the apply a closed guided setup
+    /// runs).
+    Reload,
+    /// The terminal handed to the guided setup (`/setup`).
+    Setup,
 }
 
 /// A port that records instead of performing, and panics on request.
@@ -138,5 +145,14 @@ impl CmdPort for FakePort {
 
     fn op(&self, command: crate::slash::SlashCommand) {
         self.record(Call::Op(command));
+    }
+
+    fn reload(&self) {
+        self.record(Call::Reload);
+    }
+
+    fn guided_setup(&self, _modes: &mut (dyn TerminalModes + Send)) -> io::Result<()> {
+        self.record(Call::Setup);
+        Ok(())
     }
 }

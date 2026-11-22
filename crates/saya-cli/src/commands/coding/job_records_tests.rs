@@ -3,7 +3,7 @@
 
 use super::*;
 
-fn scratch(label: &str) -> PathBuf {
+pub(super) fn scratch(label: &str) -> PathBuf {
     let base = std::env::current_dir()
         .expect("the test runs in the checkout")
         .join("target")
@@ -20,17 +20,32 @@ fn scratch(label: &str) -> PathBuf {
     base
 }
 
-fn job(id: &str) -> JobId {
+pub(super) fn job(id: &str) -> JobId {
     JobId::parse(id).expect("the fixture's job id parses")
 }
 
 /// A job directory with one record in it and one nested directory.
-fn records(root: &Path, id: &str) -> PathBuf {
+pub(super) fn records(root: &Path, id: &str) -> PathBuf {
     let directory = root.join(id);
     fs::create_dir_all(directory.join("checkpoints")).expect("the records are creatable");
     fs::write(directory.join("run-notes.txt"), "x").expect("a record is writable");
     fs::write(directory.join("checkpoints").join("one"), "y").expect("a record is writable");
     directory
+}
+
+/// The names under `root`, sorted: everything a listing of the store's own
+/// root can see.
+pub(super) fn names(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(root)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
 }
 
 #[test]
