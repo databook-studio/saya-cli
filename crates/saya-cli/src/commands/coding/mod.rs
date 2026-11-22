@@ -164,7 +164,7 @@ pub enum CodingError {
     )]
     PreparedCandidateState,
     #[error(
-        "fresh approval for this exact job and scope is required: scripts pass --approve for exactly that scope; interactive sessions answer with `/approve <job>`"
+        "fresh approval for this exact job and scope is required: scripts pass --approve for exactly that scope; interactive sessions answer with `/job approve <job>`"
     )]
     ApprovalRequired,
     #[error(

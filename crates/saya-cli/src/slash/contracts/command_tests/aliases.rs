@@ -83,7 +83,7 @@ fn the_approve_all_note_is_about_knowledge_claims_not_job_approvals() {
         "the note must say it is not about job approvals: {note}"
     );
     assert!(
-        note.contains("/approve <id>"),
+        note.contains("/job approve <id>"),
         "the note must point at the job command: {note}"
     );
 }

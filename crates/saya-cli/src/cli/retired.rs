@@ -11,13 +11,13 @@ use clap::Subcommand;
 pub(crate) const RETIRED_COMMANDS: &[(&str, &str)] = &[(
     "coding",
     "`saya coding` was replaced: `saya start` starts a job, `saya job` runs its \
-     lifecycle verbs, and the session-only controls are `/approve`, `/deny`, \
-     `/message`, `/pause`, `/continue`, and `/cancel-child`",
+     lifecycle verbs, and the child controls are `/job approve`, `/job deny`, \
+     `/job message`, `/job pause`, `/job continue`, and `/job cancel-child`",
 )];
 
 /// All 28 old `saya coding` verbs, and the spelling that runs each one. The
-/// eight agent-shaped controls have no top-level spelling: they are the
-/// interactive session's own commands.
+/// eight agent-shaped controls have no CLI spelling: in a session they are
+/// `/job`'s own verbs.
 const RETIRED_CODING_SUBCOMMANDS: &[(&str, &str)] = &[
     (
         "export",
