@@ -22,8 +22,11 @@ use crate::commands::coding::parent_turn_provider::{Reply, Scripted};
 /// Load ceiling, not a product bound: how long a scripted turn may take.
 const RUN: Duration = Duration::from_secs(120);
 
-/// Load ceiling for the settle: how long a helper given up is awaited.
-const SETTLE: Duration = Duration::from_secs(20);
+/// Load ceiling for the settle: how long a helper given up is awaited. Well
+/// under the fixture provider's own five-second request timeout, so a helper
+/// that merely timed out could not settle this fast — only the turn's own stop
+/// reaching it could.
+const SETTLE: Duration = Duration::from_secs(2);
 
 /// The helper the scripted root delegates to.
 const HELPER: &str = "helper-1";
@@ -135,14 +138,18 @@ async fn an_escape_mid_helper_ends_the_turn_and_the_helper() {
         "the helper is working when the operator escapes"
     );
 
-    // The operator's Esc.
+    // The operator's Esc, then the whole path it must settle: the turn ends
+    // cancelled, and the schedule that ran the helper drains — while the
+    // provider is still holding the helper's answer, which its own request
+    // timeout would only release five seconds from now.
     session.cancel().await;
-
-    let admission = tokio::time::timeout(RUN, sending)
-        .await
-        .expect("the turn ends on the operator's cancel")
-        .expect("the sending task runs");
-    assert_eq!(admission, Admission::Ran, "the message ran as a turn");
+    let ended = tokio::time::timeout(SETTLE, async {
+        let admission = sending.await.expect("the sending task runs");
+        (admission, job.join().await)
+    })
+    .await
+    .expect("the turn and its helper end on the operator's cancel");
+    assert_eq!(ended.0, Admission::Ran, "the message ran as a turn");
     assert!(
         front
             .turn_ends()
@@ -150,20 +157,15 @@ async fn an_escape_mid_helper_ends_the_turn_and_the_helper() {
             .any(|event| matches!(event, ChatEvent::TurnEnded(outcome) if outcome == &ChatOutcome::Cancelled)),
         "the turn ended cancelled"
     );
-
-    // The helper ended with the turn: the schedule settles, and a session it
-    // already settled is one with no live child.
-    let settled = tokio::time::timeout(SETTLE, job.join())
-        .await
-        .expect("the schedule settles: the helper ended with the turn");
-    if let Ok(report) = settled {
+    if let Ok(report) = ended.1 {
         assert!(
-            !report.outcomes.is_empty()
-                && report
-                    .outcomes
-                    .iter()
-                    .all(|outcome| outcome.result.is_err()),
-            "the helper's own outcome is the ended child's: {report:?}"
+            matches!(
+                report.stop,
+                Some(saya_harness::coding::coordinator::ScheduleStop::Cancelled(
+                    _
+                ))
+            ),
+            "the helper's schedule stopped on the turn's own stop: {report:?}"
         );
     }
     assert!(
