@@ -1,7 +1,7 @@
 use crate::{
     agent::{
         question_scope::QuestionScope,
-        runtime::{AgentRuntimeError, PromptOverrides},
+        turn_config::{AgentRuntimeError, PromptOverrides},
     },
     budget_wording::budget_partial_message,
     config::runtime::RuntimeConfig,

@@ -34,7 +34,7 @@ async fn run_turn(
     privacy_gate_closed: bool,
     store: SqliteStateStore,
 ) -> (
-    Result<AgentOutput, crate::agent::runtime::AgentRuntimeError>,
+    Result<AgentOutput, crate::agent::turn_config::AgentRuntimeError>,
     Arc<Captured>,
 ) {
     let captured = Arc::new(Captured::default());

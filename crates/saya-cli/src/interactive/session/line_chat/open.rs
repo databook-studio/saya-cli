@@ -29,8 +29,8 @@ use saya_store::{RedactedSession, SqliteStateStore};
 
 use super::line::Line;
 use super::run::Run;
-use crate::agent::runtime::PromptOverrides;
 use crate::agent::system_prompt::memory_reachable;
+use crate::agent::turn_config::PromptOverrides;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::turn_inputs::prepare_turn;
 use crate::chat::{
@@ -274,7 +274,7 @@ pub(super) async fn session_run(
         // A setup failure is worded the way the `ask` has always worded it: an
         // unresolved secret names the step that resolves it, at the one seam
         // both the question and the plain loop pass through.
-        .map_err(|error| crate::agent::runtime::with_next_step(error).to_string())?;
+        .map_err(|error| crate::agent::turn_config::with_next_step(error).to_string())?;
     let allow_query_data = query_data_allowed_for_endpoint(
         inputs.ai.provider,
         inputs.ai.base_url.as_deref(),

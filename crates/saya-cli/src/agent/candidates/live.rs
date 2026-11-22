@@ -10,7 +10,7 @@
 use super::super::decide::CandidateExecutor;
 use super::super::profile;
 use super::super::question_scope::QuestionScope;
-use super::super::runtime::{AgentRuntimeError, PromptOverrides};
+use super::super::turn_config::{AgentRuntimeError, PromptOverrides};
 use super::AttemptRunner;
 use async_trait::async_trait;
 use saya_agent::{AgentEventSink, AgentOutput, ApprovalPolicy, CancellationReason};

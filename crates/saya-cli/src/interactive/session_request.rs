@@ -2,7 +2,7 @@ use crate::{
     agent::{
         self,
         question_scope::QuestionScope,
-        runtime::{AgentRuntimeError, PromptOverrides},
+        turn_config::{AgentRuntimeError, PromptOverrides},
     },
     budget_wording::{budget_dimension, emit_partial_diagnostic},
     config::runtime::RuntimeConfig,

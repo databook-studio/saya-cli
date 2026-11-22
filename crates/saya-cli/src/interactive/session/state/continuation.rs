@@ -1,7 +1,7 @@
 impl SessionState {
     fn compacted_summary_gate(&self) -> Option<&str> {
         let summary = self.compaction_summary.as_deref()?;
-        let allowed = crate::agent::runtime::query_data_allowed_for_endpoint(
+        let allowed = crate::agent::turn_config::query_data_allowed_for_endpoint(
             saya_config::AiProvider::parse(&self.provider)
                 .unwrap_or(saya_config::AiProvider::Ollama),
             self.provider_endpoint.as_deref(),

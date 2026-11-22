@@ -13,8 +13,8 @@
 //! surface for capabilities; the seeds are the per-call grant words the
 //! scopes' grammar stated.
 
-use crate::agent::runtime::query_data_allowed_for_endpoint;
 use crate::agent::tools::DatabaseTools;
+use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::{profile, provider};
 use crate::config::runtime::RuntimeConfig;
 use crate::connection;

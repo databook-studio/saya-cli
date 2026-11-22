@@ -6,7 +6,8 @@
 //! from config) against a local counting source and a real SQLite connector,
 //! so the real tool definitions/schemas are in the request.
 
-use crate::agent::runtime::{PromptOverrides, SinkPrompt, run_prompt_with_sink_and_outcomes};
+use crate::agent::runtime::{SinkPrompt, run_prompt_with_sink_and_outcomes};
+use crate::agent::turn_config::PromptOverrides;
 use async_trait::async_trait;
 use saya_agent::{AgentEvent, AgentEventSink, AgentMode, ApprovalPolicy, BudgetDimension};
 use std::sync::{Arc, Mutex, mpsc};

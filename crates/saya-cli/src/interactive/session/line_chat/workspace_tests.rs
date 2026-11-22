@@ -21,8 +21,8 @@ use saya_store::SqliteStateStore;
 use saya_types::JobId;
 
 use crate::GlobalOptions;
-use crate::agent::runtime::PromptOverrides;
 use crate::agent::tools::coding::RootTools;
+use crate::agent::turn_config::PromptOverrides;
 use crate::chat::{Workspace, WorkspaceShape};
 use crate::commands::coding::{
     CodingApplication, CodingAuthorization, CodingJobRequest, NativeCodingJob,

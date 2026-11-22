@@ -6,7 +6,7 @@
 
 use super::super::decide::{CandidateExecutor, decide};
 use super::super::question_scope::QuestionScope;
-use super::super::runtime::AgentRuntimeError;
+use super::super::turn_config::AgentRuntimeError;
 use super::AttemptRunner;
 use super::stop::{apply_stop_reason, ended_on_settled_clarification};
 use crate::answering_receipts::AnsweringReceiptSink;

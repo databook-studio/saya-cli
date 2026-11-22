@@ -19,7 +19,7 @@ mod orchestrate;
 mod stop;
 
 use super::question_scope::QuestionScope;
-use super::runtime::{AgentRuntimeError, PromptOverrides};
+use super::turn_config::{AgentRuntimeError, PromptOverrides};
 use crate::answering_receipts::AnsweringReceiptSink;
 use saya_agent::{AgentEventSink, AgentOutput, ApprovalPolicy};
 use saya_store::SqliteStateStore;

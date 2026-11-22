@@ -42,7 +42,7 @@ async fn a_profile_that_cannot_open_leaves_the_session_without_a_database() {
     let runtime = stale_runtime("stale");
     let inputs = prepare_turn(
         &runtime,
-        &crate::agent::runtime::PromptOverrides::default(),
+        &crate::agent::turn_config::PromptOverrides::default(),
         false,
         None,
     )

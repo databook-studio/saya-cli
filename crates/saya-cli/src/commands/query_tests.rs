@@ -4,8 +4,8 @@
 
 use super::ask_exit_code;
 use super::settle_ask;
-use crate::agent::runtime::AgentRuntimeError;
 use crate::agent::tools::DatabaseTools;
+use crate::agent::turn_config::AgentRuntimeError;
 use crate::commands::{capture_output_start, capture_output_take};
 use crate::render::{RenderFormat, clarification_text, render_event};
 use crate::stream_render::terminal_event;

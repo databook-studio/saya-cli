@@ -1,11 +1,10 @@
 use super::knowledge_event::knowledge_supplied_event;
 use super::limits::{AnsweringSurface, answering_deadline, answering_limits};
+use super::provider::provider_message;
 use super::question_scope::QuestionScope;
 use super::tools;
-#[cfg(test)]
-pub(crate) use super::turn_config::query_data_allowed;
-pub(crate) use super::turn_config::{
-    AgentRuntimeError, PromptOverrides, effective_ai, query_data_allowed_for_endpoint,
+use super::turn_config::{
+    AgentRuntimeError, PromptOverrides, query_data_allowed_for_endpoint, with_next_step,
 };
 use super::turn_inputs::{TurnInputs, prepare_turn};
 use crate::agent::hooks::{HookApprovalGate, HookCaller, HookGate, Hooks};
@@ -84,51 +83,6 @@ mod ask_surface;
 #[cfg(test)]
 #[path = "runtime/ask_surface_tests.rs"]
 mod ask_surface_tests;
-
-/// The advice a provider that could not be reached is followed by. One
-/// sentence, in one place: the turn body's own provider error says it, and so
-/// does the failure-class table a job surface reads a run's failure through.
-pub(crate) const PROVIDER_UNREACHABLE_ADVICE: &str =
-    "next: start your AI provider, or run `saya config doctor` to check the endpoint and base_url.";
-
-/// the three first-run failures name no next step. Guidance is
-/// added at the saya-cli boundary (here), not in the provider-neutral agent
-/// crate. A provider that is configured but unreachable is "what is configured
-/// did not work", not "nothing is configured" — so the next step is to start
-/// the provider or check the endpoint, never to re-run `config init` (telling a
-/// user whose gateway is momentarily down to re-init would be worse than
-/// saying nothing).
-fn provider_message(error: &saya_agent::ProviderError) -> String {
-    let message = error.to_string();
-    if message.contains("could not reach the provider") {
-        format!("{message}\n{PROVIDER_UNREACHABLE_ADVICE}")
-    } else {
-        message
-    }
-}
-
-/// an unresolvable secret reference is "what is configured did not
-/// work" — the profile is there but its password is not. `init` cannot supply
-/// a secret, so the next step is setting the env var (doctor lists the
-/// unresolved references). Only the secret case is annotated; a genuine
-/// connection failure is left untouched rather than given advice that might
-/// not fit. Applied at the `prepare_turn` seam so both the `ask` and the
-/// interactive paths surface it.
-pub(crate) fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
-    match error {
-        AgentRuntimeError::Database(message)
-            if message.contains("secret reference")
-                && message.contains("could not be resolved") =>
-        {
-            AgentRuntimeError::Database(format!(
-                "{message}\nnext: set the referenced environment variable (or add it to a \
-                 .env.saya file passed with --env-file), then re-run; `saya config doctor` \
-                 lists unresolved secrets."
-            ))
-        }
-        other => other,
-    }
-}
 
 #[cfg(test)]
 #[path = "runtime_tests.rs"]

@@ -7,14 +7,12 @@
 //! This is a distinct concern from running the turn (recall + emit + loop),
 //! which lives in [`super::runtime`].
 
-use super::{provider, runtime::effective_ai};
+use super::{provider, turn_config::AgentRuntimeError, turn_config::effective_ai};
 use crate::config::runtime::RuntimeConfig;
 use crate::connection::ConnectionRegistry;
 use crate::local_metrics::LocalMetrics;
 use saya_agent::ChatProvider;
 use saya_config::ResolvedAi;
-
-pub(crate) use super::runtime::AgentRuntimeError;
 
 /// The provider, the resolved AI, and the connection registry a turn runs
 /// against — everything [`super::run_prompt_with_inputs`] needs that
@@ -39,7 +37,7 @@ pub(crate) struct TurnInputs {
 /// [`super::run_prompt_with_sink_and_outcomes`] awaits this inside its pinned future.
 pub(crate) async fn prepare_turn(
     runtime: &RuntimeConfig,
-    overrides: &super::runtime::PromptOverrides,
+    overrides: &super::turn_config::PromptOverrides,
     can_prompt: bool,
     metrics: Option<&LocalMetrics>,
 ) -> Result<TurnInputs, AgentRuntimeError> {

@@ -160,7 +160,7 @@ impl SessionState {
     pub(crate) fn provider_request_history(&self) -> Vec<ChatMessage> {
         let provider = saya_config::AiProvider::parse(&self.provider)
             .unwrap_or(saya_config::AiProvider::Ollama);
-        let include_sensitive = crate::agent::runtime::query_data_allowed_for_endpoint(
+        let include_sensitive = crate::agent::turn_config::query_data_allowed_for_endpoint(
             provider,
             self.provider_endpoint.as_deref(),
             self.allow_data_sharing,
