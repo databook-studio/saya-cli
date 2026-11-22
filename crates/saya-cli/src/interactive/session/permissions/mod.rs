@@ -8,4 +8,7 @@ pub(crate) mod mode;
 pub(crate) mod trust;
 
 #[cfg(test)]
+mod deny_residual_tests;
+
+#[cfg(test)]
 mod deny_shell_tests;

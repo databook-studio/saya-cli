@@ -586,9 +586,14 @@ entry is a configuration diagnostic, not a startup failure.
 
 - **`deny`** refuses the command in every mode, `bypass` included, and wins
   over any allow rule. The refusal names the rule. Deny is a prefix rule, not
-  a sandbox: it matches the command as written, so `/bin/rm`, `command rm`
-  and `\rm` are different prefixes. The one exception is an absolute program
-  path, whose basename is matched — `/bin/rm -rf x` hits deny `rm`.
+  a sandbox, and it resolves the program a command really runs: it reads
+  through a `command`/`builtin`/`exec` prefix, an `env` with any of its
+  options, a subshell's own parentheses, and a path by its basename
+  (`/bin/rm`, `./rm`); it reads into a shell's `-c` script (`sh`, `bash`,
+  `zsh`, `dash`), at most three levels deep. Past that bound, or where a
+  script cannot be read, a command that names a denied program anywhere is
+  refused rather than run. `\rm` is still a different prefix, and a renamed
+  copy asked under its own name still runs.
 - **`allow`** lets a command take the host lane without asking under `ask`,
   with or without an operator. It never widens `read-only` or `never`.
 - A compound command (`&&`, `||`, `;`, `|`, `|&`, a single `&` for a
