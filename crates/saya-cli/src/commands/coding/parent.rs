@@ -176,7 +176,10 @@ pub(crate) use parent_turn_limits::TurnInputs;
 #[path = "parent_turn_fixture.rs"]
 pub(crate) mod parent_turn_fixture;
 
-#[cfg(all(test, unix))]
+/// The scripted provider the chat and coding rows drive. It holds no Unix-only
+/// call, and the candidates' preflight row — which runs on every host — drives
+/// it, so only the Unix-only turn fixtures below stay gated.
+#[cfg(test)]
 #[path = "parent_turn_provider.rs"]
 pub(crate) mod parent_turn_provider;
 

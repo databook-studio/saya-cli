@@ -187,6 +187,9 @@ fn a_clarification_exits_six() {
     let _ = std::fs::remove_dir_all(&fixture.root);
 }
 
+// The row sends the operator's Ctrl-C, a POSIX signal the harness can only
+// deliver on Unix.
+#[cfg(unix)]
 #[test]
 fn an_interrupted_question_exits_130() {
     let fixture = fixture("interrupted");
