@@ -40,11 +40,13 @@ const PREFERENCE_LABEL: &str = "project-preferences";
 const TIGHT_BUDGET: usize = 32 * 1024;
 
 /// The composed run over the fixture, the folder kept alive, and the first
-/// request body its first turn sent.
+/// request body its first turn sent. `allow_query_data` is the run's privacy
+/// gate: a closed one refuses every database read the turn could make.
 async fn first_request(
     case: &str,
     budget: Option<usize>,
     guidance: &str,
+    allow_query_data: bool,
 ) -> (String, usize, RootGuard) {
     let provider = Scripted::start_with_script(vec![Reply::Text("hello")]);
     let fixture = match budget {
@@ -54,7 +56,8 @@ async fn first_request(
         }
     };
     let front = operator_front_fixture::non_interactive();
-    let composed = fixture.into_parts(front.front(), case, ApprovalPolicy::Ask);
+    let mut composed = fixture.into_parts(front.front(), case, ApprovalPolicy::Ask);
+    composed.run.allow_query_data = allow_query_data;
     // The folder the run opens over: the project instruction source is the
     // `AGENTS.md` at its root, and the preference is stored under its identity.
     let folder = composed.root.checkout_root();
@@ -109,8 +112,13 @@ fn text(message: &serde_json::Value) -> String {
 
 #[tokio::test]
 async fn instructions_and_preferences_ride_the_chat_turns_user_lane() {
-    let (body, _budget, _root) =
-        first_request("context-lane", None, &format!("{INSTRUCTION_MARKER}\n")).await;
+    let (body, _budget, _root) = first_request(
+        "context-lane",
+        None,
+        &format!("{INSTRUCTION_MARKER}\n"),
+        true,
+    )
+    .await;
     let messages = messages(&body);
     let system = &messages[0];
     let user = messages.last().expect("the turn's own prompt is last");
@@ -157,7 +165,7 @@ async fn the_projected_request_stays_inside_the_context_byte_budget() {
     let mut guidance = format!("{INSTRUCTION_MARKER}\n");
     guidance.push_str(&"guidance ".repeat(3_072));
     let (body, budget, _root) =
-        first_request("context-budget", Some(TIGHT_BUDGET), &guidance).await;
+        first_request("context-budget", Some(TIGHT_BUDGET), &guidance, true).await;
     assert_eq!(budget, TIGHT_BUDGET, "the fixture stated the budget");
     let messages = messages(&body);
     let request_bytes: usize = messages
@@ -177,5 +185,30 @@ async fn the_projected_request_stays_inside_the_context_byte_budget() {
     assert!(
         lane.contains("truncat"),
         "the trimmed instructions carry the visible truncation marker: {lane}"
+    );
+}
+
+/// A closed database privacy gate refuses the run's database reads; the
+/// worktree's own preferences are the user's words, not database data, so they
+/// still ride the turn.
+#[tokio::test]
+async fn preferences_ride_a_turn_whose_database_privacy_gate_is_closed() {
+    let (body, _budget, _root) = first_request(
+        "context-gate-closed",
+        None,
+        &format!("{INSTRUCTION_MARKER}\n"),
+        false,
+    )
+    .await;
+    let messages = messages(&body);
+    let system = &messages[0];
+    let lane = text(messages.last().expect("the turn's own prompt is last"));
+    assert!(
+        !text(system).contains(PREFERENCE_MARKER),
+        "the closed gate does not move the preference onto the system prompt: {system}"
+    );
+    assert!(
+        lane.contains(PREFERENCE_LABEL) && lane.contains(PREFERENCE_MARKER),
+        "a closed privacy gate does not suppress the worktree's preferences: {lane}"
     );
 }
