@@ -48,15 +48,35 @@ where
 /// A command the catalogue says needs an argument stops there: the composer
 /// holds `/<name> ` for the operator to finish. One that asks for nothing
 /// mandatory runs at once.
+///
+/// A line the catalogue cannot name — a command whose arguments were typed into
+/// the pane with it — is the operator's own line, so it takes the composer too
+/// and the same submit: the pane's query is that line with its `/` implied.
+/// Without that, a whole command typed into the pane would die in a list that
+/// does not match it. A bare `/` with nothing after it stays in the pane, since
+/// there is no line to run.
 fn run(model: &mut Model, cmds: &mut Vec<Cmd>) {
-    let Some(entry) = model.palette().and_then(Palette::selected_entry) else {
+    let Some((query, selected)) = model.palette().map(|palette| {
+        let selected = palette
+            .selected_entry()
+            .map(|entry| (entry.name, entry.takes_arguments()));
+        (palette.query().to_owned(), selected)
+    }) else {
         return;
     };
+    if query.trim().is_empty() && selected.is_none() {
+        return;
+    }
     model.close_overlay();
     model.take_composer();
-    model.insert(&format!("/{} ", entry.name));
-    if entry.takes_arguments() {
-        return;
+    match selected {
+        Some((name, takes_arguments)) => {
+            model.insert(&format!("/{name} "));
+            if takes_arguments {
+                return;
+            }
+        }
+        None => model.insert(&format!("/{query}")),
     }
     submit(model, cmds);
 }

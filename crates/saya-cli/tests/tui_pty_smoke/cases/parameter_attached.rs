@@ -5,19 +5,13 @@
 /// the trailing value text reaches neither the screen nor the history file
 /// nor the session files, and the refusal still paints.
 ///
-/// Deferred, not re-pinned — three surface differences, none of them a needle
-/// this lane may move. (1) The new surface keeps no `input_history` and no
-/// Up-arrow recall (`interactive::tui::history` is the old surface's module),
-/// so the file half has no subject. (2) It paints no per-command transcript
-/// echo, so the "the transcript shows the redacted form" positive has no
-/// subject either — only the parser's refusal carries the redacted token, and
-/// that assertion still holds. (3) After a completed `/investigation run` the
-/// settled pty frame was observed holding the result's cells on the status
-/// line's row with an empty transcript, so a screen needle cannot be pinned
-/// reliably; see REPORT.md's finding. The redaction itself stays pinned at unit
-/// level (`interactive::tui::history::ring_redact_tests`, `flags_tests`).
+/// Counted from the real TUI, not deferred: the new surface keeps the input
+/// history (`interactive::tui::history`, pushed to and recalled from by the
+/// composer), echoes the submitted line — redacted — as the turn its answer
+/// lands in, and settles the refusal on its own row. The attached spelling is
+/// still refused by the parser, and its value text reaches neither the screen
+/// nor the history file nor the session files.
 #[test]
-#[ignore = "the new surface keeps no input history and paints no settled echo of a direct command (T19)"]
 fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
     let home = scratch_home("param-attached");
     let _cleanup = HomeGuard(home.clone());

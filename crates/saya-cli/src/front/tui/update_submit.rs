@@ -14,6 +14,7 @@
 use super::direct;
 use super::model::Model;
 use super::msg::Cmd;
+use crate::slash::param_redact::redact_param_values;
 use crate::slash::{SlashCommand, parse_slash_command};
 
 /// What the surface says when a queued line is replaced by a newer one.
@@ -36,11 +37,19 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     if text.trim().is_empty() {
         return;
     }
+    let line = text.trim();
+    // Every submitted line is the ring's, whatever it turns out to be: what the
+    // `input_history` file saves and what a later `↑` recalls. The ring redacts
+    // a `--param` value on the way in, so the file and the recall show
+    // `--param name=…` (`02` §7).
+    model.remember(line);
+    // The displayed copy of the line — the transcript's echo — carries the same
+    // redaction, so a value the ring never persists is never echoed either.
+    let shown = redact_param_values(line);
     // A line the surface answers itself: bare `/mode` opens the picker and bare
     // `/job` opens the jobs drawer, neither of them sending anything
     // (`02` §8). Both are read before the slash dispatch, because the crate's
     // parser answers `/job` with its verbs — and bare `/job` has none.
-    let line = text.trim();
     if line == SLASH_MODE {
         model.open_mode_picker();
         return;
@@ -58,10 +67,17 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     // line is a turn's.
     match direct::read(model, &text) {
         direct::Read::Cmd(cmd) => {
+            // The line opens the turn its answer lands in: a command's own
+            // words are echoed where its rows will be, never only in the
+            // composer that has just been cleared.
+            model.begin_turn(shown);
             cmds.push(cmd);
             return;
         }
         direct::Read::Said(words) => {
+            // A line the surface answers with words instead of running — a
+            // refusal, a pointer — is echoed the same way, redacted.
+            model.begin_turn(shown);
             model.say(words);
             return;
         }
@@ -90,7 +106,10 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
 /// Sends one message: the turn opens here, because the operator's own words
 /// are the one thing the event stream never carries.
 pub(super) fn send(model: &mut Model, text: String, cmds: &mut Vec<Cmd>) {
-    model.begin_turn(text.clone());
+    // The echo is the displayed copy of the line, redacted exactly as the ring
+    // redacts it: what the run received and what the transcript shows are the
+    // same line only when there is nothing to redact.
+    model.begin_turn(redact_param_values(&text));
     model.start_turn();
     cmds.push(Cmd::Send(text));
 }

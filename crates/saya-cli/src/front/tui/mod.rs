@@ -27,12 +27,15 @@ pub(crate) mod direct_run;
 pub(crate) mod direct_trust;
 pub(crate) mod focus;
 mod focus_text;
+pub(crate) mod history_keys;
 pub(crate) mod jobs;
 mod jobs_desk;
 pub(crate) mod keys;
 pub(crate) mod live;
 pub(crate) mod model;
+pub(crate) mod model_history;
 pub(crate) mod model_overlay;
+pub(crate) mod model_turn;
 pub(crate) mod msg;
 pub(crate) mod ops;
 pub(crate) mod overlay_keys;
@@ -157,6 +160,14 @@ mod update_help_tests;
 #[cfg(test)]
 #[path = "update_cycle_tests.rs"]
 mod update_cycle_tests;
+
+#[cfg(test)]
+#[path = "history_echo_tests.rs"]
+mod history_echo_tests;
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod history_tests;
 
 #[cfg(test)]
 #[path = "reload_tests.rs"]

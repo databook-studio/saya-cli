@@ -11,7 +11,9 @@ use crate::front::tui::model::Model;
 use crate::front::tui::theme::{Charset, Glyph, Token, glyph};
 use crate::interactive::tui::InputBuffer;
 
-use super::composer::{Row, Run, State, hint, placeholder, state, title};
+use super::composer::{
+    Row, Run, SEARCH_HINT, State, hint, placeholder, search_prompt, state, title,
+};
 
 /// The narrowest box the composer will draw: below this the label and the
 /// hint are all that can be fitted.
@@ -29,7 +31,12 @@ pub(crate) fn rows(model: &Model, width: usize, charset: Charset) -> Vec<Row> {
         width,
         charset,
     )];
-    let (text, token) = draft(model, state);
+    let (text, token) = match search_prompt(model) {
+        // A search in progress is what the line is: the prompt and the entry it
+        // found, in the token a draft is typed in.
+        Some(prompt) => (prompt, Token::Fg),
+        None => draft(model, state),
+    };
     for line in wrapped(&text, width.saturating_sub(4)) {
         out.push(Row {
             runs: vec![Run {
@@ -41,7 +48,13 @@ pub(crate) fn rows(model: &Model, width: usize, charset: Charset) -> Vec<Row> {
     out.push(border(
         Glyph::BottomLeft,
         Glyph::BottomRight,
-        hint(state, width),
+        // The state's hint names keys a search does not read, so a search says
+        // its own row instead.
+        if model.search().is_some() {
+            SEARCH_HINT
+        } else {
+            hint(state, width)
+        },
         Token::Dim,
         width,
         charset,

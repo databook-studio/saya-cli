@@ -74,20 +74,22 @@ fn notice(model: &Model) -> Option<String> {
         })
 }
 
-/// The model a settled `/investigation run` leaves, and the evidence line the
-/// run ended in: the document is saved first, on a model of its own, so the
-/// frame under test holds the run and nothing else.
-fn settled(label: &str) -> (Model, String) {
+/// The model a settled `/investigation run` leaves, the evidence line the run
+/// ended in, and the line the operator submitted — the transcript's first row:
+/// the document is saved first, on a model of its own, so the frame under test
+/// holds the run and nothing else.
+fn settled(label: &str) -> (Model, String, String) {
     let fixture = Fixture::new(label);
     let deps = fixture.investigation_deps();
     perform_line(&mut fixture.model(), &deps, SAVE);
     let id = saved_id(&deps);
     let mut model = fixture.model();
-    perform_line(&mut model, &deps, &format!("/investigation run {id}"));
+    let line = format!("/investigation run {id}");
+    perform_line(&mut model, &deps, &line);
     let evidence = notice(&model)
         .and_then(|message| message.lines().last().map(str::to_owned))
         .unwrap_or_default();
-    (model, evidence)
+    (model, evidence, line)
 }
 
 /// The screen `model` paints at `width × height`, one row per line, trailing
@@ -106,7 +108,7 @@ fn painted(model: &Model, width: u16, height: u16) -> Vec<String> {
 
 #[test]
 fn a_completed_investigation_run_lands_its_rows_in_the_transcript() {
-    let (model, evidence) = settled("paint-entry");
+    let (model, evidence, _line) = settled("paint-entry");
     let notice = notice(&model).unwrap_or_else(|| {
         panic!(
             "the run's rows are a transcript entry, not the surface's transient \
@@ -131,20 +133,22 @@ fn a_completed_investigation_run_lands_its_rows_in_the_transcript() {
 
 #[test]
 fn the_run_rows_are_above_the_status_line_at_100x30() {
-    let (model, evidence) = settled("paint-100");
+    let (model, evidence, line) = settled("paint-100");
     let rows = painted(&model, 100, 30);
     assert_eq!(rows.len(), 30, "every row of the terminal is painted");
     assert_eq!(
-        rows[..3],
+        rows[..5],
         [
+            format!("   ❯ {line}"),
+            String::new(),
             String::from("   match_id"),
             String::from("   2"),
             format!("   {evidence}"),
         ],
-        "the run's rows open the transcript, intact and one line each: {rows:#?}"
+        "the operator's line opens the turn, then the run's rows, intact and one line each: {rows:#?}"
     );
     assert!(
-        rows[3..26].iter().all(String::is_empty),
+        rows[5..26].iter().all(String::is_empty),
         "nothing else is painted under them: {rows:#?}"
     );
     assert_eq!(
@@ -169,20 +173,22 @@ fn the_run_rows_are_above_the_status_line_at_100x30() {
 
 #[test]
 fn the_run_rows_are_above_the_status_line_at_80x24() {
-    let (model, evidence) = settled("paint-80");
+    let (model, evidence, line) = settled("paint-80");
     let rows = painted(&model, 80, 24);
     assert_eq!(rows.len(), 24, "every row of the terminal is painted");
     assert_eq!(
-        rows[..3],
+        rows[..5],
         [
+            format!("   ❯ {line}"),
+            String::new(),
             String::from("   match_id"),
             String::from("   2"),
             format!("   {evidence}"),
         ],
-        "the run's rows open the transcript, intact and one line each: {rows:#?}"
+        "the operator's line opens the turn, then the run's rows, intact and one line each: {rows:#?}"
     );
     assert!(
-        rows[3..20].iter().all(String::is_empty),
+        rows[5..20].iter().all(String::is_empty),
         "nothing else is painted under them: {rows:#?}"
     );
     assert_eq!(

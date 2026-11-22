@@ -78,6 +78,10 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
         .await
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         let mut model = model;
+        // The composer's history is the file today's surface keeps: the ring is
+        // loaded once, here at launch, so the first `↑` recalls the lines an
+        // earlier session submitted (`SAYA_HISTORY` still turns it off).
+        model.open_history();
         if let Some(skipped) = opened.skipped_primary()
             && model.database.as_deref() == Some(skipped)
         {
