@@ -59,12 +59,20 @@ pub(crate) fn connection_workspace(roots: &Roots) -> std::path::PathBuf {
     roots.config_root.join("cwd")
 }
 
-/// A mock server over `script`, held open for as many requests as it has steps.
+/// A mock server over `script`, held open for as many requests as it has steps
+/// and for long enough that an idle window does not outlast it before the first
+/// request arrives.
 pub(crate) fn server(script: Vec<ScriptStep>) -> MockServer {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let limit = script.len() + 2;
-    harness::spawn_script_server_limit(listener, script, Arc::new(AtomicBool::new(false)), limit)
+    harness::spawn_script_server_limit(
+        listener,
+        script,
+        Arc::new(AtomicBool::new(false)),
+        limit,
+        Duration::from_secs(600),
+    )
 }
 
 /// Measures (a), (b), (c) and (f) on one session of `bin`.

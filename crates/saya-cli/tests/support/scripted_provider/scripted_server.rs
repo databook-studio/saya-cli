@@ -60,18 +60,20 @@ pub(crate) fn spawn_script_server(
     script: Vec<ScriptStep>,
     release: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> MockServer {
-    spawn_script_server_limit(listener, script, release, 16)
+    spawn_script_server_limit(listener, script, release, 16, std::time::Duration::from_secs(30))
 }
 
-/// The same mock with the request cap stated. A scenario's latch rows script up
-/// to ten requests and the cap of sixteen covers them; the perf harness scripts
-/// one request per measured turn, so it states its own cap rather than the
-/// sixteen those rows bound.
+/// The same mock with the request cap and the accept wait stated. A scenario's
+/// latch rows script up to ten requests and the cap of sixteen covers them; the
+/// perf harness scripts one request per measured turn, so it states its own cap
+/// rather than the sixteen those rows bound — and a longer accept wait, because
+/// a measure may sit idle for a minute before the turn it asks for.
 pub(crate) fn spawn_script_server_limit(
     listener: std::net::TcpListener,
     script: Vec<ScriptStep>,
     release: std::sync::Arc<std::sync::atomic::AtomicBool>,
     last_index: usize,
+    accept_wait: std::time::Duration,
 ) -> MockServer {
     use std::{io::Write, sync::atomic::Ordering, thread, time::Duration};
 
@@ -86,7 +88,7 @@ pub(crate) fn spawn_script_server_limit(
     let server_stop = stop.clone();
     let handle = thread::spawn(move || {
         loop {
-            let Some(mut stream) = accept_provider(&listener, &server_stop, Duration::from_secs(30))
+            let Some(mut stream) = accept_provider(&listener, &server_stop, accept_wait)
             else {
                 break;
             };
