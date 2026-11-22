@@ -138,6 +138,26 @@ mod compose_sql_tests;
 mod compose_origin_tests;
 
 #[cfg(all(test, unix))]
+#[path = "safety_twin_fixture.rs"]
+mod safety_twin_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_shell.rs"]
+mod safety_twin_shell;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_background.rs"]
+mod safety_twin_background;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_write.rs"]
+mod safety_twin_write;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_grants.rs"]
+mod safety_twin_grants;
+
+#[cfg(all(test, unix))]
 #[path = "rollover_fixture.rs"]
 mod rollover_fixture;
 
