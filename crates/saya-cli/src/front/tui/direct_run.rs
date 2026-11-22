@@ -20,13 +20,14 @@ use saya_store::SqliteStateStore;
 use saya_types::QueryResult;
 
 use super::direct::{Direct, DirectOutcome};
+use super::direct_export::export;
 use super::direct_trust::TrustStore;
 use super::msg::Worker;
 use crate::config::runtime::RuntimeConfig;
 use crate::front::ResultPreview;
 use crate::interactive::tui::{
     CAP_REFUSAL, Followup, LastQuery, SqlTask, fill_save_from_last_query, parse_chart_args,
-    spawn_sql_task, try_acquire_worker_permit, write_result_for,
+    spawn_sql_task, try_acquire_worker_permit,
 };
 use crate::render::{RenderFormat, TerminalEvent};
 
@@ -48,36 +49,15 @@ pub(crate) fn perform(deps: &DirectDeps, command: Direct) -> Worker {
     match command {
         Direct::Sql { profile, sql } => query(deps, profile, sql),
         Direct::Export {
-            path,
-            overwrite,
+            request,
             result,
-        } => export(&result, &path, overwrite),
+            evidence,
+        } => export(&result, evidence.as_deref(), &request),
         Direct::Chart { args, result } => chart(&result, &args),
         Direct::Investigation {
             command,
             last_query,
         } => investigation(deps, command, last_query),
-    }
-}
-
-/// `/export`: today's two-phase write, to the path the operator named.
-fn export(result: &QueryResult, path: &str, overwrite: bool) -> Worker {
-    // The one export request the slash grammar builds: the destination's
-    // extension selects the format, as K7's `/export` does.
-    let request = crate::slash::ExportRequest {
-        overwrite,
-        path: path.to_owned(),
-        ..crate::slash::ExportRequest::default()
-    };
-    match write_result_for(result, &request) {
-        Ok(rows) => Worker {
-            message: format!("Exported {rows} row(s) to {path}"),
-            ..Worker::default()
-        },
-        Err(message) => Worker {
-            direct: Some(DirectOutcome::Error(message)),
-            ..Worker::default()
-        },
     }
 }
 
@@ -206,22 +186,40 @@ fn query(deps: &DirectDeps, profile: Option<String>, sql: String) -> Worker {
             connection: connection.clone(),
         },
     );
+    // The clone shares the envelope slot, so the answer below reads the
+    // execution the spawned worker wrote.
     let events = spawn_sql_task(
         permit,
         Arc::clone(&deps.runtime),
-        task,
+        task.clone(),
         CancellationToken::new(),
     );
     match events.recv() {
-        Ok(TerminalEvent::QueryResult { result }) => Worker {
-            direct: Some(DirectOutcome::Result(ResultPreview {
-                connection: connection.unwrap_or_default(),
-                sql,
-                result,
-                refusal: None,
-            })),
-            ..Worker::default()
-        },
+        Ok(TerminalEvent::QueryResult { result }) => {
+            // The worker's own envelope names and times the execution, so the
+            // report written from these rows states this run — the facts the
+            // line REPL captures for the same query. A result the worker never
+            // wrote an envelope for has no provenance to state.
+            let evidence = task
+                .take_execution()
+                .map(|execution| {
+                    crate::interactive::tui::capture::direct_sql_evidence_from_execution(
+                        connection.as_deref(),
+                        &execution,
+                    )
+                })
+                .map(Arc::new);
+            Worker {
+                direct: Some(DirectOutcome::Result(ResultPreview {
+                    connection: connection.unwrap_or_default(),
+                    sql,
+                    result,
+                    evidence,
+                    refusal: None,
+                })),
+                ..Worker::default()
+            }
+        }
         // A statement the read-only policy refused arrives here, in the safety
         // layer's own words, and is filed as the refusal line — never as rows.
         Ok(TerminalEvent::Error { message }) => Worker {

@@ -34,6 +34,7 @@ pub(super) fn result(columns: &[&str], rows: Vec<Value>) -> ResultPreview {
             executed_sql: "SELECT * FROM orders".to_owned(),
         },
         refusal: None,
+        evidence: None,
     }
 }
 

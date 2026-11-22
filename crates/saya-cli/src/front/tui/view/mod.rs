@@ -117,6 +117,8 @@ pub(crate) use palette::Palette;
 #[allow(unused_imports)]
 pub(crate) use palette_rows::rows as palette_rows;
 #[allow(unused_imports)]
+pub(crate) use result::refusal as refusal_words;
+#[allow(unused_imports)]
 pub(crate) use result::rows as result_rows;
 #[allow(unused_imports)]
 pub(crate) use result_table::{Key as TableKey, PREVIEW_ROWS, TableView, full_rows};

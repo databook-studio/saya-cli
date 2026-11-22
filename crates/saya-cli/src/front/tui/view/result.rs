@@ -40,8 +40,9 @@ pub(crate) fn rows(
 }
 
 /// Why the preview holds no rows: `02` §3.3's one dim line, which never
-/// pretends the result was empty.
-fn refusal(reason: CaptureRefusalReason) -> &'static str {
+/// pretends the result was empty. `/export` says the same line when it is
+/// asked to write a capture that was refused.
+pub(crate) fn refusal(reason: CaptureRefusalReason) -> &'static str {
     match reason {
         CaptureRefusalReason::ModelViewTruncated => {
             "model saw a truncated result; rerun with /sql to see rows"
