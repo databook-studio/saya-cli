@@ -32,9 +32,9 @@ pub(crate) struct TurnInputs {
 /// Builds [`TurnInputs`] from config: the resolved AI + provider, and the
 /// live connection registry (primary plus secondaries). This is the only
 /// production caller of `provider::build` and `build_registry`; splitting it
-/// out leaves [`super::run_prompt_with_inputs`] provider- and
-/// registry-injectable for tests. Cancellation covers the whole turn because
-/// [`super::run_prompt_with_sink_and_outcomes`] awaits this inside its pinned future.
+/// out keeps the line front's turn provider- and registry-injectable for
+/// tests. Cancellation covers the whole turn because the turn awaits this
+/// inside its pinned future.
 pub(crate) async fn prepare_turn(
     runtime: &RuntimeConfig,
     overrides: &super::turn_config::PromptOverrides,

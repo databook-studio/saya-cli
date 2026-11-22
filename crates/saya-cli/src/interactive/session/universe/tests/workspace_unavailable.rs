@@ -40,16 +40,8 @@ fn no_root_still_no_lane() {
         universe.host_composed_for_tests().is_none(),
         "no workspace root: the lane does not compose"
     );
-    let names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
-    assert!(
-        !names.contains(&"run_command".to_string()),
-        "hidden, not advertised: {names:?}"
-    );
-    let bypass_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
-    assert!(
-        !bypass_names.contains(&"run_command".to_string()),
-        "hidden under bypass too, not advertised: {bypass_names:?}"
-    );
+    // The session's advertised surface went with the deleted turn body; the
+    // lane facts above are what this pin has left to state.
     // The unstated shape composes the same way, retaining the live
     // workspace-independent members from the first universe.
     let unstated = SessionUniverse::compose_with_launch_and_path(

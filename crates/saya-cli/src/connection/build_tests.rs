@@ -59,10 +59,6 @@ async fn build_registry_primary_and_secondary_succeed() {
     assert!(registry.names().contains(&"pri_db"));
     assert!(registry.names().contains(&"sec_db"));
 
-    let context = registry.describe_context();
-    assert!(context.is_some());
-    assert!(context.as_ref().unwrap().contains("sqlite"));
-
     let _ = std::fs::remove_file(&primary_path);
     let _ = std::fs::remove_file(&secondary_path);
 }

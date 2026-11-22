@@ -88,22 +88,6 @@ fn effort_for(effort: saya_config::ReasoningEffort) -> Option<saya_agent::Reason
 pub(crate) const PROVIDER_UNREACHABLE_ADVICE: &str =
     "next: start your AI provider, or run `saya config doctor` to check the endpoint and base_url.";
 
-/// The three first-run failures name no next step. Guidance is added at the
-/// `saya-cli` boundary (here), not in the provider-neutral agent crate. A
-/// provider that is configured but unreachable is "what is configured did not
-/// work", not "nothing is configured" — so the next step is to start the
-/// provider or check the endpoint, never to re-run `config init` (telling a
-/// user whose gateway is momentarily down to re-init would be worse than
-/// saying nothing).
-pub(crate) fn provider_message(error: &ProviderError) -> String {
-    let message = error.to_string();
-    if message.contains("could not reach the provider") {
-        format!("{message}\n{PROVIDER_UNREACHABLE_ADVICE}")
-    } else {
-        message
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -20,6 +20,7 @@
 // (`mod.rs`, `shell.rs`, `executors.rs`); only what none of them names is
 // imported here.
 use crate::agent::tools::consent::Operator;
+use saya_agent::ApprovalDecider;
 
 /// The session's plan gate put to this turn's approval surface.
 ///
@@ -32,17 +33,6 @@ pub(crate) struct PlanAsk {
     /// This turn's approval surface. `None` — a turn that bound none — refuses
     /// every submission: there is no reader, so no plan is approved.
     decider: std::sync::Mutex<Option<Arc<dyn ApprovalDecider>>>,
-}
-
-impl PlanAsk {
-    /// Binds this turn's approval surface, or `None` for a turn without one.
-    pub(crate) fn bind(&self, decider: Option<Arc<dyn ApprovalDecider>>) {
-        let mut slot = self
-            .decider
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *slot = decider;
-    }
 }
 
 #[async_trait::async_trait]
@@ -84,19 +74,5 @@ impl SessionUniverse {
     /// approval — and the close a mode switch performs — survive every turn.
     pub(crate) fn plan_gate(&self) -> Arc<PlanGate> {
         Arc::clone(&self.plan)
-    }
-
-    /// Whether the plan gate is open. The one fact the advertisement reads to
-    /// decide the write, shell and MCP families under `plan`; the engine reads
-    /// the same gate's cell, so the two cannot disagree.
-    pub(crate) fn plan_gate_open(&self) -> bool {
-        self.plan.is_open()
-    }
-
-    /// Binds this turn's approval surface onto the gate. Called once per turn,
-    /// before the model runs, with the same decider every other ask of the
-    /// turn goes through.
-    pub(crate) fn bind_plan_ask(&self, decider: Option<Arc<dyn ApprovalDecider>>) {
-        self.plan_ask.bind(decider);
     }
 }

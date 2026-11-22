@@ -3,34 +3,15 @@
 //! user turn — after the instruction blocks, never in the system prompt,
 //! never from another worktree, independent of the database privacy gate.
 
-use super::{
-    MAX_PREFERENCE_REQUEST_BYTES, project_preferences, remaining_request_bytes, render_preferences,
-};
+use super::{project_preferences, render_preferences};
 use crate::agent::context::sources::UNTRUSTED_PREFIX;
-use crate::agent::runtime::run_prompt_with_inputs;
-use crate::agent::turn_inputs::TurnInputs;
 use crate::commands::preferences::worktree_id_for;
-use crate::config::runtime::RuntimeConfig;
-use crate::connection::{ConnectionEntry, ConnectionRegistry};
-use crate::interactive::session::universe::SessionUniverse;
-use async_trait::async_trait;
-use saya_agent::{
-    AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage, ChatProvider,
-    ChatRequest, ChatResponse, ContextBlock, NoopEventSink, render_untrusted_block, turn_bytes,
-};
-use saya_config::{
-    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedHostCommands, ResolvedJobs, ResolvedMemory, ThemeChoice,
-};
-use saya_connectors::DatabaseConnector;
+use saya_agent::render_untrusted_block;
 use saya_store::{ProjectPreferenceStore, SqliteStateStore};
 use saya_types::{
-    ConnectionError, Database, DatabaseProfile, PROJECT_PREFERENCE_VERSION, PreferenceId,
-    PreferenceSource, ProfileIdentity, ProjectPreference, QueryRequest, QueryResult, Schema,
-    SchemaTree, SqlDialect, Table, WorktreeId,
+    PROJECT_PREFERENCE_VERSION, PreferenceId, PreferenceSource, ProjectPreference, WorktreeId,
 };
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 const CLOSE: &str = "<<<CONTEXT_BLOCK_END>>>";
 const OPEN: &str = "<<<CONTEXT_BLOCK_BEGIN>>>";
@@ -49,21 +30,11 @@ fn stamp(tag: &str) -> PathBuf {
     ))
 }
 
-fn write_file(path: &Path, contents: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, contents).unwrap();
-}
-
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
-}
-
-/// The exact post-escape, post-wrapper request bytes one block adds.
-fn cost_of(block: &ContextBlock) -> usize {
-    turn_bytes(None, std::slice::from_ref(block), "").saturating_sub(turn_bytes(None, &[], ""))
 }
 
 /// A hand-built preference, for the pure renderer: the store refuses
@@ -97,14 +68,3 @@ fn canonical_fixture(tag: &str) -> (PathBuf, PathBuf) {
 }
 
 include!("preferences_tests/absence_and_format.rs");
-
-include!("preferences_tests/budget.rs");
-
-// ===========================================================================
-// The runtime wiring: the real turn path splices the preferences block into
-// the request's user turn, after the instruction blocks.
-// ===========================================================================
-
-include!("preferences_tests/runtime_config.rs");
-include!("preferences_tests/runtime_provider.rs");
-include!("preferences_tests/runtime_turn.rs");

@@ -113,7 +113,7 @@ impl HookCaller {
             }
             HookCaller::Run(id) => payload["run_id"] = bounded_id(id),
             HookCaller::Session(Some(id)) => payload["session_id"] = bounded_id(id),
-            HookCaller::Session(None) | HookCaller::Ask => {}
+            HookCaller::Session(None) => {}
         }
     }
 }

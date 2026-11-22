@@ -59,20 +59,10 @@ pub(crate) struct ApprovalFacts {
 }
 
 impl ApprovalFacts {
-    /// The one-shot `ask` shape: the SQL bounds from the resolved config,
-    /// and no session members — `saya ask` advertises only the database
-    /// surface, so no run-tool prompt can occur here.
-    pub(crate) fn for_ask(runtime: &crate::config::runtime::RuntimeConfig) -> Self {
-        Self {
-            row_cap: crate::agent::state_tools::model_row_cap(runtime.resolved.max_rows),
-            sql_timeout_seconds: runtime.resolved.query_timeout_seconds,
-            ..ApprovalFacts::default()
-        }
-    }
-
     /// Binds the session state directory an over-bound command's exact bytes
-    /// are saved under. The deciders call this with the journal's directory;
-    /// every other construction leaves it `None`.
+    /// are saved under. The deciders called this with the journal's directory;
+    /// with the session decider gone the prompt tests bind it here.
+    #[cfg(test)]
     pub(crate) fn with_approval_dir(mut self, dir: Option<PathBuf>) -> Self {
         self.approval_dir = dir;
         self

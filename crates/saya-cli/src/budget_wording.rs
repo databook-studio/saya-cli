@@ -1,7 +1,6 @@
 //! The one truthful wording for a budget stop, shared by the `ask`
 //! classification (exit 6) and the plain REPL's terminal diagnostics.
 
-use crate::render::{RenderFormat, TerminalEvent, render_event};
 use saya_agent::{BudgetDimension, CancellationReason};
 
 /// The budget dimension a settled turn stopped on, if any: the question
@@ -41,25 +40,6 @@ pub(crate) fn budget_partial_message(dimension: BudgetDimension) -> String {
         other => format!("{other:?}").to_lowercase(),
     };
     format!("the run stopped on its {what} budget; any answer it produced is partial or absent")
-}
-
-/// Says the truthful partial wording for a settled budget stop as a
-/// terminal diagnostic. `None` (no budget stop) says nothing.
-///
-/// The line front words a budget stop through the same
-/// [`budget_partial_message`]; this printer's one caller is the old request
-/// body (`interactive::session_request`), which stays for 0.5.1.
-pub(crate) fn emit_partial_diagnostic(budget: Option<BudgetDimension>, format: RenderFormat) {
-    if let Some(dimension) = budget {
-        let rendered = render_event(
-            &TerminalEvent::Diagnostic {
-                message: budget_partial_message(dimension),
-            },
-            format,
-        );
-        print!("{}", rendered.stdout);
-        eprint!("{}", rendered.stderr);
-    }
 }
 
 #[cfg(test)]

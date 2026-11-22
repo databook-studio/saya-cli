@@ -5,7 +5,7 @@
 
 use saya_agent::{AgentMode, ApprovalPolicy, SessionGrants};
 
-use super::{command_available, fetch_available, shell_available};
+use super::{command_available, fetch_available};
 
 /// A store with `tokens` granted.
 fn granted(tokens: &[&str]) -> SessionGrants {
@@ -148,23 +148,6 @@ fn the_command_family_advertises_exactly_where_a_call_can_run() {
             "shell:cargo test",
         ],
         command_available,
-    );
-}
-
-/// The job shell's family: the `shell:` prefix group opens it, and the
-/// run-command lane's `command:` word does not — the two doors are two
-/// families, so neither grant can stand in for the other.
-#[test]
-fn the_shell_family_advertises_exactly_where_a_call_can_run() {
-    the_family_table(
-        &["shell:cargo test"],
-        &[
-            "command:cargo",
-            "fetch:https+docs.example",
-            "workspace-write",
-            "sql:docs",
-        ],
-        shell_available,
     );
 }
 

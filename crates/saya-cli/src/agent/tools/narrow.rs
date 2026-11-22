@@ -14,13 +14,10 @@
 //! A tool the list removes is removed from the *advertisement*, and the loop
 //! refuses a call to a name it did not advertise ("unknown tool 'x'; available
 //! tools: …"). The composites that dispatch without the loop in front of them
-//! — a session, a run step, a coding root, a helper — ask [`admits`] at their
-//! own door too, so advertisement and dispatch cannot drift.
+//! — a run step, a coding root, a helper — ask [`admits`] at their own door
+//! too, so advertisement and dispatch cannot drift.
 
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use saya_agent::{ToolDefinition, ToolError, ToolExecutionContext, ToolExecutor};
+use saya_agent::ToolDefinition;
 use saya_config::ResolvedTools;
 
 /// Keeps only the definitions `tools` admits, in place. An unstated list
@@ -28,17 +25,6 @@ use saya_config::ResolvedTools;
 /// composition produced, unchanged.
 pub(crate) fn narrow(definitions: &mut Vec<ToolDefinition>, tools: &ResolvedTools) {
     definitions.retain(|definition| admits(tools, &definition.name));
-}
-
-/// [`narrow`] as a builder, for a composition that returns its list rather
-/// than holding it: the session universe and a run step both hand back the
-/// definitions the loop advertises.
-pub(crate) fn narrowed(
-    mut definitions: Vec<ToolDefinition>,
-    tools: &ResolvedTools,
-) -> Vec<ToolDefinition> {
-    narrow(&mut definitions, tools);
-    definitions
 }
 
 /// Whether this surface may dispatch `name` at all. The same predicate the
@@ -51,73 +37,6 @@ pub(crate) fn narrowed(
 /// else is the list's to remove.
 pub(crate) fn admits(tools: &ResolvedTools, name: &str) -> bool {
     !saya_config::is_governed_tool(name) || tools.admits(name)
-}
-
-/// The gate, at the one surface whose executor is its own composition and
-/// holds no allow of its own: the one-shot `ask` path, whose whole toolset is
-/// `DatabaseTools`. Every other surface carries the allow in the composite it
-/// already dispatches through.
-pub(crate) struct NarrowedExecutor {
-    tools: ResolvedTools,
-    inner: Arc<dyn ToolExecutor>,
-}
-
-impl NarrowedExecutor {
-    pub(crate) fn new(tools: ResolvedTools, inner: Arc<dyn ToolExecutor>) -> Self {
-        Self { tools, inner }
-    }
-
-    fn admit(&self, name: &str) -> Result<(), ToolError> {
-        if admits(&self.tools, name) {
-            Ok(())
-        } else {
-            Err(ToolError::UnsupportedTool)
-        }
-    }
-}
-
-#[async_trait]
-impl ToolExecutor for NarrowedExecutor {
-    async fn settle_invocation(&self) -> Result<(), ToolError> {
-        self.inner.settle_invocation().await
-    }
-
-    fn turn_context_note(&self) -> Option<String> {
-        self.inner.turn_context_note()
-    }
-
-    async fn execute(
-        &self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
-        self.admit(name)?;
-        self.inner.execute(name, arguments).await
-    }
-
-    async fn execute_with_result_cap(
-        &self,
-        name: &str,
-        arguments: serde_json::Value,
-        result_cap: usize,
-    ) -> Result<serde_json::Value, ToolError> {
-        self.admit(name)?;
-        self.inner
-            .execute_with_result_cap(name, arguments, result_cap)
-            .await
-    }
-
-    async fn execute_with_context(
-        &self,
-        name: &str,
-        arguments: serde_json::Value,
-        context: ToolExecutionContext,
-    ) -> Result<serde_json::Value, ToolError> {
-        self.admit(name)?;
-        self.inner
-            .execute_with_context(name, arguments, context)
-            .await
-    }
 }
 
 #[cfg(test)]

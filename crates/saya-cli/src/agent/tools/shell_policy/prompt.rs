@@ -7,11 +7,8 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use saya_agent::{ApprovalDecider, SessionGrants, ToolDefinition};
-use serde_json::Value;
+use saya_agent::SessionGrants;
 
-use super::schema::definition;
 use crate::agent::tools::consent::{Caller, Operator, Prompt};
 
 /// How the shell names its own call: the imperative a root's or a session's
@@ -35,30 +32,4 @@ pub(crate) fn line(caller: &Caller) -> String {
 pub(crate) fn prompt(operator: Arc<dyn Operator>, caller: Caller) -> Prompt {
     let grants: Option<SessionGrants> = operator.grants();
     Prompt::new(operator, line(&caller)).with_grants(grants)
-}
-
-/// The bridge from the model-facing approval contract to a shell prompt: the
-/// interactive session's own surface is an [`ApprovalDecider`], so a host shell
-/// call is put to it under the shell's advertised definition. The session
-/// words its own prompt from the tool call, so the line the session's caller
-/// builds is not rendered by that surface.
-pub(crate) struct DeciderShellOperator {
-    decider: Arc<dyn ApprovalDecider>,
-    definition: ToolDefinition,
-}
-
-impl DeciderShellOperator {
-    pub(crate) fn new(decider: Arc<dyn ApprovalDecider>) -> Self {
-        Self {
-            decider,
-            definition: definition(),
-        }
-    }
-}
-
-#[async_trait]
-impl Operator for DeciderShellOperator {
-    async fn ask(&self, _line: &str, arguments: &Value) -> bool {
-        self.decider.approve(&self.definition, arguments).await
-    }
 }

@@ -6,7 +6,7 @@
 use super::{
     InstructionProjection, OmittedReason, SourceReceipt, UNTRUSTED_PREFIX, project_instructions,
 };
-use saya_agent::{ChatProvider, ContextBlock, render_untrusted_block, turn_bytes};
+use saya_agent::{ContextBlock, render_untrusted_block, turn_bytes};
 use saya_config::ResolvedInstructions;
 use std::path::{Path, PathBuf};
 
@@ -68,30 +68,3 @@ include!("sources_tests/source_access.rs");
 include!("sources_tests/byte_budgets.rs");
 
 include!("sources_tests/redaction_and_integrity.rs");
-
-// ===========================================================================
-// The runtime wiring: the real turn path splices the projection into the
-// request's user turn, fitted to the budget the call site computes.
-// ===========================================================================
-
-use crate::agent::runtime::run_prompt_with_inputs;
-use crate::config::runtime::RuntimeConfig;
-use crate::connection::{ConnectionEntry, ConnectionRegistry};
-use async_trait::async_trait;
-use saya_agent::{
-    AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage, ChatRequest,
-    ChatResponse, NoopEventSink,
-};
-use saya_config::{
-    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedHostCommands, ResolvedJobs, ResolvedMemory, ThemeChoice,
-};
-use saya_connectors::DatabaseConnector;
-use saya_types::{
-    ConnectionError, Database, DatabaseProfile, ProfileIdentity, QueryRequest, QueryResult, Schema,
-    SchemaTree, SqlDialect, Table,
-};
-use std::sync::{Arc, Mutex};
-
-include!("sources_tests/runtime_config.rs");
-include!("sources_tests/runtime_turn.rs");

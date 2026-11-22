@@ -21,13 +21,10 @@ pub(crate) mod recall_turn;
 #[allow(dead_code)]
 // mechanism only — not yet wired into the agent loop; a later change decides when it runs
 pub(crate) mod roundtrip;
-pub(crate) mod runtime;
 // The session wiring for checkpoint recovery: the one line the
 // per-turn `DatabaseTools` build gains.
 pub(crate) mod session_facts;
-pub(crate) mod session_recovery_attach;
 pub(crate) mod state_tools;
-pub(crate) mod system_prompt;
 pub(crate) mod tools;
 pub(crate) mod turn_config;
 pub(crate) mod turn_context;

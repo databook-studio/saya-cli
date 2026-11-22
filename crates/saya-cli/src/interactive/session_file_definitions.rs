@@ -35,23 +35,3 @@ pub(crate) fn workspace_write() -> ToolDefinition {
     definition.effect = write_shape(false);
     definition
 }
-
-/// `edit`, beside `write` on the session surface: the
-/// run definition's anchored replace and offset-checked append, with the
-/// session's wording and per-call ask. Prefer it for small changes.
-pub(crate) fn workspace_edit() -> ToolDefinition {
-    let mut definition = run_file_definitions()
-        .into_iter()
-        .find(|definition| definition.name == "edit")
-        .expect(
-            "edit is a run-surface file tool the session derives from; \
-            a missing name is a programming error the schema tests pin",
-        );
-    definition.description = lean::EDIT.replace("this run", "this session");
-    definition.effect = write_shape(false);
-    definition
-}
-
-#[cfg(test)]
-#[path = "session_file_definitions_tests.rs"]
-mod session_file_definitions_tests;

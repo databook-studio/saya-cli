@@ -44,14 +44,19 @@ pub(in crate::agent::tools) use classify::MISSING_FILE_NOT_A_REPLACE;
 /// tools call the same four methods on either.
 #[derive(Clone)]
 pub(in crate::agent::tools) enum CheckpointRecorder {
+    /// The session's recorder. Its production wiring (the deleted turn body)
+    /// built it from `RecoveryHandle::parts`; the capture tests build it
+    /// directly, so the variant stays matchable rather than half-deleted.
+    #[allow(dead_code)]
     Session(SessionRecorder),
     Job(JobRecorder),
 }
 
 impl CheckpointRecorder {
     /// Builds a session recorder over one session's store and enable flag.
-    /// The session wiring builds it from `RecoveryHandle::parts` through
-    /// `DatabaseTools::with_recovery`; the flag stays its only policy.
+    /// The session wiring that built it from `RecoveryHandle::parts` went with
+    /// the deleted turn body; the capture tests build it here.
+    #[allow(dead_code)]
     pub(in crate::agent::tools) fn new(
         store: Arc<FsSessionStore>,
         session_id: String,

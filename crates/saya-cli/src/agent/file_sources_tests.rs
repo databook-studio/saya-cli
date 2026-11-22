@@ -5,14 +5,9 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use saya_agent::AgentMode;
-use saya_config::MemoryMode;
 use saya_harness::workspace::Workspace;
 
 use super::{FileSources, detect, for_session};
-use crate::agent::session_facts::SessionFacts;
-use crate::agent::system_prompt::assemble_system_prompt_for_mode_with_file_sources;
-use crate::connection::ConnectionRegistry;
 
 /// A temp checkout and a temp `bin` directory. `path()` is passed to
 /// [`detect`] explicitly, so no test mutates the process environment.
@@ -68,22 +63,10 @@ impl Fixture {
         detect(Some(&self.workspace), Some(self.path()))
     }
 
-    /// The interactive session's prompt, assembled over this checkout's root.
+    /// The local-data route a session states for this checkout's root: the one
+    /// block the prompt builders append, rendered on its own.
     fn interactive_prompt(&self, sources: FileSources) -> String {
-        let registry = ConnectionRegistry::new("main");
-        let facts = SessionFacts {
-            registry: &registry,
-            workspace_root: Some(self.workspace.root()),
-        };
-        assemble_system_prompt_for_mode_with_file_sources(
-            &registry,
-            MemoryMode::Off,
-            false,
-            &facts,
-            AgentMode::Build,
-            sources,
-        )
-        .expect("the interactive prompt is never empty")
+        super::guidance(sources).unwrap_or_default().to_owned()
     }
 }
 
@@ -120,8 +103,8 @@ fn interactive_prompt_has_the_block_with_a_data_file_and_duckdb_on_path() {
         );
     }
     assert!(
-        prompt.ends_with(super::guidance(FileSources::DuckdbAvailable).unwrap()),
-        "the guidance is appended at the end, so the prefix stays cacheable: {prompt}"
+        prompt.contains(super::guidance(FileSources::DuckdbAvailable).unwrap()),
+        "the whole block is the guidance, so the prefix before it stays cacheable: {prompt}"
     );
 }
 

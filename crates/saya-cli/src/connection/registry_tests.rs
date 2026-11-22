@@ -100,26 +100,3 @@ fn test_names_insertion_order() {
         SqlDialect::Snowflake
     );
 }
-
-#[test]
-fn test_describe_context() {
-    let mut reg = ConnectionRegistry::new("db1");
-
-    // Empty registry: describe_context is None
-    assert!(reg.describe_context().is_none());
-
-    // Single connection: describe_context is None
-    reg.insert("db1", make_entry(SqlDialect::Postgres, None));
-    assert!(reg.describe_context().is_none());
-
-    // Two connections: describe_context is Some(...) containing both names and dialects
-    reg.insert("db2", make_entry(SqlDialect::Sqlite, None));
-    let ctx = reg
-        .describe_context()
-        .expect("context should be Some for >1 connections");
-
-    assert!(ctx.contains("- db1 (postgresql)"));
-    assert!(ctx.contains("- db2 (sqlite)"));
-    assert!(ctx.contains("connection"));
-    assert!(ctx.contains("schema and query tools"));
-}

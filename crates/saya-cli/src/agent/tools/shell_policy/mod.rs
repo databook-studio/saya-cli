@@ -194,9 +194,12 @@ fn width(mode: ApprovalPolicy) -> u8 {
     }
 }
 
-pub(crate) use compose::{
-    Background, HostLane, advertised, compose, compose_host_only, compose_sandboxed, prove,
-};
+pub(crate) use compose::{Background, HostLane, advertised, compose};
+// The sandbox and host-lane constructors are read only from the
+// platform-gated shell tests (the deleted session shell was their last
+// production caller), so they are re-exported for those tests alone.
+#[cfg(test)]
+pub(crate) use compose::{compose_host_only, compose_sandboxed, prove};
 pub(crate) use placement::ShellPlacement;
 pub(crate) use poll::WallClock;
 // The refusal and notice texts are read only from test code and `ShellPolicy`
@@ -204,7 +207,7 @@ pub(crate) use poll::WallClock;
 // a live path in a non-test build; callers still name them through this module.
 #[allow(unused_imports)]
 pub(crate) use policy::{HOST_APPROVAL_UNAVAILABLE, SANDBOX_DOWNGRADE_NOTICE, ShellPolicy};
-pub(crate) use prompt::{DeciderShellOperator, prompt};
+pub(crate) use prompt::prompt;
 // The prompt's line is read only from test code, which asserts the wording the
 // operator is shown; callers still name it through this module.
 #[cfg(test)]

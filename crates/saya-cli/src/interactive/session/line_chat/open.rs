@@ -29,9 +29,9 @@ use saya_store::{RedactedSession, SqliteStateStore};
 
 use super::line::Line;
 use super::run::Run;
-use crate::agent::system_prompt::memory_reachable;
 use crate::agent::turn_config::PromptOverrides;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
+use crate::agent::turn_context::memory_reachable;
 use crate::agent::turn_inputs::prepare_turn;
 use crate::chat::{
     ChatFront, ChatSession, OpsContext, RunComposition, RunPort, SessionRun, WorkspaceShape,

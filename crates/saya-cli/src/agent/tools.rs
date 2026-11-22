@@ -62,7 +62,7 @@ mod write_ask_tests;
 pub(crate) use database_tools::DatabaseTools;
 // The write bound the tool enforces, which the approval prompt states.
 pub(crate) use database_tools::WORKSPACE_WRITE_MAX_BYTES;
-pub(crate) use narrow::{NarrowedExecutor, admits, narrow, narrowed};
+pub(crate) use narrow::{admits, narrow};
 pub(crate) use run_tools::RunTools;
 pub(crate) use write_ask::WriteAsk;
 // Whether the workspace holds a notebook, and the removal a surface whose list

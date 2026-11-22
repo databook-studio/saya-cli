@@ -139,7 +139,4 @@ mod render_tests;
 #[path = "restore_tests.rs"]
 mod restore_tests;
 #[cfg(test)]
-#[path = "session_tests.rs"]
-mod session_tests;
-#[cfg(test)]
 mod testing;
