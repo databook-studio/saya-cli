@@ -1,5 +1,6 @@
-//! The four database-golden scenarios. Each drives the real REPL against a
-//! scripted provider and a SQLite fixture, then records what happened.
+//! The three database-golden scenarios of part A (the re-specified budget row
+//! is `scenarios_budget`). Each drives the real REPL against a scripted provider
+//! and a SQLite fixture, then records what happened.
 //!
 //! The scripts are the model's side: one request slot per script step, in
 //! order. A scenario asserts the behaviour it exists to pin (the calls the
@@ -8,26 +9,41 @@
 
 use std::net::TcpListener;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use super::harness::{self, ScriptStep};
-use super::record::{Golden, assert_golden};
+use super::record::{Golden, StateRecord, assert_golden};
 use super::setup::{ANSWER, QUESTION, assert_last_state, fixture, settle, spawn, visible_states};
 
-fn listener() -> TcpListener {
+pub(super) fn listener() -> TcpListener {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     listener
 }
 
 fn record(name: &str, observed: &super::setup::Observed) -> Golden {
+    record_states(
+        name,
+        observed,
+        visible_states(&observed.stdout, &observed.stderr),
+    )
+}
+
+/// The same record with the settled states the scenario states itself: a row
+/// whose turns settle in an order `visible_states` cannot infer (it reads stdout
+/// first and stderr after) says that order here.
+pub(super) fn record_states(
+    name: &str,
+    observed: &super::setup::Observed,
+    states: Vec<StateRecord>,
+) -> Golden {
     Golden::build(
         name,
         &observed.bodies,
         &observed.served,
         &observed.normaliser,
-        visible_states(&observed.stdout, &observed.stderr),
+        states,
     )
 }
 
@@ -113,34 +129,6 @@ fn a_clarification_is_asked_then_answered_in_the_next_message() {
     );
     assert_last_state(&golden, "answer");
     assert_golden("clarification", &golden);
-}
-
-#[test]
-fn an_exhausted_question_budget_stops_the_turn() {
-    let fixture = fixture("budget");
-    let release = Arc::new(AtomicBool::new(false));
-    let mut server = harness::spawn_script_server(
-        listener(),
-        vec![ScriptStep::HoldOpen {
-            marker: String::new(),
-        }],
-        release.clone(),
-    );
-    let mut child = spawn(&fixture, &server.address, 8, "budget");
-    child.send(QUESTION);
-    harness::wait_for_stream_timeout(
-        &child.stderr_buf,
-        "the run stopped on its".as_bytes(),
-        "the budget diagnostic",
-        Duration::from_secs(30),
-    );
-    release.store(true, Ordering::SeqCst);
-    let observed = settle(&fixture, child, &mut server);
-
-    let golden = record("question_budget_stop", &observed);
-    assert!(!golden.requests.is_empty(), "the held request was recorded");
-    assert_last_state(&golden, "budget-stop");
-    assert_golden("question_budget_stop", &golden);
 }
 
 #[test]

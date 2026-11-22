@@ -46,14 +46,16 @@ pub(crate) struct LocalPhaseSnapshot {
 }
 
 pub(crate) struct LocalMetrics {
-    origin: Instant,
+    /// The instant this collector's counters are measured from: the question it
+    /// belongs to began here, and [`LocalMetrics::begin_question`] moves it.
+    origin: Mutex<Instant>,
     state: Mutex<LocalPhaseSnapshot>,
 }
 
 impl LocalMetrics {
     pub(crate) fn new() -> Self {
         Self {
-            origin: Instant::now(),
+            origin: Mutex::new(Instant::now()),
             state: Mutex::new(LocalPhaseSnapshot::default()),
         }
     }
@@ -62,8 +64,19 @@ impl LocalMetrics {
         *self.state.lock().expect("local metrics lock")
     }
 
+    /// Starts the next question: the counters a settled turn prints are the
+    /// question's own, so this one begins empty — and measured from now, so a
+    /// `first_useful` instant is this question's elapsed time and not the
+    /// session's. Called between turns, at the boundary one question ends and
+    /// the next begins; never while a turn is running.
+    pub(crate) fn begin_question(&self) {
+        *self.origin.lock().expect("local metrics lock") = Instant::now();
+        *self.state.lock().expect("local metrics lock") = LocalPhaseSnapshot::default();
+    }
+
     pub(crate) fn record(&self, metric: &AgentMetric) {
-        let now_ns = u64::try_from(self.origin.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        let origin = *self.origin.lock().expect("local metrics lock");
+        let now_ns = u64::try_from(origin.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let mut state = self.state.lock().expect("local metrics lock");
         match *metric {
             AgentMetric::Phase {

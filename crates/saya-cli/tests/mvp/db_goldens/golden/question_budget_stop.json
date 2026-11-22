@@ -3,12 +3,16 @@
   "requests": [
     {
       "tools": [
-        "schema_discovery",
-        "request_clarification",
+        "checklist",
         "read",
-        "list",
         "glob",
         "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "schema_discovery",
+        "request_clarification",
         "bounded_sql_query",
         "bounded_sql_query_all",
         "result_shape",
@@ -16,24 +20,74 @@
         "join_check",
         "designate_answer",
         "contract_search",
-        "contract_read",
-        "checklist",
-        "write",
-        "edit",
-        "http_fetch",
-        "http_download",
-        "run_command",
-        "shell"
+        "contract_read"
       ],
-      "body_bytes": 20352,
+      "body_bytes": 20503,
       "messages": 2
+    },
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "schema_discovery",
+        "request_clarification",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 20753,
+      "messages": 4
+    },
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "schema_discovery",
+        "request_clarification",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 20587,
+      "messages": 4
     }
   ],
-  "tool_calls": [],
+  "tool_calls": [
+    {
+      "name": "schema_discovery",
+      "outcome": "ok"
+    }
+  ],
   "states": [
     {
       "kind": "budget-stop",
       "text": "the run stopped on its elapsed-time budget; any answer it produced is partial or absent"
+    },
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
     }
   ]
 }

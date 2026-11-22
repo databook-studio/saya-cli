@@ -8,6 +8,7 @@
 //! turn body's `take_answering_usage` settle did: an absent report is not a
 //! reported zero, and a cancelled turn still spent what it consumed.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
@@ -25,6 +26,9 @@ pub(crate) struct TurnStream {
     usage: TurnUsage,
     /// The answer the turn said, as the reader saw it streamed.
     said: Mutex<String>,
+    /// Whether the turn asked the operator a question: the turn that follows is
+    /// that question's answer, so it is the same question and not the next one.
+    asked: AtomicBool,
 }
 
 impl TurnStream {
@@ -32,11 +36,20 @@ impl TurnStream {
         self.usage.record(event);
         match event {
             AgentEvent::AssistantText { text } => self.said().push_str(text),
+            // A question the turn put to the reader: the next line is its
+            // answer, and the question the turn was asked is still open.
+            AgentEvent::ClarificationNeeded { .. } => self.asked.store(true, Ordering::SeqCst),
             // A retried attempt's answer replaces the partial one it discards,
             // so the turn's words are rolled back with it.
             AgentEvent::TurnReset => self.said().clear(),
             _ => {}
         }
+    }
+
+    /// Whether the turn that just settled asked the operator a question, taken
+    /// once: the next turn continues that question rather than starting one.
+    pub(crate) fn take_asked(&self) -> bool {
+        self.asked.swap(false, Ordering::SeqCst)
     }
 
     /// What the turn said and spent, taken once at its settlement.

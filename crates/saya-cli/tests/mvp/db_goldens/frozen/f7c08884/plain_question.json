@@ -1,0 +1,103 @@
+{
+  "scenario": "plain_question",
+  "requests": [
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 20352,
+      "messages": 2
+    },
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 20602,
+      "messages": 4
+    },
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 21000,
+      "messages": 6
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "schema_discovery",
+      "outcome": "ok"
+    },
+    {
+      "name": "bounded_sql_query",
+      "sql": "SELECT SUM(amount) AS total FROM revenue",
+      "outcome": "ok"
+    }
+  ],
+  "states": [
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
+    }
+  ]
+}

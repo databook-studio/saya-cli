@@ -48,6 +48,16 @@ impl Signals {
         print_metrics_section(&self.metrics());
     }
 
+    /// Starts the next question's collector: a question's counters are its own,
+    /// so the section a settled turn prints holds this question's samples and
+    /// not the session's. A clarification reply is the same question and never
+    /// calls this; the turn after an answered question does.
+    pub(crate) fn begin_question(&self) {
+        if let Some(metrics) = self.metrics() {
+            metrics.begin_question();
+        }
+    }
+
     /// The run's counters, when the session records a scope: the collector a
     /// settled turn's section prints, and the one the question's wait samples
     /// go to.

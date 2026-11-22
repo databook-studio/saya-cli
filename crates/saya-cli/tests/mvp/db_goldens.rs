@@ -27,10 +27,12 @@
 // owns the module, and the other rows reach it through this binding.
 use crate::session_question_budget::harness;
 
+mod frozen;
 mod normalise;
 mod record;
 mod record_b;
 mod scenarios;
 mod scenarios_b;
+mod scenarios_budget;
 mod setup;
 mod setup_b;

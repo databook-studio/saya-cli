@@ -130,6 +130,11 @@ pub(crate) fn spawn_script_server(
                     // the socket silent; non-empty writes one content chunk
                     // (already on screen, proving the reply turn runs)
                     // with no DONE frame, then holds the socket open.
+                    //
+                    // A release closes this one response and leaves the mock
+                    // serving: a scenario releases the held request to drive
+                    // the turn AFTER it (the next line of the same run) on the
+                    // same script.
                     if marker.is_empty() {
                         // Hold the socket silent: accept the request, say
                         // nothing, keep it open. The establishment (60s)
@@ -148,26 +153,26 @@ pub(crate) fn spawn_script_server(
                             }
                             thread::sleep(Duration::from_millis(20));
                         }
-                        return;
-                    }
-                    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
-                    write!(stream, "{head}data: {marker}\n\n").unwrap();
-                    stream.flush().unwrap();
-                    use std::time::Instant;
-                    let held = Instant::now();
-                    let mut beats = 0_u32;
-                    while !release.load(Ordering::SeqCst) {
-                        if held.elapsed() > Duration::from_secs(25) {
-                            break;
+                    } else {
+                        let head =
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+                        write!(stream, "{head}data: {marker}\n\n").unwrap();
+                        stream.flush().unwrap();
+                        use std::time::Instant;
+                        let held = Instant::now();
+                        let mut beats = 0_u32;
+                        while !release.load(Ordering::SeqCst) {
+                            if held.elapsed() > Duration::from_secs(25) {
+                                break;
+                            }
+                            if beats.is_multiple_of(10) {
+                                let _ = write!(stream, ": keep-alive\n\n");
+                                let _ = stream.flush();
+                            }
+                            beats = beats.wrapping_add(1);
+                            thread::sleep(Duration::from_millis(20));
                         }
-                        if beats.is_multiple_of(10) {
-                            let _ = write!(stream, ": keep-alive\n\n");
-                            let _ = stream.flush();
-                        }
-                        beats = beats.wrapping_add(1);
-                        thread::sleep(Duration::from_millis(20));
                     }
-                    return;
                 }
             }
             drop(stream);

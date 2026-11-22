@@ -3,12 +3,16 @@
   "requests": [
     {
       "tools": [
-        "schema_discovery",
-        "request_clarification",
+        "checklist",
         "read",
-        "list",
         "glob",
         "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "schema_discovery",
+        "request_clarification",
         "bounded_sql_query",
         "bounded_sql_query_all",
         "result_shape",
@@ -16,26 +20,23 @@
         "join_check",
         "designate_answer",
         "contract_search",
-        "contract_read",
-        "checklist",
-        "write",
-        "edit",
-        "http_fetch",
-        "http_download",
-        "run_command",
-        "shell"
+        "contract_read"
       ],
-      "body_bytes": 20352,
+      "body_bytes": 20503,
       "messages": 2
     },
     {
       "tools": [
-        "schema_discovery",
-        "request_clarification",
+        "checklist",
         "read",
-        "list",
         "glob",
         "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "schema_discovery",
+        "request_clarification",
         "bounded_sql_query",
         "bounded_sql_query_all",
         "result_shape",
@@ -43,16 +44,9 @@
         "join_check",
         "designate_answer",
         "contract_search",
-        "contract_read",
-        "checklist",
-        "write",
-        "edit",
-        "http_fetch",
-        "http_download",
-        "run_command",
-        "shell"
+        "contract_read"
       ],
-      "body_bytes": 20435,
+      "body_bytes": 20574,
       "messages": 4
     }
   ],

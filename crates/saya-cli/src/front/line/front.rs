@@ -33,6 +33,7 @@ use crate::agent::tools::consent::Answer;
 use crate::budget_wording::budget_partial_message;
 use crate::chat::{ChatEvent, ChatFront, ChatOutcome, Question};
 use crate::interactive::turn_summary::TallyHandle;
+use crate::local_metrics::LocalMetrics;
 use crate::render::{RenderFormat, TerminalEvent, render_event};
 use crate::stream_render::TerminalSink;
 
@@ -131,6 +132,12 @@ impl LineFront {
         self
     }
 
+    /// The question's collector, when this session records one: the counters a
+    /// `--verbose` session keeps per question.
+    pub(crate) fn metrics(&self) -> Option<Arc<LocalMetrics>> {
+        self.signals.metrics()
+    }
+
     /// The turn now running: a pending question ends when its turn does.
     pub(crate) fn set_turn(&self, turn: CancellationToken) {
         self.lock().turn = turn;
@@ -216,6 +223,13 @@ pub(crate) fn wording(outcome: &ChatOutcome) -> Option<TerminalEvent> {
 #[async_trait]
 impl ChatFront for LineFront {
     fn sink(&self) -> Arc<dyn AgentEventSink> {
+        // The turn about to run is one question's: the answer to the question
+        // the turn before it asked, or the start of the next question. A
+        // question's counters are its own, so only the second kind begins a
+        // fresh collector.
+        if !self.stream.take_asked() {
+            self.signals.begin_question();
+        }
         // A sink per turn: the terminal renderer's bracket state is one turn's.
         let terminal: Arc<dyn AgentEventSink> = match &self.surface {
             Surface::Terminal(format) => {
