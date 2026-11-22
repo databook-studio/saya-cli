@@ -12,11 +12,10 @@ fn tui_verbose_session_metrics_print_after_terminal_restoration() {
     // jobs drawer) instead of submitting. The status line's idle word is the
     // proof the new surface is up and reading keys raw.
     tui.wait_for("? help", HARD_DEADLINE);
-    // Quit through the interface's own exit command: the line is typed and
-    // submitted, and the surface leaves on it (the launch answers `/quit` as
-    // the session op that ends the surface, T19). Nothing has to happen on
-    // screen first — this release's surface opens no command palette, so there
-    // is no menu to close before the submit.
+    // Quit through the interface's own exit command: `/` opens the command
+    // palette, its query narrows to `/exit` (whose `/quit` alias the letters
+    // spell), and Enter runs it — the launch answers that as the session op
+    // that ends the surface (T19). Nothing has to happen on screen first.
     tui.send(b"/quit\r");
     // Drain every remaining byte, bounded. The child quit on its own, so a
     // read error past exit is the pty's end-of-stream (EIO), not a failure;
