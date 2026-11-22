@@ -170,6 +170,24 @@ pub struct SessionState {
     /// answers nobody has read yet, so every note is owed again.
     #[serde(skip)]
     pub(crate) status_notes: crate::chat::ops_status::StatusNotes,
+    /// The one-release job-control notes this session has already said:
+    /// `/approve`, `/deny`, `/message`, `/pause`, `/continue <id> <agent>`,
+    /// `/cancel-child` and `/follow-up` are `/job`'s verbs under a deprecated
+    /// spelling for one release, and each says its note once
+    /// (`chat::ops_job`). In-memory only (`#[serde(skip)]`, the
+    /// `status_notes` precedent): a resumed session is a new process whose
+    /// answers nobody has read yet.
+    #[serde(skip)]
+    pub(crate) job_notes: crate::chat::JobNotes,
+}
+
+impl SessionState {
+    /// Records that `request`'s one-release alias note is being said now: the
+    /// alias is cleared on the request, so the same spelling says nothing the
+    /// next time this session uses it (`chat::ops_job`).
+    pub(crate) fn claim_job_note(&mut self, request: &mut crate::slash::JobRequest) {
+        crate::chat::claim_job_note(&mut self.job_notes, request);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

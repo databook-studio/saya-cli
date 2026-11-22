@@ -53,7 +53,7 @@ fn the_help_listing_prints_no_hidden_row() {
             catalog::listed_in(category).map(move |(usage, _)| (category.heading(), usage))
         })
         .collect();
-    assert_eq!(printed.len(), 45, "45 rows print: {} of them", printed.len());
+    assert_eq!(printed.len(), 39, "39 rows print: {} of them", printed.len());
 
     for name in ["run", "runs", "recovery"] {
         let own = format!("/{name} ");

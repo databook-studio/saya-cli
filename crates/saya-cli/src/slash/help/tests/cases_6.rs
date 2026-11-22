@@ -13,6 +13,11 @@
 /// `/recovery` (O6 — hidden this release, removed next) are hidden rows, so
 /// their three lines leave the listing, and the `Runs` heading leaves with the
 /// only two rows it had — a heading with nothing under it is not a listing.
+/// K4 is the last deliberate move: `/approve`, `/deny`, `/message`, `/pause`,
+/// `/continue <id> <agent>`, `/cancel-child` and `/follow-up` are `/job`'s own
+/// verbs under a one-release top-level spelling (row 171), so their seven rows
+/// fold into the `/job` row; bare `/continue` is the paused turn's command and
+/// moves to the Session section, where the conversation's commands live.
 /// Any other difference is a regression.
 #[test]
 fn help_listing_is_byte_identical() {
@@ -23,14 +28,7 @@ const LISTING: &str = r#"Slash commands:
 
 Jobs
   /start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--approve] — Start a job for long or background work; ordinary work is just a message
-  /follow-up <id> <agent> --expected-completion-sequence <n> <instruction> [--approve] — Run a bounded new invocation of a completed child in its checkout
-  /job <export|events|review|apply|resume|list|show|cancel|doctor|setup|reconcile|worktrees|rewind> … — Operate a durable job's lifecycle: review, apply, resume, list, show, cancel, and the rest
-  /approve <id> — Approve the exact pending job scope this session is showing
-  /deny <id> — Refuse the exact pending job scope this session is showing
-  /message <id> <agent> <text> — Send bounded steering to one child in this session's active job
-  /pause <id> <agent> — Pause one active child at its next safe boundary
-  /continue <id> <agent> — Continue one paused child in this session's active job
-  /cancel-child <id> <agent> — Cancel one child, preserving its siblings
+  /job <export|events|review|apply|resume|list|show|cancel|doctor|setup|reconcile|worktrees|rewind|approve|deny|message|pause|continue|cancel-child|follow-up> … — Operate a durable job's lifecycle (review, apply, resume, list, show, cancel, and the rest) and its child controls
 
 Connections
   /connect <profile> — Replace the active database profile
@@ -56,6 +54,7 @@ Query & data
   /columns [name,name,… | all] — Choose which columns wide result tables show
 
 Session
+  /continue [<id> <agent>] — Continue the turn that paused: it sends the message Continue. The <id> <agent> spelling is the job control /job continue for this release
   /clear — Clear current session context
   /undo — Undo the last turn's file edits: restore the run's checkpoint taken before that turn
   /rewind [<id>] — List the run's checkpoints, newest first, or restore the one you name

@@ -1,9 +1,18 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
-    /// The job surface: `/job <verb>`, `/start`, `/follow-up`, and the six
-    /// session-only controls. Every spelling carries the same `CodingCommand`
-    /// the CLI parses, so the two surfaces cannot drift.
-    Coding(crate::cli::CodingCommand),
+    /// The job surface: `/job <verb>`, `/start`, and the seven top-level
+    /// spellings that are `/job`'s verbs for one release (`/approve`, `/deny`,
+    /// `/message`, `/pause`, `/continue <id> <agent>`, `/cancel-child`,
+    /// `/follow-up`). Every spelling carries the same `CodingCommand` the CLI
+    /// parses, so the two surfaces cannot drift; a deprecated spelling also
+    /// carries its alias, for the note it owes once per session.
+    Coding(JobRequest),
+    /// Bare `/continue` — continue the session's last turn when it paused. A
+    /// guard stop is a pause the operator's next message continues, and this is
+    /// that message: the literal `Continue.`, sent through the same path a
+    /// typed line uses, once (approved decision 11). The argument spelling
+    /// `/continue <id> <agent>` is [`JobAlias::Continue`], a job control.
+    ContinueTurn,
     Connect(String),
     Connections,
     Include(String),

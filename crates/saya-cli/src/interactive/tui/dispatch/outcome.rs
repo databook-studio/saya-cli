@@ -2,7 +2,9 @@
 
 /// Outcome of dispatching one line.
 pub(crate) enum Dispatch {
-    Coding(crate::cli::CodingCommand),
+    /// A job command: the operation, plus the one-release alias note the
+    /// caller says before it runs (`chat::ops_job`).
+    Coding(crate::slash::JobRequest),
     /// A command was handled synchronously; keep looping.
     Handled,
     /// The session should exit.

@@ -71,6 +71,8 @@ include!("chain_tests/notes.rs");
 
 include!("chain_tests/recovery.rs");
 
+include!("chain_tests/continue_cmd.rs");
+
 /// The handoff inputs the real `tick_pending` takes: a no-op terminal double
 /// (no `/setup` line is drained in these tests, so neither half runs) and
 /// default CLI options.

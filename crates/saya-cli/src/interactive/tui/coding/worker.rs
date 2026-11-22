@@ -52,7 +52,7 @@ impl ApprovalDecider for PanelApproval {
             return false;
         }
         let text = format!(
-            "Approve job {} with this exact scope:\n{}\nUse `/approve {}` or `/deny {}`.",
+            "Approve job {} with this exact scope:\n{}\nUse `/job approve {}` or `/job deny {}`.",
             self.id, arguments, self.id, self.id
         );
         ask_operator(&self.sender, &self.token, text, WaitPolicy::PANEL).await

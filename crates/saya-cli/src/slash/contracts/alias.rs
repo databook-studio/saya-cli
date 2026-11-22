@@ -39,7 +39,7 @@ pub(crate) const REJECT_ALIAS_NOTE: &str = "note: `/reject` is a deprecated alia
 pub(crate) const APPROVE_ALL_ALIAS_NOTE: &str = "note: `/approve-all` is a deprecated alias of \
      `/contracts confirm-all` and is removed in the next release: use \
      `/contracts confirm-all [--yes] [limit]`. It confirms knowledge claims, never job \
-     approvals — those are `/approve <id>`.";
+     approvals — those are `/job approve <id>`.";
 
 /// The one operation a contract slash command names, plus the one-line note
 /// its deprecated spelling states.

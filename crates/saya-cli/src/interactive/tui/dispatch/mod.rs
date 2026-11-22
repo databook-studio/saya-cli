@@ -94,7 +94,12 @@ pub(crate) fn dispatch(
     match parsed {
         Err(error) => transcript.push(BlockKind::Error, error.to_string()),
         Ok(Some(command)) => match command {
-            SlashCommand::Coding(command) => return Dispatch::Coding(command),
+            SlashCommand::Coding(mut request) => {
+                // The alias's one-release note is said once per session
+                // (`chat::ops_job`), so the request carries it only once.
+                state.claim_job_note(&mut request);
+                return Dispatch::Coding(request);
+            }
             SlashCommand::Columns(arg) => {
                 result = Dispatch::SetColumns(arg);
             }

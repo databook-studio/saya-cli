@@ -1,13 +1,17 @@
-//! The session's job surface: `/job <verb>` for the durable-job lifecycle,
-//! `/start` and `/follow-up` for the two agent launches, and one bare spelling
-//! each for the six session-only controls.
+//! The session's job surface: `/job <verb>` for the durable-job lifecycle and
+//! its child controls, `/start` for the one launch with a spelling of its own,
+//! and the seven top-level spellings `/job`'s verbs still answer to for one
+//! release (`/approve`, `/deny`, `/message`, `/pause`, `/continue <id>
+//! <agent>`, `/cancel-child`, `/follow-up`).
 //!
 //! Every spelling builds the one `CodingCommand` the CLI carries, so the
-//! surfaces cannot drift: `/job` and `/follow-up` parse through its clap
-//! grammar, while `/start` reads its own line so the task can be the whole
-//! remaining text and the id can be generated.
+//! surfaces cannot drift: `/job`, `/follow-up` and the controls parse through
+//! its clap grammar, while `/start` reads its own line so the task can be the
+//! whole remaining text and the id can be generated. A deprecated spelling also
+//! records its alias (`slash::JobRequest`), which is the note it owes once per
+//! session.
 
-use super::{SlashCommand, SlashParseError};
+use super::{JobAlias, JobRequest, SlashCommand, SlashParseError};
 use crate::cli::CodingCommand;
 use clap::Parser;
 
@@ -148,17 +152,19 @@ pub(super) fn parse_start(tail: &str) -> Result<SlashCommand, SlashParseError> {
     let id = start
         .id
         .unwrap_or_else(|| crate::commands::coding::generate_job_id().to_string());
-    Ok(SlashCommand::Coding(CodingCommand::Start {
-        id,
-        task: task.join(" "),
-        write_paths: start.write_paths,
-        database_profiles: start.database_profiles,
-        tools: start.tools,
-        plan: start.plan,
-        approve: start.approve,
-        in_place: start.in_place,
-        managed: start.managed,
-    }))
+    Ok(SlashCommand::Coding(JobRequest::job(
+        CodingCommand::Start {
+            id,
+            task: task.join(" "),
+            write_paths: start.write_paths,
+            database_profiles: start.database_profiles,
+            tools: start.tools,
+            plan: start.plan,
+            approve: start.approve,
+            in_place: start.in_place,
+            managed: start.managed,
+        },
+    )))
 }
 
 /// The words a `/start` line states besides its task, before the command is
@@ -209,19 +215,53 @@ impl StartWords {
 }
 
 /// `/follow-up <id> <agent> --expected-completion-sequence <n> <instruction>`
-/// — `saya follow-up` inside the session.
+/// — `/job follow-up`'s one-release top-level spelling.
 pub(super) fn parse_follow_up(tail: &str) -> Result<SlashCommand, SlashParseError> {
-    refuse_tools(parse_words("follow-up", Some("follow-up"), tail)?).map(SlashCommand::Coding)
+    let command = refuse_tools(parse_words("follow-up", Some("follow-up"), tail)?)?;
+    Ok(SlashCommand::Coding(JobRequest::alias(
+        command,
+        JobAlias::FollowUp,
+    )))
 }
 
-/// `/approve`, `/deny`, `/message`, `/pause`, `/continue`, `/cancel-child` —
-/// the six controls that only a live session can answer.
+/// `/approve`, `/deny`, `/message`, `/pause`, `/cancel-child` — the top-level
+/// spellings of `/job`'s own verbs, for one release.
 pub(super) fn parse_control(program: &str, tail: &str) -> Result<SlashCommand, SlashParseError> {
-    refuse_tools(parse_words(program, Some(program), tail)?).map(SlashCommand::Coding)
+    let command = refuse_tools(parse_words(program, Some(program), tail)?)?;
+    let alias = match program {
+        "approve" => JobAlias::Approve,
+        "deny" => JobAlias::Deny,
+        "message" => JobAlias::Message,
+        "pause" => JobAlias::Pause,
+        "continue" => JobAlias::Continue,
+        other => {
+            debug_assert_eq!(other, "cancel-child", "the six controls are named");
+            JobAlias::CancelChild
+        }
+    };
+    Ok(SlashCommand::Coding(JobRequest::alias(command, alias)))
 }
 
-/// `/job <verb>` — the lifecycle command, the session mirror of `saya job`. An
-/// agent-shaped verb is refused by name, naming the spelling that works.
+/// `/continue` — bare continues the session's paused turn; with an id and an
+/// agent it is `/job continue`'s one-release top-level spelling.
+pub(super) fn parse_continue(tail: &str) -> Result<SlashCommand, SlashParseError> {
+    if tail.trim().is_empty() {
+        return Ok(SlashCommand::ContinueTurn);
+    }
+    let words = crate::interactive::session::run::tokenize_tail(tail).map_err(SlashParseError)?;
+    if words.len() < 2 {
+        return Err(SlashParseError(
+            "continue needs an id and an agent: `/job continue <id> <agent>` continues a \
+             child, and bare `/continue` continues a paused turn"
+                .into(),
+        ));
+    }
+    parse_control("continue", tail)
+}
+
+/// `/job <verb>` — the lifecycle command, the session mirror of `saya job`.
+/// The lifecycle verbs run here; a launch that has its own spelling is refused
+/// by name, naming the spelling that works.
 pub(super) fn parse_job(tail: &str) -> Result<SlashCommand, SlashParseError> {
     let command = refuse_tools(parse_words("job", None, tail)?)?;
     if let Some(spelling) = session_spelling(&command) {
@@ -229,15 +269,15 @@ pub(super) fn parse_job(tail: &str) -> Result<SlashCommand, SlashParseError> {
             "`/job` runs the durable-job verbs; this one has its own spelling: `{spelling}`"
         )));
     }
-    Ok(SlashCommand::Coding(command))
+    Ok(SlashCommand::Coding(JobRequest::job(command)))
 }
 
-/// The session spelling of an agent-shaped verb. The six controls share the
-/// CLI command's map; the two launches name their session spelling.
+/// The session spelling of a verb that is not `/job`'s own. Only the two
+/// launches are left: every child control is a `/job` verb now, and its
+/// top-level spelling is a one-release alias of it (`ref/03-commands.md` row 171).
 fn session_spelling(command: &CodingCommand) -> Option<&'static str> {
     match command {
         CodingCommand::Start { .. } => Some("/start <task>"),
-        CodingCommand::FollowUp { .. } => Some("/follow-up <id> <agent> …"),
-        other => crate::cli::job_session_spelling(other),
+        _ => None,
     }
 }

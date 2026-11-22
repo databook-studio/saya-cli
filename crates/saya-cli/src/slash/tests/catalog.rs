@@ -53,7 +53,7 @@ fn sample_line(name: &str) -> String {
         "job" => " list",
         "approve" | "deny" => " j-1",
         "message" => " j-1 a hi",
-        "pause" | "continue" | "cancel-child" => " j-1 a",
+        "pause" | "cancel-child" => " j-1 a",
         "connect" | "include" | "exclude" => " prod",
         "resume" => " s-1",
         "investigation" => " list",
@@ -138,6 +138,12 @@ fn every_alias_resolves_to_its_command() {
     assert_eq!(
         aliases,
         vec![
+            ("follow-up", "job"),
+            ("approve", "job"),
+            ("deny", "job"),
+            ("message", "job"),
+            ("pause", "job"),
+            ("cancel-child", "job"),
             ("approvals", "mode"),
             ("report", "export"),
             ("investigations", "investigation"),
@@ -255,7 +261,7 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         }
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 45, "the listing shows 45 of today's 63 names");
+    assert_eq!(ranks.len(), 39, "the listing shows 39 of today's 63 names");
     assert_eq!(
         catalog::names().count(),
         63,

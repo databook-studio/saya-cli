@@ -43,7 +43,11 @@ fn saya_coding_review_names_saya_job_review() {
 fn saya_coding_approve_names_the_session_command() {
     let stderr = refusal(&["coding", "approve", "job-a"]);
     assert!(
-        stderr.contains("/approve"),
-        "the session-only control names `/approve`: {stderr}"
+        stderr.contains("/job approve"),
+        "the session-only control names `/job approve`: {stderr}"
+    );
+    assert!(
+        !stderr.contains("use `/approve"),
+        "a reader is not sent to the one-release top-level spelling: {stderr}"
     );
 }

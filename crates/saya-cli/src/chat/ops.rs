@@ -6,6 +6,9 @@
 //! stated fate, and every fate says who performs the operation:
 //!
 //! * [`Fate::Session`] — the session's own state, never a turn of the run;
+//!   bare `/continue` is the exception that states one: the session's adapter
+//!   sends the literal `Continue.` through the typed line's own path
+//!   (`chat::ops_continue`), and this layer never enters the port to do it.
 //! * [`Fate::Rollover`] — a context change, which only ever *requests* the
 //!   rollover; the session performs it;
 //! * [`Fate::ReadOnly`] — a shared operation on something other than the run;
@@ -13,8 +16,10 @@
 //!
 //! Nothing here renders or prompts. A result is a typed value a front projects,
 //! and the run's port is in hand only so the guarantee above is visible where a
-//! command is dispatched: no operation in today's table enters the run, and the
-//! tests assert the port sees no call.
+//! command is dispatched: no operation in this table enters the run, and the
+//! tests assert the port sees no call. The one command that states a turn
+//! (`/continue` bare) states it as a [`SessionOp`], for the adapter that owns
+//! the session to send.
 
 use std::sync::Arc;
 
@@ -185,6 +190,9 @@ impl ChatOps {
             // of the run, so both are session ops and neither runs mid-turn.
             SlashCommand::Undo => Op::Session(SessionOp::Undo),
             SlashCommand::Rewind(request) => Op::Session(SessionOp::Rewind(request.clone())),
+            // Continue a paused turn: a session op that states the one message,
+            // sent by the adapter through the typed line's own path.
+            SlashCommand::ContinueTurn => Op::Session(SessionOp::ContinueTurn),
             SlashCommand::Setup => Op::Session(SessionOp::Setup),
             SlashCommand::Reload => Op::Session(SessionOp::Reload),
             SlashCommand::Columns(names) => Op::Session(SessionOp::Columns(names.clone())),
