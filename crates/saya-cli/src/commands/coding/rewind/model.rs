@@ -94,6 +94,7 @@ impl NativeCodingJob {
             Before {
                 images: before.as_ref(),
                 foreign: &foreign,
+                own_writes: true,
             },
         )?;
         store.record_rewind(

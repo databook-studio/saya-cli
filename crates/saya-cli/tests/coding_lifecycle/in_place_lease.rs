@@ -19,6 +19,19 @@ async fn create(
     id: &str,
     writes: bool,
 ) -> Result<Arc<NativeCodingJob>, CodingError> {
+    create_as(fixture, id, writes, None).await
+}
+
+/// The same, with the session the job is a job *of* stated: `Some(session)` is
+/// the id the folder's lease names, and a job that names it is that session's
+/// own child rather than an unrelated job over the same folder.
+async fn create_as(
+    fixture: &Fixture,
+    id: &str,
+    writes: bool,
+    session: Option<&str>,
+) -> Result<Arc<NativeCodingJob>, CodingError> {
+    fixture.application.set_session_parent(session);
     let write_paths = if writes {
         vec![".".to_owned()]
     } else {
@@ -161,4 +174,52 @@ async fn a_read_only_run_reads_alongside_a_write_scoped_one() {
         "neither run wrote the folder"
     );
     drop((writer, reader));
+}
+
+/// A job a session opens over the session's own folder runs alongside the
+/// session's run: the folder's lease names that session, and a job naming it is
+/// admitted as its dependent — while a job that names no session is the
+/// unrelated one and is refused exactly as before.
+#[tokio::test]
+async fn a_sessions_own_job_runs_alongside_its_run_in_the_same_folder() {
+    let fixture = Fixture::in_place("lease-shared").await;
+    let session = create_as(&fixture, "lease-shared", true, Some("lease-shared"))
+        .await
+        .expect("the session's run opens over its own folder");
+    assert_eq!(
+        lease_files(&fixture).len(),
+        1,
+        "the session's run holds the folder's one lease"
+    );
+
+    let child = create_as(&fixture, "lease-shared-child", true, Some("lease-shared"))
+        .await
+        .expect("a job the session opens over its own folder is admitted alongside its run");
+    assert_eq!(
+        lease_files(&fixture).len(),
+        1,
+        "the admitted job takes no second lease file: it is the session's dependent"
+    );
+    assert!(
+        state_root(&fixture)
+            .join(child.job_id().as_str())
+            .join("inplace-root.json")
+            .is_file(),
+        "and works in the session's own folder, not in a checkout"
+    );
+    assert_eq!(
+        checkouts(&fixture, child.job_id().as_str()).await,
+        0,
+        "a shared job creates no checkout"
+    );
+
+    let stranger = create_as(&fixture, "lease-shared-stranger", true, None).await;
+    let Err(error) = stranger else {
+        panic!("an unrelated job over a leased folder must still be refused");
+    };
+    assert!(
+        matches!(error, CodingError::InPlaceRootBusy),
+        "the unrelated job is refused as busy: {error:?}"
+    );
+    drop((session, child));
 }

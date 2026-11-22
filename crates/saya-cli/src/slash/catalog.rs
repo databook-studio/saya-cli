@@ -201,7 +201,7 @@ const fn hidden_cmd(
 #[rustfmt::skip]
 pub(crate) const CATALOGUE: &[CommandSpec] = &[
     cmd("start", Jobs, BOTH, "Start a job for long or background work; ordinary work is just a message",
-        Some(("/start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--approve]", 1))),
+        Some(("/start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--checkout] [--approve]", 1))),
     aliased("job", Jobs, BOTH, "Operate a durable job's lifecycle (review, apply, resume, list, show, cancel, and the rest) and its child controls",
         Some(("/job <export|events|review|apply|resume|list|show|cancel|doctor|setup|reconcile|worktrees|rewind|approve|deny|message|pause|continue|cancel-child|follow-up> …", 3)),
         &[Alias { name: "follow-up", description: "Deprecated alias for /job follow-up (removed next release)" },

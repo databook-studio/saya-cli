@@ -80,6 +80,7 @@ pub(crate) fn spawn(
     store: SqliteStateStore,
     repository: PathBuf,
     approval_policy: saya_agent::ApprovalPolicy,
+    session: Option<String>,
 ) -> CodingPanel {
     let (tx, rx) = mpsc::sync_channel(128);
     let (receipt_tx, receipts) = mpsc::sync_channel(64);
@@ -117,6 +118,7 @@ pub(crate) fn spawn(
                         control,
                         approval_policy,
                         published,
+                        session,
                     ))
                     .map_err(|error| error.to_string())
             });
@@ -162,6 +164,7 @@ async fn work(
     controls: tokio::sync::mpsc::Receiver<CodingCommand>,
     approval_policy: saya_agent::ApprovalPolicy,
     job_mode: Arc<OnceLock<ModeCell>>,
+    session: Option<String>,
 ) -> Result<String, CodingError> {
     let PanelSenders {
         activity: tx,
@@ -181,13 +184,25 @@ async fn work(
     // Only a start may take the fallback; every other verb opens over the
     // mode its job records.
     let (application, _) = if matches!(command, CodingCommand::Start { .. }) {
-        CodingApplication::session_for_start(runtime, store, &repository, mode, &token).await?
+        CodingApplication::session_for_start(
+            runtime,
+            store,
+            &repository,
+            mode,
+            command.states_checkout(),
+            &token,
+        )
+        .await?
     } else {
         (
             CodingApplication::session(runtime, store, &repository, mode, &token).await?,
             None,
         )
     };
+    // The session this surface opened the job for, when it stated one: the job
+    // is that session's own, so the folder's lease admits it beside the
+    // session's run rather than refusing it.
+    application.set_session_parent(session.as_deref());
     // The live session's mode, stated once at composition: the root's `shell`
     // reads it to decide whether a run outside the sandbox is put to the
     // operator. The panel is an attached surface, so its mode stays

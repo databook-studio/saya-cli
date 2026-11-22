@@ -106,6 +106,7 @@ mod rewind;
 mod root_checkout;
 mod root_direct;
 pub(crate) mod root_mode;
+mod session_parent;
 mod setup;
 mod task_flow;
 mod task_history;
@@ -222,6 +223,11 @@ pub enum CodingError {
         "another job is already running in this folder; wait for it to finish before starting a new one"
     )]
     InPlaceRootBusy,
+    #[error(
+        "`--checkout` needs a Git working tree to copy, and this folder is not one: run the job in \
+         place with `--in-place`, or start it inside a Git repository"
+    )]
+    CheckoutNeedsRepository,
     #[error("job is not owned by this application or has no active runtime")]
     NotOwned,
     #[error("job {job} {detail}")]

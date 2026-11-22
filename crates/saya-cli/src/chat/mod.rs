@@ -61,7 +61,7 @@ pub(crate) use ops_continue::{
 #[allow(unused_imports)]
 pub(crate) use ops_job::{JobNotes, claim_job_note};
 #[allow(unused_imports)]
-pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, rewind, undo};
+pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, Restored, rewind, undo};
 #[allow(unused_imports)]
 pub(crate) use ops_rewind_run::RunCheckpoints;
 #[allow(unused_imports)]

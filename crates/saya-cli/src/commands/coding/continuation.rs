@@ -128,9 +128,18 @@ impl CodingApplication {
         let records = super::host::private_directory(&self.state_root.join(job.as_str()))?;
         let plan = self.stored_baseline(job, &record)?;
         // A resumed in-place job reopens its before-image store; a resume
-        // that will run retakes the one-live-job lease over its folder.
-        let (before_images, _in_place_lease) =
-            super::in_place_lease::job_parts(&plan, &records, &self.state_root, lease)?;
+        // that will run retakes the one-live-job lease over its folder, naming
+        // the session the surface stated for it, if any.
+        let parent = self.session_parent();
+        let owner = parent.as_deref().unwrap_or(job.as_str());
+        let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
+            &plan,
+            &records,
+            &self.state_root,
+            lease,
+            owner,
+            parent.as_deref(),
+        )?;
         let workspace = Workspace::open(self.root_path()).map_err(CodingError::owner)?;
         let project = self.capture_original_project_context(&workspace).await?;
         let policy_digest = digest(&serde_json::to_vec(&proposed).map_err(CodingError::owner)?)?;

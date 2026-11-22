@@ -72,6 +72,7 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         std::sync::Arc::clone(&live),
         state_db.clone(),
         session.root(),
+        &state.id,
         session.policy().mode(),
     ));
     let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(

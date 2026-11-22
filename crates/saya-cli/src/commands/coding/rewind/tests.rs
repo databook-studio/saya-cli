@@ -118,6 +118,7 @@ fn rewind_restores_the_checkout_to_the_named_turn() {
         apply::Before {
             images: None,
             foreign: &[],
+            own_writes: true,
         },
     )
     .unwrap();
@@ -133,7 +134,8 @@ fn rewind_restores_the_checkout_to_the_named_turn() {
 }
 
 /// A file the checkpoint recorded as absent — the job deleted it — is restored
-/// by removing whatever is there now.
+/// by removing whatever is there now, once the run's own newest record of that
+/// path is the state that stands.
 #[test]
 fn rewind_removes_a_file_the_checkpoint_recorded_as_absent() {
     let sandbox = Sandbox::new("absent");
@@ -150,7 +152,12 @@ fn rewind_removes_a_file_the_checkpoint_recorded_as_absent() {
             1_000,
         )
         .unwrap();
+    // The job writes the path after turn 1; the second checkpoint records it,
+    // so the current bytes are what this run last wrote there.
     sandbox.write(&checkout, "gone.txt", "written after the checkpoint");
+    store
+        .capture(2, &capture_state(&checkout, &["gone.txt"]), 2_000)
+        .unwrap();
 
     let scope = AssignedPaths::whole_checkout();
     let report = apply::restore(
@@ -163,6 +170,7 @@ fn rewind_removes_a_file_the_checkpoint_recorded_as_absent() {
         apply::Before {
             images: None,
             foreign: &[],
+            own_writes: true,
         },
     )
     .unwrap();

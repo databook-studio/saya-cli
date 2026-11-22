@@ -235,3 +235,53 @@ async fn checkpoint_restore_uses_before_image() {
         "a path the checkpoint does not hold returns to its before-image, never removed"
     );
 }
+
+/// `/undo` in a folder another run shares: a file whose current content is not
+/// what this run last wrote is never overwritten. The restore names it as
+/// skipped and restores the rest.
+#[tokio::test]
+async fn undo_skips_a_file_another_run_changed_since() {
+    let fixture = fixture_with(
+        "undo-skip",
+        vec![".".into()],
+        &[("other.txt", b"original other\n")],
+    )
+    .await;
+    // The run's first turn edits both files, and checkpoints the state.
+    record(&fixture, "tracked.txt", Some(b"original\n"), 1);
+    record(&fixture, "other.txt", Some(b"original other\n"), 1);
+    write(&fixture, "tracked.txt", "one\n");
+    write(&fixture, "other.txt", "one other\n");
+    fixture.job.capture_rewind().await;
+    // A second turn edits them again: that checkpoint holds what the run last
+    // wrote at each path.
+    write(&fixture, "tracked.txt", "two\n");
+    write(&fixture, "other.txt", "two other\n");
+    fixture.job.capture_rewind().await;
+    // Another run over the shared folder writes one of them after that.
+    write(&fixture, "other.txt", "another run\n");
+    pause(&fixture).await;
+
+    let run = crate::chat::RunCheckpoints::new(std::sync::Arc::clone(&fixture.job));
+    let words = crate::chat::undo(&run, false)
+        .await
+        .expect("the run's second checkpoint admits an undo");
+    assert!(
+        words.contains("changed since by another run: other.txt"),
+        "the skipped file is named as another run's change: {words}"
+    );
+    assert!(
+        words.contains("tracked.txt"),
+        "and the rest is restored by name: {words}"
+    );
+    assert_eq!(
+        read(&fixture, "tracked.txt").unwrap(),
+        "one\n",
+        "the file this run last wrote returns to the older checkpoint"
+    );
+    assert_eq!(
+        read(&fixture, "other.txt").unwrap(),
+        "another run\n",
+        "the other run's bytes stand: a rewind never overwrites another run's write"
+    );
+}

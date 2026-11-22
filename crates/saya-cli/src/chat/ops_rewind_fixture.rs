@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 
-use super::{Checkpoint, Checkpoints};
+use super::{Checkpoint, Checkpoints, Restored};
 
 /// The workspace-relative path every case edits.
 pub(super) const EDITED: &str = "notes.txt";
@@ -52,6 +52,8 @@ pub(super) struct FakeRun {
     folder: PathBuf,
     recorded: Vec<Recorded>,
     restored: Mutex<Vec<u32>>,
+    /// The paths another run changed since: reported, never written.
+    changed_elsewhere: Vec<String>,
 }
 
 impl FakeRun {
@@ -60,7 +62,15 @@ impl FakeRun {
             folder,
             recorded,
             restored: Mutex::new(Vec::new()),
+            changed_elsewhere: Vec::new(),
         }
+    }
+
+    /// The same run, with `paths` changed by another run since it last wrote
+    /// them: the restore leaves them as they stand.
+    pub(super) fn with_changed_elsewhere(mut self, paths: &[&str]) -> Self {
+        self.changed_elsewhere = paths.iter().map(|path| (*path).to_owned()).collect();
+        self
     }
 
     /// The edited file as it now stands.
@@ -88,15 +98,24 @@ impl Checkpoints for FakeRun {
             .collect())
     }
 
-    async fn restore(&self, turn: u32) -> Result<Vec<String>, String> {
+    async fn restore(&self, turn: u32) -> Result<Restored, String> {
         let recorded = self
             .recorded
             .iter()
             .find(|recorded| recorded.turn == turn)
             .ok_or_else(|| format!("no checkpoint {turn}"))?;
-        fs::write(self.folder.join(EDITED), recorded.bytes).unwrap();
         self.restored.lock().unwrap().push(turn);
-        Ok(vec![EDITED.to_owned()])
+        let changed = self.changed_elsewhere.clone();
+        let restored = if changed.iter().any(|path| path == EDITED) {
+            Vec::new()
+        } else {
+            fs::write(self.folder.join(EDITED), recorded.bytes).unwrap();
+            vec![EDITED.to_owned()]
+        };
+        Ok(Restored {
+            restored,
+            changed_elsewhere: changed,
+        })
     }
 }
 

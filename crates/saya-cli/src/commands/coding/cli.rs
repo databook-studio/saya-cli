@@ -256,6 +256,7 @@ pub(crate) async fn run(
                 &git,
                 &program_dir,
                 mode,
+                command.states_checkout(),
                 &CancellationToken::new(),
             )
             .await?

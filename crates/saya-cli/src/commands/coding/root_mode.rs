@@ -12,6 +12,7 @@ pub(crate) use classify::managed_only_refusal;
 use super::{CodingApplication, CodingApprovalRequest, CodingError, CodingJobRequest};
 use crate::{cli::RootMode, config::runtime::RuntimeConfig};
 use saya_agent::CancellationToken;
+use saya_harness::coding::git::{GitError, GitService};
 use saya_harness::coding::local::JobBaseline;
 use saya_store::SqliteStateStore;
 use serde::{Deserialize, Serialize};
@@ -106,6 +107,10 @@ pub(crate) fn read_fallback(records: &Path) -> Option<String> {
 
 /// Opens the start's application over `requested`, falling back to in place
 /// when a managed-only refusal names a class a fallback may absorb.
+///
+/// `checkout` states whether the launch asked for a checkout of its own. Such a
+/// launch has no checkout to cut from a folder Git does not root, and says so in
+/// one sentence rather than serving that folder in place.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn open_start(
     runtime: RuntimeConfig,
@@ -115,8 +120,22 @@ pub(crate) async fn open_start(
     git: &Path,
     program_dir: &Path,
     requested: RootMode,
+    checkout: bool,
     token: &CancellationToken,
 ) -> Result<(Arc<CodingApplication>, Option<&'static str>), CodingError> {
+    // A launch that asked for its own checkout has no checkout to cut from a
+    // folder Git does not root: that is said in one sentence, never absorbed by
+    // the silent in-place fallback a configured default may take.
+    if checkout && requested == RootMode::Managed {
+        let service = GitService::new(git, state_root).map_err(CodingError::owner)?;
+        let folder = std::fs::canonicalize(repository).map_err(CodingError::owner)?;
+        if matches!(
+            service.open_repository(&folder, token).await,
+            Err(GitError::NotRepository)
+        ) {
+            return Err(CodingError::CheckoutNeedsRepository);
+        }
+    }
     match CodingApplication::open_default_with_mode(
         runtime.clone(),
         store.clone(),

@@ -42,6 +42,8 @@ mod provider;
 mod read_only;
 #[path = "coding_lifecycle/root_cancel.rs"]
 mod root_cancel;
+#[path = "coding_lifecycle/start_checkout.rs"]
+mod start_checkout;
 #[path = "coding_lifecycle/start_consent.rs"]
 mod start_consent;
 #[path = "coding_application/support.rs"]

@@ -102,6 +102,31 @@ fn a_job_that_may_write_nothing_states_no_write_row() {
     );
 }
 
+/// The card states where the job runs: in the session's own folder beside its
+/// run, or in a checkout of its own.
+#[test]
+fn the_consent_states_where_the_job_runs() {
+    let rows: Vec<String> = text("pty-job", &proposal())
+        .split('\n')
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        rows.contains(&"runs: in this folder, alongside the session".to_owned()),
+        "an in-place proposal says the job shares the session's folder: {rows:?}"
+    );
+
+    let mut checked_out = proposal();
+    checked_out["mode"] = json!("managed");
+    let rows: Vec<String> = text("pty-job", &checked_out)
+        .split('\n')
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        rows.contains(&"runs: in a separate checkout".to_owned()),
+        "a checkout proposal says the job works apart from the folder: {rows:?}"
+    );
+}
+
 #[test]
 fn a_proposal_too_long_to_read_is_cut_on_a_character_boundary() {
     let mut arguments = proposal();

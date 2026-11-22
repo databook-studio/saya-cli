@@ -59,6 +59,7 @@ async fn open(fixture: &Fixture, mode: RootMode) -> (Arc<CodingApplication>, Opt
         &fixture.git,
         &fixture.program_dir,
         mode,
+        false,
         &CancellationToken::new(),
     )
     .await

@@ -27,7 +27,7 @@ fn help_listing_is_byte_identical() {
 const LISTING: &str = r#"Slash commands:
 
 Jobs
-  /start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--approve] — Start a job for long or background work; ordinary work is just a message
+  /start [--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--checkout] [--approve] — Start a job for long or background work; ordinary work is just a message
   /job <export|events|review|apply|resume|list|show|cancel|doctor|setup|reconcile|worktrees|rewind|approve|deny|message|pause|continue|cancel-child|follow-up> … — Operate a durable job's lifecycle (review, apply, resume, list, show, cancel, and the rest) and its child controls
 
 Connections

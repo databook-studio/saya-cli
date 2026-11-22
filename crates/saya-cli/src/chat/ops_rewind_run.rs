@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{Checkpoint, Checkpoints};
+use super::{Checkpoint, Checkpoints, Restored};
 use crate::commands::coding::NativeCodingJob;
 
 /// The run's own checkpoints.
@@ -45,13 +45,16 @@ impl Checkpoints for RunCheckpoints {
             .collect())
     }
 
-    async fn restore(&self, turn: u32) -> Result<Vec<String>, String> {
+    async fn restore(&self, turn: u32) -> Result<Restored, String> {
         let result = self
             .job
             .model_rewind(Some(&turn.to_string()), None)
             .await
             .map_err(|error| error.to_string())?;
-        Ok(changed_paths(&result))
+        Ok(Restored {
+            restored: changed_paths(&result),
+            changed_elsewhere: skipped_paths(&result),
+        })
     }
 }
 
@@ -72,6 +75,18 @@ fn changed_paths(result: &Value) -> Vec<String> {
         .flatten()
         .filter_map(|entry| entry.as_str().map(str::to_owned));
     restored.chain(removed).collect()
+}
+
+/// The paths the restore left as they stand because another run changed them
+/// since this run last wrote them.
+fn skipped_paths(result: &Value) -> Vec<String> {
+    result
+        .get("foreign_paths")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.as_str().map(str::to_owned))
+        .collect()
 }
 
 #[cfg(test)]

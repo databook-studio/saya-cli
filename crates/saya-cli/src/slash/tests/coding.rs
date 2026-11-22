@@ -193,6 +193,29 @@ fn slash_start_managed() {
     );
 }
 
+/// `/start --checkout` is the opt-in isolation: the job runs in a managed
+/// checkout of the repository, so `/start` with no flag shares the session's
+/// own folder and `--checkout` asks for a separate one.
+#[test]
+fn slash_start_checkout() {
+    let Some(SlashCommand::Coding(crate::slash::JobRequest {
+        command: crate::cli::CodingCommand::Start { managed, .. },
+        ..
+    })) = parse_slash_command("/start --id job-a \"a task\" --write . --checkout --approve").unwrap()
+    else {
+        panic!("the checkout start parses");
+    };
+    assert!(managed, "--checkout states the managed checkout mode");
+    let Some(SlashCommand::Coding(crate::slash::JobRequest {
+        command: crate::cli::CodingCommand::Start { managed, .. },
+        ..
+    })) = parse_slash_command("/start --id job-a \"a task\" --write . --approve").unwrap()
+    else {
+        panic!("the shared-folder start parses");
+    };
+    assert!(!managed, "no flag, no separate checkout");
+}
+
 /// Every other job spelling refuses a stated `--tools` with the one text the
 /// CLI's dispatch guard uses, rather than parsing it and dropping it: a
 /// session cannot narrow a surface it does not have.

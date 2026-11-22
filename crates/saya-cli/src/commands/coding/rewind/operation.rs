@@ -85,6 +85,7 @@ impl CodingApplication {
             Before {
                 images: before.as_ref(),
                 foreign: &foreign,
+                own_writes: !force,
             },
         )?;
         store.record_rewind(
