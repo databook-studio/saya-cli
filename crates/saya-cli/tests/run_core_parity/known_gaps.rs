@@ -150,7 +150,7 @@ pub(super) const KNOWN_GAPS: &[Gap] = &[
     Gap::missing(
         "chat",
         "helpers",
-        "chat has no delegation tool; only the coding root delegates",
+        "every surface's `helpers` is evidence-gated, and this fixture's message names no helper",
     ),
     Gap::missing(
         "helper",

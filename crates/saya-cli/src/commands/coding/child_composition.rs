@@ -272,6 +272,14 @@ impl NativeCodingJob {
             )),
         )
         .map_err(CodingError::owner)?;
+        // The helper's own tool calls join the parent run's stream, stamped with
+        // its id, when the surface running this turn draws a helper's work by
+        // its caller (`02` §3.6). A surface that stated no stream — every job
+        // surface — keeps the child's events on its own progress channel.
+        let node = match self.helper_forward() {
+            Some(sink) => node.forwarding(sink),
+            None => node,
+        };
         Ok((node, scope))
     }
 }

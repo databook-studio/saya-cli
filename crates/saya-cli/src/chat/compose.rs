@@ -218,9 +218,10 @@ impl RunComposition {
 /// job's label and — unless that name is already a run's — its id, and the
 /// write scope its folder's shape allows.
 ///
-/// `request.task` is a real, stable label — every helper brief and the tool
-/// advertisement read it — and never the first message: a prepared run's first
-/// message is `run_next_turn`.
+/// `request.task` is a real, stable label — every helper brief reads it — and
+/// never the first message: a prepared run's first message is `run_next_turn`,
+/// and that message, not this label, is what the optional tools are advertised
+/// from (the root states it as the run's own request on the first turn).
 ///
 /// The request states the origin `session`: a chat session and every `saya ask`
 /// open a job, and this is the one place either builds its request, so a

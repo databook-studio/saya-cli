@@ -94,6 +94,18 @@ pub(crate) mod operator_front_fixture;
 pub(crate) mod compose_fixture;
 
 #[cfg(all(test, unix))]
+#[path = "compose_helpers_tests.rs"]
+mod compose_helpers_tests;
+
+#[cfg(all(test, unix))]
+#[path = "helpers_transcript_tests.rs"]
+mod helpers_transcript_tests;
+
+#[cfg(all(test, unix))]
+#[path = "helpers_cancel_tests.rs"]
+mod helpers_cancel_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_tests.rs"]
 mod compose_tests;
 
