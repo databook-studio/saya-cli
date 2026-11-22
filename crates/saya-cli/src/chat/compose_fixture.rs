@@ -8,16 +8,14 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use saya_agent::{AgentEventSink, CancellationToken, NoopEventSink};
 use saya_config::MemoryMode;
-use saya_connectors::{ConnectorOptions, SqliteConnector};
 use saya_store::SqliteStateStore;
-use saya_types::{DatabaseProfile, SqlDialect};
 
 use super::compose::SessionRun;
 use super::workspace_shape::WorkspaceShape;
@@ -25,15 +23,25 @@ use super::{ChatEvent, ChatFront, Question};
 use crate::GlobalOptions;
 use crate::agent::tools::consent::Answer;
 use crate::commands::coding::CodingApplication;
-use crate::connection::{ConnectionEntry, ConnectionRegistry};
+use crate::connection::ConnectionRegistry;
 use crate::load_with_sources;
 use crate::plugins::database::DatabaseBudget;
 
-/// The in-place folder, the application over it, and the databases the session
-/// resolved — primary first.
+#[path = "compose_fixture_database.rs"]
+mod database;
+
+#[allow(unused_imports)]
+pub(crate) use database::{limit, sqlite_connection};
+
+/// The in-place folder, the application over it, the databases the session
+/// resolved — primary first — and the budget its turns spend.
 pub(super) struct Fixture {
     pub(super) application: Arc<CodingApplication>,
     pub(super) connections: ConnectionRegistry,
+    /// What a turn of this run spends once it uses the database: the table the
+    /// fixture's resolved configuration states, so a test that narrows one
+    /// dimension sees the live arming read its own number.
+    budget: DatabaseBudget,
     root: RootGuard,
 }
 
@@ -49,6 +57,7 @@ impl Fixture {
         let Fixture {
             application,
             connections,
+            budget,
             root,
         } = self;
         Composed {
@@ -57,7 +66,7 @@ impl Fixture {
                 front,
                 session: session.to_owned(),
                 mode,
-                budget: DatabaseBudget::defaults(),
+                budget,
                 shape: WorkspaceShape::Writable,
                 connections,
                 allow_query_data: true,
@@ -84,13 +93,13 @@ pub(super) struct Composed {
 
 /// An in-place session with no database configured.
 pub(super) async fn in_place(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, false, None, None, None).await
+    build(case, endpoint, false, None, None, None, Ceilings::default()).await
 }
 
 /// The same, with one seeded SQLite database named `primary`: a chat that has a
 /// database to read and to ask about.
 pub(super) async fn in_place_with_database(case: &str, endpoint: &str) -> Fixture {
-    build(case, endpoint, true, None, None, None).await
+    build(case, endpoint, true, None, None, None, Ceilings::default()).await
 }
 
 /// The same, with a `[web_search]` backend configured: the session's run holds
@@ -104,6 +113,7 @@ pub(super) async fn in_place_with_web_search(case: &str, endpoint: &str) -> Fixt
         None,
         Some("https://search.example"),
         None,
+        Ceilings::default(),
     )
     .await
 }
@@ -115,7 +125,16 @@ pub(super) async fn in_place_with_memory(
     endpoint: &str,
     memory: MemoryMode,
 ) -> Fixture {
-    build(case, endpoint, true, Some(memory), None, None).await
+    build(
+        case,
+        endpoint,
+        true,
+        Some(memory),
+        None,
+        None,
+        Ceilings::default(),
+    )
+    .await
 }
 
 /// The same, with the run's context byte budget stated by the test: the one
@@ -126,7 +145,52 @@ pub(super) async fn in_place_with_budget(
     endpoint: &str,
     context_byte_budget: usize,
 ) -> Fixture {
-    build(case, endpoint, false, None, None, Some(context_byte_budget)).await
+    build(
+        case,
+        endpoint,
+        false,
+        None,
+        None,
+        Some(context_byte_budget),
+        Ceilings::default(),
+    )
+    .await
+}
+
+/// The same, with the database budget its turns spend stated by the test: the
+/// table the plugin arms on the turn's first database use.
+pub(super) async fn in_place_with_database_ceilings(
+    case: &str,
+    endpoint: &str,
+    ceilings: Ceilings,
+) -> Fixture {
+    build(case, endpoint, true, None, None, None, ceilings).await
+}
+
+/// The `[limits.database]` ceilings a test states for the session's run: every
+/// field left `None` keeps the value the configuration resolved, so a test
+/// narrows exactly the dimension it is about.
+#[derive(Default)]
+pub(super) struct Ceilings {
+    pub(super) requests: Option<u64>,
+    pub(super) tool_calls: Option<u64>,
+    pub(super) elapsed_seconds: Option<u64>,
+    pub(super) known_tokens: Option<u64>,
+    /// The model's known request window: small enough and the turn refuses at
+    /// preflight, before any provider request.
+    pub(super) context_window_tokens: Option<u64>,
+}
+
+/// The same, with the session's memory on and the database budget its turns
+/// spend stated by the test: the two facts the turn's own budget and its
+/// post-turn learning pass read.
+pub(super) async fn in_place_with_memory_and_ceilings(
+    case: &str,
+    endpoint: &str,
+    memory: MemoryMode,
+    ceilings: Ceilings,
+) -> Fixture {
+    build(case, endpoint, true, Some(memory), None, None, ceilings).await
 }
 
 /// The in-place folder's name inside the throwaway root.
@@ -139,6 +203,7 @@ async fn build(
     memory: Option<MemoryMode>,
     web_search: Option<&str>,
     byte_budget: Option<usize>,
+    ceilings: Ceilings,
 ) -> Fixture {
     use std::os::unix::fs::PermissionsExt;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -168,6 +233,21 @@ async fn build(
     if let Some(budget) = byte_budget {
         runtime.resolved.ai.context_byte_budget = budget;
     }
+    if let Some(window) = ceilings.context_window_tokens {
+        runtime.resolved.ai.context_window_tokens = Some(window);
+    }
+    if let Some(requests) = ceilings.requests {
+        runtime.resolved.limits.database.requests = limit(requests);
+    }
+    if let Some(tool_calls) = ceilings.tool_calls {
+        runtime.resolved.limits.database.tool_calls = limit(tool_calls);
+    }
+    if let Some(elapsed) = ceilings.elapsed_seconds {
+        runtime.resolved.limits.database.elapsed_seconds = limit(elapsed);
+    }
+    if let Some(known_tokens) = ceilings.known_tokens {
+        runtime.resolved.limits.database.known_tokens = limit(known_tokens);
+    }
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.model = "composition".into();
     runtime.resolved.ai.base_url = Some(endpoint.into());
@@ -185,6 +265,10 @@ async fn build(
     effective.model = "composition".into();
     effective.base_url = Some(endpoint.into());
     effective.api_key = None;
+    // The budget the run's turns spend, read off the configuration this fixture
+    // just resolved — the same read production's session does, before the
+    // runtime moves into the application.
+    let budget = DatabaseBudget::of(&runtime);
     let application = CodingApplication::open_in_place(
         runtime,
         SqliteStateStore::new(root.join("state.sqlite3")),
@@ -201,57 +285,14 @@ async fn build(
     } else {
         ConnectionRegistry::new("")
     };
+    // The budget the run's turns spend, read off the configuration this
+    // fixture just resolved — the same read production's session does.
     Fixture {
         application,
         connections,
+        budget,
         root: RootGuard(root),
     }
-}
-
-/// One seeded SQLite connection, named `primary` — the name a chat grants its
-/// "yes for this run" under.
-async fn sqlite_connection(root: &Path) -> ConnectionRegistry {
-    let path = root.join("main.sqlite3");
-    let seed = sqlx::SqlitePool::connect_with(
-        sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true),
-    )
-    .await
-    .expect("the fixture database creates");
-    sqlx::query("CREATE TABLE IF NOT EXISTS users (id INTEGER, name TEXT)")
-        .execute(&seed)
-        .await
-        .expect("the fixture table creates");
-    sqlx::query("INSERT INTO users VALUES (1, 'ada'), (2, 'grace')")
-        .execute(&seed)
-        .await
-        .expect("the fixture rows insert");
-    seed.close().await;
-    let connector = SqliteConnector::open(&path, true, ConnectorOptions::default())
-        .await
-        .expect("the fixture database opens");
-    // The entry carries the profile identity a stored claim is filed under, so
-    // recall can resolve the profile it selects against — the same identity the
-    // connection's own profile would hash to.
-    let identity = crate::profile_identity::profile_identity(
-        "primary",
-        &DatabaseProfile::Sqlite {
-            path: path.display().to_string(),
-            read_only: true,
-        },
-        &root.join("connections.toml"),
-    );
-    let mut registry = ConnectionRegistry::new("primary");
-    registry.insert(
-        "primary",
-        ConnectionEntry {
-            connector: Box::new(connector),
-            dialect: SqlDialect::Sqlite,
-            profile_id: Some(identity.as_str().to_string()),
-        },
-    );
-    registry
 }
 
 /// Removes the throwaway root when it drops.

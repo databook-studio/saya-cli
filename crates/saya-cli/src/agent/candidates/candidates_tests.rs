@@ -152,3 +152,7 @@ fn legacy_truncated_output(sql: &str) -> AgentOutput {
 include!("candidates_tests/budget_retention.rs");
 
 include!("candidates_tests/user_stop.rs");
+
+/// A question stopped before it starts: the live entry builds nothing.
+#[path = "candidates_tests/pre_stopped.rs"]
+mod pre_stopped;
