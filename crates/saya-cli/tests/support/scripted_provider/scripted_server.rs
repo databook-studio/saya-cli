@@ -60,6 +60,19 @@ pub(crate) fn spawn_script_server(
     script: Vec<ScriptStep>,
     release: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> MockServer {
+    spawn_script_server_limit(listener, script, release, 16)
+}
+
+/// The same mock with the request cap stated. A scenario's latch rows script up
+/// to ten requests and the cap of sixteen covers them; the perf harness scripts
+/// one request per measured turn, so it states its own cap rather than the
+/// sixteen those rows bound.
+pub(crate) fn spawn_script_server_limit(
+    listener: std::net::TcpListener,
+    script: Vec<ScriptStep>,
+    release: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    last_index: usize,
+) -> MockServer {
     use std::{io::Write, sync::atomic::Ordering, thread, time::Duration};
 
     let address = format!("http://{}", listener.local_addr().unwrap());
@@ -97,6 +110,28 @@ pub(crate) fn spawn_script_server(
                 }
                 ScriptStep::NaturalNoUsage => reply_finished(&mut stream, &answer_no_usage_body()),
                 ScriptStep::Summary(text) => reply_finished(&mut stream, &summary_body(&text)),
+                ScriptStep::DelayedSummary { text, delay } => {
+                    thread::sleep(delay);
+                    reply_finished(&mut stream, &summary_body(&text));
+                }
+                ScriptStep::StreamTokens { count, chunk_delay } => {
+                    // The head goes out first, then one frame per chunk, each
+                    // flushed: the reader sees a stream, not one body.
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                         Connection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    stream.flush().unwrap();
+                    for chunk in 0..count {
+                        write!(stream, "{}", token_frame(chunk)).unwrap();
+                        stream.flush().unwrap();
+                        thread::sleep(chunk_delay);
+                    }
+                    write!(stream, "data: [DONE]\n\n").unwrap();
+                    stream.flush().unwrap();
+                }
                 ScriptStep::Json(content) => {
                     reply_finished(&mut stream, &json_content_body(&content))
                 }
@@ -172,7 +207,7 @@ pub(crate) fn spawn_script_server(
             drop(stream);
             // The latch rows script up to ten requests (fail, /compact
             // re-arm, /clear re-arm); bound runaway loops well past that.
-            if index >= 16 {
+            if index >= last_index {
                 break;
             }
         }

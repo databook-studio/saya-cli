@@ -14,6 +14,19 @@ pub(crate) enum ScriptStep {
     NaturalNoUsage,
     /// A plain text completion (the summariser's reply shape).
     Summary(String),
+    /// `Summary` held for `delay` before it is written: the perf harness's
+    /// steady turn needs a known provider cost to subtract.
+    DelayedSummary {
+        text: String,
+        delay: std::time::Duration,
+    },
+    /// `count` content chunks written one at a time, `chunk_delay` apart: the
+    /// perf harness's 1 000-token stream, slow enough that a surface's frame
+    /// rate during it can be counted.
+    StreamTokens {
+        count: usize,
+        chunk_delay: std::time::Duration,
+    },
     /// A completion whose content is the given JSON text, served verbatim
     /// (the post-turn extractor's reply shape).
     Json(String),
@@ -112,6 +125,12 @@ pub(crate) fn answer_no_usage_body() -> String {
         "\"finish_reason\":\"stop\"}]}\n\n"
     )
     .to_owned()
+}
+
+/// One openai-compatible content delta, already a complete SSE frame.
+pub(crate) fn token_frame(index: usize) -> String {
+    let delta = serde_json::json!({"choices": [{"delta": {"content": format!("tok{index} ")}}]});
+    format!("data: {delta}\n\n")
 }
 
 pub(crate) fn summary_body(text: &str) -> String {
