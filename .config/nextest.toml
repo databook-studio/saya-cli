@@ -28,6 +28,17 @@ failure-output = "immediate-final"
 filter = 'binary(postgres_live) or binary(mysql_live) or binary(snowflake_live)'
 retries = 2
 
+# The perf harness measures windows of 60 s per front and repeats every measure
+# `SAYA_PERF_K` times, so a run is minutes rather than seconds. Only that binary
+# gets the longer period; `terminate-after` still bounds a genuine hang.
+[[profile.default.overrides]]
+filter = 'binary(perf_chat)'
+slow-timeout = { period = "600s", terminate-after = 2 }
+
+[[profile.ci.overrides]]
+filter = 'binary(perf_chat)'
+slow-timeout = { period = "900s", terminate-after = 2 }
+
 # Machine-readable results for the CI UI.
 [profile.ci.junit]
 path = "junit.xml"
