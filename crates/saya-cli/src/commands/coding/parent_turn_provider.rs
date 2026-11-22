@@ -3,6 +3,11 @@
 //! turn that is still running is observable while it runs, and it keeps every
 //! request body it received.
 
+// The rows that script every helper below are Unix-only; the candidates'
+// preflight row asks only for the plain answer, so a non-Unix test build leaves
+// the rest unused.
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},

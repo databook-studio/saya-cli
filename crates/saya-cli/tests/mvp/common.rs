@@ -37,6 +37,9 @@ pub(crate) fn sqlite_fixture(path: &Path, statements: &[&str]) {
 /// names it as the read-only profile `local`: the fixture a row about the
 /// database budget connects to. Returns the root both files live in and the
 /// connections file.
+// Its only callers are the database-budget rows, which are Unix-only rows, so
+// the fixture carries the same gate.
+#[cfg(unix)]
 pub(crate) fn database_fixture(label: &str) -> (PathBuf, PathBuf) {
     let root = test_root(&format!("database-{label}"));
     let database = root.join("budget.sqlite");
