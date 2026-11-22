@@ -121,6 +121,19 @@ impl Model {
         }
     }
 
+    /// Puts a pasted block where typing would put it: into the composer's line,
+    /// or — while a search owns the line — into the search's query, character
+    /// for character, so a pasted fragment searches for what was pasted.
+    pub(crate) fn paste(&mut self, text: &str) {
+        if self.search.is_none() {
+            self.composer.push_str(text);
+            return;
+        }
+        for character in text.chars() {
+            self.search_type(character);
+        }
+    }
+
     /// Removes the open search's last query character: the search widens again,
     /// from its newest match.
     pub(crate) fn search_backspace(&mut self) {

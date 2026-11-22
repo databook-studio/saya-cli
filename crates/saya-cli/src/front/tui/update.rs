@@ -36,8 +36,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     match msg {
         Msg::Key(key) => press(model, key, &mut cmds),
         // A paste lands as text and nothing else: a `\r` inside a pasted block
-        // must never send it.
-        Msg::Paste(text) => model.insert(&text),
+        // must never send it. While a search owns the line, the text narrows the
+        // query, exactly as the same characters typed would.
+        Msg::Paste(text) => model.paste(&text),
         // The panes lay themselves out from the frame they are handed, so a
         // new size changes nothing the model holds.
         Msg::Resize { .. } => {}

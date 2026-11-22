@@ -192,6 +192,26 @@ fn a_card_or_a_pane_keeps_the_history_keys_to_itself() {
 }
 
 #[test]
+fn a_paste_narrows_the_open_search_instead_of_the_line_behind_it() {
+    let mut model = Model::default();
+    model.remember("select count(*) from events");
+    update(&mut model, ctrl_r());
+
+    update(&mut model, Msg::Paste("count".to_owned()));
+
+    assert_eq!(
+        model.search().map(|search| search.query().to_owned()),
+        Some("count".to_owned()),
+        "a pasted fragment searches for what was pasted"
+    );
+    assert_eq!(
+        model.composer(),
+        "",
+        "and never lands on the line behind the search"
+    );
+}
+
+#[test]
 fn the_open_search_is_painted_with_its_query_and_its_match() {
     let mut model = Model::default();
     model.remember("select count(*) from events");
