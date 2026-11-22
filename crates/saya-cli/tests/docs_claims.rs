@@ -12,6 +12,8 @@
 //! No model and no TTY: every run is a slash command or a preferences
 //! subcommand, and the provider env points at a dead address.
 
+#[path = "docs_claims/command_table.rs"]
+mod command_table;
 #[path = "docs_claims/context_limits.rs"]
 mod context_limits;
 #[path = "docs_claims/doc_commands.rs"]
@@ -20,6 +22,8 @@ mod doc_commands;
 mod help;
 #[path = "docs_claims/in_place.rs"]
 mod in_place;
+#[path = "docs_claims/limits_docs.rs"]
+mod limits_docs;
 #[path = "docs_claims/preferences.rs"]
 mod preferences;
 #[path = "docs_claims/quick_start.rs"]

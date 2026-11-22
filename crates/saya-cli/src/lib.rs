@@ -94,6 +94,10 @@ pub use render::{
 // adapters and the headless `saya run` commands share.
 pub use render_run::render_run_event;
 pub use slash::{SessionsRequest, SlashCommand, parse_slash_command};
+// The documented view of the slash catalogue: `docs/commands.md`'s command
+// table is rendered from it by `tests/docs_claims/command_table.rs`, so the
+// page and `/help` are one table and drift fails the suite.
+pub use slash::catalog::{DocumentedCommand, documented_commands};
 pub use state_path::resolve_state_db_path;
 
 pub fn run_from_env() -> i32 {

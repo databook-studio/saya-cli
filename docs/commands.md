@@ -3,9 +3,10 @@
 Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts the slash commands `/help` lists — grouped under
 connections; provider, model and privacy; query and data; session; memory;
-and runs — from `/connect`, `/sql`, and `/export` through the session
-commands `/sessions`, `/preferences`, `/notes`, `/recovery`, `/rotate`,
-`/reload`, `/setup`, and `/context`, to `/exit`.
+and runs — from `/connect`, `/sql`, and `/export` through the session commands
+`/sessions`, `/preferences`, `/notes`, `/compact`, `/reload`, and `/setup`, to
+`/exit`. [The table below](#slash-commands) is generated from the surface's
+catalogue, so it names every one of them with its arguments and aliases.
 
 `/context` shows which project and personal instruction files are loaded
 into requests: names, sizes, truncation and redaction counts, never their
@@ -208,6 +209,104 @@ instead. It is credential-free, refuses to overwrite either file,
 and makes a best-effort rollback after an ordinary creation error; it is not
 crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
 errors and diagnostics remain on stderr.
+
+## Slash commands
+
+The table below is generated from the surface's one catalogue
+(`crates/saya-cli/src/slash/catalog.rs`), the same rows `/help` prints, the
+completion popup completes and the `Ctrl+K` palette lists: a command's name,
+the arguments its usage line states, its one-line description and the other
+spellings that resolve to it. Add a row there and the table follows; a page
+that stops matching it fails the documentation suite, so the two cannot drift.
+A command hidden from every surface this release — `/run`, `/runs` and
+`/recovery` — still parses and runs when typed, and is offered nowhere, so it
+is not in this table.
+
+<!-- generated: slash commands -->
+
+| Command | Arguments | What it does | Aliases |
+| --- | --- | --- | --- |
+| `/start` | `[--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--checkout] [--approve]` | Start a job for long or background work; ordinary work is just a message | — |
+| `/job` | `<export\|events\|review\|apply\|resume\|list\|show\|cancel\|doctor\|setup\|reconcile\|worktrees\|rewind\|approve\|deny\|message\|pause\|continue\|cancel-child\|follow-up> …` | Operate a durable job's lifecycle (review, apply, resume, list, show, cancel, and the rest) and its child controls | `/follow-up`, `/approve`, `/deny`, `/message`, `/pause`, `/cancel-child` |
+| `/continue` | `[<id> <agent>]` | Continue the turn that paused: it sends the message Continue. The <id> <agent> spelling is the job control /job continue for this release | — |
+| `/connect` | `<profile>` | Replace the active database profile | — |
+| `/connections` | — | List configured database connections | — |
+| `/include` | `<profile>` | Add a secondary database profile to query scope | — |
+| `/exclude` | `<profile>` | Remove a database profile from query scope | — |
+| `/provider` | `[name]` | Set or view the AI provider | — |
+| `/model` | `[name]` | Set or view the AI model | — |
+| `/privacy` | `[on\|off]` | Enable or disable data sharing privacy | — |
+| `/mode` | `[ask\|accept-edits\|plan\|bypass\|read-only\|never]` | Set the session's consent mode: ask, accept-edits, plan, bypass, read-only, or never | `/approvals` |
+| `/schema` | `[refresh]` | Inspect or refresh database schema | — |
+| `/sql` | `<query>` | Run a raw SQL query against the active profile | — |
+| `/export` | `[--snapshot\|--refresh] [--overwrite] [--rows N] [--format csv\|json\|md] <path>` | Export the last query's fresh result, or the captured /sql result with --snapshot; a .md path writes today's Markdown report | `/report` |
+| `/investigation` | `save\|list\|show\|run\|export\|import\|delete` | Save, list, show, run, export, import, or delete a saved investigation | `/investigations` |
+| `/chart` | `[type] [path]` | Re-run the last query and render the fresh result as an HTML chart | — |
+| `/explain` | `[sql]` | Explain the given or last SQL statement | — |
+| `/clear` | — | Clear current session context | — |
+| `/undo` | — | Undo the last turn's file edits: restore the run's checkpoint taken before that turn | — |
+| `/rewind` | `[<id>]` | List the run's checkpoints, newest first, or restore the one you name | — |
+| `/compact` | `[--new-session]` | Summarise older turns to shrink working memory; --new-session continues in a smaller successor | `/rotate` |
+| `/notes` | `[set <text>\|clear]` | Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember | — |
+| `/sessions` | `[list\|delete <id>]` | Browse saved sessions: list or delete; bare opens a picker in the TUI | `/history` |
+| `/preferences` | `[list\|add <text>\|edit <id> <text>\|forget <id>\|forget-all]` | Explicit per-worktree guidance you confirmed: list, add, edit, forget; never permissions; separate from /remember | — |
+| `/resume` | `<id>` | Resume a saved session by id | — |
+| `/setup` | — | Run the guided setup (full-screen terminal only) | — |
+| `/reload` | — | Re-read the configuration between turns: applies what is safe now, says what needs a new session. Data sharing and host commands never change in a running session. | — |
+| `/columns` | `[name,name,… \| all]` | Choose which columns wide result tables show | — |
+| `/contracts` | `<list\|show\|queue\|confirm\|reject\|confirm-all\|export\|import>` | The knowledge store: list every contract, show one object's contract, review and decide the queue, and export or import the context | `/contract`, `/queue`, `/confirm`, `/reject`, `/approve-all` |
+| `/remember` | `<table> <kind> <value…>` | Store a confirmed contract claim | — |
+| `/forget` | `<id>` | Tombstone a contract claim so recall excludes it | — |
+| `/allow` | `<scopes…>` | Seed pre-authorised scopes into this session's grant store | — |
+| `/permissions` | — | One read-only view: the mode, the grant store, the deny list, the host lane and data sharing | `/grants` |
+| `/doctor` | — | Diagnose config: secrets, provider endpoint | — |
+| `/status` | — | One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks | `/usage`, `/workspace`, `/context` |
+| `/thinking` | `[on\|off]` | Toggle display of the model's chain-of-thought | — |
+| `/tasks` | `[clear]` | Show the session's task list, or clear it with /tasks clear | — |
+| `/help` | `[command]` | Show help for slash commands | — |
+| `/exit` | — | Exit the REPL | `/quit` |
+
+<!-- end: slash commands -->
+
+## Keys in the full-screen session
+
+The keymap is one table read by the surface (`crates/saya-cli/src/front/tui/keys.rs`),
+and the `?` key sheet draws the presses valid in the state you are in — the
+approval answers only while a card asks, the mode cycle only while the line is
+yours. `--plain` (or `SAYA_PLAIN=1`) runs the line REPL on a terminal instead,
+where editing is the reader's `Up`/`Down` recall and no key below applies.
+
+| Key | What it does |
+| --- | --- |
+| `Enter` | Send the line; with a turn running, queue it behind that turn |
+| `Alt+Enter` | Break the line inside the message |
+| `Backspace` | Delete the last character |
+| `↑`, `↓` | Recall the previous or next line from the input history; `↓` past the newest brings the draft back |
+| `Ctrl+R` | Search the input history: type to narrow, `Ctrl+R` again steps one match older, `Enter` takes it, `Esc` closes the search |
+| `Ctrl+K`, or `/` on an empty line | Open the command palette over the catalogue below: `↑`/`↓` choose, `Enter` runs or fills the selected command, `Esc` closes. A non-empty line keeps its `/` |
+| `?` on an empty line | Open the key sheet; `Esc` closes it |
+| `Shift+Tab` | Walk the mode cycle: `ask → accept-edits → plan → bypass`, skipping `bypass` when it is withheld. `read-only` and `never` are reachable only by naming them. Refused with a note while an approval card is open |
+| `Esc` while a turn runs | Stop that turn: the run stays open, and a helper the turn launched is stopped with it |
+| `Esc` on an approval card | Deny the call it asks about |
+| `y` or `a` | Allow the call the card asks about once |
+| `s` | Allow calls like it for this session (only when the card offers a session grant) |
+| `n` or `d` | Deny the call |
+| `v` | Show the card's whole body, or fold it back |
+| `↑`, `↓` on a card, `PgUp`, `PgDn` | Scroll the body the card withholds, a line or a screen at a time |
+| `Ctrl+G` | Drop the line held behind the running turn |
+| `Ctrl+J` | Open the background jobs drawer: `↑`/`↓` choose, `Enter` opens the selected job, `a` opens the card for the call it waits on, `x` asks before cancelling (`y`/`n` answers), `Esc` closes |
+| `Alt+↑`, `Alt+↓` | Move the block cursor to the older or newer transcript entry |
+| `Enter` or `→` in cursor mode | Expand the block the cursor holds (`←` folds it) |
+| `c` in cursor mode | Copy the focused block's source text |
+| `i` in cursor mode | Show the focused block's provenance line, or take it away |
+| `Esc` in cursor mode | Leave cursor mode |
+
+`/mode` with no argument opens a picker over the same six values: `↑`/`↓`
+choose, `Enter` states the mode, `Esc` cancels without stating anything.
+`plan` is the read-only member of the cycle: it advertises the read-shaped
+tools plus `submit_plan`, hides the write family, `shell` and the MCP servers,
+and puts the plan to the session's own approval. Leaving `plan` closes that
+again, so re-entering it asks afresh.
 
 ## Global flags
 
@@ -1324,6 +1423,11 @@ still lists, resumes, reviews, and applies.
   lets a rewind touch a path the job's journal does not account for, which is
   otherwise reported and left as it stands.
 
+In the session, `/rewind <id>` restores one of the run's checkpoints and leaves
+what it must not touch: a file another run changed since that checkpoint is
+named and left where it stands (`changed since by another run: <paths>`), never
+overwritten.
+
 `saya start` and `saya resume` end with an `outcome` block — final state, the
 model's bounded and redacted final answer, the commits made in the working
 checkout since its base, the changed paths, the checkout path, and readiness as
@@ -1345,10 +1449,18 @@ is the opt-in for long or background work: the task is the whole remaining
 text, recognised flags are removed wherever they appear, and the id is
 generated unless `--id` states one (the session names the id it chose). With
 no `--write`, a session start may edit the whole workspace (`.`), exactly like
-`saya -p`; an explicit `--write` narrows it. The old positional
-`/start <id> "<task>"` form is gone — an unquoted first word is ambiguous with
-a task, so it is read as task text, never as an id. Put `--` before task text
-that itself begins with `--`. The session-only controls have one bare spelling each:
+`saya -p`; an explicit `--write` narrows it. A job shares the session's own
+folder by default: it runs there, alongside the session, and no checkout is
+made. `--checkout` (the older spelling is `--managed`) asks for a separate
+checkout of the repository instead — it needs a Git working tree — and what the
+job changes there reaches this folder only when you apply it: `/job review
+<id>` prints the candidate, and `/job apply <id> <candidate>` writes it, the
+same grammar `saya job apply` takes. `--in-place` forces the shared folder even
+where `[job] root_mode = "managed"` makes a checkout the default. The old
+positional `/start <id> "<task>"` form is gone — an unquoted first word is
+ambiguous with a task, so it is read as task text, never as an id. Put `--`
+before task text that itself begins with `--`. The session-only controls have
+one bare spelling each:
 `/approve <id>`, `/deny <id>`, `/message <id> <agent> <text>`,
 `/pause <id> <agent>`, `/continue <id> <agent>`, and
 `/cancel-child <id> <agent>`. A top-level `saya coding …` still parses, but

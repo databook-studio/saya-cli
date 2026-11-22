@@ -148,10 +148,28 @@ key below.
 
 | Surface | Table | Defaults |
 | --- | --- | --- |
-| Interactive session | `[limits.session]` | 24 requests, 64 tool calls, 300 s, 250,000 known tokens |
-| `saya ask` | `[limits.ask]` | every unset key falls back to `[limits.session]` |
+| A turn's database work | `[limits.database]` | 24 requests, 64 tool calls, 300 s, 250,000 known tokens |
+| `saya ask` | `[limits.ask]` | every unset key falls back to `[limits.database]` |
+| Job | `[limits.job]` | bounded: 2,000 logical requests, 6,000 transport attempts, 10,000 tool calls, a 604,800 s deadline, unlimited per-loop tokens; no job-wide token ceiling |
 | `saya run` | `[limits.run]` | `turns`, `tool_calls` and `wall_clock_seconds` unset (no ceiling); `tokens_per_endpoint` unset |
-| Job | `[limits.job]` | bounded: 80 logical requests, 240 transport attempts, 300 tool calls, 400,000 known tokens per loop, 1,200 s; no job-wide token ceiling |
+
+`[limits.database]` is the budget the database plugin spends: the database
+work one turn may do, counted from its first database call. Its four keys are
+`requests`, `tool_calls`, `elapsed_seconds` and `known_tokens` — each a
+positive integer or the exact string `"unlimited"`. `[limits.ask]` is the
+one-shot `ask` surface's override of the same budget: every key it leaves
+unset keeps the database value.
+
+`[limits.session]` is retired: it now maps onto `[limits.database]` for one
+release, and a config that states it is read with a diagnostic naming the
+rename. When both tables are stated, `[limits.database]` wins and
+`[limits.session]` is reported as ignored. Next release the old table is
+gone, so write `[limits.database]`.
+
+`[limits.job]` is a job's own table — `budget_mode`, `logical_requests`,
+`transport_attempts`, `tool_calls`, `known_tokens`, `job_tokens`,
+`elapsed_seconds`, `no_progress_turns`, `repeat_limit`, `wall_clock_seconds`
+and `max_cost_usd` — documented under [Job limits](#job-limits).
 
 A run pauses when a declared budget trips rather than silently stopping. A zero
 is refused as a typo, not clamped. `[limits.job] budget_mode = "uncapped"`
@@ -415,11 +433,11 @@ context_window_tokens = 1048576
 
 A declared value of `0` is rejected as a typo. There is no upper bound.
 
-Interactive investigations and the one-shot `ask` surface resolve four budget
-ceilings from `[limits.session]`: `requests` (24), `tool_calls` (64),
+A turn's database work, and the one-shot `ask` surface, resolve four budget
+ceilings from `[limits.database]`: `requests` (24), `tool_calls` (64),
 `elapsed_seconds` (300), and `known_tokens` (250,000). `[limits.ask]` may state
 its own value for any of the four; every key it leaves unset falls back to
-`[limits.session]`. These are conservative starting policy values, not
+`[limits.database]`. These are conservative starting policy values, not
 production percentile measurements. The elapsed ceiling is an active-time
 wallet rather than a wall-clock total: it starts before connector setup, stops
 before post-turn learning, and only active answering segments debit it, so
@@ -428,22 +446,28 @@ serves every answering invocation for the question — candidates and
 clarification replies included. Each accepts a positive integer or the exact
 string `"unlimited"`; zero, negative values, other strings, and non-integer TOML
 values are errors. Integer literals beyond TOML's signed 64-bit range are
-invalid TOML and fail while parsing. `[limits.session]` and `[limits.ask]` are
+invalid TOML and fail while parsing. `[limits.database]` and `[limits.ask]` are
 protected: a repository project config cannot change these trusted budgets
 unless `--trust-project-config` is supplied. No environment aliases are defined
 for them. Enforcement is live: each answering invocation admits against these
 limits, and a crossed ceiling stops the run with a typed budget stop reason
 naming the dimension — requests, tool calls, reported tokens, or elapsed time.
 
+The retired `[limits.session]` table still resolves for one release and maps
+onto `[limits.database]` — its keys are read, never dropped, because ignoring a
+stated ceiling would silently widen a bound — with a diagnostic naming the
+rename. `[limits.ask]` keeps its own row above: it always bounded the one-shot
+surface.
+
 ```toml
-[limits.session]
+[limits.database]
 requests = 24
 tool_calls = 64
 elapsed_seconds = 300
 known_tokens = 250000
 
 [limits.ask]
-tool_calls = 32   # every unset key falls back to [limits.session]
+tool_calls = 32   # every unset key falls back to [limits.database]
 ```
 
 The `[[ai.endpoints]]` array declares the named endpoints a run's roles can
@@ -1011,10 +1035,10 @@ the diagnostic quotes the message that names the fix:
 | `[coding] program_dir` | Write `job.program_dir` in the `[job]` table. |
 | `[coding.extensions]` | Write `[job.extensions]`. |
 | `[coding] automatic_lsp_profile` | Write `job.automatic_lsp_profile`. |
-| `[ai] investigation_max_logical_answering_requests` | Write `limits.session.requests` (and `limits.ask.requests` for the one-shot surface). |
-| `[ai] investigation_max_requested_tool_calls` | Write `limits.session.tool_calls` (and `limits.ask.tool_calls`). |
-| `[ai] investigation_max_elapsed_seconds` | Write `limits.session.elapsed_seconds` (and `limits.ask.elapsed_seconds`). |
-| `[ai] investigation_max_known_reported_tokens` | Write `limits.session.known_tokens` (and `limits.ask.known_tokens`). |
+| `[ai] investigation_max_logical_answering_requests` | Write `limits.database.requests` (and `limits.ask.requests` for the one-shot surface). |
+| `[ai] investigation_max_requested_tool_calls` | Write `limits.database.tool_calls` (and `limits.ask.tool_calls`). |
+| `[ai] investigation_max_elapsed_seconds` | Write `limits.database.elapsed_seconds` (and `limits.ask.elapsed_seconds`). |
+| `[ai] investigation_max_known_reported_tokens` | Write `limits.database.known_tokens` (and `limits.ask.known_tokens`). |
 | `[jobs] wall_clock_seconds` | Write `limits.run.wall_clock_seconds`. |
 | `[jobs] tokens_per_endpoint` | Write `limits.run.tokens_per_endpoint`. |
 | `[jobs] turns` | Write `limits.run.turns`. |
@@ -1057,6 +1081,11 @@ The messages, exactly as the parse error renders them:
 [run] max_iterations was removed; `limits.run.turns` is the run's turn ceiling. Delete the key.
 [coding] was renamed: the job host's own settings live in the [job] table, and its ceilings in [limits.job]. Move the section.
 ```
+
+The four `[ai] investigation_*` messages still name `limits.session`; that
+table maps onto `[limits.database]` this release (see
+[Limits at a glance](#limits-at-a-glance)), so the key to write is the one the
+row above names.
 
 The tools and flags that went with them — `run_program`, the `--program` flag
 on `saya start`, checks and check profiles, and every `coding_*` model tool —
