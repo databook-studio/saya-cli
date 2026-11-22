@@ -14,7 +14,7 @@ use state::root;
 pub(super) use state::{FailureState, progress_failure};
 
 impl NativeCodingJob {
-    fn failures(&self) -> std::sync::MutexGuard<'_, FailureState> {
+    pub(super) fn failures(&self) -> std::sync::MutexGuard<'_, FailureState> {
         self.failure
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -32,8 +32,16 @@ impl NativeCodingJob {
             Fault::Storage => CodingDiagnosticFault::Storage,
             Fault::Recovery => CodingDiagnosticFault::Recovery,
         });
-        failures.latch(root(Class::DiagnosticStorage));
+        // The first fault stops every later diagnostic write for this job: a
+        // failing writer is never retried, so one failure costs one notice.
         self.observation_failed.store(true, Ordering::Release);
+        if fault.degrades() {
+            // A write failure leaves the audit trail incomplete; it carries no
+            // authority, so the job keeps its own outcome.
+            failures.diagnostics_incomplete = true;
+            return;
+        }
+        failures.latch(root(Class::DiagnosticStorage));
         self.cancellation
             .cancel_with_reason(CancellationReason::OwnerFailure);
     }
@@ -156,14 +164,21 @@ impl NativeCodingJob {
             self.latch_error(&error);
         }
         let cancellation = self.observe_cancellation();
-        let (failure, secondary, diagnostic_fault) = {
+        let (failure, secondary, diagnostic_fault, diagnostics_incomplete) = {
             let failures = self.failures();
             (
                 failures.primary.clone(),
                 failures.secondary,
                 failures.diagnostic_fault,
+                failures.diagnostics_incomplete,
             )
         };
+        // One notice, before the terminal event: the job says once that its own
+        // diagnostics are incomplete, and the durable record is where it says
+        // it. Best effort, exactly like the progress checks.
+        if diagnostics_incomplete {
+            self.record_diagnostics_incomplete(diagnostic_fault).await;
+        }
         // A final answer with no guard stop is completion, whatever the job
         // changed or committed. A guard stop is a real pause and names its
         // guard; any other failure keeps the failed state.
@@ -171,7 +186,7 @@ impl NativeCodingJob {
             .as_ref()
             .is_some_and(|failure| failure.agent_id.is_none() && is_guard(failure.class))
             && secondary.is_none()
-            && diagnostic_fault.is_none();
+            && !diagnostics_incomplete;
         let state = if cancellation == Some(CancellationReason::User) {
             JobState::Cancelled
         } else if guard_stop {
@@ -238,7 +253,7 @@ impl NativeCodingJob {
             if failure.agent_id.is_none()
                 && is_guard(failure.class)
                 && secondary.is_none()
-                && diagnostic_fault.is_none()
+                && !diagnostics_incomplete
                 && let Ok(mut output) = result
             {
                 if !self.request.write_paths.is_empty() {
@@ -257,7 +272,7 @@ impl NativeCodingJob {
                     Class::BudgetStopped | Class::Cancelled | Class::LimitReached | Class::Backstop
                 )
                 && secondary.is_none()
-                && diagnostic_fault.is_none()
+                && !diagnostics_incomplete
             {
                 return result;
             }

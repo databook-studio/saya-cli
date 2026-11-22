@@ -59,6 +59,10 @@ pub(super) fn validate_event(
         }
         // A progress check belongs to the job, not a child or invocation.
         CodingEventKind::ProgressReported { .. } => agent_id.is_none() && invocation_id.is_none(),
+        // The job's own diagnostics stopped being writable: a job-level fact.
+        CodingEventKind::DiagnosticsIncomplete { .. } => {
+            agent_id.is_none() && invocation_id.is_none()
+        }
         CodingEventKind::BudgetReserved { reservation } => {
             sequence == reservation.reservation_sequence()
                 && job_id == reservation.job_id()

@@ -113,6 +113,10 @@ impl NativeCodingJob {
         invocation: Option<&InvocationId>,
         diagnostic: &saya_agent::ToolDiagnostic,
     ) {
+        // A writer that already failed is never retried for this job.
+        if self.diagnostics_stopped() {
+            return;
+        }
         // One tool event's attach, append and marker check is one journal step:
         // holding the lock across them keeps the budget's call ordinals in the
         // order the records land, so no call can record a body after the marker
@@ -180,6 +184,9 @@ impl NativeCodingJob {
         invocation: Option<&InvocationId>,
         observation: ContextCompaction,
     ) {
+        if self.diagnostics_stopped() {
+            return;
+        }
         let record = self.observation_sequence.fetch_add(1, Ordering::AcqRel);
         let value = json!({"job_id":self.job_id(),"agent_id":agent,"invocation_id":invocation,"epoch":self.epoch,"record_id":record,"authority_policy_sha256":self.policy_digest,"observation":observation,"source":"actual_agent_context_mutation","byte_measure":"context_estimator_not_wire_or_tokens"});
         let result = serde_json::to_vec(&value)
@@ -253,6 +260,17 @@ impl NativeCodingJob {
         turn: Option<u64>,
         class: Option<&str>,
     ) -> Result<(), CodingError> {
+        if self.diagnostics_stopped() {
+            // One failed writer is never retried. A degraded fault lets the run
+            // go on; a fatal one keeps failing closed when it is asked again.
+            return if self.diagnostics_incomplete() {
+                Ok(())
+            } else {
+                self.failures()
+                    .diagnostic_fault()
+                    .map_or(Ok(()), |fault| Err(CodingError::Diagnostic(fault.into())))
+            };
+        }
         let budget = self.ledger.snapshot().await;
         let mut value = json!({"job_id":self.job_id(),"epoch":self.epoch,"phase":phase,"complete":complete&&!self.observation_failed.load(Ordering::Acquire),"compaction_records":self.observation_sequence.load(Ordering::Acquire).saturating_sub(1),"logical_requests":budget.logical_requests,"transport_attempts":budget.transport_attempts,"tool_calls":budget.tool_calls,"unsettled_reservations":budget.unsettled_reservations});
         if let Some(turn) = turn {
@@ -268,7 +286,13 @@ impl NativeCodingJob {
             });
         if let Err(fault) = result {
             self.latch_diagnostic_fault(fault);
+            // A degraded write failure is stated once and the run goes on.
+            return if fault.degrades() {
+                Ok(())
+            } else {
+                Err(CodingError::Diagnostic(fault))
+            };
         }
-        result.map_err(CodingError::Diagnostic)
+        Ok(())
     }
 }
