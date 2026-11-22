@@ -141,8 +141,9 @@ impl NativeCodingJob {
 
     /// Opens a session on the batch and spawns the task that runs it, draining
     /// its `ChildEvent`s into `forward_progress` as the one-shot schedule did.
-    /// The job's own cancellation token is the session's caller, so cancelling
-    /// the run stops every live helper.
+    /// The caller is the turn a helper was launched from — the run's token
+    /// between turns — so stopping that turn stops every helper it launched,
+    /// and a stop of the run reaches the helpers through the turn it ends.
     pub(super) async fn open_session(
         self: &Arc<Self>,
         nodes: Vec<(AgentId, ScheduledChild)>,
@@ -152,6 +153,13 @@ impl NativeCodingJob {
         let maximum = usize::try_from(limits.child_slots.min(limits.model_slots.saturating_sub(1)))
             .unwrap_or(0);
         let (sender, mut receiver) = mpsc::channel(128);
+        // The turn a helper is launched from is its caller: Esc (the turn's own
+        // stop) ends the helper it launched, and the run's stop ends it too,
+        // because the turn's token follows the run's. Between turns — a
+        // continuation's repair batch — the caller is the run itself.
+        let caller = self
+            .turn_cancellation()
+            .unwrap_or_else(|| self.cancellation.clone());
         let (session, run, waiters) = ScheduleSession::open(
             nodes.into_iter().map(|(_, node)| node).collect(),
             ScheduleLimits {
@@ -159,7 +167,7 @@ impl NativeCodingJob {
                 max_active_per_provider: maximum,
             },
             &self.ledger,
-            self.cancellation.clone(),
+            caller,
             sender,
         )
         .await
@@ -244,6 +252,18 @@ impl NativeCodingJob {
         if settled && let Err(error) = self.join().await {
             self.latch_error(&error);
         }
+    }
+
+    /// How many helpers the live schedule still holds: the count a surface's
+    /// jobs drawer states (`02` §8). Zero between batches, and zero once every
+    /// helper a batch admitted has ended.
+    #[allow(dead_code)] // the jobs drawer of phase 4.6 is its caller; the helper tests read it today
+    pub(crate) async fn active_helpers(&self) -> usize {
+        self.active
+            .lock()
+            .await
+            .as_ref()
+            .map_or(0, |live| live.in_flight)
     }
 
     pub async fn message(&self, agent: &AgentId, text: &str) -> Result<(), CodingError> {

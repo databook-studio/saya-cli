@@ -17,7 +17,11 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     // when the surface ends. A raw stdin read in front of the interface would
     // pre-empt the alternate screen and leave the terminal broken.
     let runtime = std::sync::Arc::new(runtime);
-    let parts = surface_parts(
+    // The session's facts, and the record this launch resumed: the one opener
+    // reads its link exactly as the plain loop's first message does, so an
+    // attach, a next epoch, a read-only record and a refusal all open the same
+    // way on both surfaces.
+    let composed = surface_parts(
         &state,
         &session,
         runtime.as_ref(),
@@ -40,7 +44,7 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         trust: std::sync::Arc::clone(&trust)
             as std::sync::Arc<dyn crate::front::tui::direct_trust::TrustStore>,
     });
-    let outcome = run_surface(parts, model, facts, direct, commands, metrics, entered);
+    let outcome = run_surface(composed, model, facts, direct, commands, metrics, entered);
     let mut session = trust
         .release()
         .ok_or("the surface ended without giving its session back")?;

@@ -6,7 +6,7 @@ use super::super::{
     session::runtime::SessionRuntime,
     turn_summary::{ProseOutcome, ToolTally, TurnSummary, prose_status},
 };
-use super::line_chat::{LineChat, LineSession, Said};
+use super::line_chat::{Begun, LineChat, LineSession, Said};
 use crate::chat::ChatOutcome;
 use crate::interactive::session::lifecycle::paths::default_session_dir;
 use crate::{

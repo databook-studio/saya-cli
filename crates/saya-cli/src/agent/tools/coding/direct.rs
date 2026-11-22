@@ -51,6 +51,16 @@ impl RootTools {
             .any(|definition| definition.name == "shell")
     }
 
+    /// States the text this run was asked — the first turn's own words — which
+    /// the optional tools' advertisement is filtered by. A run over a working
+    /// checkout states it once; a read-only run advertises no optional tool at
+    /// all, so it has none to state it for.
+    pub(crate) fn note_request_text(&self, text: &str) {
+        if let RootTools::WorkingCheckout(direct) = self {
+            direct.note_request_text(text);
+        }
+    }
+
     /// Starts the root shell's held composition, if this surface has one, once
     /// the turn's context is built: the probe it starts mutates W.
     pub(crate) fn start_shell_composition(&self) {

@@ -1,5 +1,9 @@
 //! Native parent tools adapt the same job owner used by terminal controls.
 mod direct;
+/// What the working-checkout root advertises of its composed toolset: the one
+/// predicate the advertisement and the dispatch gate read, and the evidence it
+/// is filtered by (`direct_tools.rs` is the composition itself).
+mod direct_advertise;
 /// The advertisement's mode gate: which of the root's tools the run's mode
 /// reaches, read from the old session's own family rules.
 mod direct_mode;

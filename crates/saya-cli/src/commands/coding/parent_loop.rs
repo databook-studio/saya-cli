@@ -126,6 +126,12 @@ impl NativeCodingJob {
             context_blocks.extend(blocks);
         }
         session.tools.start_shell_composition();
+        // The text this turn asks with is the run's own request, and the
+        // optional tools are advertised from it: a job root's first turn is its
+        // task, a chat session's is the message the operator sent. Stated once,
+        // so the advertisement — and the request prefix a provider caches — is
+        // stable across the run's turns.
+        session.tools.note_request_text(&asked);
         let request = AgentRequest {
             prompt,
             profile_names: vec![],

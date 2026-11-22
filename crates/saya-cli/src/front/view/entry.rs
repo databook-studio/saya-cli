@@ -6,7 +6,7 @@
 
 use serde_json::Value;
 
-use super::entry_blocks::{Clarification, Command, Edit, Error, Helper, Stop};
+use super::entry_blocks::{Clarification, Command, Edit, Error, Helper, HelperState, Stop};
 use super::entry_result::ResultPreview;
 
 /// The conversation as its front holds it: one view per turn, oldest first.
@@ -94,6 +94,27 @@ impl TurnView {
     /// The block at `index`, to be changed.
     pub(crate) fn entry_mut(&mut self, index: usize) -> Option<&mut Entry> {
         self.entries.get_mut(index)
+    }
+
+    /// One helper's block, once its first call opened it: the turn keeps one
+    /// per caller, so this is how a later call of the same helper finds it.
+    pub(crate) fn helper_mut(&mut self, id: &str) -> Option<&mut Helper> {
+        self.entries.iter_mut().find_map(|entry| match entry {
+            Entry::Helper(helper) if helper.id == id => Some(helper),
+            _ => None,
+        })
+    }
+
+    /// Settles every helper still running: the call that launched it returned,
+    /// so the helpers it launched have ended.
+    pub(crate) fn settle_helpers(&mut self) {
+        for entry in &mut self.entries {
+            if let Entry::Helper(helper) = entry
+                && helper.state == HelperState::Running
+            {
+                helper.state = HelperState::Done;
+            }
+        }
     }
 }
 

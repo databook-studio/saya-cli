@@ -122,8 +122,14 @@ impl RunPort for JobPort {
         // This turn's cancel is the operator's, stated during it: a message
         // after it starts the next one uncancelled.
         self.cancelled.store(false, Ordering::Release);
+        // A helper's own tool calls join this turn's stream, stamped with the
+        // helper's id, so a surface draws one block per helper (`02` §3.6).
+        // Stated for the turn and cleared when the turn ends, however it ends.
+        let forwarded = Forwarding::new(&self.job, Arc::clone(&sink));
         let turn = ChatTurn::new(&self.job, self.metrics.clone(), &self.cancelled, &self.last);
-        turn.run(sink.as_ref(), &prompt).await
+        let outcome = turn.run(sink.as_ref(), &prompt).await;
+        drop(forwarded);
+        outcome
     }
 
     async fn cancel_turn(&self) {
@@ -208,6 +214,27 @@ impl<'a> ChatTurn<'a> {
     /// How this turn ended, as the chat side of it.
     fn read(&self) -> ChatOutcome {
         ChatOutcome::from_stop(self.job.turn_stop(), self.cancelled.load(Ordering::Acquire))
+    }
+}
+
+/// One turn's forwarding: the run's stream, read by every helper the turn
+/// launches, cleared when the turn is over — a helper launched by a later turn
+/// joins that turn's stream and never this one's.
+pub(super) struct Forwarding<'a> {
+    job: &'a NativeCodingJob,
+}
+
+impl<'a> Forwarding<'a> {
+    /// States `sink` as the stream this turn's helpers join.
+    pub(super) fn new(job: &'a NativeCodingJob, sink: Arc<dyn AgentEventSink>) -> Self {
+        job.set_helper_forward(Some(sink));
+        Self { job }
+    }
+}
+
+impl Drop for Forwarding<'_> {
+    fn drop(&mut self) {
+        self.job.set_helper_forward(None);
     }
 }
 

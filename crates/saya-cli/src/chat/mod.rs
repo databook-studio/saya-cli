@@ -46,7 +46,7 @@ pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
 pub(crate) use front::ChatFront;
 #[allow(unused_imports)]
-pub(crate) use link::{Resume, RunFacts, after_prepare};
+pub(crate) use link::{Resume, RunFacts, after_prepare, decide};
 #[allow(unused_imports)]
 pub(crate) use operator::SessionOperator;
 #[allow(unused_imports)]
@@ -92,6 +92,18 @@ pub(crate) mod operator_front_fixture;
 #[cfg(all(test, unix))]
 #[path = "compose_fixture.rs"]
 pub(crate) mod compose_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_helpers_tests.rs"]
+mod compose_helpers_tests;
+
+#[cfg(all(test, unix))]
+#[path = "helpers_transcript_tests.rs"]
+mod helpers_transcript_tests;
+
+#[cfg(all(test, unix))]
+#[path = "helpers_cancel_tests.rs"]
+mod helpers_cancel_tests;
 
 #[cfg(all(test, unix))]
 #[path = "compose_tests.rs"]

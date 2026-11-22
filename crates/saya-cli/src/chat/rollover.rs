@@ -28,7 +28,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use super::compose::{RunComposition, SessionRun};
 use super::link;
 use super::transcript::Transcript;
-use crate::commands::coding::{CodingApplication, CodingError};
+use crate::commands::coding::{CodingApplication, CodingError, NativeCodingJob};
 use crate::interactive::session::continuation::compaction::manual::COMPACT_KEEP_TAIL_TURNS;
 
 /// What a context change changed. The change is what the surface states; the
@@ -95,13 +95,39 @@ impl std::fmt::Display for RolloverError {
 /// value, closes and finalizes it, and drops it so the folder lease is free
 /// before the next job is created.
 pub(crate) struct Ending {
-    run: RunComposition,
+    run: End,
+}
+
+/// The run a rollover replaces, as the surface holds it: the composition a
+/// session stated, or the job alone — a run the front resumed has no
+/// composition of its own, the engine handed its job back already opened.
+enum End {
+    Composed(Box<RunComposition>),
+    Adopted(Arc<NativeCodingJob>),
 }
 
 impl Ending {
     /// The session's run, handed over to the rollover that replaces it.
     pub(crate) fn new(run: RunComposition) -> Self {
-        Self { run }
+        Self {
+            run: End::Composed(Box::new(run)),
+        }
+    }
+
+    /// A resumed run, handed over the same way.
+    pub(crate) fn adopted(job: Arc<NativeCodingJob>) -> Self {
+        Self {
+            run: End::Adopted(job),
+        }
+    }
+
+    /// The job every turn of the run named: what the rollover finalizes before
+    /// the next job is prepared.
+    fn job(&self) -> &Arc<NativeCodingJob> {
+        match &self.run {
+            End::Composed(run) => run.job(),
+            End::Adopted(job) => job,
+        }
     }
 }
 
@@ -155,23 +181,22 @@ impl Rollover {
         next: SessionRun,
         transcript: &mut Transcript,
     ) -> Result<RunComposition, RolloverError> {
-        let run = ending.run;
+        let job = ending.job();
         // A rollover prepares a new job: the run it replaces is over, and the
         // surface states the job that follows it.
-        if run.job().job_id().as_str() == next.session {
+        if job.job_id().as_str() == next.session {
             return Err(RolloverError::SameJob(next.session));
         }
         // The run's own last answer, as the surface recorded it, is the answer
         // its terminal record states.
         let answer = transcript.turns().last().map(|turn| turn.answer.clone());
-        run.job()
-            .run_finish(answer)
+        job.run_finish(answer)
             .await
             .map_err(RolloverError::Engine)?;
         // The job object owns the folder's lease, in place: dropping the run
         // that ended is what frees it, and the next job is created after that
         // and never before it.
-        drop(run);
+        drop(ending);
         // `/clear` starts the next run with nothing; every other change carries
         // the conversation over as the run's history.
         if change.clears_transcript() {

@@ -14,14 +14,19 @@
 //! session states, and the rollover a compaction asks for builds the next one
 //! the same way: the same folder, the same mode, the same databases — only the
 //! job name differs, which is what makes the run that follows a new job.
+//!
+//! **One opener.** [`open_run`] composes and opens a run over a host and a front
+//! its caller stated, so the first run, the rollover's next one, the run a
+//! resumed record names and the one a read-only record prepares are one path:
+//! what a record's link decides ([`super::begin::decided`]) is the only thing
+//! that differs, never how a run is opened.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use saya_agent::{AgentEventSink, ApprovalPolicy, CancellationToken};
-use saya_store::SqliteStateStore;
+use saya_store::{RedactedSession, SqliteStateStore};
 
-use super::LineChat;
 use super::line::Line;
 use super::run::Run;
 use crate::agent::runtime::PromptOverrides;
@@ -98,19 +103,6 @@ pub(crate) struct LineSession {
     pub(crate) seed: Vec<(String, String)>,
 }
 
-/// Opens the session: composes and opens its run, and hands back the session
-/// driving it, already `Ready`.
-impl LineChat {
-    pub(crate) fn open(parts: LineSession) -> Result<Self, String> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| format!("the session's runtime could not be built: {error}"))?;
-        let line = runtime.block_on(assemble(parts, super::one_shot::OneShot::No))?;
-        Ok(LineChat::new(line, runtime))
-    }
-}
-
 /// The same composition, driven by a surface that already runs on a runtime:
 /// one line session, composed and prepared exactly as the plain loop's first
 /// message prepares it, owned by that runtime instead of one of its own.
@@ -123,15 +115,14 @@ impl LineChat {
 ///
 pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
     parts.state_root = super::one_shot::state_root(&parts)?;
-    assemble(parts, super::one_shot::OneShot::Yes).await
+    assemble(parts, true).await
 }
 
 /// Builds the host the session's run is composed over, and states the run's
 /// facts — asking nobody: the session's mode is the consent.
-async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
-    let config: &RuntimeConfig = &parts.runtime;
+async fn assemble(parts: LineSession, one_shot: bool) -> Result<Line, String> {
     let hosted = host(&parts).await?;
-    if one_shot == super::one_shot::OneShot::Yes {
+    if one_shot {
         super::one_shot::state_on(&hosted.application);
     }
     // The run's own counters, printed after every settled turn: the same
@@ -140,17 +131,7 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
     // own — the run keeps the one it was opened with — and a surface that
     // brought the question's token states it, so the stop the question latched
     // is the stop this front waits on.
-    let stop = parts.cancellation.clone().unwrap_or_default();
-    let scope = match parts.cancellation.is_some() {
-        true => crate::agent::question_scope::QuestionScope::ask(config, stop),
-        false => crate::agent::question_scope::QuestionScope::session(config, stop),
-    };
-    let metrics = scope.metrics();
-    let front = match parts.sink.clone() {
-        Some(sink) => LineFront::over(sink, parts.can_prompt, tally_handle()),
-        None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
-    };
-    let front = Arc::new(front.with_scope(scope));
+    let (front, metrics) = front_for(&parts);
     let (run, application, shape) = open_run(
         &parts,
         hosted,
@@ -208,15 +189,21 @@ pub(super) async fn open_run(
 }
 
 /// The run the full-screen surface drives: the line loop's own composition —
-/// the same folder rule, the same grants, the same budget, the same seed —
-/// with that surface's front receiving what the session says.
+/// the same folder rule, the same grants, the same budget, the same seed — with
+/// the record the launch resumed read the same way the line loop reads it, so a
+/// record whose link attaches, prepares its next epoch, opens read-only or is
+/// refused opens that way on this surface too.
 pub(crate) async fn open_surface(
     parts: LineSession,
+    record: &RedactedSession,
     front: Arc<dyn ChatFront>,
 ) -> Result<Opened, String> {
-    let hosted = host(&parts).await?;
-    let (run, _application, _shape) = open_run(&parts, hosted, front, None).await?;
-    Ok(Opened { run })
+    match super::begin::decided(&parts, record, front, None).await? {
+        super::begin::Decided::Open(open) => Ok(Opened { run: open.run }),
+        // A job this release takes no further turn on states its one sentence;
+        // the surface opens nothing and the launch reports it.
+        super::begin::Decided::Refused { sentence } => Err(sentence),
+    }
 }
 
 /// A run one surface outside the line loop drives, held for as long as that
@@ -243,6 +230,23 @@ impl Opened {
     pub(crate) fn run_port(&self) -> Arc<dyn RunPort> {
         self.run.run_port()
     }
+}
+
+/// The surface every turn prints on, and the counters its scope records into:
+/// stated once for the composed run and for the resumed one.
+pub(super) fn front_for(parts: &LineSession) -> (Arc<LineFront>, Option<Arc<LocalMetrics>>) {
+    let config: &RuntimeConfig = &parts.runtime;
+    let stop = parts.cancellation.clone().unwrap_or_default();
+    let scope = match parts.cancellation.is_some() {
+        true => crate::agent::question_scope::QuestionScope::ask(config, stop),
+        false => crate::agent::question_scope::QuestionScope::session(config, stop),
+    };
+    let metrics = scope.metrics();
+    let front = match parts.sink.clone() {
+        Some(sink) => LineFront::over(sink, parts.can_prompt, tally_handle()),
+        None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
+    };
+    (Arc::new(front.with_scope(scope)), metrics)
 }
 
 /// The run a session states — the first one, and every one a rollover prepares

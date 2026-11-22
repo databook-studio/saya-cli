@@ -22,10 +22,12 @@
 //! runtime per call, which is fine for one-shot operations and not for a run
 //! that outlives them.
 
+mod begin;
 mod boundary;
 mod line;
 mod one_shot;
 mod open;
+mod resume;
 mod run;
 mod session_host;
 
@@ -37,6 +39,8 @@ pub(crate) use self::open::{LineSession, open_surface};
 
 #[allow(unused_imports)]
 pub(crate) use self::open::Opened;
+
+pub(crate) use self::begin::Begun;
 
 #[allow(unused_imports)]
 pub(crate) use self::boundary::{Said, nothing_to_compact};

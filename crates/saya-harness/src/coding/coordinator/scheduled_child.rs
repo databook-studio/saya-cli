@@ -38,6 +38,12 @@ pub(super) async fn run(
         .map_err(|_| ChildRunError::OwnerFailure)?;
     let cancellation = node.control.cancellation.clone();
     let (sender, mut receiver) = child_event_channel(&node.spec);
+    // A caller that stated its own stream — the chat transcript that draws one
+    // block per helper — receives this child's tool calls through it.
+    let sender = match node.forward.clone() {
+        Some(sink) => sender.forwarding(sink),
+        None => sender,
+    };
     let loop_future = run_child_controlled(
         node.spec,
         node.factory.as_ref(),
