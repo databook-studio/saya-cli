@@ -21,6 +21,9 @@ impl SessionState {
     /// The raw stored summary under the same gate: the runtime renderer
     /// adds its own header and cuts the text to its byte budget, so the
     /// request feed must not pre-wrap the summary in a narrative header.
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn compaction_summary_text(&self) -> Option<String> {
         self.compacted_summary_gate().map(str::to_owned)
     }

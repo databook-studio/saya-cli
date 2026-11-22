@@ -1,5 +1,5 @@
+use crate::interactive::SessionUsage;
 use crate::interactive::session::universe::SessionUniverse;
-use crate::interactive::tui::types::SessionUsage;
 use saya_agent::{AgentOutput, ChatMessage, ToolMetadata};
 use saya_store::{
     ParentLink, RedactedSession, RedactedToolMetadata, RedactedToolResultShape, RedactedTurn,

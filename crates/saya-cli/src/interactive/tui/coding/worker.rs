@@ -1,6 +1,5 @@
 use super::{CodingMessage, CodingPanel};
 use crate::{
-    agent::tools::shell_policy::ModeCell,
     cli::CodingCommand,
     commands::coding::{
         CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, Launch,
@@ -14,21 +13,12 @@ use saya_store::SqliteStateStore;
 use serde_json::Value;
 use std::{
     path::PathBuf,
-    sync::{Arc, OnceLock, mpsc},
+    sync::{Arc, mpsc},
 };
 #[path = "worker/active.rs"]
 mod active;
 #[path = "worker/chat_operator.rs"]
 mod chat_operator;
-#[cfg(test)]
-#[path = "worker/chat_operator_refusal_tests.rs"]
-mod chat_operator_refusal_tests;
-#[cfg(test)]
-#[path = "worker/chat_operator_tests.rs"]
-mod chat_operator_tests;
-#[cfg(test)]
-#[path = "worker/chat_prompt_fixture.rs"]
-mod chat_prompt_fixture;
 #[path = "worker/wait_policy.rs"]
 mod wait_policy;
 #[cfg(test)]
@@ -87,11 +77,6 @@ pub(crate) fn spawn(
     let (commands, control) = tokio::sync::mpsc::channel(16);
     let cancellation = CancellationToken::new();
     let token = cancellation.clone();
-    // The job's one mode cell, published back to the panel as soon as the
-    // worker has built the job: the handle the session's own switch states a
-    // mode on, so a mode switched in the TUI reaches this job's next call.
-    let job_mode = Arc::new(OnceLock::new());
-    let published = Arc::clone(&job_mode);
     let id = match &command {
         CodingCommand::Start { id, .. } | CodingCommand::FollowUp { id, .. } => Some(id.clone()),
         _ => None,
@@ -116,7 +101,6 @@ pub(crate) fn spawn(
                         senders,
                         control,
                         approval_policy,
-                        published,
                     ))
                     .map_err(|error| error.to_string())
             });
@@ -132,7 +116,6 @@ pub(crate) fn spawn(
         pending: None,
         worker: Some(worker),
         active: true,
-        job_mode,
     }
 }
 /// Operator-visible outcomes (control receipts, pause acknowledgements) ride
@@ -161,7 +144,6 @@ async fn work(
     senders: PanelSenders,
     controls: tokio::sync::mpsc::Receiver<CodingCommand>,
     approval_policy: saya_agent::ApprovalPolicy,
-    job_mode: Arc<OnceLock<ModeCell>>,
 ) -> Result<String, CodingError> {
     let PanelSenders {
         activity: tx,
@@ -206,7 +188,6 @@ async fn work(
     };
     if matches!(command, CodingCommand::FollowUp { .. }) {
         let (job, request) = resume_follow_up(&application, command, token, tx.clone()).await?;
-        let _ = job_mode.set(job.approval_mode());
         let run = async {
             job.run_follow_up(request)
                 .await
@@ -270,7 +251,6 @@ async fn work(
     let job = application
         .create_for_start(request, plan, approval.as_ref(), token)
         .await?;
-    let _ = job_mode.set(job.approval_mode());
     let run = async {
         job.run(&NoopEventSink).await.map(|output| {
             // The model's final answer, not the readiness envelope the

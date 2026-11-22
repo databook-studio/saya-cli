@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 use super::tokens::Scheme;
+use crate::interactive::tui::Theme;
 
 /// The variable the convention names.
 pub(crate) const NO_COLOR: &str = "NO_COLOR";
@@ -27,4 +28,15 @@ pub(crate) fn scheme(env: &BTreeMap<String, String>, chosen: Scheme) -> Scheme {
 /// disables colour; an empty value states nothing.
 pub(crate) fn asks_for_no_colour(env: &BTreeMap<String, String>) -> bool {
     env.get(NO_COLOR).is_some_and(|value| !value.is_empty())
+}
+
+/// The token column for the ground the launch resolved: `[ui] theme`/`--theme`
+/// select light or dark (through the kept theme leaf, which asks the terminal
+/// when the choice is `auto`), and `NO_COLOR` still wins over either.
+pub(crate) fn scheme_for(ground: Theme, env: &BTreeMap<String, String>) -> Scheme {
+    let chosen = match ground {
+        Theme::Light => Scheme::Light,
+        Theme::Dark => Scheme::Dark,
+    };
+    scheme(env, chosen)
 }

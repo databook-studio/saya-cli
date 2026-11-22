@@ -144,3 +144,66 @@ fn cancelling_with_no_job_says_so_instead_of_doing_nothing() {
     };
     assert_eq!(worker.message, NO_SUCH_JOB);
 }
+
+// ---------------------------------------------------------------------------
+// what a job's text may show: the old app's `safe_text` pins, moved here
+// ---------------------------------------------------------------------------
+//
+// The deleted App pushed a job's activity into its transcript through one
+// redacting, bounded filter, and three tests pinned it. The drawer and the
+// consent card keep the same guarantee on this surface, so the pins follow
+// them: a secret never reaches a row, a control character never reaches the
+// terminal, and neither a row nor a consent's facts grow without a bound.
+
+mod what_a_jobs_text_may_show {
+    use super::super::jobs_desk::{facts, summary};
+
+    /// A terminal escape, a bell, a carriage return, and a backspace are
+    /// stripped; a row keeps no control character at all — a row is one row.
+    #[test]
+    fn control_characters_never_reach_a_row() {
+        let hostile = "ok\u{1b}[31mred\u{1b}[0m\u{7}bell\rreturn\u{8}back\nline\ttab";
+        let shown = summary(hostile);
+        assert!(
+            !shown.chars().any(char::is_control),
+            "a row carries no control character at all: {shown:?}"
+        );
+        assert!(!shown.contains('\u{1b}') && !shown.contains('\u{7}'));
+        assert!(shown.starts_with("ok"), "{shown:?}");
+    }
+
+    /// A consent is read row by row, so its own newlines survive — every other
+    /// control character does not.
+    #[test]
+    fn a_consent_keeps_its_rows_and_drops_every_other_control_character() {
+        let shown = facts("run:\u{1b}[2J\u{7} rm -rf build\nand then: make");
+        assert_eq!(shown, "run:[2J rm -rf build\nand then: make");
+    }
+
+    /// A secret-shaped value is replaced before anything is shown, in both
+    /// kinds of text a job hands the surface.
+    #[test]
+    fn secrets_are_redacted_before_display() {
+        let row = summary("connecting with password=hunter2-sentinel done");
+        assert!(!row.contains("hunter2-sentinel"), "{row}");
+        assert!(row.contains("connecting"), "{row}");
+        let consent = facts("export TOKEN=ghp_hunter2-sentinel\nrun");
+        assert!(!consent.contains("hunter2-sentinel"), "{consent}");
+    }
+
+    /// A row is one line of at most 120 characters; a consent's facts stop at
+    /// sixteen kibibytes of characters, with the exactly-at-the-bound text
+    /// untouched.
+    #[test]
+    fn both_texts_are_bounded() {
+        let long = "x".repeat(40 * 1024);
+        assert_eq!(summary(&long).chars().count(), 120);
+        assert_eq!(facts(&long).chars().count(), 16 * 1024);
+        let exact = "y".repeat(16 * 1024);
+        assert_eq!(
+            facts(&exact),
+            exact,
+            "positive control: at the bound nothing is cut"
+        );
+    }
+}

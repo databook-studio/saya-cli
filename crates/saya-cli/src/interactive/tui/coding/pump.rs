@@ -119,7 +119,6 @@ impl CodingPanel {
                 pending: None,
                 worker: None,
                 active: true,
-                job_mode: std::sync::Arc::new(std::sync::OnceLock::new()),
             },
             activity,
             receipts_tx,

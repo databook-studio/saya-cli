@@ -4,6 +4,9 @@ pub(crate) mod deny;
 pub(crate) mod grant_families;
 pub(crate) mod grant_surface;
 pub(crate) mod grants;
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 pub(crate) mod mode;
 pub(crate) mod trust;
 

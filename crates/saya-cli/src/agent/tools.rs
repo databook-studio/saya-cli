@@ -37,7 +37,13 @@ mod shell_command;
 /// shared by every surface that advertises it (the coding root and a run's
 /// per-step toolsets).
 pub(crate) mod shell_policy;
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 mod sql_format;
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 mod tool_calls;
 /// The one `web_fetch` tool: the harness's own bounded GET, converted to text
 /// and consented per call, shared by the coding root and its helpers.

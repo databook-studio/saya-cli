@@ -1,7 +1,7 @@
 //! Column selection: the `/columns` name filter (`base_columns`) and the
 //! viewport window with pin-first and horizontal offset (`window_columns`).
 
-use crate::interactive::tui::types::WideTableView;
+use super::WideTableView;
 
 use super::geometry::cell_text;
 

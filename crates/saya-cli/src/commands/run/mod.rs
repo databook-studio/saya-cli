@@ -14,6 +14,9 @@
 //! builds a turn's, drives the steps blocking, and maps the typed outcomes
 //! onto the documented exit codes.
 
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 mod approval;
 #[cfg(test)]
 mod approval_tests;
@@ -40,6 +43,9 @@ mod resume;
 // grant token suggester feeds its tokens back through this parser — the
 // parser is the grammar's single authority, never duplicated.
 pub(crate) mod scopes;
+// The old surface was this seam's only caller; X1 deleted it. The code here
+// is X2/X3's to remove, kept compiled rather than deleted twice.
+#[allow(dead_code)]
 mod start;
 mod step_tools;
 #[cfg(test)]
@@ -56,13 +62,13 @@ use saya_store::SqliteStateStore;
 use saya_types::{PauseReason, RunEvent, RunId};
 use std::path::PathBuf;
 
-// The panel adapter surface: the TUI's run panel drives the same fresh-run
-// path through `start_for_panel`, and its plan-approval modal answers the
-// channel request `ask.rs`'s terminal driver answers for `saya run`. The
-// panel mints its run's id with the same helper so the title names the run
-// the journal will record.
-pub(crate) use approval::{PlanApproval, PlanApprovalRequest};
+// The run-panel adapter's seams, read by the run cancellation tests: the panel
+// drives the same fresh-run path `saya run` takes, and its plan-approval channel
+// is the one `ask.rs` answers for the terminal driver. Only the tests name them
+// now that the panel is gone, so they are exported with the tests.
+#[cfg(test)]
 pub(crate) use host::{HostRun, RunRequest};
+#[cfg(test)]
 pub(crate) use start::start_for_panel;
 
 /// A fresh run id: milliseconds plus pid — unique on one machine, and inside
@@ -228,12 +234,4 @@ pub(super) fn journal_tail(
         },
         Err(_) => (RunState::Executing, None),
     }
-}
-
-/// Serializes the unit tests that point `SAYA_RUNS_DIR` at a private root:
-/// the variable is process-global and the lib test binary runs its tests
-/// concurrently, so every such test holds this for its whole body.
-#[cfg(test)]
-pub(crate) mod test_lock {
-    pub(crate) static RUNS_DIR: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 }

@@ -45,20 +45,3 @@ pub(super) fn format_cell(text: &str, col_width: usize, alignment: Alignment) ->
         Alignment::Right => format!("{padding}{content}"),
     }
 }
-
-pub(super) fn clean_cell(cell: &str) -> String {
-    let mut s = cell.trim();
-    if s.starts_with("**") && s.ends_with("**") && s.len() >= 4 {
-        s = &s[2..s.len() - 2];
-        s = s.trim();
-    }
-    if s.starts_with('`') && s.ends_with('`') && s.len() >= 2 {
-        s = &s[1..s.len() - 1];
-        s = s.trim();
-    }
-    if s.starts_with("**") && s.ends_with("**") && s.len() >= 4 {
-        s = &s[2..s.len() - 2];
-        s = s.trim();
-    }
-    s.to_string()
-}

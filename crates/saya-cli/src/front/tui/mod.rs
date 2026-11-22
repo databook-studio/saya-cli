@@ -22,8 +22,10 @@
 
 pub(crate) mod cards_keys;
 pub(crate) mod direct;
+pub(crate) mod direct_chart_args;
 pub(crate) mod direct_export;
 pub(crate) mod direct_run;
+pub(crate) mod direct_save;
 pub(crate) mod direct_trust;
 pub(crate) mod focus;
 mod focus_text;
@@ -247,3 +249,9 @@ mod direct_trust_tests;
 #[cfg(test)]
 #[path = "direct_export_tests.rs"]
 mod direct_export_tests;
+
+// The `/setup` close the old surface rendered onto its app block by block: the
+// meaning survives here, pinned against this surface's own landing.
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod setup_tests;

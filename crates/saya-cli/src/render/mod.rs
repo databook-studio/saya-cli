@@ -29,25 +29,11 @@ pub use contract_view::{
     ContractClaimView, ContractConflictView, ContractQueueItemView, ContractView,
 };
 pub use io_view::{ContractExportView, ContractImportClaimView, ContractImportView};
-/// Re-exported for the TUI, which renders [`AgentEvent::ClarificationNeeded`]
-/// as the transcript's Question block, and for the ask-path tests, which pin
-/// the block text — one shaper, both surfaces.
+
+// The ask-path tests pin the Question block's text through this one shaper; the
+// old TUI's transcript was its other reader.
+#[cfg(test)]
 pub(crate) use render_clarification::clarification_text;
-/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeProposed`] in
-/// `apply_event` and shares this shaper so the wording lives in one place.
-pub(crate) use render_learned::knowledge_learned_text;
-/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeOverridden`] in
-/// `apply_event` and shares this shaper so the wording lives in one place.
-pub(crate) use render_memory::knowledge_overridden_text;
-/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeSupplied`] in
-/// `apply_event` and shares this shaper so the wording lives in one place.
-pub(crate) use render_memory::knowledge_supplied_text;
-/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningDisabled`]
-/// in `apply_event` and shares this shaper so the wording lives in one place.
-pub(crate) use render_memory::learning_disabled_text;
-/// Re-exported for the TUI, which renders [`AgentEvent::KnowledgeLearningSkipped`]
-/// in `apply_event` and shares this shaper so the wording lives in one place
-pub(crate) use render_memory::learning_skipped_text;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderFormat {
     Text,

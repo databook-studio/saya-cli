@@ -52,6 +52,9 @@ impl SessionRuntime {
     /// session's write surface at the engine. The plan gate rides it for the
     /// same reason: the rebuilt policy holds the composed gate's own cell, so
     /// an approval already given still admits what the advertisement lists.
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn sync_policy(&mut self, mode: ApprovalPolicy) {
         if self.policy_mode == mode {
             return;

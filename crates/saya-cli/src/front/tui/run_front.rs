@@ -149,6 +149,15 @@ impl ChatFront for Forward {
         answer.await.unwrap_or(Answer::Deny)
     }
 
+    /// Every ask is painted as a card and answered by the key that takes it,
+    /// so this surface can obtain a per-call approval: that is the fact a
+    /// write-shaped tool's advertisement is decided from, and stating it false
+    /// would hide every write-shaped tool the operator asked for (the old
+    /// surface stated the same fact through its modal).
+    fn can_obtain_approval(&self) -> bool {
+        true
+    }
+
     fn emit(&self, event: ChatEvent) {
         let _ = self.send(event);
     }

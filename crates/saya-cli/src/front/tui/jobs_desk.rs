@@ -166,7 +166,7 @@ impl JobDesk {
 }
 
 /// One activity line as a row keeps it: redacted, one line, and bounded.
-fn summary(line: &str) -> String {
+pub(super) fn summary(line: &str) -> String {
     saya_types::redact(line)
         .chars()
         .map(|character| {
@@ -185,7 +185,7 @@ fn summary(line: &str) -> String {
 /// One consent text as the card's facts state it: redacted, its own rows kept —
 /// a consent is a list an operator reads row by row, not one line — and
 /// bounded.
-fn facts(text: &str) -> String {
+pub(super) fn facts(text: &str) -> String {
     saya_types::redact(text)
         .chars()
         .filter(|character| *character == '\n' || !character.is_control())

@@ -105,6 +105,9 @@ impl SessionState {
     /// Records a completed turn and its bounded live outcome observation.
     /// Status strings are interpreted only here, while they belong to the
     /// actual runtime output; resumed strings never feed this projection.
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn record_agent_output(&mut self, user: impl Into<String>, output: &AgentOutput) {
         self.record_turn(
             user,
