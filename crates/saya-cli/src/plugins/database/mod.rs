@@ -50,7 +50,7 @@ use saya_agent::{
 
 use crate::agent::knowledge_event::knowledge_supplied_event;
 use crate::agent::tools::workspace::is_tool_name;
-use crate::agent::tools::{CaptureHook, DatabaseTools, clarification};
+use crate::agent::tools::{CaptureEvent, CaptureHook, DatabaseTools, clarification};
 use crate::contracts::RecallReceipt;
 
 pub(crate) use learning::LearningSource;
@@ -61,6 +61,17 @@ pub(crate) use surface::ChatDatabaseFlags;
 pub(crate) use turn_policy::DatabaseBudget;
 
 use surface::{ChatSurface, Surface};
+
+/// Writes one SQL statement into the shared slot both the plugin and the chat
+/// surface's capture hook hold. A poisoned lock still holds the slot — a plain
+/// string is no half-written value — so it is written rather than lost.
+fn record(slot: &Mutex<Option<String>>, sql: Option<&str>) {
+    let mut slot = match slot.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *slot = sql.map(str::to_owned);
+}
 
 /// Every database tool name either surface can offer. The registry checks
 /// collisions against this list once, so it is the whole of what the plugin may
@@ -104,8 +115,10 @@ pub(crate) struct DatabasePlugin {
     last_receipt: Mutex<Option<Arc<RecallReceipt>>>,
     /// The most recent SQL this run executed, as the run last stated it. A
     /// mutex for the same reason as the receipt: `context()` reads it through
-    /// `&self` when the turn asks for its context blocks.
-    last_sql: Mutex<Option<String>>,
+    /// `&self` when the turn asks for its context blocks. Shared with the
+    /// capture hook the chat surface's tools carry, because that hook is where
+    /// a query's success is known (`record_last_sql`'s one live caller).
+    last_sql: Arc<Mutex<Option<String>>>,
 }
 
 impl DatabasePlugin {
@@ -113,11 +126,30 @@ impl DatabasePlugin {
     /// adapt-this-query hint the chat's turn carried. `None` clears it — a turn
     /// that ran no SQL states nothing about one.
     pub(crate) fn record_last_sql(&self, sql: Option<&str>) {
-        let mut slot = match self.last_sql.lock() {
-            Ok(slot) => slot,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        *slot = sql.map(str::to_owned);
+        record(&self.last_sql, sql);
+    }
+
+    /// The capture hook the chat surface's tools carry: the front's own hook
+    /// (when it drives one) behind the record the next turn's context reads.
+    ///
+    /// A capture is emitted only for a query that executed — the single
+    /// connection arm, on success, either as evidence or refused for its size —
+    /// so this is where the run learns the SQL it most recently ran, and the
+    /// hint for it rides the NEXT turn's user tail
+    /// ([`Self::context`] → `last_sql_hint_block`).
+    fn capture_hook(&self) -> CaptureHook {
+        let last_sql = Arc::clone(&self.last_sql);
+        let front = self.capture.clone();
+        Arc::new(move |event: CaptureEvent| {
+            let sql = match &event {
+                CaptureEvent::Captured(capture) => Some(capture.sql.as_str()),
+                CaptureEvent::Refused { sql, .. } => Some(sql.as_str()),
+            };
+            record(&last_sql, sql);
+            if let Some(front) = &front {
+                front(event);
+            }
+        })
     }
 
     /// Attaches the run's recall source: with one, `context()` recalls this
@@ -289,9 +321,7 @@ impl RunPlugin for DatabasePlugin {
             // hook is installed on them here, before the loop can call them.
             // No hook installs nothing, leaving the tools as built.
             Surface::Chat(ChatSurface { tools, .. }) => {
-                if let Some(capture) = &self.capture {
-                    tools.set_capture_hook(capture.clone());
-                }
+                tools.set_capture_hook(self.capture_hook());
                 Some(tools.clone())
             }
             Surface::Job(job) => Some(Arc::new(job_adapter::JobToolExecutor::new(

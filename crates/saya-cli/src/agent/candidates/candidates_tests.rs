@@ -156,3 +156,8 @@ include!("candidates_tests/user_stop.rs");
 /// A question stopped before it starts: the live entry builds nothing.
 #[path = "candidates_tests/pre_stopped.rs"]
 mod pre_stopped;
+
+/// A question the engine refuses before admission: the live entry reads it as
+/// the budget stop and the question's token names its dimension.
+#[path = "candidates_tests/preflight_stop.rs"]
+mod preflight_stop;

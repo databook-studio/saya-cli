@@ -10,7 +10,7 @@
 use super::parent_arming::{TurnArming, stated_delay, stop_the_turn};
 use super::parent_turn::RootSession;
 use super::{CodingError, NativeCodingJob, map_root_error};
-use crate::budget_wording::budget_dimension;
+use crate::budget_wording::{budget_dimension, preflight_dimension};
 use crate::commands::coding::TurnStop;
 use saya_agent::{
     AgentError, AgentEventSink, AgentOutput, AgentRequest, ApprovalDecider, ToolExecutor,
@@ -201,9 +201,12 @@ impl NativeCodingJob {
                 work.await
             }
         };
+        let mut outcome = outcome;
         self.lifecycle().enter("after_loop");
         // The turn's end is stated to the active plugins once, whatever it was:
-        // a plugin observes the outcome and never changes it.
+        // a plugin observes the outcome and never changes it, and what the
+        // plugin's own post-turn work spent is folded into the turn's report —
+        // apart from the answering total, so `/usage` can label the two calls.
         if let Some(plugins) = session.plugins.as_ref() {
             let finished = saya_agent::TurnOutcome {
                 answered: outcome.is_ok(),
@@ -211,7 +214,11 @@ impl NativeCodingJob {
                 prompt: &asked,
                 output: outcome.as_ref().ok(),
             };
-            super::parent_plugins::turn_finished(plugins, &finished, sink).await;
+            let learning_usage =
+                super::parent_plugins::turn_finished(plugins, &finished, sink).await;
+            if let (Some(usage), Ok(output)) = (learning_usage, &mut outcome) {
+                output.learning_usage = Some(usage);
+            }
         }
         // The root loop has finished: record its progress as durable job
         // events, then the final report, then run the `stop` hooks. Reporting
@@ -260,6 +267,12 @@ impl NativeCodingJob {
                     .as_ref()
                     .and_then(|scope| budget_dimension(scope.cancellation_token().reason()))
                     .or_else(|| arming.stop_dimension())
+                    // A turn the engine refused before admission stated its own
+                    // stop on its token and handed back partial output: no
+                    // plugin budget armed and the question's scope spent
+                    // nothing, so this is the only reader of that stop. It is
+                    // still the budget stop, never an answer.
+                    .or_else(|| preflight_dimension(cancellation.reason()))
                 {
                     self.root_run
                         .note_turn_stop(Some(TurnStop::budget(dimension)));

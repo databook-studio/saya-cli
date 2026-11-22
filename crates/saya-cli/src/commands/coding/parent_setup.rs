@@ -34,11 +34,13 @@ impl NativeCodingJob {
         // The untrusted project context (instruction sources and the worktree's
         // preferences) rides a chat surface's turns, as the line session carried
         // it on release. A job surface states its own context, so it carries
-        // none of it.
-        let project_context = inputs
+        // none of it. The same fact decides whether this root states its
+        // workspace's session facts: they are a chat session's, not a job's.
+        let chat_surface = inputs
             .plugins
             .as_ref()
             .is_some_and(|supplied| supplied.context.surface == saya_agent::RunSurface::Chat);
+        let project_context = chat_surface;
         // A direct-mode coordinator owns one working checkout for the whole
         // run; `RootTools::build` ensures it (resume re-ensures it) and composes
         // the toolset. Delegate-only jobs create nothing.
@@ -163,6 +165,17 @@ impl NativeCodingJob {
                 system_prompt.push_str("\n\n");
                 system_prompt.push_str(&sections.join("\n\n"));
             }
+        }
+        // The session's own facts ride the same one-time composition: the
+        // folder this run works in is stated once, exactly as the old session
+        // stated it, so every turn sends the same bytes and the request prefix
+        // never moves. A run with no workspace states none of it, and a job
+        // surface states none: its section is the job's own.
+        if chat_surface && let Some(verified) = checkout.as_ref() {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&crate::agent::session_facts::workspace_root_text(
+                std::path::Path::new(verified.path().as_str()),
+            ));
         }
         let system_prompt = Some(system_prompt);
         self.record_observation_boundary("started", false).await?;

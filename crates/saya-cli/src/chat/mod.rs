@@ -126,8 +126,24 @@ mod turn_extraction_wait_tests;
 mod turn_learning_soft_tests;
 
 #[cfg(all(test, unix))]
+#[path = "turn_learning_usage_tests.rs"]
+mod turn_learning_usage_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compose_token_wallet_tests.rs"]
 mod compose_token_wallet_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_preflight_stop_tests.rs"]
+mod compose_preflight_stop_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_last_sql_tests.rs"]
+mod compose_last_sql_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_workspace_root_tests.rs"]
+mod compose_workspace_root_tests;
 
 #[cfg(all(test, unix))]
 #[path = "compose_preferences_tests.rs"]

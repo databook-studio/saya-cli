@@ -22,7 +22,7 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21416,
+      "body_bytes": 21463,
       "messages": 2,
       "recall": {
         "present": true,
