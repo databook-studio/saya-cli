@@ -11,17 +11,18 @@ use saya_store::{RedactedSession, RunLink};
 
 use super::boundary::Said;
 use super::open::{LineSession, session_run};
+use crate::agent::tools::shell_policy::ModeCell;
 use crate::chat::{
     ChatFront, ChatSession, Ending, JobPort, RunComposition, RunPort, SessionRun, WorkspaceShape,
 };
 use crate::commands::coding::NativeCodingJob;
-use crate::front::{LineFront, SettledTurn};
+use crate::front::SettledTurn;
 use crate::local_metrics::LocalMetrics;
 
 /// The run the session is on.
-pub(super) struct Run {
+pub(crate) struct Run {
     composition: RunComposition,
-    session: ChatSession,
+    session: Arc<ChatSession>,
     port: Arc<JobPort>,
     job: Arc<NativeCodingJob>,
 }
@@ -30,17 +31,17 @@ impl Run {
     /// The run and the chat session driving it, over a composition already
     /// opened: the port states it and opens nothing, so the session's prepare
     /// is the composition's one open.
-    pub(super) async fn opened(
+    pub(crate) async fn opened(
         composition: RunComposition,
-        front: &Arc<LineFront>,
+        front: Arc<dyn ChatFront>,
         metrics: Option<Arc<LocalMetrics>>,
     ) -> Self {
         let job = Arc::clone(composition.job());
         let port = Arc::new(port(&job, metrics));
-        let session = ChatSession::new(
+        let session = Arc::new(ChatSession::new(
             Arc::clone(&port) as Arc<dyn RunPort>,
-            Arc::clone(front) as Arc<dyn ChatFront>,
-        );
+            front,
+        ));
         session.open().await;
         Self {
             composition,
@@ -51,8 +52,27 @@ impl Run {
     }
 
     /// The chat session a turn of this run is sent to.
-    pub(super) fn session(&self) -> &ChatSession {
+    pub(crate) fn session(&self) -> &ChatSession {
         &self.session
+    }
+
+    /// The chat session a surface outside this module drives: the same session,
+    /// by handle, for a surface whose loop owns it rather than sending a line.
+    pub(crate) fn chat(&self) -> Arc<ChatSession> {
+        Arc::clone(&self.session)
+    }
+
+    /// The run's one mode cell, as a surface that states a mode holds it: the
+    /// cell every call of this run reads.
+    pub(crate) fn mode_cell(&self) -> ModeCell {
+        self.composition.mode_cell()
+    }
+
+    /// The port this run's turns run through, for the operations a surface
+    /// states without running a turn (the chat layer's `ChatOps` holds it and
+    /// never enters it).
+    pub(crate) fn run_port(&self) -> Arc<dyn RunPort> {
+        Arc::clone(&self.port) as Arc<dyn RunPort>
     }
 
     /// The run a rollover prepared, over the same port shape the first run had.
@@ -64,7 +84,7 @@ impl Run {
         Self {
             job: Arc::clone(composition.job()),
             composition,
-            session,
+            session: Arc::new(session),
             port,
         }
     }

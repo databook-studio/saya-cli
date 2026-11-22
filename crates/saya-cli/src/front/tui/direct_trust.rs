@@ -100,8 +100,12 @@ pub(crate) fn answer(store: &dyn TrustStore, answer: TrustResolution) -> Worker 
 
 /// Today's store: the live session runtime's own `bind_trusted`, the call the
 /// old surface makes when its modal closes on a directory.
+///
+/// The launch hands the session over and takes it back ([`Self::release`]):
+/// while the surface runs, the store is the one holder, and the launch ends the
+/// session it gets back on the way out.
 pub(crate) struct SessionTrust {
-    session: Mutex<SessionRuntime>,
+    session: Mutex<Option<SessionRuntime>>,
     runtime: Arc<RuntimeConfig>,
     launch: crate::interactive::session_host::HostLaunch,
 }
@@ -115,16 +119,29 @@ impl SessionTrust {
         launch: crate::interactive::session_host::HostLaunch,
     ) -> Self {
         Self {
-            session: Mutex::new(session),
+            session: Mutex::new(Some(session)),
             runtime,
             launch,
         }
+    }
+
+    /// The session back, once the surface that held it has ended: the launch's
+    /// end hooks, its metrics and its record all need it, and no answer binds
+    /// anything after the question's surface is gone.
+    pub(crate) fn release(&self) -> Option<SessionRuntime> {
+        self.session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 }
 
 impl TrustStore for SessionTrust {
     fn bind(&self, dir: &Path) -> Result<(), String> {
-        let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(session) = held.as_mut() else {
+            return Err("the session has ended".to_owned());
+        };
         session.bind_trusted(&self.runtime, dir, Some(&self.launch))
     }
 }

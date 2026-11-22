@@ -28,10 +28,14 @@ use crate::agent::runtime::PromptOverrides;
 use crate::agent::system_prompt::memory_reachable;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::turn_inputs::prepare_turn;
-use crate::chat::{ChatFront, RunComposition, SessionRun, WorkspaceShape};
+use crate::chat::{
+    ChatFront, ChatSession, OpsContext, RunComposition, RunPort, SessionRun, WorkspaceShape,
+};
+use crate::commands::coding::CodingApplication;
 use crate::config::runtime::RuntimeConfig;
 use crate::front::LineFront;
 use crate::interactive::turn_summary::tally_handle;
+use crate::local_metrics::LocalMetrics;
 use crate::plugins::database::DatabaseBudget;
 use crate::render::RenderFormat;
 
@@ -126,14 +130,10 @@ pub(super) async fn one(mut parts: LineSession) -> Result<Line, String> {
 /// facts — asking nobody: the session's mode is the consent.
 async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Result<Line, String> {
     let config: &RuntimeConfig = &parts.runtime;
-    let (application, shape) = super::session_host::open_host(&parts).await?;
+    let hosted = host(&parts).await?;
     if one_shot == super::one_shot::OneShot::Yes {
-        super::one_shot::state_on(&application);
+        super::one_shot::state_on(&hosted.application);
     }
-    // The launch's own seeds ride the host the run composes over: a held token
-    // pre-answers the calls its family would have asked about, so the mode's
-    // advertisement states the family the session stated.
-    application.with_launch_grants(parts.grants.clone());
     // The run's own counters, printed after every settled turn: the same
     // collector the answering turn hands its metrics sink, and the stop
     // instant a Ctrl-C is measured from. Its cancellation token is the scope's
@@ -151,15 +151,51 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
         None => LineFront::new(parts.format, parts.can_prompt, tally_handle()),
     };
     let front = Arc::new(front.with_scope(scope));
-    let name = parts.session.clone();
-    let stated = session_run(
+    let (run, application, shape) = open_run(
         &parts,
+        hosted,
         Arc::clone(&front) as Arc<dyn ChatFront>,
-        name,
-        &shape,
+        metrics.clone(),
     )
     .await?;
-    let composed = RunComposition::compose_seeded(application, stated, parts.seed.clone())
+    Ok(Line::new(application, parts, front, shape, metrics, run))
+}
+
+/// The host a run is composed over: the application it composes on, and the
+/// shape of the folder it opened over.
+pub(super) struct Hosted {
+    application: Arc<CodingApplication>,
+    shape: WorkspaceShape,
+}
+
+/// The host `parts` state: the folder's shape first, because it decides which
+/// root the application opens over.
+pub(super) async fn host(parts: &LineSession) -> Result<Hosted, String> {
+    let (application, shape) = super::session_host::open_host(parts).await?;
+    Ok(Hosted { application, shape })
+}
+
+/// The run a surface states over `hosted`, composed and opened, with `front`
+/// receiving everything the session says. The application the run composed on
+/// comes back with it: a surface's own successor runs compose over that one.
+pub(super) async fn open_run(
+    parts: &LineSession,
+    hosted: Hosted,
+    front: Arc<dyn ChatFront>,
+    metrics: Option<Arc<LocalMetrics>>,
+) -> Result<(Run, Arc<CodingApplication>, WorkspaceShape), String> {
+    // The launch's own seeds ride the host the run composes over: a held token
+    // pre-answers the calls its family would have asked about, so the mode's
+    // advertisement states the family the session stated.
+    hosted.application.with_launch_grants(parts.grants.clone());
+    let stated = session_run(
+        parts,
+        Arc::clone(&front),
+        parts.session.clone(),
+        &hosted.shape,
+    )
+    .await?;
+    let composed = RunComposition::compose_seeded(hosted.application, stated, parts.seed.clone())
         .await
         .map_err(|error| error.to_string())?;
     // The composition states the operator on the host, which only the host's one
@@ -167,8 +203,46 @@ async fn assemble(parts: LineSession, one_shot: super::one_shot::OneShot) -> Res
     // so a call of this run is put to the person at this terminal.
     let application = composed.job().application();
     composed.open().await.map_err(|error| error.to_string())?;
-    let run = Run::opened(composed, &front, metrics.clone()).await;
-    Ok(Line::new(application, parts, front, shape, metrics, run))
+    let run = Run::opened(composed, front, metrics).await;
+    Ok((run, application, hosted.shape))
+}
+
+/// The run the full-screen surface drives: the line loop's own composition —
+/// the same folder rule, the same grants, the same budget, the same seed —
+/// with that surface's front receiving what the session says.
+pub(crate) async fn open_surface(
+    parts: LineSession,
+    front: Arc<dyn ChatFront>,
+) -> Result<Opened, String> {
+    let hosted = host(&parts).await?;
+    let (run, _application, _shape) = open_run(&parts, hosted, front, None).await?;
+    Ok(Opened { run })
+}
+
+/// A run one surface outside the line loop drives, held for as long as that
+/// surface lives: the run owns the folder's lease, so it must outlive every
+/// handle taken from it.
+pub(crate) struct Opened {
+    run: Run,
+}
+
+impl Opened {
+    /// The chat session this run's turns are sent to.
+    pub(crate) fn chat(&self) -> Arc<ChatSession> {
+        self.run.chat()
+    }
+
+    /// The context an operation states a mode on: the run's own cell, with the
+    /// launch's answer about whether `bypass` is reachable at all.
+    pub(crate) fn context(&self, allow_bypass: bool) -> OpsContext {
+        OpsContext::new(self.run.mode_cell(), allow_bypass)
+    }
+
+    /// The port this run's turns run through, for the operations a surface
+    /// states without running a turn.
+    pub(crate) fn run_port(&self) -> Arc<dyn RunPort> {
+        self.run.run_port()
+    }
 }
 
 /// The run a session states — the first one, and every one a rollover prepares

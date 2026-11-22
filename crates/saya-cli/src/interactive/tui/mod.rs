@@ -74,6 +74,7 @@ mod worker_permits;
 mod worker_permits_tests;
 pub(crate) mod wrap;
 
+#[allow(unused_imports)]
 pub(crate) use session::{TrustOutcome, TuiSession, run};
 
 // The new front reuses today's input buffer and completion instead of a

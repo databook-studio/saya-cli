@@ -20,18 +20,15 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc;
 
-use super::direct_run::DirectDeps;
 use super::model::Model;
 use super::msg::Msg;
-use super::run_clock::{Clock, SystemClock};
-use super::run_cmd::{CmdPort, SessionPort, perform};
+use super::run_clock::Clock;
+use super::run_cmd::{CmdPort, perform};
 use super::run_draw::Facts;
-use super::run_front::Forward;
 use super::run_input;
 use super::run_panic::Restored;
-use super::run_screen::{Screen, TtyScreen};
+use super::run_screen::Screen;
 use super::update::update;
-use crate::chat::{ChatSession, OpsContext};
 
 /// The shortest gap between two frames: thirty a second, the ceiling the design
 /// gives the render loop.
@@ -53,6 +50,15 @@ pub(crate) struct Runtime<S: Screen, C: Clock, P: CmdPort> {
     working: Option<Instant>,
     /// Whether something on the surface moves; the ticker reads it.
     animating: Arc<AtomicBool>,
+    /// The session's metrics collector, until the first frame is painted: the
+    /// launch's own sample, recorded once and taken here.
+    metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
+    /// When the launch began, so the first paint's sample measures what the
+    /// surface this one replaces measured.
+    entered: Instant,
+    /// Whether the surface has been asked to leave (`/exit`, `/quit`): the
+    /// loop ends once the message that asked has been folded.
+    leaving: bool,
 }
 
 impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
@@ -75,7 +81,23 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             painted: None,
             working: None,
             animating: Arc::new(AtomicBool::new(false)),
+            metrics: None,
+            entered: Instant::now(),
+            leaving: false,
         }
+    }
+
+    /// The collector the first paint's sample is recorded in, and the instant
+    /// the launch began — the two facts the launch states and the loop spends
+    /// once (`02` §4's first-paint metric).
+    pub(crate) fn with_metrics(
+        mut self,
+        metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,
+        entered: Instant,
+    ) -> Self {
+        self.metrics = metrics;
+        self.entered = entered;
+        self
     }
 
     /// The facts every frame is painted with: the launch's token column, glyph
@@ -107,7 +129,7 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
 
     /// One turn of the loop, with no waiting of its own: fold the message that
     /// is waiting, drain the rest of the burst into the same frame, and paint
-    /// the frame that is due.
+    /// the frame that is due. False once the surface has been asked to leave.
     pub(crate) async fn step(&mut self) -> io::Result<bool> {
         let Some(msg) = self.msgs.recv().await else {
             return Ok(false);
@@ -115,7 +137,7 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
         self.fold(msg)?;
         self.drain()?;
         self.paint_if_due()?;
-        Ok(true)
+        Ok(!self.leaving)
     }
 
     /// Blocks on the queue, folding whatever arrives, and paints the frames the
@@ -141,6 +163,9 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             }
             self.drain()?;
             self.paint_if_due()?;
+            if self.leaving {
+                return Ok(());
+            }
         }
     }
 
@@ -156,6 +181,11 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
     /// One message: the pure update, its commands performed, and the surface
     /// marked as changed.
     fn fold(&mut self, msg: Msg) -> io::Result<()> {
+        // Leaving is the loop's own decision: the message is folded (so the
+        // model is exactly as the session left it) and the loop ends after it.
+        if matches!(msg, Msg::Quit) {
+            self.leaving = true;
+        }
         let busy = self.model.is_busy();
         let cmds = update(&mut self.model, msg);
         for cmd in cmds {
@@ -206,6 +236,11 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
         self.screen.draw(&self.model, &facts)?;
         self.dirty = false;
         self.painted = Some(self.clock.now());
+        // The first frame's sample: once, from the instant the launch began,
+        // into the collector the launch handed over.
+        if let Some(metrics) = self.metrics.take() {
+            super::run_launch::record_first_paint(&metrics, self.entered);
+        }
         Ok(())
     }
 
@@ -219,27 +254,4 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             ..self.facts.clone()
         }
     }
-}
-
-/// The surface on the real terminal, with its producers: the input thread, the
-/// sessions's front and the ticker.
-///
-/// The launch still opens the old TUI; T19 switches `saya` over to this call. It
-/// is exported with the boundary's other names, and the attribute says why
-/// nothing references it yet.
-#[allow(dead_code)]
-pub(crate) async fn run(
-    model: Model,
-    session: Arc<ChatSession>,
-    ops: OpsContext,
-    direct: Arc<DirectDeps>,
-    facts: Facts,
-) -> io::Result<()> {
-    let (msgs, queue) = mpsc::unbounded_channel();
-    let front = Arc::new(Forward::new(msgs.clone()));
-    let port = Arc::new(SessionPort::new(session, front, ops, direct));
-    let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port).with_facts(facts);
-    run_input::spawn_input(msgs.clone());
-    run_input::spawn_ticker(runtime.animating_flag(), msgs, super::view::TICK);
-    runtime.run().await
 }

@@ -26,6 +26,7 @@ use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 use crate::front::apply;
 use crate::interactive::session::permissions::mode::next_in_cycle;
+use crate::slash::{SlashCommand, parse_slash_command};
 
 /// What the surface says when a queued line is replaced by a newer one.
 const QUEUED_REPLACED: &str = "queued line replaced — the earlier one was dropped";
@@ -68,6 +69,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         // The spinner reads this tick, and so does the toast's clock: four
         // seconds of ticks spend it (`02` §4).
         Msg::Tick => model.tick_toast(),
+        // Leaving is the loop's decision, not the model's: the runtime ends on
+        // this message and the model state it leaves behind is never painted.
+        Msg::Quit => {}
     }
     cmds
 }
@@ -177,6 +181,14 @@ fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
             return;
         }
         direct::Read::Turn => {}
+    }
+    // A command the surface does not answer itself is the session's own
+    // operation, read by the chat layer's one table (A9) — never a turn.
+    if let Ok(Some(command)) = parse_slash_command(line)
+        && !matches!(command, SlashCommand::Coding(_) | SlashCommand::Mode(_))
+    {
+        cmds.push(Cmd::Op(command));
+        return;
     }
     if model.is_busy() {
         if model.queue(text).is_some() {
