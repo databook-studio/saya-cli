@@ -152,6 +152,34 @@ fn a_toast_replaces_the_right_side() {
     }
 }
 
+/// A toast is one row, whatever it carries: a message with lines of its own
+/// reads as one run of words on the status row, so it can never paint down the
+/// transcript's rows or wrap over the row under this one.
+#[test]
+fn a_multiline_toast_stays_on_one_row() {
+    let facts = StatusFacts {
+        toast: Some("match_id\n2\nsaved investigation: demo · 1 rows".to_owned()),
+        ..full()
+    };
+    let line = status_line(&facts, 100);
+
+    let text = words(&line);
+    assert!(
+        !text.contains('\n'),
+        "a toast never paints a second row: {text:?}"
+    );
+    assert!(
+        text.contains("match_id 2 saved investigation: demo · 1 rows"),
+        "its lines read as one run of words: {text:?}"
+    );
+    assert_eq!(
+        cells(&line),
+        100,
+        "and it still fills its row: {:?}",
+        row(&line)
+    );
+}
+
 /// `--ascii` reaches the caveat mark too: the row keeps saying the same thing
 /// in a seven-bit glyph set.
 #[test]

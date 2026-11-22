@@ -219,6 +219,12 @@ impl Opened {
         self.run.chat()
     }
 
+    /// The profile this run was configured on and could not open, when there is
+    /// one: the run holds no database, so a surface names the absence.
+    pub(crate) fn skipped_primary(&self) -> Option<&str> {
+        self.run.skipped_primary()
+    }
+
     /// The context an operation states a mode on: the run's own cell, with the
     /// launch's answer about whether `bypass` is reachable at all.
     pub(crate) fn context(&self, allow_bypass: bool) -> OpsContext {
@@ -275,6 +281,24 @@ pub(super) async fn session_run(
         inputs.ai.allow_data_sharing,
     );
     let memory = config.resolved.memory.mode;
+    // What of the session's connections did not open. The primary is the one a
+    // surface must state: the run is a session with no database, and the
+    // operator reads why, once, in the session's own voice — the transcript's
+    // line on this surface, the loop's on the other.
+    let configured = inputs.registry.primary_name().to_owned();
+    let skipped = inputs
+        .failures
+        .iter()
+        .find(|(name, _)| *name == configured)
+        .cloned();
+    if let Some((name, reason)) = &skipped {
+        front.emit(crate::chat::ChatEvent::Notice {
+            // One row at the narrowest terminal the surface is drawn at (80
+            // columns leave 72 cells of transcript): the profile, then the
+            // error in the words the connector stated.
+            message: format!("cannot open profile '{name}': {reason}"),
+        });
+    }
     // The provider the run's post-turn learning pass calls: only a session whose
     // memory mode is on has one, so a memory-off run extracts nothing and says
     // nothing.
@@ -298,5 +322,6 @@ pub(super) async fn session_run(
         learning,
         tasks: parts.tasks.clone(),
         facts: parts.facts.clone(),
+        skipped_primary: skipped.map(|(name, _)| name),
     })
 }

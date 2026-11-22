@@ -121,6 +121,13 @@ fn chart(result: &QueryResult, args: &str) -> Worker {
 
 /// `/investigation`: the crate's own command, today's save fill, and the shared
 /// dispatcher's captured output.
+///
+/// What the command printed is the command's *answer*, not the surface's word
+/// about itself: a run prints the rows it replayed and the evidence line under
+/// them, and a save prints the document it wrote. Both are several lines, and
+/// several lines are a transcript entry (`02` §3.10) — handed back as the
+/// surface's transient toast they would be flattened onto the one status row,
+/// where the operator could never read them.
 fn investigation(
     deps: &DirectDeps,
     command: crate::cli::InvestigationCommand,
@@ -151,8 +158,9 @@ fn investigation(
     let body = if out.trim().is_empty() { err } else { out };
     let body = body.trim_end().to_owned();
     match outcome {
+        // A command that succeeded says what it printed, in the transcript.
         Ok(0) => Worker {
-            message: body,
+            direct: (!body.is_empty()).then_some(DirectOutcome::Notice(body)),
             ..Worker::default()
         },
         Ok(_) => Worker {

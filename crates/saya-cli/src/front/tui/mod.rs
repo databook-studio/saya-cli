@@ -196,6 +196,10 @@ mod run_front_tests;
 mod direct_fixture;
 
 #[cfg(test)]
+#[path = "direct_paint_tests.rs"]
+mod direct_paint_tests;
+
+#[cfg(test)]
 #[path = "direct_tests.rs"]
 mod direct_tests;
 

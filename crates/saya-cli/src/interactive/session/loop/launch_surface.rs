@@ -40,6 +40,10 @@ pub(super) fn run_surface(
         .enable_all()
         .build()?;
     runtime.block_on(async move {
+        // The profile the launch configured and the run could not open: the
+        // session opened anyway, with no database attached, and said so in the
+        // transcript (`session_run`'s notice). The status line names what the
+        // run is talking to, so it names the absence rather than the profile.
         let opened = open_surface(
             parts,
             &record,
@@ -47,6 +51,12 @@ pub(super) fn run_surface(
         )
         .await
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        let mut model = model;
+        if let Some(skipped) = opened.skipped_primary()
+            && model.database.as_deref() == Some(skipped)
+        {
+            model.database = None;
+        }
         let allow_bypass = model.allow_bypass;
         let deps = Arc::new(OpsDeps {
             chat: crate::chat::ChatOps::new(opened.run_port(), opened.context(allow_bypass)),
