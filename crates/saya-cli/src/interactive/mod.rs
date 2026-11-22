@@ -13,6 +13,12 @@ mod session_narrative_feed_tests;
 #[cfg(test)]
 #[path = "session/permissions/deny_red_tests.rs"]
 mod session_deny_red_tests;
+// What still reaches the `run_command` matcher in `session/permissions/deny.rs`:
+// the one-release alias of `shell` and the legacy `command:<program>` grant, so
+// a later unit cannot remove that branch by claiming it was unreachable.
+#[cfg(test)]
+#[path = "session/permissions/deny_run_command_reach_tests.rs"]
+mod session_deny_run_command_reach_tests;
 pub(crate) mod session_host;
 // The session's write-shaped definitions are crate-reachable: the approval
 // tests build the real grantable shapes the frontends are asked about.
@@ -43,10 +49,12 @@ mod session_grants_tests;
 // is X2/X3's to remove, kept compiled rather than deleted twice.
 #[allow(dead_code)]
 pub(crate) mod session_prompt;
-// The old per-turn request body. The plain REPL's turn is a chat session turn
-// now (`front/line` + `session/line_chat`), so nothing calls it: the module is
-// kept — its wording, decider and sink wiring are the record of what the new
-// turn reproduces — until the deletion unit removes the old path outright.
+// The old per-turn request body: the last production caller of the old turn
+// engine (`agent::runtime`). X3 measured what deleting it alone costs — the
+// engine and its appurtenances then report 78 dead-code errors over more than
+// 40 files, and the `clippy -D warnings` gate goes red — so the body and this,
+// its only production caller, go in one commit with the pins that drive them
+// re-pointed at the chat path. See `REPORT.md`.
 #[allow(dead_code)]
 mod session_request;
 // The one terminal result a scripted turn reports: its status, exit code,
