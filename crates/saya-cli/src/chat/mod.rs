@@ -28,6 +28,7 @@ mod port;
 mod queue;
 mod rollover;
 mod session;
+mod session_facts;
 mod transcript;
 mod turn;
 mod workspace_shape;
@@ -45,7 +46,7 @@ pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 #[allow(unused_imports)]
 pub(crate) use front::ChatFront;
 #[allow(unused_imports)]
-pub(crate) use link::{Resume, RunFacts};
+pub(crate) use link::{Resume, RunFacts, after_prepare};
 #[allow(unused_imports)]
 pub(crate) use operator::SessionOperator;
 #[allow(unused_imports)]
@@ -72,11 +73,13 @@ pub(crate) use rollover::{Ending, Rollover, RolloverCause, RolloverError};
 #[allow(unused_imports)]
 pub(crate) use session::{Admission, ChatSession, SessionState};
 #[allow(unused_imports)]
+pub(crate) use session_facts::SessionFacts;
+#[allow(unused_imports)]
 pub(crate) use transcript::{SettledTurn, Transcript};
 #[allow(unused_imports)]
 pub(crate) use turn::{ChatTurn, JobPort};
 #[allow(unused_imports)]
-pub(crate) use workspace_shape::{WorkspaceShape, decide as workspace_shape};
+pub(crate) use workspace_shape::{Workspace, WorkspaceShape, decide as workspace_shape};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]
@@ -93,6 +96,26 @@ pub(crate) mod compose_fixture;
 #[cfg(all(test, unix))]
 #[path = "compose_tests.rs"]
 mod compose_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_ask_tests.rs"]
+mod compose_ask_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_mode_tests.rs"]
+mod compose_mode_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_catalog_tests.rs"]
+mod compose_catalog_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_recall_fixture.rs"]
+mod compose_recall_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_recall_tests.rs"]
+mod compose_recall_tests;
 
 #[cfg(all(test, unix))]
 #[path = "compose_sql_tests.rs"]

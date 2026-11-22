@@ -9,7 +9,7 @@
 //!   the provider request (test 2), that exactly one event names the supplied
 //!   claims (test 1), and that a store failure still emits and still runs the
 //!   turn (test 6). The provider and registry are injected because
-//!   `run_prompt_with_sink` builds a live provider and a live (connecting)
+//!   `run_prompt_with_sink_and_outcomes` builds a live provider and a live (connecting)
 //!   registry from config, which a unit test cannot supply; the inner
 //!   `run_prompt_with_inputs` is the seam.
 

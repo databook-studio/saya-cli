@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 /// Starts the `/compact` worker on the TUI: a short-circuit message when
 /// there is nothing to do or no history, otherwise a detached thread running
-/// [`crate::interactive::compact_task::run`] to completion. Never blocks the frame loop.
+/// [`crate::interactive::compact_task::run_with_trigger`] to completion. Never
+/// blocks the frame loop.
 pub(crate) fn start(app: &mut App, state: &SessionState) {
     start_with_trigger(app, state, false);
 }

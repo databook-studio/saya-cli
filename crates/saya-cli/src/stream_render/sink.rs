@@ -26,6 +26,11 @@ impl TerminalSink {
         self
     }
 
+    /// The answering call's usage, taken once at settle. The old turn body
+    /// read it to feed `/usage`; the line front's turn does not yet (the chat
+    /// turn reports its usage on the stream), so this waits for the unit that
+    /// settles the session's usage accumulator.
+    #[allow(dead_code)]
     pub(crate) fn take_answering_usage(&self) -> Option<saya_agent::TokenUsage> {
         self.answering_usage.take()
     }

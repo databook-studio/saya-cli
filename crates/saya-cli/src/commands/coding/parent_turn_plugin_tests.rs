@@ -165,6 +165,7 @@ async fn the_root_turn_consults_the_registry_it_is_given() {
             primary: None,
         }),
         seed: Vec::new(),
+        ..TurnInputs::default()
     };
 
     let first = tokio::time::timeout(RUN, fixture.job.run_open(&NoopEventSink, inputs))

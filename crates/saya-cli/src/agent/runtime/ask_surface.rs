@@ -41,11 +41,14 @@ pub(crate) async fn lane(
 }
 
 /// The definitions the one-shot `ask` surface advertises: the database
-/// surface, then the servers' tools, then the one `[tools] allow` list.
+/// surface — with the clarification ask where a connection makes one askable —
+/// then the servers' tools, then the one `[tools] allow` list. The ask is
+/// placed before the list, so the list can take it away like any other name.
 pub(crate) fn definitions(
     allow_query_data: bool,
     has_state_store: bool,
     permit_candidate_writes: bool,
+    has_connection: bool,
     mcp: Option<&Arc<McpTools>>,
     tools: &ResolvedTools,
 ) -> Vec<ToolDefinition> {
@@ -55,6 +58,11 @@ pub(crate) fn definitions(
         permit_candidate_writes,
         false,
     );
+    // The ask rides the database: an `ask` turn with no connection is asked no
+    // question, and is offered none.
+    if has_connection {
+        crate::agent::tools::clarification::advertise(&mut definitions);
+    }
     if let Some(mcp) = mcp {
         definitions.extend(mcp.definitions());
     }

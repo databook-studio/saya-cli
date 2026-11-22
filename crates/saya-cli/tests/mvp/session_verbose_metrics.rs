@@ -2,6 +2,10 @@
 //! settled turn: under `--verbose` only, never on stdout, and cumulative
 //! across a clarification reply on the same question's collector while an
 //! unrelated question starts a fresh one.
+//!
+//! The clarification row runs with a database configured: the ask is the
+//! database plugin's tool, so a session with no database is offered no ask and
+//! the row would be scripting a call nothing advertises.
 
 #[cfg(unix)]
 use crate::session_question_budget::harness;
@@ -109,6 +113,33 @@ fn wait_for_section(spawned: &harness::SpawnedChild, index: usize, sections: usi
     let stderr_text = String::from_utf8_lossy(&spawned.stderr_buf.lock().unwrap()).into_owned();
     metrics_section(&stderr_text, index).expect("metrics section")
 }
+/// The database the clarification row connects to: the ask rides the database
+/// plugin, and a plugin with no connection never activates.
+#[cfg(unix)]
+fn seed_database(tag: &str) -> (std::path::PathBuf, String) {
+    use std::fs;
+
+    let root = std::env::temp_dir().join(format!(
+        "saya-cli-verbose-clarify-{tag}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let database = root.join("verbose.sqlite");
+    crate::common::sqlite_fixture(&database, &["CREATE TABLE revenue (amount INTEGER);"]);
+    let connections = root.join("connections.toml");
+    fs::write(
+        &connections,
+        format!(
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\nread_only = true\n",
+            database.display()
+        ),
+    )
+    .unwrap();
+    let path = connections.to_str().unwrap().to_owned();
+    (root, path)
+}
+
 /// A `--verbose` REPL turn prints the fixed section on stderr at the
 /// settled boundary: the header, the establishment and attempt phase lines
 /// with numbers, and neither sentinel — the section carries only the fixed
@@ -159,7 +190,8 @@ fn a_repl_without_verbose_prints_no_section() {
 
 /// The clarification's reply prints a cumulative section on the SAME
 /// question's collector (the clarify turn's sample is still counted), while
-/// a later unrelated question starts a fresh collector at one sample.
+/// a later unrelated question starts a fresh collector at one sample. The row
+/// states a database, because the ask is only offered where one is connected.
 #[cfg(unix)]
 #[test]
 fn a_clarification_reply_prints_a_cumulative_section() {
@@ -188,11 +220,21 @@ fn a_clarification_reply_prints_a_cumulative_section() {
         release,
     );
 
+    let (fixture_root, connections) = seed_database("cumulative");
+    let extra = vec![
+        "--verbose",
+        "--connections",
+        connections.as_str(),
+        "--profile",
+        "local",
+        "--approval-mode",
+        "bypass",
+    ];
     let mut spawned = spawn_child_with_config_extra(
         &server.address,
         &metrics_config(),
         "verbose-cumulative",
-        &VERBOSE_ARGS,
+        &extra,
     );
 
     // Turn 1: the question clarifies; its settled section has one sample.
@@ -230,4 +272,5 @@ fn a_clarification_reply_prints_a_cumulative_section() {
     spawned.send(b"/exit\n");
     spawned.finish();
     server.join();
+    let _ = std::fs::remove_dir_all(fixture_root);
 }

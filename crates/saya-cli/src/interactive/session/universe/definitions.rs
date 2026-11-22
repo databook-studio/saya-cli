@@ -155,6 +155,11 @@ impl SessionUniverse {
             permit_candidate_writes,
             false,
         );
+        // The ask rides the database: a session with no connection has no
+        // database question to put, and is offered none.
+        if self.primary.get().is_some() {
+            crate::agent::tools::clarification::advertise(&mut defs);
+        }
         if advertises_tasks {
             defs.push(crate::interactive::session::tasks::render::checklist_definition());
         }

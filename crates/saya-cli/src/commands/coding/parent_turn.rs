@@ -59,6 +59,15 @@ pub(super) struct RootSession {
     /// The plugins this run activated at open, or `None` for a run that
     /// consults no registry — every job surface today.
     pub(super) plugins: Option<Arc<ActivePlugins>>,
+    /// Whether this run's turns carry the project's untrusted context — its
+    /// instruction sources and the worktree's explicit preferences. The chat
+    /// surface does, as the line session's turn did on release; a job surface
+    /// states its own context and carries none of it.
+    pub(super) project_context: bool,
+    /// The session facts this run's requests carry, when a session states them:
+    /// the compaction narrative and the continuation record its loop holds.
+    /// `None` is a job surface, which carries neither.
+    pub(super) facts: Option<Arc<crate::chat::SessionFacts>>,
 }
 
 impl NativeCodingJob {

@@ -17,6 +17,11 @@
 //! `shell` and the database lane read on every call: a mode switched between two
 //! calls decides the second.
 //!
+//! **The mode is the surface.** The run's mode and the front's own answer to
+//! "can this surface obtain a per-call approval at all" are stated at
+//! composition, so the root's tool advertisement offers exactly what the mode
+//! reaches: a session with nobody to ask carries no write-shaped tool.
+//!
 //! **The database is the plugin's.** With a database resolved the registry holds
 //! the database plugin's chat surface, which states the database section of the
 //! run's prompt, offers the SQL tools, and — through its lane — decides them;
@@ -40,6 +45,7 @@ use crate::commands::coding::{
     NativeCodingJob, TurnInputs,
 };
 use crate::connection::ConnectionRegistry;
+use crate::plugins::database::DatabaseBudget;
 
 /// A session's run, as the session states it: the facts the composition builds
 /// the run's request, inputs, mode cell and operator from.
@@ -51,6 +57,9 @@ pub(crate) struct SessionRun {
     /// The session's approval mode — the consent to open, and the mode the
     /// run's one cell starts in.
     pub(crate) mode: ApprovalPolicy,
+    /// The database budget a turn of this run spends once it uses the database:
+    /// the chat's `[limits.database]`, or the one-shot ask's override of it.
+    pub(crate) budget: DatabaseBudget,
     /// What a run may do with the folder the session opened over.
     pub(crate) shape: WorkspaceShape,
     /// The databases the session resolved, primary first: the plugin's
@@ -63,6 +72,17 @@ pub(crate) struct SessionRun {
     pub(crate) memory_reachable: bool,
     /// The session's query-capture hook, when the front previews what it runs.
     pub(crate) capture: Option<CaptureHook>,
+    /// The provider the run's post-turn learning pass calls, for a session whose
+    /// memory mode is on. `None` means the run learns nothing: nothing is
+    /// extracted after a turn and nothing is announced.
+    pub(crate) learning: Option<Arc<dyn saya_agent::ChatProvider>>,
+    /// The session's live task list, for a session that states one: the run's
+    /// `checklist` writes through it, and its turns render it at the turn's
+    /// start instead of the root rendering it mid-turn.
+    pub(crate) tasks: Option<crate::interactive::session::tasks::SessionTasks>,
+    /// The session facts this run's requests carry — the compaction narrative
+    /// and the continuation record — when a session states them.
+    pub(crate) facts: Option<Arc<super::SessionFacts>>,
 }
 
 /// One session's composed run: the job that runs it, what its one open is given,
@@ -103,17 +123,31 @@ impl RunComposition {
             front,
             session,
             mode,
+            budget,
             shape,
             connections,
             allow_query_data,
             memory,
             memory_reachable,
             capture,
+            learning,
+            tasks,
+            facts,
         } = run;
+        // The surface's own fact, stated beside the operator that answers its
+        // asks: a front with nobody to ask cannot reach a write-shaped call, so
+        // the run advertises none of them (see `saya_agent::mode_advertises`).
+        let can_obtain_approval = front.can_obtain_approval();
         let operator = Arc::new(SessionOperator::new(front));
         let application = Launch::Attached(mode).compose(application);
+        application.with_approval_surface(can_obtain_approval);
         let application = application.with_operator(Arc::clone(&operator) as Arc<dyn Operator>);
-        let request = request(&session, &shape)?;
+        // The one `[tools] allow` list narrows this run exactly as it narrows
+        // every other surface's: the request states it, so the root advertises
+        // only the names the list keeps (minus the database plugin's, which
+        // follow their connection).
+        let request = request(&session, &shape, application.snapshot_taken(&session))?
+            .with_tools_allow(application.stated_tools(&[])?)?;
         // The session's mode is the consent to open: the approval is scoped to
         // the exact request built here, so no question is put to anybody.
         let proposal = application.propose(&request).await?;
@@ -130,6 +164,8 @@ impl RunComposition {
                 memory,
                 memory_reachable,
                 capture,
+                learning,
+                budget,
             },
         )?;
         let mode = job.approval_mode();
@@ -139,6 +175,8 @@ impl RunComposition {
                 policy: None,
                 plugins: Some(plugins),
                 seed,
+                tasks,
+                facts,
             })),
             operator,
             mode,
@@ -177,7 +215,8 @@ impl RunComposition {
 }
 
 /// The job request a session's run is created with: the session's name as the
-/// job's id and its task label, and the write scope its folder's shape allows.
+/// job's label and — unless that name is already a run's — its id, and the
+/// write scope its folder's shape allows.
 ///
 /// `request.task` is a real, stable label — every helper brief and the tool
 /// advertisement read it — and never the first message: a prepared run's first
@@ -186,10 +225,38 @@ impl RunComposition {
 /// The request states the origin `session`: a chat session and every `saya ask`
 /// open a job, and this is the one place either builds its request, so a
 /// `saya job list` can tell them from the CLI's own without asking anybody.
-fn request(session: &str, shape: &WorkspaceShape) -> Result<CodingJobRequest, CodingError> {
-    let job = JobId::parse(session).map_err(CodingError::owner)?;
+///
+/// `taken` is the artifacts root's answer about the session's own name: a
+/// session opens a run more than once — a resumed session's next process says
+/// the same name the process before it did — and a run's private artifacts are
+/// keyed by its job id, so an id already used meets its own snapshot and the
+/// run is refused. Such a run states the session's name plus the instant and
+/// process that opened it; every other run keeps the plain name, so nothing
+/// else about a run's identity moves.
+fn request(
+    session: &str,
+    shape: &WorkspaceShape,
+    taken: bool,
+) -> Result<CodingJobRequest, CodingError> {
+    let id = if taken {
+        run_name(session)
+    } else {
+        session.to_owned()
+    };
+    let job = JobId::parse(&id).map_err(CodingError::owner)?;
     let task = format!("session {session}");
     CodingJobRequest::new(job, task, write_scope(shape))?.with_origin(JobOrigin::Session)
+}
+
+/// The job id a run takes when the session's own name is already a run's: the
+/// name, cut to fit, plus the instant and process that opened this run.
+fn run_name(session: &str) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis());
+    let suffix = format!("-p{millis}-{}", std::process::id());
+    let keep = session.len().min(128 - suffix.len());
+    format!("{}{suffix}", &session[..keep])
 }
 
 /// The paths a run of this shape may write: the folder itself when nothing holds

@@ -69,6 +69,7 @@ impl CandidateExecutor for StopDuringVoteExecutor {
 // recording sink
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 struct RecordingSink {
     events: Arc<Mutex<Vec<AgentEvent>>>,
 }

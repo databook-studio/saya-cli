@@ -48,6 +48,7 @@ mod status_turn_tests {
             last_turn: None,
             save_refused: false,
             launch_options: GlobalOptions::default(),
+            chat: None,
         };
         let outcome = handle_line_verbatim("/status", &mut ctx).expect("the turn runs");
         assert!(
@@ -79,8 +80,21 @@ mod status_turn_tests {
             text.contains("  Model: test-model\n"),
             "the Model section names the model in force: {text}"
         );
-        assert!(
-            text.contains(&format!("  Root: {}\n", root.display())),
+        // The row asks whether the panel names the live root, not how the path
+        // is spelled: the platform may resolve the fixture's temp spelling
+        // (`/var/…` for `/private/var/…` on macOS), so both sides are
+        // canonicalised before they are compared.
+        let canonical = |path: &std::path::Path| {
+            std::fs::canonicalize(path)
+                .unwrap_or_else(|error| panic!("{} resolves: {error}", path.display()))
+        };
+        let printed = text
+            .lines()
+            .find_map(|line| line.strip_prefix("  Root: "))
+            .unwrap_or_else(|| panic!("the Workspace section names a root: {text}"));
+        assert_eq!(
+            canonical(std::path::Path::new(printed)),
+            canonical(&root),
             "the Workspace section names the live root: {text}"
         );
         let _ = std::fs::remove_dir_all(&root);

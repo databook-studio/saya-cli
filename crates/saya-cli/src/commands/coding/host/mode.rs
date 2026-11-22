@@ -62,6 +62,37 @@ impl CodingApplication {
     pub fn set_approval_policy(&self, policy: ApprovalPolicy) -> Result<(), ModeFrozen> {
         self.mode.set(policy)
     }
+    /// Attaches the operator and states whether this surface can obtain a
+    /// per-call approval at all — the two facts a write-shaped tool's
+    /// advertisement is decided from. Stated through the shared host, like the
+    /// mode, so a host another owner holds still carries it.
+    pub(crate) fn with_approval_surface(self: &Arc<Self>, can_obtain_approval: bool) {
+        self.can_obtain_approval
+            .store(can_obtain_approval, std::sync::atomic::Ordering::Release);
+    }
+    /// States the grants the launching surface holds for this session
+    /// (`--allow`). A seed pre-answers the call the mode would have asked
+    /// about, so the family it covers is advertised exactly as it was on the
+    /// session that stated it: the same store the rule reads, in the same place.
+    pub(crate) fn with_launch_grants(self: &Arc<Self>, grants: saya_agent::SessionGrants) {
+        *self
+            .launch_grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = grants;
+    }
+    /// States whether this host's runs inherit the job's continuation context.
+    /// A one-turn composition — the one-shot `ask` — states `false`: its job
+    /// began a moment ago, so there is nothing to inherit, and the block that
+    /// would state it carries the run's own identity, which no two runs share.
+    pub(crate) fn with_continuation_context(self: &Arc<Self>, inherits: bool) {
+        self.continuation_context
+            .store(inherits, std::sync::atomic::Ordering::Release);
+    }
+    /// Whether this host's runs inherit the job's continuation context.
+    pub(crate) fn inherits_continuation_context(&self) -> bool {
+        self.continuation_context
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
     /// States the mode a freshly reopened host starts with: the same mode this
     /// one holds, frozen again when this one is. A detached start that falls
     /// back to an in-place root reopens through here, so the fallback cannot
@@ -88,5 +119,23 @@ impl super::super::runtime::NativeCodingJob {
     /// stated between two calls is the mode the second one resolves.
     pub(crate) fn approval_mode(&self) -> ModeCell {
         self.application.mode.clone()
+    }
+    /// Whether the surface that composed this job can obtain a per-call
+    /// approval at all: what the root's tool advertisement reads beside the
+    /// mode, so a headless session offers no tool it could never ask about.
+    pub(crate) fn can_obtain_approval(&self) -> bool {
+        self.application
+            .can_obtain_approval
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// The grants the launching surface held for this session (`--allow`): the
+    /// store a family's advertisement reads for its grant arm. Empty for a job
+    /// surface, which states no such grant.
+    pub(crate) fn launch_grants(&self) -> saya_agent::SessionGrants {
+        self.application
+            .launch_grants
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }

@@ -191,7 +191,12 @@ impl NativeCodingJob {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *held = None;
-        if !self.request.write_paths.is_empty()
+        // A one-turn composition records no outcome view — the advisory facts
+        // fill the outcome a finishing job writes — so its precompute would be a
+        // whole-checkout scan started on the turn's first text, read by nobody,
+        // and still running when the surface closed the run. It plans none.
+        if !self.is_one_turn()
+            && !self.request.write_paths.is_empty()
             && !hooks_configured
             && self.mcp_servers().is_empty()
         {

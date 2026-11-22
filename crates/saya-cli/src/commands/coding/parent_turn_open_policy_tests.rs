@@ -47,6 +47,7 @@ async fn a_policy_given_at_open_bounds_the_first_turn() {
         policy: Some(two_requests()),
         plugins: None,
         seed: Vec::new(),
+        ..TurnInputs::default()
     };
 
     let stopped = tokio::time::timeout(RUN, fixture.job.run_open(&NoopEventSink, inputs))

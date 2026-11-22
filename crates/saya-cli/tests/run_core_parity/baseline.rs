@@ -1,16 +1,14 @@
 //! The request-size and cache-prefix baseline, one row per surface.
 //!
-//! Moving chat onto the run core changes what chat sends to the model:
-//! unused tool text and a changing request prefix are known to slow Saya and
-//! raise cost. This module measures today's numbers so a later chunk can
-//! compare against them.
+//! Moving chat onto the run core changes what chat sends to the model: unused
+//! tool text and a changing request prefix slow Saya and raise cost, so this
+//! module measures today's numbers for a later chunk to compare against.
 //!
-//! Every surface is scripted to make one tool call, so a SECOND request
-//! follows the tool result. Each row records the first request's byte length,
-//! how many tools it advertises and what those definitions cost, what its
-//! system message(s) cost, and whether the second request repeats the first
-//! request's prefix byte for byte — the shape a provider's prompt cache
-//! needs.
+//! Every surface is scripted to make one tool call, so a SECOND request follows
+//! the tool result. Each row records the first request's byte length, how many
+//! tools it advertises and what those definitions cost, what its system
+//! message(s) cost, and whether the second request repeats the first's prefix
+//! byte for byte — the shape a provider's prompt cache needs.
 //!
 //! Bodies are normalised (temp roots, home prefix, user name) *before* they
 //! are measured, so the golden is byte-identical on every machine and run.
@@ -18,10 +16,10 @@
 //! bytes of their compact serialised form.
 //!
 //! Regenerate deliberately with `SAYA_UPDATE_GOLDENS=1 cargo nextest run -p
-//! saya-cli --locked --test run_core_parity`, then review the diff like code:
-//! a moved number is a change in what the model is sent. Set
-//! `SAYA_PARITY_DUMP_DIR` to a directory to also write each surface's
-//! normalised first body there for a diff; the measurement never reads it.
+//! saya-cli --locked --test run_core_parity`, then review the diff like code: a
+//! moved number is a change in what the model is sent. `SAYA_PARITY_DUMP_DIR`
+//! also writes each surface's normalised first body under a directory, for a
+//! diff.
 
 use std::path::{Path, PathBuf};
 
@@ -127,11 +125,10 @@ impl Baseline {
     }
 
     /// Compares against the committed baseline, or rewrites it when
-    /// `SAYA_UPDATE_GOLDENS=1`. The update is explicit so a moved number is
+    /// `SAYA_UPDATE_GOLDENS=1`: the update is explicit so a moved number is
     /// reviewed, never silently accepted.
     pub(super) fn assert_golden(&self) {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/run_core_parity/golden/request_baseline.json");
+        let path = golden_path();
         if std::env::var("SAYA_UPDATE_GOLDENS").is_ok_and(|value| value == "1") {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).unwrap();
@@ -157,6 +154,12 @@ impl Baseline {
             path.display()
         );
     }
+}
+
+/// The committed baseline this row compares against and rewrites.
+pub(super) fn golden_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/run_core_parity/golden/request_baseline.json")
 }
 
 impl Surface {
@@ -199,9 +202,8 @@ impl Surface {
 
 /// Writes one surface's normalised first request body under `dir` when
 /// `SAYA_PARITY_DUMP_DIR` names a directory. The file name carries the
-/// surface, the process id and a nanosecond stamp, so a loop of runs —
-/// concurrent or not — keeps every sample and two samples can be diffed to
-/// name the field that moved. The measurement itself never reads the dump.
+/// surface, the process id and a nanosecond stamp, so every sample of a loop of
+/// runs survives and two can be diffed to name the field that moved.
 fn dump_first_body(dir: &Path, surface: &str, body: &str) {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

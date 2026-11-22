@@ -1,10 +1,14 @@
 //! Native parent tools adapt the same job owner used by terminal controls.
 mod direct;
+/// The advertisement's mode gate: which of the root's tools the run's mode
+/// reaches, read from the old session's own family rules.
+mod direct_mode;
 mod direct_tools;
 mod owner_denial;
 mod parent;
 pub(crate) mod plan_gate;
 mod readonly;
+mod root_approval;
 mod root_db_lane;
 mod root_mcp;
 pub(crate) use root_mcp::build_for_helper;

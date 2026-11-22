@@ -1,5 +1,12 @@
 impl DatabaseTools {
     const MAX_CONCURRENT_FAN_OUT_QUERIES: usize = 4;
+
+    /// Whether this toolset reaches any database at all: a surface with no
+    /// connection has no database work to ask a question about, and offers no
+    /// clarification ask.
+    pub(crate) fn has_connection(&self) -> bool {
+        !self.registry.is_empty()
+    }
     /// The wall-clock ceiling one fan-out query runs under (`fan_out.rs`
     /// wraps every per-database query in it, narrowing the connector's own
     /// configured timeout). `pub(crate)` so the approval prompt states the
@@ -31,7 +38,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db: None,
@@ -65,7 +72,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db,
@@ -99,7 +106,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db,
@@ -127,7 +134,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry: ConnectionRegistry::new("none"),
+            registry: Arc::new(ConnectionRegistry::new("none")),
             max_rows: 0,
             allow_query_data: false,
             state_db: None,

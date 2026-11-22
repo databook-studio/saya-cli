@@ -526,6 +526,14 @@ list, a word that names no tool, or a database tool name is a typed error that
 lists the valid names. So is `helpers` on its own: a helper runs the list minus
 `helpers`, so a list of `helpers` alone would hand every helper nothing.
 
+Two spellings from before the tool catalogue was unified are still accepted, for
+one release: `run_command` names `shell`, and `http_fetch` / `http_download`
+both name `web_fetch` — the core has no download tool, so the fetch a download
+granted is what survives. A list that uses one narrows the surface exactly as
+its successor's name does, and `config doctor` reports the note with the word to
+write instead. A grant token spelled the old way keeps working the same way: a
+`command:<program>` grant still pre-answers the `shell` of that program.
+
 Database tools are **not** governed: `schema_discovery`, the bounded SQL family,
 the query fan-out, and the contract tools follow the selected connection and the
 data-sharing setting, not this list. `schema_discovery` needs only a selected

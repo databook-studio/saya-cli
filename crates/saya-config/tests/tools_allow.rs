@@ -271,3 +271,6 @@ fn a_stated_set_round_trips_canonically() {
 }
 #[path = "tools_allow/vocabulary.rs"]
 mod vocabulary;
+
+#[path = "tools_allow/deprecations.rs"]
+mod deprecations;

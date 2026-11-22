@@ -69,6 +69,9 @@ pub(super) fn run_shell(
         // stays the coding root's, where a job owns what it started.
         Background::Off,
         rules,
+        // The run's own step shells keep every lane the mode allows: the run was
+        // approved before it started, so its calls have nowhere else to be put.
+        shell_policy::HostLane::Allowed,
     )
     .map(Arc::new)
 }
@@ -150,6 +153,11 @@ pub(super) fn toolsets(inputs: ToolsetInputs<'_>, steps: &[StepSpec]) -> Vec<Ste
                 false,
                 step.capabilities.workspace_write,
             );
+            // The ask rides the database: a step of a run with no connection
+            // has no database question to put, and is offered none.
+            if database.has_connection() {
+                crate::agent::tools::clarification::advertise(&mut definitions);
+            }
             // The step's fetch member: its own policy built from the
             // destinations *this step* declared — never the run's union —
             // over the run's shared transport, workspace, and wallet.

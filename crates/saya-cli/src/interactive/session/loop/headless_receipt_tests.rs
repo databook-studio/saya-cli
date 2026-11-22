@@ -84,6 +84,26 @@ pub(super) fn receipt_runtime() -> RuntimeConfig {
     }
 }
 
+/// States the `orchestrator` endpoint a fixture runtime carries when a turn
+/// opens a run: the job's proposal binds its roles through that map (the real
+/// binary resolves it from `[ai]`), and a runtime with no entry refuses the
+/// job as invalid before any turn runs. Stated from `[ai]`, exactly as
+/// `resolve_endpoints` synthesizes it, so a fixture states the provider the
+/// run is configured with.
+pub(super) fn state_orchestrator_endpoint(runtime: &mut RuntimeConfig) {
+    let ai = &runtime.resolved.ai;
+    runtime.resolved.endpoints.insert(
+        saya_config::ORCHESTRATOR_ROLE.to_string(),
+        saya_config::ResolvedEndpoint {
+            name: saya_config::ORCHESTRATOR_ROLE.to_string(),
+            provider: ai.provider,
+            model: ai.model.clone(),
+            base_url: ai.base_url.clone(),
+            api_key: ai.api_key.clone(),
+        },
+    );
+}
+
 /// Each receipt command, and the save-without-SQL investigation refusal
 /// ("the headless REPL has no last query to save from"), ends the turn
 /// errored through the real entry — never completed, never a synthesized
@@ -127,6 +147,7 @@ fn headless_turn_over_each_receipt_action_ends_errored() {
             last_turn: None,
             save_refused: false,
             launch_options: crate::cli::GlobalOptions::default(),
+            chat: None,
         };
         let outcome = handle_line_verbatim(line, &mut ctx).expect("the turn runs");
         assert!(

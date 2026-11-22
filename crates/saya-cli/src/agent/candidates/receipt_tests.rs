@@ -6,7 +6,7 @@ use super::super::runtime::PromptOverrides;
 use super::run_with_candidates;
 use crate::config::runtime::RuntimeConfig;
 use async_trait::async_trait;
-use saya_agent::{AgentEvent, AgentEventSink, AgentMode, ApprovalPolicy, CancellationToken};
+use saya_agent::{AgentEvent, AgentEventSink, ApprovalPolicy, CancellationToken};
 use saya_config::{
     AiProvider, BudgetLimit, ColorChoice, ConnectionsFile, OutputFormat, ResolvedAi,
     ResolvedAnsweringLimits, ResolvedConfig, ResolvedHostCommands, ResolvedJobs, ResolvedLimits,
@@ -24,6 +24,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[derive(Clone)]
 struct RecordingSink(Arc<Mutex<Vec<AgentEvent>>>);
 
 #[async_trait]
@@ -212,7 +213,16 @@ async fn runtime_with_sqlite(root: &Path, base_url: String) -> RuntimeConfig {
             session_deny: Default::default(),
             ignored_project_overrides: Vec::new(),
             provenance: Default::default(),
-            endpoints: BTreeMap::new(),
+            endpoints: BTreeMap::from([(
+                saya_config::ORCHESTRATOR_ROLE.to_owned(),
+                saya_config::ResolvedEndpoint {
+                    name: saya_config::ORCHESTRATOR_ROLE.to_owned(),
+                    provider: AiProvider::OpenaiCompatible,
+                    model: "candidate-receipt-test".into(),
+                    base_url: None,
+                    api_key: None,
+                },
+            )]),
         },
         connections: ConnectionsFile {
             profiles: BTreeMap::from([("analytics".into(), profile)]),

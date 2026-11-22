@@ -67,8 +67,10 @@ pub(crate) struct DatabaseTools {
     pub(super) read_witnesses: Arc<super::workspace::ReadWitnesses>,
     // `pub(super)` so the sibling `knowledge` module (also a child of
     // `agent::tools`) can resolve a connection and read the privacy/store flags
-    // without re-deriving provider policy.
-    pub(super) registry: ConnectionRegistry,
+    // without re-deriving provider policy. Shared (`Arc`) so a run's recall
+    // source reads the same connections the tools query: recall selects against
+    // the profile identities of the registry the run actually runs on.
+    pub(super) registry: Arc<ConnectionRegistry>,
     pub(super) max_rows: usize,
     pub(super) allow_query_data: bool,
     pub(super) state_db: Option<SqliteStateStore>,

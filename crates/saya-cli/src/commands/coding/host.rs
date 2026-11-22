@@ -1,5 +1,5 @@
 use super::CodingError;
-use super::host_root::resolve_in_place;
+use super::host_root::{resolve_in_place, resolve_session_root};
 use crate::agent::tools::consent::Operator;
 use crate::agent::tools::shell_policy::ModeCell;
 use crate::cli::RootMode;
@@ -18,7 +18,11 @@ use std::{
 };
 
 pub(super) mod mode;
+mod private;
 mod root;
+mod workspace;
+use private::io_context;
+pub(super) use private::private_directory;
 use root::CodingRoot;
 
 /// Trusted host composition. Program directory and state are selected by the
@@ -41,15 +45,46 @@ pub struct CodingApplication {
     /// host runs fall back to the sandbox under `ask` and whose fetches are
     /// refused, rather than either being put to anyone.
     pub(super) operator: Option<Arc<dyn Operator>>,
+    /// Whether this surface can obtain a per-call approval at all: the fact the
+    /// tool advertisement reads, never the stdio one. `true` — every surface
+    /// that states nothing keeps today's advertisement — unless the surface
+    /// composing this application says otherwise: a chat whose front has nobody
+    /// to ask cannot reach the calls a write-shaped tool would put to a person.
+    /// A cell rather than a plain flag because the surface states it through the
+    /// shared host it already holds — the same way it states its mode.
+    pub(super) can_obtain_approval: std::sync::atomic::AtomicBool,
+    /// Whether a run of this host inherits the job's continuation context: the
+    /// block that states what a *continuing* run already knows. `true` for
+    /// every surface whose job outlives its turn, and stated `false` by a
+    /// one-turn composition, whose run answers one question and inherits
+    /// nothing — a question asked twice must send the provider the same bytes.
+    pub(super) continuation_context: std::sync::atomic::AtomicBool,
     /// The job's one permission-mode cell: the root's `shell` reads it on every
     /// call, so the mode stated here is the mode the next call resolves. Shared
     /// by handle, so a host two `Arc`s hold still answers with its current mode.
     /// `Ask` — the fail-safe default — unless the building surface states one.
     pub(super) mode: ModeCell,
+    /// The grants the launching surface stated for this session (`--allow`): a
+    /// seed pre-answers the call the mode would have asked about, so the family
+    /// it covers is advertised. A cell because the surface states it through the
+    /// shared host, like the mode; empty unless a surface states one, which is
+    /// every job surface.
+    pub(super) launch_grants: std::sync::Mutex<saya_agent::SessionGrants>,
     /// The current job's lifecycle timeline. It starts at application open so
     /// the proposal and approval phases are measured; `create` takes it into
     /// the job and leaves a fresh one for the next job.
     pub(super) lifecycle: std::sync::Mutex<Arc<super::lifecycle::LifecycleTimeline>>,
+    /// Whether this host's runs have a workspace at all: whether the folder they
+    /// were opened over is one they may read and search. `true` — every surface
+    /// whose folder can root an in-place job — and `false` only where a session
+    /// states it: a run over a folder that cannot root a job (the home
+    /// directory, a dangerous root, a folder that would hold the job's private
+    /// state root) is offered no file, shell or write tool.
+    pub(super) workspace: std::sync::atomic::AtomicBool,
+    /// Whether this host composes one-turn runs: one question, one turn, one
+    /// answer, and no outcome view recorded afterwards. `false` for every
+    /// surface whose job outlives its turn.
+    pub(super) one_turn: std::sync::atomic::AtomicBool,
 }
 impl CodingApplication {
     /// Opens the application over `repository`, falling back to an in-place
@@ -105,7 +140,10 @@ impl CodingApplication {
 
     /// Opens the application over `mode`. `InPlace` never asks Git to open the
     /// repository; `Managed` falls back to an in-place root only when the path
-    /// is not a repository at all.
+    /// is not a repository at all. `NoWorkspace` is a session over a folder that
+    /// cannot root an in-place job: the folder is the run's label and its own
+    /// identity, nothing is captured for it, and the run it composes is offered
+    /// no workspace tool.
     #[allow(clippy::too_many_arguments)]
     pub async fn open_with_mode(
         mut runtime: RuntimeConfig,
@@ -122,20 +160,28 @@ impl CodingApplication {
             CodingError::owner(io_context("resolve repository", repository, error))
         })?;
         let state_root = private_directory(state_root)?;
-        if state_root.starts_with(&canonical) {
+        // A run over a folder that cannot root an in-place job keeps its private
+        // state where it was configured even when that is inside the folder:
+        // the folder is only the run's label there, and no file, shell or write
+        // tool is composed over it, so nothing can reach the state.
+        if mode != RootMode::NoWorkspace && state_root.starts_with(&canonical) {
             return Err(CodingError::StateDirectory);
         }
         let service = GitService::new(git, &state_root).map_err(CodingError::owner)?;
-        let root = if mode == RootMode::InPlace {
-            CodingRoot::InPlace(resolve_in_place(repository, &canonical, &state_root)?)
-        } else {
-            match service.open_repository(&canonical, token).await {
+        let root = match mode {
+            RootMode::InPlace => {
+                CodingRoot::InPlace(resolve_in_place(repository, &canonical, &state_root)?)
+            }
+            RootMode::NoWorkspace => {
+                CodingRoot::InPlace(resolve_session_root(repository, &state_root)?)
+            }
+            RootMode::Managed => match service.open_repository(&canonical, token).await {
                 Ok(repository) => CodingRoot::Git(repository),
                 Err(GitError::NotRepository) => {
                     CodingRoot::InPlace(resolve_in_place(repository, &canonical, &state_root)?)
                 }
                 Err(error) => return Err(CodingError::owner(error)),
-            }
+            },
         };
         let artifacts = SnapshotArtifacts::open(&private_directory(&state_root.join("snapshots"))?)
             .map_err(CodingError::owner)?;
@@ -157,8 +203,13 @@ impl CodingApplication {
             managed_fallback: None,
             personal_instruction_dir: None,
             operator: None,
+            can_obtain_approval: std::sync::atomic::AtomicBool::new(true),
+            continuation_context: std::sync::atomic::AtomicBool::new(true),
             mode: ModeCell::new(ApprovalPolicy::Ask),
+            launch_grants: std::sync::Mutex::new(saya_agent::SessionGrants::default()),
             lifecycle: std::sync::Mutex::new(super::lifecycle::LifecycleTimeline::new()),
+            workspace: std::sync::atomic::AtomicBool::new(mode != RootMode::NoWorkspace),
+            one_turn: std::sync::atomic::AtomicBool::new(false),
         }))
     }
     pub async fn open_default(
@@ -263,51 +314,23 @@ impl CodingApplication {
     pub fn store(&self) -> &SqliteStateStore {
         &self.store
     }
-}
-
-pub(super) fn private_directory(path: &Path) -> Result<PathBuf, CodingError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, MetadataExt};
-        // Missing ancestors are created too (private, like the leaf): on a
-        // fresh machine saya's own state directory does not exist yet. An
-        // existing directory is never altered; only the leaf is then checked.
-        let mut builder = fs::DirBuilder::new();
-        builder.recursive(true).mode(0o700);
-        match builder.create(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(CodingError::owner(error)),
-        }
-        let metadata = fs::symlink_metadata(path).map_err(CodingError::owner)?;
-        // SAFETY: geteuid reads the process identity and has no pointer arguments.
-        let owner_uid = unsafe { libc::geteuid() };
-        if !metadata.is_dir() || metadata.mode() & 0o077 != 0 || metadata.uid() != owner_uid {
-            return Err(CodingError::StateDirectory);
-        }
-        fs::canonicalize(path).map_err(CodingError::owner)
-    }
-    #[cfg(windows)]
-    {
-        // Windows has no owner-only mode bits: the state directory is
-        // created under the user's profile, whose ACL is the privacy
-        // boundary. What can be proved here is that the leaf is a real
-        // directory and not a link or junction that would redirect job
-        // records elsewhere.
-        fs::create_dir_all(path).map_err(CodingError::owner)?;
-        let metadata = fs::symlink_metadata(path).map_err(CodingError::owner)?;
-        if !metadata.is_dir()
-            || saya_harness::workspace::windows_identity::path_is_reparse_point(path)
-                .map_err(CodingError::owner)?
-        {
-            return Err(CodingError::StateDirectory);
-        }
-        fs::canonicalize(path).map_err(CodingError::owner)
-    }
-    #[cfg(all(not(unix), not(windows)))]
-    {
-        let _ = path;
-        Err(CodingError::StateDirectory)
+    /// Whether the artifacts root already holds a snapshot under `id`: a job id
+    /// a run has taken. A session that opens a run again — a resumed session's
+    /// next process — would otherwise be refused by the artifacts root for
+    /// naming the snapshot the run before it wrote.
+    pub(crate) fn snapshot_taken(&self, id: &str) -> bool {
+        let Ok(id) = saya_types::SnapshotId::parse(id) else {
+            // An id the snapshot grammar refuses is `create`'s to refuse, with
+            // its own error: this method only reports what is already there.
+            return false;
+        };
+        // Anything but "no snapshot under that id" is treated as taken: a
+        // second run under the same id is the failure worth avoiding, and an
+        // unreadable snapshot is not evidence that the id is free.
+        !matches!(
+            self.artifacts.read_snapshot(&id),
+            Err(saya_harness::coding::snapshot::SnapshotError::SnapshotNotFound)
+        )
     }
 }
 
@@ -332,16 +355,31 @@ impl CodingApplication {
         )
         .await
     }
-}
 
-/// Names the operation and the path in a filesystem error. The OS message
-/// alone ("The system cannot find the path specified") does not say which
-/// path a launch failed to resolve.
-fn io_context(operation: &str, path: &Path, error: std::io::Error) -> std::io::Error {
-    std::io::Error::new(
-        error.kind(),
-        format!("{operation} {}: {error}", path.display()),
-    )
+    /// The same session over a state root the surface stated: a one-shot ask
+    /// keeps its job's records outside the folder it asks about, so it names the
+    /// root they go under instead of taking the configured one.
+    pub(crate) async fn session_over(
+        runtime: RuntimeConfig,
+        store: SqliteStateStore,
+        repository: &Path,
+        mode: RootMode,
+        state_root: &Path,
+        token: &CancellationToken,
+    ) -> Result<Arc<Self>, CodingError> {
+        let (root, program_dir) = super::root_mode::session_inputs_over(&runtime, state_root)?;
+        Self::open_default_with_mode(
+            runtime,
+            store,
+            repository,
+            &root,
+            &super::cli::find_git()?,
+            &program_dir,
+            mode,
+            token,
+        )
+        .await
+    }
 }
 
 #[cfg(all(test, unix))]

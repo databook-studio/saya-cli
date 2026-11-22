@@ -49,7 +49,7 @@ use saya_agent::{
 };
 
 use crate::agent::tools::workspace::is_tool_name;
-use crate::agent::tools::{CaptureHook, DatabaseTools};
+use crate::agent::tools::{CaptureHook, DatabaseTools, clarification};
 use crate::contracts::RecallReceipt;
 
 pub(crate) use learning::LearningSource;
@@ -233,15 +233,21 @@ impl RunPlugin for DatabasePlugin {
             // The workspace file tools ride the same list the chat builds today,
             // and are the core's: the plugin offers the rest, in the order the
             // chat has always advertised it, so the cached prefix is unchanged.
-            Surface::Chat(ChatSurface { flags, .. }) => DatabaseTools::definitions(
-                flags.allow_query_data,
-                flags.has_state_store,
-                flags.permit_candidate_writes,
-                false,
-            )
-            .into_iter()
-            .filter(|definition| !is_tool_name(&definition.name))
-            .collect(),
+            // The ask is the plugin's own name, so it is placed here rather than
+            // by the core list this surface builds from.
+            Surface::Chat(ChatSurface { flags, .. }) => {
+                let mut definitions: Vec<ToolDefinition> = DatabaseTools::definitions(
+                    flags.allow_query_data,
+                    flags.has_state_store,
+                    flags.permit_candidate_writes,
+                    false,
+                )
+                .into_iter()
+                .filter(|definition| !is_tool_name(&definition.name))
+                .collect();
+                clarification::advertise(&mut definitions);
+                definitions
+            }
             Surface::Job(job) => job.tools.definitions(job.view.as_ref()),
         }
     }

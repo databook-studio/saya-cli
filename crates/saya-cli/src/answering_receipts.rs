@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use saya_agent::{
     AgentEvent, AgentEventSink, AgentMetric, AnsweringObservation, TokenUsage, UsageCall,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 pub(crate) struct AnsweringReceipts(Mutex<Option<TokenUsage>>);
@@ -26,7 +26,9 @@ impl AnsweringReceipts {
     }
 }
 
-fn add_usage(total: &mut TokenUsage, usage: TokenUsage) {
+/// Adds one report to a running answering receipt: every field the report
+/// carries, and only the optional ones it states.
+pub(crate) fn add_usage(total: &mut TokenUsage, usage: TokenUsage) {
     total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
     total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
     sum_optional(&mut total.cached_input_tokens, usage.cached_input_tokens);
@@ -43,13 +45,16 @@ fn sum_optional(total: &mut Option<u64>, value: Option<u64>) {
     }
 }
 
-pub(crate) struct AnsweringReceiptSink<'a> {
-    inner: &'a dyn AgentEventSink,
+pub(crate) struct AnsweringReceiptSink {
+    inner: Arc<dyn AgentEventSink>,
     receipts: AnsweringReceipts,
 }
 
-impl<'a> AnsweringReceiptSink<'a> {
-    pub(crate) fn new(inner: &'a dyn AgentEventSink) -> Self {
+impl AnsweringReceiptSink {
+    /// Wraps the run's sink. The sink is owned, not borrowed: a candidate
+    /// attempt's session renders its stream through this one, and the session
+    /// outlives the borrow the attempt used to state.
+    pub(crate) fn new(inner: Arc<dyn AgentEventSink>) -> Self {
         Self {
             inner,
             receipts: AnsweringReceipts(Mutex::new(None)),
@@ -62,7 +67,7 @@ impl<'a> AnsweringReceiptSink<'a> {
 }
 
 #[async_trait]
-impl AgentEventSink for AnsweringReceiptSink<'_> {
+impl AgentEventSink for AnsweringReceiptSink {
     async fn emit(&self, event: AgentEvent) {
         self.receipts.record(&event);
         self.inner.emit(event).await;
@@ -123,8 +128,8 @@ mod tests {
 
     #[tokio::test]
     async fn metric_reaches_inner_once_unchanged_and_in_order() {
-        let sink = RecordingSink(Mutex::new(Vec::new()));
-        let wrapper = AnsweringReceiptSink::new(&sink);
+        let sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
+        let wrapper = AnsweringReceiptSink::new(sink.clone());
         wrapper.emit(AgentEvent::turn_started()).await;
         wrapper
             .metric(AgentMetric::Count(AgentMetricCount::RetryAttemptStarted))
@@ -146,13 +151,13 @@ mod tests {
     #[tokio::test]
     async fn metrics_leave_receipt_sums_unchanged() {
         let usage = || AgentEvent::usage(UsageCall::Answer, TokenUsage::new(2, 5));
-        let plain_sink = RecordingSink(Mutex::new(Vec::new()));
-        let plain = AnsweringReceiptSink::new(&plain_sink);
+        let plain_sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
+        let plain = AnsweringReceiptSink::new(plain_sink.clone());
         plain.emit(usage()).await;
         plain.emit(usage()).await;
 
-        let metrics_sink = RecordingSink(Mutex::new(Vec::new()));
-        let with_metrics = AnsweringReceiptSink::new(&metrics_sink);
+        let metrics_sink = Arc::new(RecordingSink(Mutex::new(Vec::new())));
+        let with_metrics = AnsweringReceiptSink::new(metrics_sink.clone());
         with_metrics.emit(usage()).await;
         with_metrics
             .metric(AgentMetric::Phase {

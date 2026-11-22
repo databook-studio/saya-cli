@@ -132,42 +132,36 @@ fn handle_run(
 }
 
 fn handle_compact(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+    // `/compact` touches working memory, not files or the database, so it runs
+    // outside the approval engine — exactly as today's trimming does. The
+    // compaction is the chat layer's one operation, reached through the
+    // session's own compaction, so the summariser, the plan and the validation
+    // are the ones the automatic trigger runs at a turn's boundary. A session
+    // with no run open has no conversation of its own to compact: nothing ran,
+    // so nothing is folded. It is stated before the loop's own parts are taken,
+    // because the session it runs on is one of them.
+    let said = match ctx.chat.as_ref() {
+        Some(chat) => chat.compact(),
+        None => crate::interactive::session::line_chat::nothing_to_compact(),
+    };
+    // The summary and the record this compaction saved are the session's own
+    // facts: they are applied to the state here, and the cell the next request
+    // is rendered from is re-read from it — the same writer, the same place,
+    // as a turn's boundary compaction.
+    let facts = ctx.chat.as_ref().and_then(LineChat::session_facts);
     let ActionParts {
         state,
-        runtime,
-        session,
         format,
         store,
         save_refused,
+        session,
         ..
     } = action_parts(ctx);
-    let runtime: &RuntimeConfig = &runtime;
-    // `/compact` touches working memory, not files or the database, so
-    // it runs outside the approval engine — exactly as today's trimming
-    // does. The summariser runs here (headless owns a `block_on` seam);
-    // any failure leaves the conversation exactly as it was.
-    let outcome = block_on(super::super::compact_task::run(
-        runtime,
-        state,
-        &session.universe(),
-        session.session_metrics().as_deref(),
-    ));
-    crate::local_metrics_format::print_metrics_section(&session.session_metrics());
-    state.usage.record_learning(outcome.usage);
-    // A validated manual success re-arms the automatic trigger (the TUI
-    // poll clears the latch on the same validated success, and the
-    // session-state doc names "any successful compaction"); a manual
-    // failure or a no-work result leaves the latch exactly as it was.
-    if !outcome.failed && outcome.summary.is_some() {
-        state.auto_compact_failed = false;
+    sync_session_facts(facts.as_deref(), session, state);
+    let failed = matches!(said, Said::Error(_));
+    if let Some(action) = said.action() {
+        session_emit::emit_action(action, format, state, store)?;
     }
-    let failed = outcome.failed;
-    let action = if failed {
-        SessionAction::Error(outcome.message)
-    } else {
-        SessionAction::Message(outcome.message)
-    };
-    session_emit::emit_action(action, format, state, store)?;
     if let Some(outcome) = persist(state, store, format, save_refused)? {
         return Ok(outcome);
     }

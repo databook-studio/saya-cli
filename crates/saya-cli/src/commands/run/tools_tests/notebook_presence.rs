@@ -26,7 +26,6 @@ async fn a_run_without_a_notebook_advertises_no_notebook_edit() {
         advertised,
         [
             "schema_discovery",
-            "request_clarification",
             "read",
             "glob",
             "grep",
@@ -85,7 +84,7 @@ async fn a_run_with_a_notebook_appends_the_notebook_edit_last() {
     );
     assert_eq!(
         advertised.len(),
-        14,
+        13,
         "it is appended, not inserted: {advertised:?}"
     );
 }

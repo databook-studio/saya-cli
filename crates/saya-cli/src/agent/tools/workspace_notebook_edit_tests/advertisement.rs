@@ -37,7 +37,6 @@ fn notebook_edit_is_appended_after_the_tools_that_existed_before_it() {
         names,
         [
             "schema_discovery",
-            "request_clarification",
             "read",
             "list",
             "glob",

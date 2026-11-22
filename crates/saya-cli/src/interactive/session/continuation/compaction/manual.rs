@@ -42,6 +42,7 @@ pub(crate) const COMPACT_MAX_ATTEMPTS: u32 = 2;
 
 /// A compaction plan: which turns get summarised, which stay verbatim, and
 /// the tokens the summary must preserve.
+#[derive(Clone)]
 pub(crate) struct CompactionPlan {
     pub(crate) summarise: Vec<ChatMessage>,
     pub(crate) compacted_turns: usize,

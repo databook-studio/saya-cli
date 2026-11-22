@@ -9,9 +9,8 @@ use async_trait::async_trait;
 use saya_agent::{ApprovalDecider, ApprovalPolicy, ToolDefinition};
 use serde_json::{Value, json};
 
-use super::direct::RootTools;
 use super::direct_tests::working_checkout_root;
-use super::plan_gate_tests::{plan_root, ungated_root};
+use super::plan_gate_tests::plan_root;
 use crate::agent::tools::child::tests_root_compose_fixture as fixture;
 use crate::agent::tools::consent::Operator;
 
@@ -47,12 +46,18 @@ impl Operator for Recording {
     }
 }
 
-/// The root's own `write`, as the loop advertises it.
-fn write(root: &RootTools) -> ToolDefinition {
-    root.definitions()
+/// The root's own `write`, as the workspace family composes it. Taken from the
+/// family rather than from the advertised list: a `read-only` or `never` root
+/// does not offer it at all — its calls are refused at the door — and this file
+/// is about what the *execution-time* gate answers a call with, which the
+/// advertisement's gate never replaces.
+fn write() -> ToolDefinition {
+    let mut definitions = Vec::new();
+    crate::agent::tools::workspace::append_definitions(&mut definitions, true);
+    definitions
         .into_iter()
         .find(|definition| definition.name == "write")
-        .expect("the root advertises write")
+        .expect("the workspace family composes write")
 }
 
 /// One write inside the working checkout.
@@ -78,7 +83,7 @@ async fn ask_puts_a_root_write_to_the_operator_once() {
     )
     .await;
     let root = working_checkout_root(&fixture).await;
-    let write = write(&root);
+    let write = write();
     let job = fixture.delegate_job.job_id().clone();
 
     assert!(
@@ -110,7 +115,7 @@ async fn the_operators_refusal_refuses_the_root_write() {
     )
     .await;
     let root = working_checkout_root(&fixture).await;
-    let write = write(&root);
+    let write = write();
 
     assert!(
         !root.approve(&write, &call()).await,
@@ -129,7 +134,7 @@ async fn read_only_and_never_refuse_a_root_write_without_a_question() {
             fixture::Fixture::asking("direct-write-refused", &["notes"], operator.clone(), mode)
                 .await;
         let root = working_checkout_root(&fixture).await;
-        let write = write(&root);
+        let write = write();
 
         assert!(
             !root.approve(&write, &call()).await,
@@ -149,7 +154,7 @@ async fn accept_edits_and_bypass_admit_a_root_write_without_a_question() {
             fixture::Fixture::asking("direct-write-admitted", &["notes"], operator.clone(), mode)
                 .await;
         let root = working_checkout_root(&fixture).await;
-        let write = write(&root);
+        let write = write();
 
         assert!(
             root.approve(&write, &call()).await,
@@ -175,7 +180,7 @@ async fn a_write_outside_the_workspace_is_refused_without_a_question() {
             fixture::Fixture::asking("direct-write-escape", &["notes"], operator.clone(), mode)
                 .await;
         let root = working_checkout_root(&fixture).await;
-        let write = write(&root);
+        let write = write();
         let escape = json!({"path": "../escape.txt", "content": "must not exist"});
 
         assert!(
@@ -203,7 +208,7 @@ async fn a_write_the_plan_posture_hides_is_refused_without_a_question() {
         ApprovalPolicy::Ask,
     )
     .await;
-    let write = write(&ungated_root(&fixture).await);
+    let write = write();
     let closed = plan_root(&fixture, None).await;
 
     assert!(
@@ -226,7 +231,7 @@ async fn a_detached_job_writes_with_no_question_at_all() {
     for mode in [ApprovalPolicy::AcceptEdits, ApprovalPolicy::Bypass] {
         let fixture = fixture::Fixture::stating("direct-write-detached", &["notes"], mode).await;
         let root = working_checkout_root(&fixture).await;
-        let write = write(&root);
+        let write = write();
 
         assert!(
             root.approve(&write, &call()).await,

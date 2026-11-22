@@ -33,6 +33,11 @@ pub(crate) struct DirectCodingTools {
     pub(super) workspace: ChildTools,
     pub(super) decider: ExactWriteChildApproval,
     pub(super) tasks: TasksSet,
+    /// The session's own task cell, when this run works through a session's
+    /// list: present, the root's `turn_context_note` carries nothing — the
+    /// session renders the list once at the turn's start, where the release's
+    /// turn body did, never mid-turn for a list that changed under it.
+    pub(super) session_tasks: Option<SessionTasks>,
     /// The root's `shell`, when the config is on and the mode is not `never`.
     /// Absent means the root advertises no shell at all.
     pub(super) shell: Option<RootShell>,
@@ -180,6 +185,7 @@ impl DirectCodingTools {
             workspace,
             decider,
             tasks: TasksSet::new(SessionTasks::default()),
+            session_tasks: None,
             shell,
             web,
             mcp,
@@ -192,6 +198,14 @@ impl DirectCodingTools {
             tools,
             db_lane: None,
         }
+    }
+
+    /// Gives this run the session's own task list: the `checklist` tool writes
+    /// through the session's cell from now on, and the session renders the list
+    /// at the turn's start, so this surface stops rendering it mid-turn.
+    pub(crate) fn attach_session_tasks(&mut self, tasks: SessionTasks) {
+        self.tasks = TasksSet::new(tasks.clone());
+        self.session_tasks = Some(tasks);
     }
 
     /// Attaches the root's model-facing rewind. Appended last, like every tool
@@ -217,6 +231,7 @@ impl DirectCodingTools {
                 && (!shell_policy::reaches_background(name)
                     || self.background_started.load(Ordering::Acquire))
                 && self.plan_permits(definition)
+                && self.mode_permits(definition)
                 && crate::agent::tools::advertisement::advertised(&self.evidence, &self.tools, name)
         })
     }

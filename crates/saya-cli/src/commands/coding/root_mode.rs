@@ -41,13 +41,36 @@ pub(super) fn session_inputs(runtime: &RuntimeConfig) -> Result<(PathBuf, PathBu
         .ok_or(CodingError::StateDirectory)?
         .join("coding");
     let root = super::host::private_directory(&root)?;
-    let program_dir = runtime
+    Ok((root, program_dir(runtime)))
+}
+
+/// The same pair over a state root the surface stated: the one-shot ask keeps
+/// its job's records outside the folder it asks about, so it names the root
+/// here and the rule is answered by where they go.
+pub(super) fn session_inputs_over(
+    runtime: &RuntimeConfig,
+    state_root: &Path,
+) -> Result<(PathBuf, PathBuf), CodingError> {
+    let root = super::host::private_directory(state_root)?;
+    Ok((root, program_dir(runtime)))
+}
+
+/// The program directory a session states: the configured one, else the
+/// launch's own.
+fn program_dir(runtime: &RuntimeConfig) -> PathBuf {
+    runtime
         .resolved
         .coding
         .program_dir
         .clone()
-        .unwrap_or_else(crate::cli::default_program_dir);
-    Ok((root, program_dir))
+        .unwrap_or_else(crate::cli::default_program_dir)
+}
+
+/// The state root a folder's lease lives under, for a surface that asks whether
+/// another owner holds that folder: `saya run start` and the chat session look
+/// in the same place for the same lease.
+pub(crate) fn session_state_root(runtime: &RuntimeConfig) -> Result<PathBuf, CodingError> {
+    Ok(session_inputs(runtime)?.0)
 }
 
 /// The one stderr/activity line a fallback start states. Exact text: it is

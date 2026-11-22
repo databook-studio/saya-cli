@@ -31,6 +31,14 @@ impl NativeCodingJob {
             .plugins
             .as_ref()
             .map(|supplied| Arc::new(active_plugins(&supplied.registry, &supplied.context)));
+        // The untrusted project context (instruction sources and the worktree's
+        // preferences) rides a chat surface's turns, as the line session carried
+        // it on release. A job surface states its own context, so it carries
+        // none of it.
+        let project_context = inputs
+            .plugins
+            .as_ref()
+            .is_some_and(|supplied| supplied.context.surface == saya_agent::RunSurface::Chat);
         // A direct-mode coordinator owns one working checkout for the whole
         // run; `RootTools::build` ensures it (resume re-ensures it) and composes
         // the toolset. Delegate-only jobs create nothing.
@@ -60,6 +68,13 @@ impl NativeCodingJob {
                 DbApprovalLane::for_run(self, &supplied.context, supplied.primary.clone())
         {
             tools.attach_db_lane(Arc::new(lane));
+        }
+        // A run a session opens works through the session's own task cell: its
+        // `checklist` writes there, so the record can keep what the run left,
+        // and its turns render the list at the turn's start rather than the
+        // root rendering it mid-turn.
+        if let Some(tasks) = inputs.tasks.clone() {
+            tools.attach_session_tasks(tasks);
         }
         let tools = Arc::new(tools);
         // The run's own working checkout, resolved once: `RootTools::build` has
@@ -128,11 +143,16 @@ impl NativeCodingJob {
                 std::env::var_os("PATH").as_deref(),
             ),
         );
-        let mut system_prompt = super::super::prompts::system_with_file_sources(
-            self.request.plan,
-            self.is_read_only_root(),
-            file_sources,
-        );
+        let mut system_prompt = match self.has_workspace() {
+            true => super::super::prompts::system_with_file_sources(
+                self.request.plan,
+                self.is_read_only_root(),
+                file_sources,
+            ),
+            // A run with no workspace reads no file and has no shell, so it is
+            // told that rather than told to read a workspace it does not have.
+            false => super::super::prompts::NO_WORKSPACE.to_owned(),
+        };
         // The active plugins' sections ride after the core prompt, composed
         // here with the rest of the run's one-time setup: every turn of the run
         // sends these exact bytes, so the request prefix never moves. A run
@@ -161,6 +181,11 @@ impl NativeCodingJob {
             // exactly as it always did.
             history: TurnHistory::seeded(inputs.seed.clone()),
             plugins,
+            project_context,
+            // The session facts a chat run's requests carry, when the session
+            // states them: the compaction narrative and the continuation
+            // record its loop holds.
+            facts: inputs.facts.clone(),
         })
     }
 }

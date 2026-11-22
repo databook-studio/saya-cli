@@ -4,10 +4,10 @@ use super::super::{
     session::lifecycle::capacity::{SaveFailure, notice_after_save, save_with_explanation},
     session::lifecycle::resume::{SessionDefaults, block_on, load_session},
     session::runtime::SessionRuntime,
-    session_request::PromptResult,
     turn_summary::{ProseOutcome, ToolTally, TurnSummary, prose_status},
 };
-use crate::budget_wording::{budget_dimension, budget_partial_message};
+use super::line_chat::{LineChat, LineSession, Said};
+use crate::chat::ChatOutcome;
 use crate::interactive::session::lifecycle::paths::default_session_dir;
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
@@ -34,6 +34,8 @@ include!("action_coding.rs");
 include!("action_lifecycle.rs");
 include!("action_dispatch.rs");
 include!("headless_entry.rs");
+include!("action_message.rs");
+include!("session_facts_sync.rs");
 include!("launch_prepare.rs");
 include!("launch_terminal.rs");
 include!("launch_headless.rs");

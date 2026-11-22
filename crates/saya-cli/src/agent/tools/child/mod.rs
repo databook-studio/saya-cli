@@ -17,7 +17,7 @@ mod tests_allow;
 #[cfg(test)]
 mod tests_ask;
 #[cfg(test)]
-mod tests_database;
+pub(crate) mod tests_database;
 #[cfg(test)]
 mod tests_database_plugin;
 #[cfg(test)]

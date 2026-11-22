@@ -70,7 +70,6 @@ pub(crate) struct TurnPrompt<'a> {
     pub(crate) compaction_summary: Option<String>,
 }
 
-include!("runtime/entrypoint.rs");
 include!("runtime/sink_outcomes.rs");
 include!("runtime/question_start.rs");
 include!("runtime/injected_inputs.rs");
@@ -86,6 +85,12 @@ mod ask_surface;
 #[path = "runtime/ask_surface_tests.rs"]
 mod ask_surface_tests;
 
+/// The advice a provider that could not be reached is followed by. One
+/// sentence, in one place: the turn body's own provider error says it, and so
+/// does the failure-class table a job surface reads a run's failure through.
+pub(crate) const PROVIDER_UNREACHABLE_ADVICE: &str =
+    "next: start your AI provider, or run `saya config doctor` to check the endpoint and base_url.";
+
 /// the three first-run failures name no next step. Guidance is
 /// added at the saya-cli boundary (here), not in the provider-neutral agent
 /// crate. A provider that is configured but unreachable is "what is configured
@@ -96,10 +101,7 @@ mod ask_surface_tests;
 fn provider_message(error: &saya_agent::ProviderError) -> String {
     let message = error.to_string();
     if message.contains("could not reach the provider") {
-        format!(
-            "{message}\nnext: start your AI provider, or run `saya config doctor` to check \
-             the endpoint and base_url."
-        )
+        format!("{message}\n{PROVIDER_UNREACHABLE_ADVICE}")
     } else {
         message
     }
@@ -112,7 +114,7 @@ fn provider_message(error: &saya_agent::ProviderError) -> String {
 /// connection failure is left untouched rather than given advice that might
 /// not fit. Applied at the `prepare_turn` seam so both the `ask` and the
 /// interactive paths surface it.
-fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
+pub(crate) fn with_next_step(error: AgentRuntimeError) -> AgentRuntimeError {
     match error {
         AgentRuntimeError::Database(message)
             if message.contains("secret reference")

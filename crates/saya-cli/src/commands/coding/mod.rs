@@ -254,7 +254,7 @@ pub enum CodingError {
     )]
     RunFailed,
     #[error(
-        "the model hit its output-token limit{} before answering; a reasoning model can spend the whole limit on reasoning: raise ai.max_output_tokens in trusted configuration, then resume or restart the job",
+        "the provider's response was truncated{} before answering; a reasoning model can spend the whole limit on reasoning: raise ai.max_output_tokens in trusted configuration, then resume or restart the job",
         configured.map(|configured| format!(" (ai.max_output_tokens = {configured})")).unwrap_or_default()
     )]
     OutputLimit { configured: Option<u32> },

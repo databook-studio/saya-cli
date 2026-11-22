@@ -80,8 +80,41 @@ impl NativeCodingJob {
         // This turn's context comes first: the root shell's composition proves
         // the sandbox by creating and removing canary directories inside W, and
         // a readiness walk that met one of them mid-removal would send the model
-        // a different view than the run's first request must carry.
-        let mut context_blocks = self.continuation_context().await?;
+        // a different view than the run's first request must carry. A one-turn
+        // composition inherits nothing, so it states none of it.
+        let mut context_blocks = if self.application.inherits_continuation_context() {
+            self.continuation_context().await?
+        } else {
+            Vec::new()
+        };
+        // A chat surface carries the project's own untrusted context too — the
+        // instruction sources and the worktree's explicit preferences, on the
+        // same labelled lane and through the one injection site the interactive
+        // turn uses. It is stable across the run's turns, so it sits ahead of
+        // the continuation blocks and keeps the request prefix the provider
+        // caches.
+        if session.project_context {
+            context_blocks = crate::agent::runtime::project_untrusted_context(
+                &self.application.runtime,
+                Some(self.application.root_path()),
+                Some(&self.application.store),
+                &asked,
+                session.system_prompt.as_deref(),
+                context_blocks,
+            )
+            .await;
+        }
+        // The session's own facts join it: the task list the run holds, the
+        // compaction narrative and the continuation record its loop holds now,
+        // each through the builder the interactive turn already renders them
+        // with. A run no session stated them for (every job surface) carries
+        // none of them.
+        if let Some(block) = session.tools.take_session_tasks() {
+            context_blocks.push(block);
+        }
+        if let Some(facts) = session.facts.as_ref() {
+            context_blocks.extend(facts.blocks(config.ai.context_byte_budget));
+        }
         // The active plugins' context joins it, bounded by the same byte
         // budget; plugin context in this turn's prompt is a use of the plugin,
         // so its policy arms here, before request 1.
@@ -114,6 +147,7 @@ impl NativeCodingJob {
                 Arc::clone(plugins),
                 Arc::clone(&session.executor),
                 arming.clone(),
+                self.tools().clone(),
             )
         });
         let executor: &dyn ToolExecutor = match &routed {
@@ -123,9 +157,11 @@ impl NativeCodingJob {
         // The core tools first, then the active plugins', as a helper composes
         // them; with no plugins this is the list the core advertises.
         let definitions = match session.plugins.as_ref() {
-            Some(plugins) => {
-                super::parent_plugins::definitions(session.tools.definitions(), plugins)
-            }
+            Some(plugins) => super::parent_plugins::definitions(
+                session.tools.definitions(),
+                plugins,
+                self.tools(),
+            ),
             None => session.tools.definitions(),
         };
         let work = run_agent_with_control(

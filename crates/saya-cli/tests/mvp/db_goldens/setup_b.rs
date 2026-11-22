@@ -13,11 +13,12 @@ use super::setup::Fixture;
 pub(super) const SEEDED_CLAIM: &str = "revenue totals are recorded in dollars";
 
 /// Assisted memory: recall runs, post-turn extraction is permitted, and data
-/// sharing is the operator's explicit consent.
+/// sharing is the operator's explicit consent. The budget is `[limits.database]`
+/// like part A's, and it arms on a turn's first database use.
 fn assisted_config(elapsed_seconds: u64) -> String {
     format!(
         "[ai]\nallow_data_sharing = true\n\n\
-         [limits.session]\nelapsed_seconds = {elapsed_seconds}\n\n\
+         [limits.database]\nelapsed_seconds = {elapsed_seconds}\n\n\
          [memory]\nmode = 'assisted'\n"
     )
 }

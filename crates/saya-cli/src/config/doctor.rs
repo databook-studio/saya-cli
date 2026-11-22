@@ -22,6 +22,10 @@ mod tests;
 #[path = "doctor/ignored_override_tests.rs"]
 mod ignored_override_tests;
 
+#[cfg(test)]
+#[path = "doctor/tools_deprecation_tests.rs"]
+mod tools_deprecation_tests;
+
 /// A doctor diagnosis: the report lines and whether the setup can plausibly run
 /// a query. `can_run_query` is false when nothing is configured or the selected
 /// profile cannot connect (an unresolved secret); warnings stay true here, so a
@@ -51,6 +55,9 @@ pub(crate) fn report(runtime: &RuntimeConfig) -> DoctorReport {
     ];
     lines.extend(ignored_override_lines(
         &runtime.resolved.ignored_project_overrides,
+    ));
+    lines.extend(tools_deprecation_lines(
+        runtime.resolved.tools.deprecation_notes(),
     ));
     let secret_report = secret_lines(runtime);
     let selected_unresolved = secret_report.selected_unresolved;
@@ -143,6 +150,18 @@ fn ignored_override_lines(ignored: &[String]) -> Vec<String> {
         "  not get to set them. Move them to your user config to have them applied,".into(),
         "  or pass --trust-project-config to accept this project's values.".into(),
     ]
+}
+
+/// Names the `[tools] allow` entries that use an old tool spelling. The list
+/// honours them for one release — a stale spelling narrows the surface exactly
+/// as its successor's name does — so doctor is where a user learns which word
+/// to write instead, not where the launch fails. Empty when every stated word
+/// is current.
+fn tools_deprecation_lines(notes: &[String]) -> Vec<String> {
+    notes
+        .iter()
+        .map(|note| format!("[tools] allow: {note}"))
+        .collect()
 }
 
 fn path(value: &Option<std::path::PathBuf>) -> String {

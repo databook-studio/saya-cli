@@ -92,8 +92,55 @@ impl Normaliser {
             out = out.replace(from, to);
         }
         redact_hex_field(&mut out, "prompt_cache_key");
+        out = redact_snapshot_ids(&out);
         out
     }
+}
+
+/// Replaces every run's snapshot id — `<8 digits>-<6 digits>-<hex>` — with
+/// `<snapshot>`.
+///
+/// The continuation block a chat request carries states the run's own snapshot
+/// id, which embeds the instant the run started and a short hash. Neither is a
+/// behaviour, and the hash is not zero-padded, so the id is one byte shorter
+/// whenever it begins with a zero: measured as bytes it made a golden flake by
+/// one byte between otherwise identical runs.
+fn redact_snapshot_ids(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        match snapshot_end(bytes, index) {
+            Some(end) => {
+                out.push_str(&text[copied..index]);
+                out.push_str("<snapshot>");
+                copied = end;
+                index = end;
+            }
+            None => index += 1,
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+/// Where the snapshot id starting at `start` ends, if one starts there.
+fn snapshot_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let digits = |from: usize, count: usize| {
+        bytes
+            .get(from..from + count)
+            .filter(|run| run.iter().all(u8::is_ascii_digit))
+    };
+    digits(start, 8)?;
+    (bytes.get(start + 8) == Some(&b'-')).then_some(())?;
+    digits(start + 9, 6)?;
+    (bytes.get(start + 15) == Some(&b'-')).then_some(())?;
+    let mut end = start + 16;
+    while bytes.get(end).is_some_and(u8::is_ascii_hexdigit) {
+        end += 1;
+    }
+    (end > start + 16).then_some(end)
 }
 
 /// The `/private`-prefixed spelling of a path macOS resolves through the
@@ -186,6 +233,23 @@ mod tests {
         assert!(output.contains("<home>"), "{output}");
         assert!(output.contains("<var>"), "{output}");
         assert!(output.contains("<user>"), "{output}");
+    }
+
+    #[test]
+    fn the_normaliser_keeps_the_snapshot_field_but_not_its_id() {
+        let normaliser = Normaliser::build(&[], "alice");
+        // One id with a full-width hash and one whose hash begins with a zero:
+        // both are the run's, neither is a behaviour, and both must measure the
+        // same so the body size does not move between runs.
+        let wide = normaliser.normalise(r#""snapshot_id":"20261122-042623-36ff29a0""#);
+        let narrow = normaliser.normalise(r#""snapshot_id":"20261122-042629-ee71c0""#);
+        assert_eq!(wide, r#""snapshot_id":"<snapshot>""#);
+        assert_eq!(narrow, wide);
+        // A number that merely looks like a date is left alone.
+        assert_eq!(
+            normaliser.normalise("20261122 042623 16"),
+            "20261122 042623 16"
+        );
     }
 
     #[test]

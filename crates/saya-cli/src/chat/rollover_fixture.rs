@@ -66,12 +66,16 @@ pub(super) fn next_run(front: Arc<dyn ChatFront>, session: &str) -> SessionRun {
         front,
         session: session.to_owned(),
         mode: ApprovalPolicy::Ask,
+        budget: crate::plugins::database::DatabaseBudget::defaults(),
         shape: WorkspaceShape::Writable,
         connections: ConnectionRegistry::new(""),
         allow_query_data: true,
         memory: MemoryMode::Off,
         memory_reachable: false,
         capture: None,
+        learning: None,
+        tasks: None,
+        facts: None,
     }
 }
 

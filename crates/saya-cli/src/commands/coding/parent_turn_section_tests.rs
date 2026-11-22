@@ -117,6 +117,7 @@ async fn a_plugins_section_rides_the_run_prompt_once_and_stays_put() {
             primary: None,
         }),
         seed: Vec::new(),
+        ..TurnInputs::default()
     };
 
     let opened = tokio::time::timeout(RUN, fixture.job.run_open(&NoopEventSink, inputs))
@@ -194,6 +195,7 @@ async fn an_inactive_plugins_section_contributes_zero_bytes() {
             primary: None,
         }),
         seed: Vec::new(),
+        ..TurnInputs::default()
     };
 
     let run = tokio::time::timeout(RUN, fixture.job.run_open(&NoopEventSink, inputs))

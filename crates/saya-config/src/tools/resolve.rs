@@ -1,5 +1,6 @@
 //! The resolved `[tools]` setting: the validated allow list, or `None` when no
-//! layer stated one.
+//! layer stated one — beside the deprecation note each old tool spelling the
+//! list stated earned.
 
 use super::{ToolsAllow, ToolsAllowError};
 use crate::{ConfigError, ToolsFile};
@@ -12,9 +13,20 @@ use crate::{ConfigError, ToolsFile};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolvedTools {
     pub allow: Option<ToolsAllow>,
+    /// The one-line diagnosis each old spelling the stated list used earned
+    /// ([`crate::deprecation_note`]), in stated order and de-duplicated. The
+    /// list itself is already canonical: a name is stored under the tool it
+    /// now means, so this is the record of how it was spelled, not a second
+    /// vocabulary. Empty — the default — when every stated word is current.
+    pub deprecated: Vec<String>,
 }
 
 impl ResolvedTools {
+    /// The notes the stated old spellings earned. `config doctor` reports them;
+    /// nothing refuses a launch over one.
+    pub fn deprecation_notes(&self) -> &[String] {
+        &self.deprecated
+    }
     /// Whether `name` survives the list. `None` admits everything — the list
     /// only ever narrows, so an unstated list is the widest surface, not a
     /// grant of anything.
@@ -36,6 +48,7 @@ impl ResolvedTools {
     pub fn for_helper(&self) -> Self {
         Self {
             allow: self.allow.as_ref().map(|allow| allow.without("helpers")),
+            deprecated: self.deprecated.clone(),
         }
     }
 
@@ -49,6 +62,7 @@ impl ResolvedTools {
             None => Ok(Self::default()),
             Some(raw) => Ok(Self {
                 allow: Some(ToolsAllow::parse(raw)?),
+                deprecated: deprecation_notes(raw),
             }),
         }
     }
@@ -69,5 +83,22 @@ pub(crate) fn resolve(file: &ToolsFile) -> Result<ResolvedTools, ConfigError> {
     };
     Ok(ResolvedTools {
         allow: Some(ToolsAllow::parse(raw).map_err(ConfigError::ToolsAllow)?),
+        deprecated: deprecation_notes(raw),
     })
+}
+
+/// The notes the stated words earn: one per old spelling, in stated order, and
+/// de-duplicated — a list that repeats a spelling states one intent and owes
+/// one note. A current name earns none, so `config doctor` is silent about a
+/// list that is already up to date.
+fn deprecation_notes(raw: &[String]) -> Vec<String> {
+    let mut notes: Vec<String> = Vec::new();
+    for word in raw {
+        if let Some(note) = crate::deprecation_note(word.trim())
+            && !notes.contains(&note)
+        {
+            notes.push(note);
+        }
+    }
+    notes
 }

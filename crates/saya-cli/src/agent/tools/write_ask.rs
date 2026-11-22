@@ -30,7 +30,9 @@
 
 use std::sync::Arc;
 
-use saya_agent::{ApprovalDecider, ApprovalPolicy, ToolDefinition, WORKSPACE_WRITE_TOKEN};
+use saya_agent::{
+    ApprovalDecider, ApprovalPolicy, SessionGrants, ToolDefinition, WORKSPACE_WRITE_TOKEN,
+};
 use saya_types::AgentId;
 use serde_json::Value;
 
@@ -59,7 +61,10 @@ pub(crate) fn for_root(job: &NativeCodingJob) -> Option<WriteAsk> {
     let caller = Caller::Root {
         job_id: job.job_id().clone(),
     };
-    Some(WriteAsk::new(job.approval_mode(), operator, &caller))
+    Some(
+        WriteAsk::new(job.approval_mode(), operator, &caller)
+            .with_launch_grants(job.launch_grants()),
+    )
 }
 
 /// One helper's write ask, under a line that names the helper: the same ask,
@@ -71,11 +76,10 @@ pub(crate) fn for_helper(job: &NativeCodingJob, agent_id: &AgentId) -> Option<Ar
         agent_id: agent_id.clone(),
         job_id: job.job_id().clone(),
     };
-    Some(Arc::new(WriteAsk::new(
-        job.approval_mode(),
-        operator,
-        &caller,
-    )))
+    Some(Arc::new(
+        WriteAsk::new(job.approval_mode(), operator, &caller)
+            .with_launch_grants(job.launch_grants()),
+    ))
 }
 
 /// A write this surface does not offer — a closed plan gate, or a `[tools]
@@ -94,6 +98,11 @@ pub(crate) struct WriteAsk {
     /// The operator and the subject line it is shown, plus the store a session
     /// answer is recorded into.
     prompt: Prompt,
+    /// The launch's own seed store (`--allow`), when the surface stated one: a
+    /// token it holds pre-answers the family its mode would have asked about,
+    /// exactly as the tool advertisement and the exact-write admission read
+    /// that same store.
+    launch: Option<SessionGrants>,
 }
 
 impl WriteAsk {
@@ -104,13 +113,32 @@ impl WriteAsk {
         Self {
             mode,
             prompt: Prompt::new(operator, line(caller)).with_grants(grants),
+            launch: None,
         }
     }
 
+    /// States the launch's own seed store (`--allow`): a family it already
+    /// grants is pre-answered here too, so a headless run is admitted exactly
+    /// what the launch stated rather than asked for it.
+    pub(crate) fn with_launch_grants(mut self, grants: SessionGrants) -> Self {
+        self.launch = Some(grants);
+        self
+    }
+
+    /// Whether this caller's family is already granted — by a session answer
+    /// the operator recorded, or by the launch's own seeds.
+    fn held(&self) -> bool {
+        self.prompt.granted(WORKSPACE_WRITE_TOKEN)
+            || self
+                .launch
+                .as_ref()
+                .is_some_and(|grants| grants.is_granted(WORKSPACE_WRITE_TOKEN))
+    }
+
     /// Whether this ask would put the call to the operator, as the mode and
-    /// the store stand now.
+    /// the stores stand now.
     pub(crate) fn asks(&self) -> bool {
-        self.mode.get() == ApprovalPolicy::Ask && !self.prompt.granted(WORKSPACE_WRITE_TOKEN)
+        self.mode.get() == ApprovalPolicy::Ask && !self.held()
     }
 
     /// One call's admission: the capability first, because a call it refuses is
@@ -144,7 +172,7 @@ impl WriteAsk {
     /// The `ask` arm: a grant the job already holds pre-answers the call, and
     /// only a yes that names the run is recorded.
     async fn asked(&self, arguments: &Value) -> bool {
-        if self.prompt.granted(WORKSPACE_WRITE_TOKEN) {
+        if self.held() {
             return true;
         }
         match self.prompt.answer(arguments).await {

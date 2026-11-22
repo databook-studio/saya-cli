@@ -46,6 +46,11 @@ mod session_grants_tests;
 // family's own. Their tests ride the module itself
 // (`session_grant_families_tests.rs`).
 pub(crate) mod session_prompt;
+// The old per-turn request body. The plain REPL's turn is a chat session turn
+// now (`front/line` + `session/line_chat`), so nothing calls it: the module is
+// kept — its wording, decider and sink wiring are the record of what the new
+// turn reproduces — until the deletion unit removes the old path outright.
+#[allow(dead_code)]
 mod session_request;
 // The one terminal result a scripted turn reports: its status, exit code,
 // and the honest tool tally.
@@ -66,6 +71,10 @@ pub(crate) mod session_workspace;
 pub(crate) mod sql_execution;
 pub(crate) mod sql_operation;
 pub(crate) mod tui;
+
+// The session's token accumulator — the answering and extraction totals
+// `/usage` reads — is the one a line turn's own stream folds into.
+pub(crate) use tui::types::SessionUsage;
 
 pub use session::commands::SessionAction;
 pub use session::turn_loop::run;
