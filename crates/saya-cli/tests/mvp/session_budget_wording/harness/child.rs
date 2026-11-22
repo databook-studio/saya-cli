@@ -40,26 +40,6 @@ impl SpawnedChild {
     }
 }
 
-/// Spawns the REPL against `base_url` with `ceiling_secs` question budget.
-#[cfg(unix)]
-pub(crate) fn spawn_child(base_url: &str, ceiling_secs: u64, tag: &str) -> SpawnedChild {
-    spawn_child_with_config(
-        base_url,
-        &format!("[limits.session]\nelapsed_seconds = {ceiling_secs}\n"),
-        tag,
-    )
-}
-
-/// Spawns the REPL against `base_url` with the caller's full config TOML.
-#[cfg(unix)]
-pub(crate) fn spawn_child_with_config(
-    base_url: &str,
-    config_toml: &str,
-    tag: &str,
-) -> SpawnedChild {
-    spawn_child_with_config_extra(base_url, config_toml, tag, &[])
-}
-
 /// Spawns the REPL against `base_url` with the caller's full config TOML and
 /// any extra CLI arguments (e.g. `--verbose` for the metrics-section rows).
 #[cfg(unix)]
