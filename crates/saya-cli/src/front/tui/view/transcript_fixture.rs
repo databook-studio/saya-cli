@@ -112,8 +112,8 @@ fn preview(refusal: Option<crate::agent::tools::CaptureRefusalReason>) -> Result
 }
 
 /// The turn of `02` §2: the operator's message, four settled steps, the answer
-/// and the result the answer rests on. `folded` is the activity block's own
-/// state, which the reducer sets when the turn ends.
+/// and the result the answer rests on. `folded` is the operator's own fold,
+/// which the surface sets when the cursor folds the block.
 pub(super) fn database_turn(folded: bool) -> TurnView {
     let mut turn = TurnView::default();
     turn.push(Entry::UserMessage(UserMessage {
@@ -121,6 +121,7 @@ pub(super) fn database_turn(folded: bool) -> TurnView {
     }));
     turn.push(Entry::Activity(Activity {
         steps: demo_steps(),
+        ended: true,
         folded,
         failed: false,
     }));
@@ -143,6 +144,7 @@ pub(super) fn live_turn() -> TurnView {
     }));
     turn.push(Entry::Activity(Activity {
         steps,
+        ended: false,
         folded: false,
         failed: false,
     }));
@@ -172,6 +174,7 @@ pub(super) fn failed_turn() -> TurnView {
     }));
     turn.push(Entry::Activity(Activity {
         steps,
+        ended: true,
         folded: true,
         failed: true,
     }));

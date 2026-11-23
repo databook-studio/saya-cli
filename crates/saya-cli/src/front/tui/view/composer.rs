@@ -37,11 +37,16 @@ pub(crate) enum State {
 pub(crate) const QUEUED_HINT: &str = "↑ edit queued · Ctrl+G drop";
 
 /// The idle hint row at the full layout (`02` §7).
-pub(crate) const IDLE_HINT: &str = "Enter send · Alt+Enter newline · Ctrl+K commands";
+///
+/// `Ctrl+O` is named here because it is the key an operator reaches for when a
+/// turn's steps have scrolled by: the transcript opens them from anywhere.
+pub(crate) const IDLE_HINT: &str =
+    "Enter send · Alt+Enter newline · Ctrl+O detail · Ctrl+K commands";
 
-/// The idle hint row at the compact layout: the middle segment is the one
-/// that drops, because `Ctrl+K` is the key an operator still has to discover.
-pub(crate) const COMPACT_IDLE_HINT: &str = "Enter send · Ctrl+K commands";
+/// The idle hint row at the compact layout: the middle segments are the two
+/// keys an operator still has to discover — the transcript's detail and the
+/// command palette.
+pub(crate) const COMPACT_IDLE_HINT: &str = "Enter send · Ctrl+O detail · Ctrl+K commands";
 
 /// The width below which the composer is drawn as the compact layout: `02`
 /// contrasts 100x30 with 80x24, and 80 is the compact one.
@@ -126,7 +131,7 @@ pub(crate) fn hint(state: State, width: usize) -> &'static str {
                 IDLE_HINT
             }
         }
-        State::TurnRunning => "Enter queue · Esc stop turn",
+        State::TurnRunning => "Enter queue · Ctrl+O detail · Esc stop turn",
         State::OneQueued => QUEUED_HINT,
         State::Paused => "Enter continue · /status",
         State::ReadOnlyRecord => "Enter send",

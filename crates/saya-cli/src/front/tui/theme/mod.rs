@@ -18,7 +18,7 @@ pub(crate) use contrast::{
     relative_luminance,
 };
 #[allow(unused_imports)]
-pub(crate) use glyphs::{Charset, Glyph, charset, glyph};
+pub(crate) use glyphs::{Charset, Glyph, charset, glyph, spinner};
 #[allow(unused_imports)]
 pub(crate) use launch::{NO_COLOR, asks_for_no_colour, scheme, scheme_for};
 #[allow(unused_imports)]

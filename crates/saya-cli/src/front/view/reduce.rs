@@ -204,17 +204,14 @@ fn settle(activity: &mut Activity, tool: &str, state: StepState) {
     }
 }
 
-/// Ends the turn: a successful block folds to its one summary line, and, when
-/// the turn stopped on something the operator has to read, its stop or its
-/// error becomes a block of its own.
-///
-/// A failed block never folds, and a turn with no tool call has no block to
-/// fold.
+/// Ends the turn: the block states its summary from here on, and its steps
+/// stay on screen — a settled turn never folds itself, because the commands it
+/// ran are what an operator comes back to read. When the turn stopped on
+/// something the operator has to read, its stop or its error becomes a block of
+/// its own.
 fn end_turn(turn: &mut TurnView, outcome: &ChatOutcome) {
-    if let Some(activity) = turn.activity_mut()
-        && !activity.failed
-    {
-        activity.folded = true;
+    if let Some(activity) = turn.activity_mut() {
+        activity.ended = true;
     }
     if let Some(entry) = ended_entry(outcome) {
         turn.push(entry);

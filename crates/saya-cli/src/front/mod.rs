@@ -18,5 +18,5 @@ pub(crate) use line::{LineFront, SettledTurn};
 pub(crate) use view::{
     Activity, Answer, Clarification, Command, CommandState, DiffLine, Edit, Entry, Error, Helper,
     HelperState, Notice, ResultPreview, Step, StepState, Stop, TranscriptView, TurnView,
-    UserMessage, apply, elapsed_text, folded_summary, sql_one_line, step_line,
+    UserMessage, apply, elapsed_text, folded_summary, sql_one_line, step_fact, step_line,
 };

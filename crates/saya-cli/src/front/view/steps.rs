@@ -40,6 +40,46 @@ pub(crate) fn step_line(step: &Step, root: Option<&Path>) -> String {
     }
 }
 
+/// One step as what it actually ran: its verb and the call's own words — the
+/// command, the path, the query or the host — and nothing else.
+///
+/// This is the fact an operator needs to tell two calls apart: the fold
+/// summary counts kinds, and [`step_fact`] says which command ran. The
+/// transcript shows it on a compact step line and wraps it whole in full
+/// detail, so a line is never the only place a call's own words survive.
+pub(crate) fn step_fact(step: &Step, root: Option<&Path>) -> String {
+    let arguments = &step.arguments;
+    match step.tool.as_str() {
+        "schema_discovery" => named("Read schema", text(arguments, "connection")),
+        "bounded_sql_query" => {
+            let sql = text(arguments, "sql");
+            match (text(arguments, "connection"), sql) {
+                (Some(connection), Some(sql)) => format!("Query {connection}: {sql}"),
+                (Some(connection), None) => format!("Query {connection}"),
+                (None, Some(sql)) => format!("Query: {sql}"),
+                (None, None) => "Query database".to_owned(),
+            }
+        }
+        "bounded_sql_query_all" => match text(arguments, "sql") {
+            Some(sql) => format!("Query all databases: {sql}"),
+            None => "Query all databases".to_owned(),
+        },
+        "result_shape" | "column_health" | "join_check" => named("Check", text(arguments, "sql")),
+        "contract_search" => named("Recall", text(arguments, "query")),
+        "contract_read" => named("Recall", text(arguments, "table")),
+        "designate_answer" => "Mark answer".to_owned(),
+        "read" => named("Read", text(arguments, "path")),
+        "list" => named("Search", text(arguments, "path")),
+        "glob" | "grep" => named("Search", text(arguments, "pattern")),
+        "write" | "edit" => named("Edit", text(arguments, "path")),
+        "shell" => named("Run", own_words(text(arguments, "command"), root)),
+        "web_fetch" => named("Fetch", text(arguments, "url")),
+        "web_search" => named("Search web", text(arguments, "query")),
+        "helpers" => named("Helper", helper_id(arguments)),
+        other => other.to_owned(),
+    }
+}
+
 /// The folded summary of an activity block: how many steps, what kinds, and
 /// how long the block took.
 pub(crate) fn folded_summary(steps: &[Step], elapsed: Duration) -> String {

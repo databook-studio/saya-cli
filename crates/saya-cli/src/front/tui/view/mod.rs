@@ -263,3 +263,11 @@ mod transcript_tests;
 #[cfg(test)]
 #[path = "transcript_focus_tests.rs"]
 mod transcript_focus_tests;
+
+#[cfg(test)]
+#[path = "transcript_detail_tests.rs"]
+mod transcript_detail_tests;
+
+#[cfg(test)]
+#[path = "detail_hint_tests.rs"]
+mod detail_hint_tests;

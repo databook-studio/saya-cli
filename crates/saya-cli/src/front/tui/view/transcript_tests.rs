@@ -8,11 +8,12 @@ use super::transcript_fixture as fixture;
 use super::transcript_fixture::{ELAPSED, rendered};
 use super::{transcript, transcript_rows};
 
-/// The turn of `02` §2 at 100x30, row for row.
+/// The turn of `02` §2 at 100x30, row for row: the message, the group's
+/// summary over a line per step, and the answer with the result it rests on.
 #[test]
 fn the_hundred_column_turn_reads_as_02_section_2() {
     let rows = transcript_rows(
-        &[fixture::database_turn(true)],
+        &[fixture::database_turn(false)],
         &fixture::facts(ELAPSED),
         100,
         30,
@@ -22,7 +23,12 @@ fn the_hundred_column_turn_reads_as_02_section_2() {
         vec![
             "  ❯ how many orders did we get since December?",
             "",
-            "  ✓ 4 steps · read schema, 3 queries · 14s                                                 ▸ Enter",
+            "  ✓ 4 steps · read schema, 3 queries · 14s                                           Ctrl+O detail",
+            "    ✓ Read schema demo",
+            "    ✓ Query demo: SELECT status, COUNT(*) AS n FROM orders GROUP BY status",
+            "    ✓ Query demo: SELECT order_date, COUNT(*) AS n FROM orders",
+            "    ✓ Query demo: SELECT COUNT(*) AS orders_since_december FROM orders",
+            "",
             "  110 orders since December 2025 (2025-12-01 through 2026-01-01, the latest date in the data).",
             "",
             "  Notes on interpretation:",
@@ -39,37 +45,40 @@ fn the_hundred_column_turn_reads_as_02_section_2() {
     );
 }
 
-/// The same turn at 80x24: the answer wraps where the content column ends.
+/// The same turn at 80x24: the answer wraps where the content column ends, and
+/// every step still names what it ran.
 #[test]
 fn the_eighty_column_turn_reads_as_02_section_2() {
     let rows = transcript_rows(
-        &[fixture::database_turn(true)],
+        &[fixture::database_turn(false)],
         &fixture::facts(ELAPSED),
         80,
         24,
     );
+    let shown = rendered(&rows);
     assert_eq!(
-        rendered(&rows),
-        vec![
+        &shown[..7],
+        [
             "  ❯ how many orders did we get since December?",
             "",
-            "  ✓ 4 steps · read schema, 3 queries · 14s                             ▸ Enter",
-            "  110 orders since December 2025 (2025-12-01 through 2026-01-01, the latest",
-            "  date in the data).",
-            "",
-            "  Notes on interpretation:",
-            "  • The data contains only one December (2025), so \"since December\" = from",
-            "    2025-12-01 onward, which includes the 5 orders on 2026-01-01. December",
-            "    2025 alone would be 105.",
-            "  • I counted all orders regardless of status (completed, pending, refunded)",
-            "    — 269 completed, 144 pending, 147 refunded overall. Say the word if you",
-            "    want only completed.",
-            "",
-            "  SELECT COUNT(*) AS orders_since_december FROM orders",
-            "  result · demo · 1 row",
-            "  │ orders_since_december │",
-            "  │                   110 │",
-        ]
+            "  ✓ 4 steps · read schema, 3 queries · 14s                       Ctrl+O detail",
+            "    ✓ Read schema demo",
+            "    ✓ Query demo: SELECT status, COUNT(*) AS n FROM orders GROUP BY status",
+            "    ✓ Query demo: SELECT order_date, COUNT(*) AS n FROM orders",
+            "    ✓ Query demo: SELECT COUNT(*) AS orders_since_december FROM orders",
+        ],
+        "the group's summary and one line per step: {shown:?}"
+    );
+    assert!(
+        shown.contains(&String::from(
+            "  110 orders since December 2025 (2025-12-01 through 2026-01-01, the latest"
+        )),
+        "the answer wraps at the content column: {shown:?}"
+    );
+    assert_eq!(
+        shown.last().map(String::as_str),
+        Some("  │                   110 │"),
+        "and the result closes the turn: {shown:?}"
     );
 }
 
@@ -98,8 +107,8 @@ fn no_row_carries_a_role_label() {
     }
 }
 
-/// While the turn runs the group shows its steps: the last four, the older
-/// ones counted, each step under the block's gutter.
+/// While the turn runs the group shows its steps: the last five, the older
+/// ones counted, and the step in flight turning its spinner.
 #[test]
 fn a_running_turn_shows_its_live_steps() {
     let rows = transcript_rows(&[fixture::live_turn()], &fixture::facts(ELAPSED), 100, 30);
@@ -108,31 +117,40 @@ fn a_running_turn_shows_its_live_steps() {
         vec![
             "  ❯ how many orders did we get since December?",
             "",
-            "  ● Working · 14s · 3 earlier steps                                                        ▸ Enter",
-            "    ✓ Query demo · 1 row",
-            "    ✓ Query demo · 2 rows",
-            "    ✓ Query demo · 5 rows",
-            "    ● Query demo",
+            "  ● Working · 14s                                                                    Ctrl+O detail",
+            "    +2 earlier steps",
+            "    ✓ Query demo: SELECT order_date, COUNT(*) AS n FROM orders",
+            "    ✓ Query demo: SELECT COUNT(*) AS orders_since_december FROM orders",
+            "    ✓ Query demo: SELECT 1",
+            "    ✓ Query demo: SELECT 2",
+            "    ⠋ Query demo: SELECT 3",
         ]
     );
 }
 
-/// A settled turn folds to one line, and its steps are gone: `02` §3.2's
-/// `✓ 4 steps · read schema, 3 queries · 14s`.
+/// A settled turn keeps its step lines — the commands it ran are why the
+/// operator came back — and folds to one line only when they fold it.
 #[test]
-fn a_settled_turn_folds_to_its_one_summary_line() {
-    let live = rendered(&transcript_rows(
+fn a_settled_turn_keeps_its_step_lines() {
+    let settled = rendered(&transcript_rows(
         &[fixture::database_turn(false)],
         &fixture::facts(ELAPSED),
         100,
         30,
     ));
     assert!(
-        !live
+        settled
             .iter()
             .any(|row| row.trim_start().starts_with("✓ 4 steps")),
-        "a running block shows its steps, not a summary: {live:?}"
+        "a settled block states its summary: {settled:?}"
     );
+    for step in ["Read schema demo", "SELECT order_date"] {
+        assert!(
+            settled.iter().any(|row| row.contains(step)),
+            "and keeps the line that ran ({step:?}): {settled:?}"
+        );
+    }
+
     let folded = rendered(&transcript_rows(
         &[fixture::database_turn(true)],
         &fixture::facts(ELAPSED),
@@ -145,12 +163,12 @@ fn a_settled_turn_folds_to_its_one_summary_line() {
         folded
             .iter()
             .any(|row| row.starts_with("  ✓ 4 steps · read schema, 3 queries · 14s")),
-        "the block folds to its one line: {folded:?}"
+        "a block the operator folded is its one line: {folded:?}"
     );
 }
 
 /// A failed step never folds: what went wrong is the part to read, however
-/// the block was left marked.
+/// the block was left marked — and the reason wraps rather than being cut.
 #[test]
 fn a_failed_step_stays_unfolded() {
     let rows = transcript_rows(&[fixture::failed_turn()], &fixture::facts(ELAPSED), 100, 30);
@@ -159,9 +177,10 @@ fn a_failed_step_stays_unfolded() {
         vec![
             "  ❯ how many orders did we get since December?",
             "",
-            "  ● Working · 14s",
-            "    ✓ Read schema",
-            "    ✗ Query demo — failed to complete: connection refused",
+            "  ✓ 2 steps · read schema, 1 query · 14s                                             Ctrl+O detail",
+            "    ✓ Read schema demo",
+            "    ✗ Query demo: SELECT COUNT(*) AS orders_since_december FROM orders — failed to complete:",
+            "      connection refused",
         ]
     );
 }

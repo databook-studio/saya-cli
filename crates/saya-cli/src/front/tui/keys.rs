@@ -90,8 +90,12 @@ pub(crate) enum Intent {
     FocusFold,
     /// Copy the focused entry's source text.
     FocusCopy,
-    /// Show the focused entry's inspector line, or take it away.
+    /// Show the prompt entry's inspector line, or take it away.
     FocusInspector,
+    /// Show every step in full detail, or fold the transcript back to one
+    /// compact line per step (`Ctrl+O`). The surface's own choice, not a
+    /// block's: every turn answers it.
+    ToggleDetail,
     /// Leave cursor mode.
     FocusLeave,
     /// Answer the workspace-trust question by binding the launch folder
@@ -196,6 +200,10 @@ fn cursor_key(key: KeyEvent) -> Option<Intent> {
         KeyCode::Left => Some(Intent::FocusFold),
         KeyCode::Char('c') if !ctrl && !alt => Some(Intent::FocusCopy),
         KeyCode::Char('i') if !ctrl && !alt => Some(Intent::FocusInspector),
+        // The detail key is the surface's, not a block's, so it answers from
+        // the cursor as well: an operator reading one block can still open
+        // every step's words without leaving it (`02` §3.2).
+        KeyCode::Char('o') if ctrl => Some(Intent::ToggleDetail),
         KeyCode::Esc => Some(Intent::FocusLeave),
         _ => None,
     }
@@ -230,6 +238,10 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
         // sheet open from `/` and `?` only while the composer holds nothing — a
         // draft keeps the character it asked for.
         KeyCode::Char('k') if ctrl => Some(Intent::OpenPalette),
+        // `Ctrl+O` opens or folds the transcript's detail: the one key that
+        // says what the folded steps ran, from the composer and from the
+        // cursor (`02` §3.2).
+        KeyCode::Char('o') if ctrl => Some(Intent::ToggleDetail),
         KeyCode::Char('/') if !ctrl && !alt && model.composer().is_empty() => {
             Some(Intent::OpenPalette)
         }

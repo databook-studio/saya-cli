@@ -178,7 +178,8 @@ pub(crate) fn conversation() -> TurnView {
                 summary: String::from("1 row"),
             },
         }],
-        folded: true,
+        ended: true,
+        folded: false,
         failed: false,
     }));
     turn.push(Entry::Answer(Answer {

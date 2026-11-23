@@ -37,11 +37,11 @@ pub(super) fn rows(
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut above: Option<&Entry> = None;
     for (index, entry) in turn.entries().iter().enumerate() {
-        let mut painted = block(entry, elapsed, facts, content);
+        let focused = facts.focus == Some(EntryPath::new(place, index));
+        let mut painted = block(entry, elapsed, facts, focused, content);
         if painted.is_empty() {
             continue;
         }
-        let focused = facts.focus == Some(EntryPath::new(place, index));
         turn_focus::mark(&mut painted, focused, facts);
         if focused
             && facts.inspector
@@ -64,8 +64,8 @@ pub(super) fn rows(
 }
 
 /// Whether `below` sits directly under `above`, with no blank row between: a
-/// folded activity block's one line is the header of the answer it summarizes
-/// (`02` §2 draws `✓ 4 steps …` straight above the answer).
+/// block the operator folded to its one line is the header of the answer it
+/// summarizes (`02` §2 draws `✓ 4 steps …` straight above the answer).
 fn sits_directly_under(above: &Entry, below: &Entry) -> bool {
     match (above, below) {
         (Entry::Activity(activity), Entry::Answer(_)) => activity.folded && !activity.failed,
@@ -78,11 +78,14 @@ fn block(
     entry: &Entry,
     elapsed: Duration,
     facts: &TranscriptFacts,
+    focused: bool,
     content: usize,
 ) -> Vec<Line<'static>> {
     match entry {
         Entry::UserMessage(message) => quoted(&message.text, facts, content),
-        Entry::Activity(activity) => turn_activity::rows(activity, elapsed, facts, content),
+        Entry::Activity(activity) => {
+            turn_activity::rows(activity, elapsed, facts, focused, content)
+        }
         Entry::Answer(answer) => answer_rows(&answer.text, content),
         Entry::ResultPreview(preview) => result::rows(preview, facts, content),
         Entry::Notice(notice) => blocks::system_line(notice, facts, content),

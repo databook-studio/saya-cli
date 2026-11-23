@@ -47,10 +47,21 @@ fn the_focused_entry_carries_the_mark_at_a_hundred_columns() {
         "the unfocused group starts at the gutter: {:?}",
         plain[at]
     );
+    // The mark takes the gutter, and the header's hint says what the selected
+    // entry answers: the block's own key replaces the surface's, and the hint
+    // stays right-aligned, so only the air behind it moves.
+    let expected = format!(
+        "▸ ✓ 4 steps · read schema, 3 queries · 14s{}Enter open",
+        " ".repeat(46)
+    );
     assert_eq!(
-        marked[at],
-        plain[at].replacen("  ", "▸ ", 1),
+        marked[at], expected,
         "the focused row trades its first two cells for §6's mark"
+    );
+    assert_eq!(
+        plain[at].chars().count(),
+        marked[at].chars().count(),
+        "and the row keeps the width it had"
     );
     assert_eq!(
         marked.iter().filter(|row| row.starts_with('▸')).count(),
@@ -94,14 +105,15 @@ fn a_failed_focused_group_is_painted_expanded() {
     let mut facts = fixture::facts(ELAPSED);
     facts.focus = Some(EntryPath::new(0, 1));
     let rows = rendered(&transcript_rows(&[fixture::failed_turn()], &facts, 100, 30));
+    let shown = rows.join("\n");
 
     assert!(
-        rows.iter().any(|row| row.starts_with("▸ ● Working")),
+        rows.iter().any(|row| row.starts_with("▸ ✓ 2 steps")),
         "the failed group's header carries the mark: {rows:?}"
     );
     assert!(
-        rows.iter()
-            .any(|row| row.contains("✗ Query demo — failed to complete: connection refused")),
-        "and its steps stay open under it: {rows:?}"
+        shown.contains("✗ Query demo: SELECT COUNT(*) AS orders_since_december FROM orders")
+            && shown.contains("connection refused"),
+        "and its steps stay open under it, the reason wrapped whole: {rows:?}"
     );
 }

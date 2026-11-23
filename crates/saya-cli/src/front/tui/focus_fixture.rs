@@ -29,14 +29,15 @@ fn step(tool: &str) -> Step {
     }
 }
 
-/// Two turns: the older one's group folded and its answer readable, the newer
-/// one's group folded too. `failed` marks the older group as the one a step
-/// failed in.
+/// Two turns: the older one's group folded to its summary line and its answer
+/// readable, the newer one's group folded too. `failed` marks the older group as
+/// the one a step failed in.
 pub(super) fn conversation(failed: bool) -> Model {
     let mut model = Model::default();
     model.begin_turn("how many orders did we get since December?".to_owned());
     model.transcript.current().push(Entry::Activity(Activity {
         steps: vec![step("schema_discovery")],
+        ended: true,
         folded: true,
         failed,
     }));
@@ -47,6 +48,7 @@ pub(super) fn conversation(failed: bool) -> Model {
     model.begin_turn("and by region?".to_owned());
     model.transcript.current().push(Entry::Activity(Activity {
         steps: vec![step("schema_discovery"), step("bounded_sql_query")],
+        ended: true,
         folded: true,
         failed: false,
     }));
