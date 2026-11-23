@@ -71,6 +71,11 @@ pub(crate) fn rows(
 ) -> Vec<Line<'static>> {
     let mut all: Vec<Line<'static>> = Vec::new();
     for (index, turn) in turns.iter().enumerate() {
+        // One blank row between turns: the conversation reads as turns, not as
+        // one run of blocks.
+        if index > 0 {
+            all.push(Line::default());
+        }
         let elapsed = facts.elapsed.get(index).copied().unwrap_or_default();
         all.extend(turn::rows(index, turn, elapsed, facts, width));
     }

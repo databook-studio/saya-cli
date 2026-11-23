@@ -94,10 +94,13 @@ fn ctrl_j_opens_the_jobs_drawer() {
     };
     tui.dismiss_trust();
     tui.send("\x0a").expect("press Ctrl+J");
-    tui.wait_for("Background jobs", INTERACTIVE)
-        .expect("the drawer's title paints");
     tui.wait_for("no jobs", INTERACTIVE)
         .expect("the empty drawer says so");
+    let screen = tui.screen();
+    assert!(
+        !screen.contains("Background jobs"),
+        "an empty drawer is one line, not a panel: {screen}"
+    );
     tui.send("\x1b").expect("press Esc");
     tui.wait_for("Message", INTERACTIVE)
         .expect("the composer is back after the drawer closed");

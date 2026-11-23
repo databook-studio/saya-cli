@@ -56,6 +56,7 @@ pub(crate) mod run_cmd_ops;
 pub(crate) mod run_cmd_port;
 pub(crate) mod run_draw;
 pub(crate) mod run_draw_card;
+pub(crate) mod run_draw_layout;
 pub(crate) mod run_draw_overlay;
 pub(crate) mod run_front;
 pub(crate) mod run_handoff;
@@ -66,6 +67,7 @@ pub(crate) mod run_screen;
 pub(crate) mod setup;
 pub(crate) mod theme;
 pub(crate) mod update;
+pub(crate) mod update_answer;
 pub(crate) mod update_submit;
 pub(crate) mod view;
 
@@ -110,7 +112,9 @@ pub(crate) use run_cmd::{CmdPort, perform};
 #[allow(unused_imports)]
 pub(crate) use run_cmd_port::{PortParts, SessionPort};
 #[allow(unused_imports)]
-pub(crate) use run_draw::{Facts, Regions};
+pub(crate) use run_draw::Facts;
+#[allow(unused_imports)]
+pub(crate) use run_draw_layout::Regions;
 #[allow(unused_imports)]
 pub(crate) use run_front::Forward;
 #[allow(unused_imports)]
@@ -237,8 +241,16 @@ mod run_tests;
 mod run_mode_tests;
 
 #[cfg(test)]
+#[path = "run_draw_calm_tests.rs"]
+mod run_draw_calm_tests;
+
+#[cfg(test)]
 #[path = "run_draw_tests.rs"]
 mod run_draw_tests;
+
+#[cfg(test)]
+#[path = "status_restate_tests.rs"]
+mod status_restate_tests;
 
 #[cfg(test)]
 #[path = "run_draw_card_tests.rs"]

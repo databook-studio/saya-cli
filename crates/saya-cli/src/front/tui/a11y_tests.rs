@@ -47,15 +47,14 @@ fn questioning() -> Model {
     model
 }
 
-/// The launch posture a narrow frame still has to state: both caveats, a deny
-/// list and a model id.
+/// The launch posture a frame still has to state: the sharing caveat and a
+/// model id. The unsandboxed warning rides the approval card instead.
 fn posture() -> Facts {
     Facts {
         workspace: Some(String::from("~/shop")),
         model: String::from("deepseek-v4.1-flash"),
         host_unsandboxed: true,
         sharing: true,
-        deny: vec![String::from("curl"), String::from("rm")],
         ..Facts::default()
     }
 }
@@ -143,8 +142,8 @@ fn narrow_frames_keep_every_caveat_and_every_answering_key() {
             .find(|row| row.contains("BYPASS"))
             .unwrap_or_else(|| panic!("{width}x{height}: no status line in {rows:#?}"));
         assert!(
-            status.contains("host unsandboxed"),
-            "{width}x{height}: the host caveat is on the status line: {status:?}"
+            !status.contains("host unsandboxed"),
+            "{width}x{height}: the unsandboxed warning is not on the status line: {status:?}"
         );
         assert!(
             status.contains("sharing"),
@@ -152,12 +151,19 @@ fn narrow_frames_keep_every_caveat_and_every_answering_key() {
         );
 
         let screen = rows.join("\n");
+        if width == 80 {
+            assert!(
+                screen.contains("on your machine, not sandboxed"),
+                "{width}x{height}: the approval card states the host lane: {screen}"
+            );
+        }
         for key in [
             "[y] Allow once",
             "[s] Allow for this session",
             "shell:python3",
             "[n] Deny",
             "[Esc] Deny",
+            "v full details",
         ] {
             assert!(
                 screen.contains(key),

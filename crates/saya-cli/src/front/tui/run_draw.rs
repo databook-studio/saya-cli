@@ -16,23 +16,19 @@
 use std::time::Duration;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::model::Model;
 use super::run_draw_card;
+use super::run_draw_layout::{regions, status_facts};
 use super::run_draw_overlay;
 use super::theme::{Charset, Scheme, ascii_line, style};
 use super::view::{
-    ActivityState, Database, EmptyFacts, Row, StatusFacts, TranscriptFacts, empty_rows,
-    rows as composer_rows, status_line, transcript_rows,
+    Database, EmptyFacts, Row, TranscriptFacts, empty_rows, rows as composer_rows, status_line,
+    toast_row, transcript_rows,
 };
-
-/// The spare rows a screen must have beyond the panel before it is centred
-/// rather than docked: below this the panel belongs where the operator's eye
-/// already is, and the rows are the transcript's.
-const TALL_ROWS: usize = 20;
 
 /// What a frame is painted with, besides the model: the token column and glyph
 /// set the session was launched under, how long the running turn has run, and
@@ -55,12 +51,14 @@ pub(crate) struct Facts {
     pub(crate) untrusted: bool,
     /// The model's short id, for the status line's segment.
     pub(crate) model: String,
-    /// Whether host commands run outside the sandbox, and whether query data
-    /// leaves the machine: the two conditions the status line caveats.
+    /// Whether host commands run outside the sandbox: the approval card states
+    /// it where the decision is made.
     pub(crate) host_unsandboxed: bool,
+    /// Whether query data leaves the machine: the status line's one caveat.
     pub(crate) sharing: bool,
-    /// The programs the session's deny list keeps out.
-    pub(crate) deny: Vec<String>,
+    /// The workspace's own top-level names, for the welcome screen's
+    /// suggestions. Every one exists; an empty list offers neutral examples.
+    pub(crate) entries: Vec<String>,
 }
 
 impl Default for Facts {
@@ -78,20 +76,9 @@ impl Default for Facts {
             model: String::new(),
             host_unsandboxed: false,
             sharing: false,
-            deny: Vec::new(),
+            entries: Vec::new(),
         }
     }
-}
-
-/// The four regions of `02` §1's grid, top to bottom, inside the content
-/// column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Regions {
-    pub(crate) transcript: Rect,
-    pub(crate) status: Rect,
-    /// The docked card's rows, when a call is open.
-    pub(crate) card: Option<Rect>,
-    pub(crate) composer: Rect,
 }
 
 /// Paints one whole frame.
@@ -129,6 +116,15 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
             facts.charset,
         );
     }
+    if let (Some(area), Some(toast)) = (regions.toast, model.toast()) {
+        let width = area.width as usize;
+        paint(
+            frame,
+            area,
+            lines(vec![toast_row(toast, width, facts.charset)], facts.scheme),
+            facts.charset,
+        );
+    }
     let width = regions.composer.width as usize;
     paint(
         frame,
@@ -136,64 +132,6 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
         composer(model, facts, width),
         facts.charset,
     );
-}
-
-/// The grid's regions for `area`, in the order the panes sit.
-pub(crate) fn regions(model: &Model, facts: &Facts, area: Rect) -> Regions {
-    let column = column(area);
-    let height = column.height as usize;
-    let width = column.width as usize;
-    // The composer keeps its box and its hint row whatever else is on screen;
-    // the status line is one row and never folds.
-    let composer = composer_rows(model, width, facts.charset)
-        .len()
-        .min(height.saturating_sub(1))
-        .max(1);
-    let spare = height.saturating_sub(1 + composer);
-    let card = run_draw_card::rows(model, facts, column.height, column.width, spare).min(spare);
-    // A tall screen lifts the panel off the status line instead of crowding it.
-    // The gap is only taken from a screen with rows to burn: the transcript
-    // keeps everything else, a short screen docks the panel where the
-    // operator's eye already is, and either way the panel closes on the
-    // composer's first row.
-    let lift = centring(spare, card);
-    let [transcript, status, _gap, docked, composer] = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(lift as u16),
-        Constraint::Length(card as u16),
-        Constraint::Length(composer as u16),
-    ])
-    .areas(column);
-    Regions {
-        transcript,
-        status,
-        card: (card > 0).then_some(docked),
-        composer,
-    }
-}
-
-/// The blank rows a tall screen leaves between the status line and the panel.
-/// A screen with room to spare for the transcript keeps the panel docked; one
-/// with rows to burn centres it in the room above the composer, which is the
-/// design's "centred on a tall terminal": the panel is never crowded against
-/// the status line, and it still closes on the composer's first row.
-fn centring(spare: usize, card: usize) -> usize {
-    if card == 0 || spare < card + TALL_ROWS {
-        return 0;
-    }
-    (spare - card) / 2
-}
-
-/// `02` §1's content column: one cell of gutter on each side.
-fn column(area: Rect) -> Rect {
-    let [_, middle, _] = Layout::horizontal([
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .areas(area);
-    middle
 }
 
 /// Paints one region's rows, clipping anything longer than the region. Under
@@ -243,45 +181,10 @@ fn empty_facts(model: &Model, facts: &Facts) -> EmptyFacts {
             ..Database::default()
         }),
         workspace: facts.workspace.clone(),
+        suggestions: super::view::empty_suggestions::from_entries(&facts.entries),
         scheme: facts.scheme,
         charset: facts.charset,
         ..EmptyFacts::default()
-    }
-}
-
-/// The status line's facts: the model's mode, database, queue and toast, the
-/// launch's posture facts, and what the surface is doing right now.
-fn status_facts(model: &Model, facts: &Facts) -> StatusFacts {
-    StatusFacts {
-        mode: model.mode(),
-        databases: model
-            .database_name()
-            .map(|name| vec![name.to_owned()])
-            .unwrap_or_default(),
-        model: facts.model.clone(),
-        workspace: facts.workspace.clone(),
-        host_unsandboxed: facts.host_unsandboxed,
-        sharing: facts.sharing,
-        deny: facts.deny.clone(),
-        activity: activity(model, facts),
-        toast: model.toast().map(str::to_owned),
-        scheme: facts.scheme,
-        charset: facts.charset,
-        ..StatusFacts::default()
-    }
-}
-
-/// What the status line says the surface is doing: a held line outranks a
-/// running turn, because the held line is what the next Enter acts on.
-fn activity(model: &Model, facts: &Facts) -> ActivityState {
-    if model.queued().is_some() {
-        ActivityState::Queued { count: 1 }
-    } else if model.is_busy() {
-        ActivityState::Working {
-            seconds: facts.working.map_or(0, |working| working.as_secs()),
-        }
-    } else {
-        ActivityState::Idle
     }
 }
 

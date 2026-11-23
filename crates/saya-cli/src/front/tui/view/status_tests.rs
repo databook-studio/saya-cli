@@ -1,77 +1,60 @@
 //! The status line's contract, read as the words a terminal would show.
 //!
-//! The rows of `02` §4: at 100, 80 and 60 columns the same facts, giving way in
-//! the row's drop order — the workspace first, then the meter, the model, the
-//! deny list, the database's extra count, the job count, the hint, and the
-//! sharing caveat's detail — while the chip and both caveats stay.
+//! The row says the mode, the short model and the database, and nothing else by
+//! default: the unsandboxed warning belongs to the approval card, the toast has
+//! a row of its own, and a mode change never takes the model name away.
 
 use saya_agent::PermissionMode;
 
-use super::status::{StatusFacts, status_line};
+use super::status::{ActivityState, StatusFacts, status_line};
 use super::status_fixture::{assert_row, bare, cells, full, row, words};
 use crate::front::tui::theme::{Charset, Scheme};
 use ratatui::style::Modifier;
 
-/// The full row at 100 columns: the workspace, the meter and the model give
-/// way; the caveats, the database count and the jobs stay.
+/// The full row at 100 columns: mode, short model, database and the one
+/// conditional caveat, then the state.
 #[test]
-fn a_hundred_columns_keep_the_caveats_the_count_and_the_jobs() {
+fn a_hundred_columns_read_mode_model_database() {
     let line = status_line(&full(), 100);
 
     assert_row(
         &line,
         100,
-        "ask │ demo +1 │ ⚠ host unsandboxed │ ⚠ data sharing on │ jobs 1",
+        "ask │ deepseek-v4.1-flash │ demo +1 │ ⚠ data sharing on",
         "● working 6s · Esc stop",
     );
     let text = row(&line);
-    for dropped in ["~/shop", "ctx 23%", "deepseek-v4.1-flash", "deny:"] {
+    for gone in [
+        "~/shop",
+        "ctx",
+        "deny",
+        "jobs",
+        "host unsandboxed",
+        "deepseek/",
+    ] {
         assert!(
-            !text.contains(dropped),
-            "{dropped} should be gone: {text:?}"
+            !text.contains(gone),
+            "{gone:?} has no place on the row: {text:?}"
         );
     }
 }
 
-/// At 80 the database shortens to its count and the jobs go: the caveats, the
-/// chip and the state word are still there.
+/// At 60 the extra count and the caveat's detail give way; the mode, the model
+/// and the database stay.
 #[test]
-fn eighty_columns_drop_the_jobs_before_a_caveat() {
-    let line = status_line(&full(), 80);
-
-    assert_row(
-        &line,
-        80,
-        "ask │ +1 │ ⚠ host unsandboxed │ ⚠ data sharing on",
-        "● working 6s · Esc stop",
-    );
-    assert!(
-        !row(&line).contains("jobs"),
-        "the job count gives way before the caveats: {:?}",
-        row(&line)
-    );
-}
-
-/// At 60 the hint goes and the sharing caveat shortens, and both caveats are
-/// still on the row — the one thing the drop order may never cost.
-#[test]
-fn sixty_columns_cannot_lose_a_caveat() {
+fn sixty_columns_keep_the_model_and_the_database() {
     let line = status_line(&full(), 60);
 
     assert_row(
         &line,
         60,
-        "ask │ +1 │ ⚠ host unsandboxed │ ⚠ sharing",
+        "ask │ deepseek-v4.1-flash │ +1 │ ⚠ sharing",
         "● working 6s",
     );
-    let text = row(&line);
+    let text = words(&line);
     assert!(
-        text.contains("host unsandboxed"),
-        "the unsandboxed caveat is never dropped: {text:?}"
-    );
-    assert!(
-        text.contains("⚠ sharing"),
-        "the sharing caveat shortens rather than leaves: {text:?}"
+        text.contains("deepseek-v4.1-flash"),
+        "the model name survives the narrow row: {text:?}"
     );
     assert!(
         !text.contains("Esc stop"),
@@ -88,13 +71,12 @@ fn the_bypass_chip_reads_its_word_with_colour_off() {
         scheme: Scheme::NoColour,
         ..full()
     };
-    let line = status_line(&facts, 60);
+    let line = status_line(&facts, 80);
 
-    assert_row(
-        &line,
-        60,
-        "! BYPASS │ +1 │ ⚠ host unsandboxed │ ⚠ sharing",
-        "● working 6s",
+    assert!(
+        row(&line).starts_with("! BYPASS │ deepseek-v4.1-flash │ "),
+        "the chip leads the row: {:?}",
+        row(&line)
     );
     let chip = line.spans.first().expect("the chip leads the row");
     assert_eq!(chip.content.as_ref(), "! BYPASS");
@@ -109,75 +91,71 @@ fn the_bypass_chip_reads_its_word_with_colour_off() {
     );
 }
 
-/// The two absences are words, not blanks: `no database` and `no workspace`.
+/// The missing database is a word, not a blank.
 #[test]
-fn a_missing_database_and_workspace_are_named() {
+fn a_missing_database_is_named() {
     let line = status_line(&bare(), 100);
 
-    assert_row(
-        &line,
-        100,
-        "ask │ no database │ qwen3-coder │ no workspace",
-        "? help",
-    );
-    assert!(
-        words(&line).contains("no database"),
-        "an unattached session says so: {:?}",
-        words(&line)
-    );
+    assert_row(&line, 100, "ask │ qwen3-coder │ no database", "? help");
 }
 
-/// A toast is the surface's own words: for the four seconds it lives it is the
-/// right side, and the state's word and hint are not.
+/// A model with no provider prefix reads as it is, and an empty model paints no
+/// segment at all.
 #[test]
-fn a_toast_replaces_the_right_side() {
+fn the_model_segment_is_optional() {
     let facts = StatusFacts {
-        toast: Some("copied answer (1.2 kB)".to_owned()),
-        ..full()
+        databases: vec![String::from("demo")],
+        model: String::from("qwen3-coder"),
+        ..StatusFacts::default()
     };
-    let line = status_line(&facts, 100);
-
-    assert_row(
-        &line,
-        100,
-        "ask │ demo +1 │ ⚠ host unsandboxed │ ⚠ data sharing on │ jobs 1",
-        "copied answer (1.2 kB)",
-    );
-    let text = row(&line);
-    for gone in ["working", "Esc stop"] {
-        assert!(
-            !text.contains(gone),
-            "{gone} waits for the toast to end: {text:?}"
-        );
-    }
-}
-
-/// A toast is one row, whatever it carries: a message with lines of its own
-/// reads as one run of words on the status row, so it can never paint down the
-/// transcript's rows or wrap over the row under this one.
-#[test]
-fn a_multiline_toast_stays_on_one_row() {
-    let facts = StatusFacts {
-        toast: Some("match_id\n2\nsaved investigation: demo · 1 rows".to_owned()),
-        ..full()
-    };
-    let line = status_line(&facts, 100);
-
-    let text = words(&line);
-    assert!(
-        !text.contains('\n'),
-        "a toast never paints a second row: {text:?}"
-    );
-    assert!(
-        text.contains("match_id 2 saved investigation: demo · 1 rows"),
-        "its lines read as one run of words: {text:?}"
-    );
     assert_eq!(
-        cells(&line),
-        100,
-        "and it still fills its row: {:?}",
-        row(&line)
+        row(&status_line(&facts, 40)),
+        "ask │ qwen3-coder │ demo          ? help",
+        "a plain model name keeps its segment"
     );
+
+    let facts = StatusFacts {
+        databases: vec![String::from("demo")],
+        ..StatusFacts::default()
+    };
+    assert!(
+        row(&status_line(&facts, 40)).starts_with("ask │ demo"),
+        "no model, no segment: {:?}",
+        row(&status_line(&facts, 40))
+    );
+}
+
+/// A been-running turn says its seconds, and an idle surface offers the sheet.
+#[test]
+fn the_state_word_outlives_its_hint() {
+    let facts = StatusFacts {
+        activity: ActivityState::Queued { count: 1 },
+        mode: PermissionMode::Plan,
+        ..StatusFacts::default()
+    };
+    let wide = status_line(&facts, 60);
+    assert!(
+        row(&wide).ends_with("queued 1 · Ctrl+G drop"),
+        "the hint rides beside the state word while there is room: {:?}",
+        row(&wide)
+    );
+
+    let facts = StatusFacts {
+        model: "deepseek-v4.1-flash".to_owned(),
+        ..facts
+    };
+    let narrow = status_line(&facts, 60);
+
+    let text = row(&narrow);
+    assert!(
+        text.ends_with("queued 1"),
+        "the state word outlives its hint: {text:?}"
+    );
+    assert!(
+        !text.contains("Ctrl+G drop"),
+        "the hint is dropped first: {text:?}"
+    );
+    assert!(cells(&narrow) <= 60, "the row fits: {text:?}");
 }
 
 /// `--ascii` reaches the caveat mark too: the row keeps saying the same thing
@@ -193,7 +171,7 @@ fn the_ascii_row_says_the_same_things() {
     assert_row(
         &line,
         100,
-        "ask │ demo +1 │ ! host unsandboxed │ ! data sharing on │ jobs 1",
+        "ask │ deepseek-v4.1-flash │ demo +1 │ ! data sharing on",
         "* working 6s · Esc stop",
     );
     assert_eq!(

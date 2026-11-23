@@ -59,6 +59,15 @@ pub(crate) enum Msg {
     /// The surface is leaving: the run is closed and the terminal restored
     /// (`/exit`, `/quit`). The loop ends on it, after painting nothing more.
     Quit,
+    /// The session's own facts, restated by a command that changed them
+    /// (`/model`, `/provider`, `/connect`): the status row names what the
+    /// session is on now, never the model and database the launch resolved.
+    Restated {
+        /// The model the session states, as the launch states its own.
+        model: String,
+        /// The database the session is connected to, if it is.
+        database: Option<String>,
+    },
 }
 
 /// One side effect the runtime performs after an [`update`](super::update).

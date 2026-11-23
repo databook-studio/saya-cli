@@ -8,25 +8,21 @@ use super::status::{ActivityState, StatusFacts};
 use super::status_fit::GAP;
 use crate::interactive::tui::wrap::cell_width;
 
-/// Every segment of the row on: two databases, both caveats, a deny list, a
-/// reported context meter, one background job, and a turn six seconds in.
+/// The row's everyday facts: the mode, a provider-prefixed model, two
+/// databases, the sharing caveat, and a turn six seconds in. The unsandboxed
+/// warning is not here: it belongs to the approval card.
 pub(crate) fn full() -> StatusFacts {
     StatusFacts {
         mode: PermissionMode::Ask,
         databases: vec!["demo".to_owned(), "shop".to_owned()],
-        model: "deepseek-v4.1-flash".to_owned(),
-        workspace: Some("~/shop".to_owned()),
-        host_unsandboxed: true,
+        model: "deepseek/deepseek-v4.1-flash".to_owned(),
         sharing: true,
-        deny: vec!["curl".to_owned(), "rm".to_owned()],
-        context_percent: Some(23),
-        jobs: 1,
         activity: ActivityState::Working { seconds: 6 },
         ..StatusFacts::default()
     }
 }
 
-/// A session with nothing attached and nothing bound — the row's two absences.
+/// A session with nothing attached — the row's one absence.
 pub(crate) fn bare() -> StatusFacts {
     StatusFacts {
         model: "qwen3-coder".to_owned(),

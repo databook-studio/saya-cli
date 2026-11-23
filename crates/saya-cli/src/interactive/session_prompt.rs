@@ -79,7 +79,8 @@ pub(crate) struct StatusView {
     /// Whether the host-command lane composed — mirrors `status_line`'s
     /// `host:` segment.
     pub(crate) host_composed: bool,
-    /// The session's deny list — mirrors `status_line`'s `deny:` listing.
+    /// The session's deny list, kept for the legacy header's own tests.
+    #[allow(dead_code)]
     pub(crate) denied_programs: Vec<String>,
     /// The session task list's done count — mirrors `status_line`'s `tasks:`
     /// segment; `None` renders no segment, the empty-list shape. Read by the

@@ -1,6 +1,5 @@
-//! The new TUI's status line: the one row that names the mode in force, what
-//! the session can touch and what the surface is doing — as words first,
-//! colour second.
+//! The new TUI's status line: the one calm row that names the mode in force,
+//! the model and the database — as words first, colour second.
 //!
 //! A pure function of the facts and a width. Nothing here reads the terminal,
 //! the clock or the model: the caller hands over what it knows, and the row
@@ -66,26 +65,14 @@ pub(crate) struct StatusFacts {
     pub(crate) mode: PermissionMode,
     /// The session's databases, the primary first.
     pub(crate) databases: Vec<String>,
-    /// The model's short id; empty paints no model segment.
+    /// The model's id; a provider prefix is shortened away by the segment.
+    /// Empty paints no model segment.
     pub(crate) model: String,
-    /// The operator-facing workspace root (`~/shop`), already abbreviated —
-    /// the row never reads the environment to shorten it.
-    pub(crate) workspace: Option<String>,
-    /// Whether host commands run outside the sandbox.
-    pub(crate) host_unsandboxed: bool,
-    /// Whether query data leaves the machine.
+    /// Whether query data leaves the machine: the one conditional caveat left
+    /// on the row, because it changes what every answer contains.
     pub(crate) sharing: bool,
-    /// The programs the deny list keeps out.
-    pub(crate) deny: Vec<String>,
-    /// The provider's last context report, if it made one.
-    pub(crate) context_percent: Option<u8>,
-    /// How many background jobs the session holds.
-    pub(crate) jobs: usize,
     /// What the surface is doing.
     pub(crate) activity: ActivityState,
-    /// The surface's own last words, which replace the right side while they
-    /// live.
-    pub(crate) toast: Option<String>,
     /// Which token column paints the row.
     pub(crate) scheme: Scheme,
     /// Which glyph set the row draws with.
@@ -98,14 +85,8 @@ impl Default for StatusFacts {
             mode: PermissionMode::default(),
             databases: Vec::new(),
             model: String::new(),
-            workspace: None,
-            host_unsandboxed: false,
             sharing: false,
-            deny: Vec::new(),
-            context_percent: None,
-            jobs: 0,
             activity: ActivityState::default(),
-            toast: None,
             scheme: Scheme::Dark,
             charset: Charset::Utf8,
         }
@@ -151,34 +132,15 @@ fn tail_spans(right: &Right, scheme: Scheme) -> Option<Vec<Span<'static>>> {
             }
             Some(spans)
         }
-        Right::Toast { text, paint } => Some(vec![Span::styled(text.clone(), *paint)]),
         Right::Empty => None,
     }
 }
 
-/// The row's right side: a toast while one lives, otherwise the state.
+/// The row's right side: what the surface is doing.
 fn right(facts: &StatusFacts) -> Right {
-    if let Some(toast) = &facts.toast {
-        return Right::Toast {
-            text: one_row(toast),
-            paint: style(Token::Info, facts.scheme),
-        };
-    }
     Right::State {
         word: facts.activity.word(facts.charset),
         hint: facts.activity.hint(),
         paint: style(facts.activity.token(), facts.scheme),
     }
-}
-
-/// A toast is one row: its lines read as one run of words, so a message that
-/// carries lines of its own can never paint them down the transcript's rows or
-/// wrap over the row under this one. Much of it may still be cut by the fitting
-/// above; that is a cut the row's own ellipsis states, not a second pane.
-fn one_row(text: &str) -> String {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
 }

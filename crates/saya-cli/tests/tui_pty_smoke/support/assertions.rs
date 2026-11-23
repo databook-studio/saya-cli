@@ -41,13 +41,13 @@ fn assert_splash_for_profile(screen: &vt100::Screen, profile: &str, label: &str)
         &text,
     );
 
-    // Positive: the status line painted end to end — the mode chip, the active
-    // profile and the model this launch configured. The offline config is model
-    // `smoke`, so the model segment must be there.
+    // Positive: the status line painted end to end — the mode chip, the model
+    // this launch configured, then the active profile. The offline config is
+    // model `smoke`, so the model segment must be there.
     assert_in(
         &text,
-        &format!("read-only │ {profile} │ smoke"),
-        &format!("status line (mode · database · model) missing from {label}"),
+        &format!("read-only │ smoke │ {profile}"),
+        &format!("status line (mode · model · database) missing from {label}"),
         &text,
     );
 

@@ -78,8 +78,8 @@ async fn slash_mode_opens_the_picker_and_a_row_states_the_mode_end_to_end() {
         "the picker closes on Enter: {painted}"
     );
     assert!(
-        painted.contains("mode: plan"),
-        "and the transcript keeps one compact line: {painted}"
+        painted.contains("mode → plan"),
+        "and the toast row says what changed: {painted}"
     );
     assert!(
         painted.contains("plan"),
@@ -118,7 +118,7 @@ async fn esc_over_the_picker_closes_it_without_telling_the_session_anything() {
 }
 
 #[tokio::test]
-async fn two_shift_tabs_paint_two_mode_lines() {
+async fn two_shift_tabs_keep_the_welcome_and_say_the_mode_once() {
     let (sender, queue) = mpsc::unbounded_channel();
     let screen = FakeScreen::new(100, 30);
     let recorded = screen.recorded();
@@ -140,9 +140,15 @@ async fn two_shift_tabs_paint_two_mode_lines() {
     let painted = last(&recorded);
     assert_eq!(
         painted.matches("mode: ").count(),
-        2,
-        "two presses, two lines: {painted}"
+        0,
+        "no turn was begun, so no notice is written into one: {painted}"
     );
-    assert!(painted.contains("mode: accept-edits"), "{painted}");
-    assert!(painted.contains("mode: plan"), "{painted}");
+    assert!(
+        painted.contains("Describe a change") || painted.contains("/connect"),
+        "the welcome is still the screen: {painted}"
+    );
+    assert!(
+        painted.contains("mode → plan"),
+        "the toast row says the last mode: {painted}"
+    );
 }

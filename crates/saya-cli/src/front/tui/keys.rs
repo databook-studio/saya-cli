@@ -87,6 +87,14 @@ pub(crate) enum Intent {
     PaletteClose,
     /// Close the key sheet.
     HelpClose,
+    /// Scroll the key sheet's body up one row.
+    HelpUp,
+    /// Scroll it down one row.
+    HelpDown,
+    /// Scroll it up a screen's worth.
+    HelpPageUp,
+    /// Scroll it down a screen's worth.
+    HelpPageDown,
     /// Walk, search or leave the composer's input history (`02` §7): `Up`,
     /// `Down`, `Ctrl+R` and the keys the open search reads.
     History(history_keys::HistoryIntent),

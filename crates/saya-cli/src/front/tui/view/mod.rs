@@ -61,9 +61,12 @@ mod composer;
 mod composer_frame;
 mod empty;
 mod empty_lines;
+pub(crate) mod empty_suggestions;
 mod empty_welcome;
 mod help;
 mod help_keys;
+mod help_rows_a;
+mod help_rows_b;
 mod inspector;
 pub(crate) mod jobs;
 pub(crate) mod jobs_rows;
@@ -108,7 +111,9 @@ pub(crate) use composer_frame::{fit, pad, rows};
 #[allow(unused_imports)]
 pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]
-pub(crate) use help::{Context, ROWS as HELP_ROWS, rows as help_rows};
+pub(crate) use help::{
+    Context, ROWS as HELP_ROWS, rows as help_rows, rows_scrolled as help_scrolled,
+};
 #[allow(unused_imports)]
 pub(crate) use jobs::{CARD_FIRST, DETAIL_UNIT, Drawer, Job, NO_JOBS, State as JobState, TITLE};
 #[allow(unused_imports)]
@@ -137,7 +142,7 @@ pub(crate) use sessions_rows::rows as sessions_rows;
 #[allow(unused_imports)]
 pub(crate) use status::{ActivityState, StatusFacts, status_line};
 #[allow(unused_imports)]
-pub(crate) use toast::{TICK, Toast};
+pub(crate) use toast::{TICK, Toast, row as toast_row};
 #[allow(unused_imports)]
 pub(crate) use transcript::{TranscriptFacts, rows as transcript_rows};
 #[allow(unused_imports)]
@@ -190,6 +195,10 @@ mod empty_snapshots;
 mod empty_tests;
 
 #[cfg(test)]
+#[path = "help_coverage_tests.rs"]
+mod help_coverage_tests;
+
+#[cfg(test)]
 #[path = "help_fixture.rs"]
 mod help_fixture;
 
@@ -200,6 +209,10 @@ mod help_tests;
 #[cfg(test)]
 #[path = "mode_picker_tests.rs"]
 mod mode_picker_tests;
+
+#[cfg(test)]
+#[path = "jobs_empty_tests.rs"]
+mod jobs_empty_tests;
 
 #[cfg(test)]
 #[path = "jobs_fixture.rs"]
@@ -214,12 +227,20 @@ mod jobs_rows_tests;
 mod jobs_tests;
 
 #[cfg(test)]
+#[path = "notice_collapse_tests.rs"]
+mod notice_collapse_tests;
+
+#[cfg(test)]
 #[path = "palette_fixture.rs"]
 mod palette_fixture;
 
 #[cfg(test)]
 #[path = "palette_match_tests.rs"]
 mod palette_match_tests;
+
+#[cfg(test)]
+#[path = "palette_order_tests.rs"]
+mod palette_order_tests;
 
 #[cfg(test)]
 #[path = "palette_tests.rs"]
@@ -279,6 +300,10 @@ mod transcript_tests;
 mod transcript_focus_tests;
 
 #[cfg(test)]
+#[path = "transcript_rhythm_tests.rs"]
+mod transcript_rhythm_tests;
+
+#[cfg(test)]
 #[path = "transcript_steps_fixture.rs"]
 mod transcript_steps_fixture;
 
@@ -289,3 +314,7 @@ mod transcript_detail_tests;
 #[cfg(test)]
 #[path = "detail_hint_tests.rs"]
 mod detail_hint_tests;
+
+#[cfg(test)]
+#[path = "welcome_suggestions_tests.rs"]
+mod welcome_suggestions_tests;

@@ -60,6 +60,9 @@ pub(crate) struct Model {
     /// The database the run is connected to, if one is: the composer's idle
     /// placeholder asks about it by name (`02` §7, §9.3).
     pub(crate) database: Option<String>,
+    /// The model the session talks to now, when a command has restated it: the
+    /// status row names this rather than the model the launch resolved.
+    pub(crate) model_name: Option<String>,
     /// Whether the run is paused at a stop the operator can continue from.
     pub(crate) paused: bool,
     /// Whether this surface is a read-only record of an older (0.5.0) session:
@@ -88,6 +91,9 @@ pub(crate) struct Model {
     /// the keyboard before the card and the composer, and it is painted over
     /// the transcript (`02` §8).
     pub(crate) overlay: Option<Overlay>,
+    /// How far the key sheet is scrolled: its body is taller than a short
+    /// terminal, so the sheet scrolls rather than hides a group.
+    pub(crate) help_scroll: usize,
     /// The entry the block cursor holds (`02` §6), if it holds one. While it
     /// does, the keyboard is the cursor's: Esc leaves it, Enter expands the
     /// block and `←` folds it, `c` copies it and `i` shows its provenance.
@@ -129,17 +135,6 @@ impl Model {
         self.toast.as_ref()
     }
 
-    /// Whether the open card's whole body is shown, or only the rows the
-    /// screen has for it.
-    pub(crate) const fn card_full(&self) -> bool {
-        self.card_full
-    }
-
-    /// How far the open card's body is scrolled, in rows.
-    pub(crate) const fn card_scroll(&self) -> usize {
-        self.card_scroll
-    }
-
     /// The mode in force, as the status line's chip names it.
     pub(crate) const fn mode(&self) -> PermissionMode {
         self.mode
@@ -154,6 +149,19 @@ impl Model {
     /// composer name it.
     pub(crate) fn database_name(&self) -> Option<&str> {
         self.database.as_deref()
+    }
+
+    /// The model the session talks to now, when a command has restated it.
+    pub(crate) fn model_name(&self) -> Option<&str> {
+        self.model_name.as_deref()
+    }
+
+    /// States the session's own model and database: what the command that moved
+    /// them restated, so the status row names the session rather than the
+    /// launch from here on.
+    pub(crate) fn restated(&mut self, model: String, database: Option<String>) {
+        self.model_name = Some(model);
+        self.database = database;
     }
 
     /// Whether the run is paused at a stop the operator can continue from.
@@ -185,39 +193,6 @@ impl Model {
     /// Takes the composer's text, leaving the composer empty.
     pub(crate) fn take_composer(&mut self) -> String {
         std::mem::take(&mut self.composer)
-    }
-
-    /// Puts a call to the operator: one card at a time, opening folded at its
-    /// first row, with the keyboard where the operator's hands are
-    /// ([`Model::opening_seat`]).
-    pub(crate) fn show_card(&mut self, card: Question) {
-        self.card = Some(card);
-        self.card_full = false;
-        self.card_scroll = 0;
-        self.card_choice = None;
-        self.seat = self.opening_seat();
-    }
-
-    /// Takes the open card, if one is waiting for an answer.
-    pub(crate) fn take_card(&mut self) -> Option<Question> {
-        self.card_full = false;
-        self.card_scroll = 0;
-        self.card_choice = None;
-        self.seat = Seat::Composer;
-        self.card.take()
-    }
-
-    /// Shows the open card's whole body, or folds it back to its rows.
-    pub(crate) fn toggle_card_full(&mut self) {
-        self.card_full = !self.card_full;
-    }
-
-    /// Moves the open card's body by `rows`, a negative count moving it up. It
-    /// never moves above its first row; the pane clamps the far end against
-    /// the body it paints.
-    pub(crate) fn scroll_card(&mut self, rows: isize) {
-        let moved = self.card_scroll as isize + rows;
-        self.card_scroll = moved.max(0) as usize;
     }
 
     /// States the mode the run's next call reads.
