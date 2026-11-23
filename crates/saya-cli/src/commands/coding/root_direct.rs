@@ -47,11 +47,15 @@ impl NativeCodingJob {
     pub(crate) async fn compose_in_place_workspace(&self) -> Result<RootWorkspace, CodingError> {
         let record = self.in_place_record()?;
         let input = self.in_place_input(&record);
-        let checkout = verify_in_place_root(&input)
-            .map_err(CodingError::owner)?
-            .checkout_id()
-            .clone();
-        self.compose_workspace(&checkout, CheckoutProof::InPlace(input), None)
+        // This verification is the composition's one security check: it proves
+        // the folder is still the root the job recorded and that the published
+        // baseline still names it. The value it returns is bound and handed to
+        // the composition below, which binds it rather than reading the folder
+        // and the baseline again — the same proof the managed path seeds from
+        // its own start flow (`ensure_root_checkout`).
+        let verified = Arc::new(verify_in_place_root(&input).map_err(CodingError::owner)?);
+        let checkout = verified.checkout_id().clone();
+        self.compose_workspace(&checkout, CheckoutProof::InPlace(input), Some(verified))
             .await
     }
 

@@ -358,6 +358,10 @@ mod origin_tests;
 mod root_checkout_tests;
 
 #[cfg(all(test, unix))]
+#[path = "root_verify_once_tests.rs"]
+mod root_verify_once_tests;
+
+#[cfg(all(test, unix))]
 #[path = "delegate_direct_tests/fixture.rs"]
 mod delegate_direct_fixture;
 

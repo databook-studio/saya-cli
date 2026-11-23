@@ -19,12 +19,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(super) struct Fixture {
+pub(crate) struct Fixture {
     root: PathBuf,
     pub(super) folder: PathBuf,
     store: SqliteStateStore,
     pub(super) application: Arc<CodingApplication>,
-    pub(super) job: Arc<NativeCodingJob>,
+    pub(crate) job: Arc<NativeCodingJob>,
 }
 
 impl Drop for Fixture {
@@ -33,7 +33,7 @@ impl Drop for Fixture {
     }
 }
 
-pub(super) async fn fixture(case: &str, write_paths: Vec<String>) -> Fixture {
+pub(crate) async fn fixture(case: &str, write_paths: Vec<String>) -> Fixture {
     fixture_with(case, write_paths, &[]).await
 }
 
