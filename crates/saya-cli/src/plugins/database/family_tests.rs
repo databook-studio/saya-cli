@@ -322,7 +322,7 @@ fn a_verb_form_or_the_engines_name_is_database_work() {
     let plain = Arc::new(Family::of(local(), false));
     assert!(
         !plain.note("why is the monthly summary slow?"),
-        "a word that merely starts with one of the twelve is not evidence"
+        "a word that merely starts with one of the fourteen is not evidence"
     );
 
     let plural = Arc::new(Family::of(local(), false));
