@@ -139,6 +139,10 @@ pub(crate) mod changes_fixture;
 mod run_draw_changes_tests;
 
 #[cfg(test)]
+#[path = "run_draw_changes_bounds_tests.rs"]
+mod run_draw_changes_bounds_tests;
+
+#[cfg(test)]
 #[path = "update_changes_tests.rs"]
 mod update_changes_tests;
 
