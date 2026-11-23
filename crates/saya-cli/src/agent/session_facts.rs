@@ -26,3 +26,7 @@ pub(crate) fn workspace_root_line(root: &Path) -> String {
 pub(crate) fn workspace_root_text(root: &Path) -> String {
     format!("{SESSION_FACTS_HEADING}\n{}", workspace_root_line(root))
 }
+
+#[cfg(test)]
+#[path = "session_facts_tests.rs"]
+mod tests;
