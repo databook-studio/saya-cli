@@ -248,6 +248,10 @@ mod run_draw_calm_tests;
 mod run_draw_tests;
 
 #[cfg(test)]
+#[path = "status_restate_tests.rs"]
+mod status_restate_tests;
+
+#[cfg(test)]
 #[path = "run_draw_card_tests.rs"]
 mod run_draw_card_tests;
 

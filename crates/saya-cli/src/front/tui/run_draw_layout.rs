@@ -86,10 +86,11 @@ fn column(area: Rect) -> Rect {
     middle
 }
 
-/// The status line's facts: the model's mode and database, the launch's model,
-/// and what the surface is doing right now. Nothing conditional beyond the
-/// sharing caveat lives here: the unsandboxed warning belongs to the approval
-/// card, where the decision is made.
+/// The status line's facts: the model's mode and database, the model the
+/// session talks to — the launch's until a command restates it — and what the
+/// surface is doing right now. Nothing conditional beyond the sharing caveat
+/// lives here: the unsandboxed warning belongs to the approval card, where the
+/// decision is made.
 pub(crate) fn status_facts(model: &Model, facts: &Facts) -> StatusFacts {
     StatusFacts {
         mode: model.mode(),
@@ -97,7 +98,7 @@ pub(crate) fn status_facts(model: &Model, facts: &Facts) -> StatusFacts {
             .database_name()
             .map(|name| vec![name.to_owned()])
             .unwrap_or_default(),
-        model: facts.model.clone(),
+        model: model.model_name().unwrap_or(&facts.model).to_owned(),
         sharing: facts.sharing,
         activity: activity(model, facts),
         scheme: facts.scheme,

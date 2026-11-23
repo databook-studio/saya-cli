@@ -60,6 +60,9 @@ pub(crate) struct Model {
     /// The database the run is connected to, if one is: the composer's idle
     /// placeholder asks about it by name (`02` §7, §9.3).
     pub(crate) database: Option<String>,
+    /// The model the session talks to now, when a command has restated it: the
+    /// status row names this rather than the model the launch resolved.
+    pub(crate) model_name: Option<String>,
     /// Whether the run is paused at a stop the operator can continue from.
     pub(crate) paused: bool,
     /// Whether this surface is a read-only record of an older (0.5.0) session:
@@ -157,6 +160,19 @@ impl Model {
     /// composer name it.
     pub(crate) fn database_name(&self) -> Option<&str> {
         self.database.as_deref()
+    }
+
+    /// The model the session talks to now, when a command has restated it.
+    pub(crate) fn model_name(&self) -> Option<&str> {
+        self.model_name.as_deref()
+    }
+
+    /// States the session's own model and database: what the command that moved
+    /// them restated, so the status row names the session rather than the
+    /// launch from here on.
+    pub(crate) fn restated(&mut self, model: String, database: Option<String>) {
+        self.model_name = Some(model);
+        self.database = database;
     }
 
     /// Whether the run is paused at a stop the operator can continue from.

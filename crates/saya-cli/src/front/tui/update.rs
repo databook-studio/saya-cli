@@ -71,6 +71,12 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         // Leaving is the loop's decision, not the model's: the runtime ends on
         // this message and the model state it leaves behind is never painted.
         Msg::Quit => {}
+        // The session restated the model and the database it is on: the status
+        // row names those from now on, not the launch's.
+        Msg::Restated {
+            model: name,
+            database,
+        } => model.restated(name, database),
     }
     cmds
 }
