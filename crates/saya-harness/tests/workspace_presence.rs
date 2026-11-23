@@ -13,6 +13,22 @@ use std::{
     time::Duration,
 };
 
+/// The deadline these tests run under. They measure the entry bound, the
+/// ignore policy and the shape of the tree — never the clock — so they name a
+/// deadline no runner will spend: the check's default is 25 ms, and a busy
+/// machine can burn it before a short walk finishes, which would answer
+/// "incomplete" for a reason the test never meant to exercise.
+/// `a_spent_deadline_stops_the_check` is the one test that pins the deadline.
+const ROOMY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `bounds` with every bound it states, but a deadline too long to reach.
+fn roomy(bounds: PresenceBounds) -> PresenceBounds {
+    PresenceBounds {
+        timeout: ROOMY_TIMEOUT,
+        ..bounds
+    }
+}
+
 struct Fixture {
     outer: PathBuf,
     workspace: Workspace,
@@ -43,8 +59,7 @@ impl Fixture {
     }
 
     fn present(&self) -> saya_harness::workspace::Presence {
-        self.workspace
-            .holds_file_extension("ipynb", PresenceBounds::default())
+        self.present_under(roomy(PresenceBounds::default()))
     }
 
     fn present_under(&self, bounds: PresenceBounds) -> saya_harness::workspace::Presence {
@@ -126,10 +141,10 @@ fn a_symlinked_notebook_is_not_counted() {
 #[test]
 fn a_tree_over_the_entry_bound_stops_at_the_bound() {
     let fixture = Fixture::new("bound");
-    let bounds = PresenceBounds {
+    let bounds = roomy(PresenceBounds {
         entries: 4,
         ..PresenceBounds::default()
-    };
+    });
     for index in 0..32 {
         fixture.put(&format!("file-{index}.txt"), b"x");
     }
@@ -143,10 +158,10 @@ fn a_tree_over_the_entry_bound_stops_at_the_bound() {
 
     // The same tree answers completely once the bound can hold it — the
     // incomplete answer above is the bound, not the tree.
-    let whole = fixture.present_under(PresenceBounds {
+    let whole = fixture.present_under(roomy(PresenceBounds {
         entries: PRESENCE_MAX_ENTRIES,
         ..PresenceBounds::default()
-    });
+    }));
     assert!(!whole.found && whole.complete, "{whole:?}");
 }
 
