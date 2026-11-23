@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # CI runners are ephemeral, so incremental compilation only adds overhead and
 # bloats the restored cache; disable it workspace-wide. Build parallelism stays
@@ -32,6 +33,70 @@ jobs:
           else
             scripts/check-internal-paths.sh HEAD
           fi
+
+  # Performance guards. Both arms run on this one runner, one after the other:
+  # the control is the latest published linux x86_64 release binary, the
+  # candidate is this pull request built in release, and `scripts/perf-compare.sh`
+  # applies the bars — first message within control + 10 %, steady turn overhead
+  # p50 ≤ 50 ms and p95 ≤ 120 ms, idle TUI CPU ≤ 1 %, draws ≤ 30/s — so a
+  # request-size or overhead regression fails the pull request that causes it.
+  # With no release published yet there is nothing to compare against: the job
+  # says so and passes, and starts guarding from the next release.
+  perf-compare:
+    name: Perf against the latest release
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "perf-${{ runner.os }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Download the latest published release (control)
+        id: control
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/tmp-control
+          # No release at all is an error from the API, not an empty list: both
+          # shapes mean the same thing here — there is nothing to compare with.
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" 2>/dev/null || true)
+          asset=""
+          if [ -n "$latest" ]; then
+            asset=$(printf '%s' "$latest" | \
+              jq -r '[.assets[].name | select(test("x86_64-unknown-linux-gnu[.]tar[.]gz$"))] | first // ""')
+          fi
+          if [ -z "$asset" ]; then
+            echo "::notice::No published linux x86_64 release binary yet — the control arm is skipped, so this job has nothing to compare. It starts guarding from the next published release."
+            exit 0
+          fi
+          gh release download --repo "${{ github.repository }}" \
+            --pattern "$asset" --pattern "$asset.sha256" --dir target/tmp-control
+          if [ -f "target/tmp-control/$asset.sha256" ]; then
+            (cd target/tmp-control && sha256sum -c "$asset.sha256")
+          fi
+          tar -xzf "target/tmp-control/$asset" -C target/tmp-control
+          bin=$(find target/tmp-control -maxdepth 2 -type f -name saya -perm -u+x | head -n 1)
+          test -n "$bin"
+          echo "binary=$(realpath "$bin")" >> "$GITHUB_OUTPUT"
+      - name: Build the candidate (release)
+        if: steps.control.outputs.binary != ''
+        run: cargo build --release --locked -p saya-cli --bin saya
+      - name: Compare the two arms
+        if: steps.control.outputs.binary != ''
+        run: bash scripts/perf-compare.sh "${{ steps.control.outputs.binary }}" target/release/saya 5
+      - name: Upload the comparison
+        if: always() && steps.control.outputs.binary != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-compare
+          path: target/perf/compare.md
+          if-no-files-found: warn
 
   # Pure file inspection: no network, no secrets, no compile. Runs on every PR
   # so the release-workflow contract cannot drift between releases.
