@@ -1,0 +1,37 @@
+{
+  "headroom": "Each ceiling is the surface's measured value at 0.5.1 (golden/request_baseline.json, plus the chat-no-database row measured beside it) plus 5 % for first_request_bytes, system_bytes and tools_bytes, rounded up, and +1 for tool_count. A growth beyond the headroom fails a test. Raising a ceiling is a reviewed change: edit the row and say why in its `reason`. SAYA_UPDATE_GOLDENS rewrites the golden measurement only and never touches this file.",
+  "surfaces": [
+    {
+      "surface": "chat",
+      "first_request_bytes": 21808,
+      "system_bytes": 5150,
+      "tools_bytes": 15056,
+      "tool_count": 20,
+      "reason": "measured 20769 / 4904 / 14339 and 19 tools at 0.5.1 with the database family latched, plus the stated headroom"
+    },
+    {
+      "surface": "chat_no_database",
+      "first_request_bytes": 11028,
+      "system_bytes": 2930,
+      "tools_bytes": 6486,
+      "tool_count": 10,
+      "reason": "measured 10502 / 2790 / 6177 and 9 tools at 0.5.1 on a message that shows no database work — no database section, only the `use_database` ask, about half the bytes of the latched chat above; that saving is what this row pins"
+    },
+    {
+      "surface": "helper",
+      "first_request_bytes": 9057,
+      "system_bytes": 661,
+      "tools_bytes": 7081,
+      "tool_count": 11,
+      "reason": "measured 8625 / 629 / 6743 and 10 tools at 0.5.1, plus the stated headroom"
+    },
+    {
+      "surface": "job",
+      "first_request_bytes": 14156,
+      "system_bytes": 2881,
+      "tools_bytes": 9554,
+      "tool_count": 13,
+      "reason": "measured 13481 / 2743 / 9099 and 12 tools at 0.5.1, plus the stated headroom"
+    }
+  ]
+}

@@ -98,6 +98,10 @@ pub(crate) mod compose_fixture;
 mod compose_helpers_tests;
 
 #[cfg(all(test, unix))]
+#[path = "default_advertisement_tests.rs"]
+mod default_advertisement_tests;
+
+#[cfg(all(test, unix))]
 #[path = "helpers_transcript_tests.rs"]
 mod helpers_transcript_tests;
 

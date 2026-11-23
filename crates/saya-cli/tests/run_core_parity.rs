@@ -32,6 +32,8 @@ mod script;
 
 #[path = "run_core_parity/baseline.rs"]
 mod baseline;
+#[path = "run_core_parity/budget.rs"]
+mod budget;
 #[path = "run_core_parity/capture.rs"]
 mod capture;
 #[path = "run_core_parity/chat.rs"]
@@ -123,11 +125,15 @@ fn assert_unregenerated_rows_are_unchanged(measured: &baseline::Baseline) {
     }
 }
 
+/// The surfaces this binary measures, so a budget row for anything else is
+/// caught as a ceiling nobody enforces.
+const MEASURED_SURFACES: &[&str] = &["chat", "chat_no_database", "helper", "job"];
+
 /// The request-size and prefix baseline: what each surface sends on its first
 /// request, and whether its second request repeats that prefix.
 #[test]
 fn request_baseline_per_surface() {
-    let chat = chat::converse();
+    let chat = chat::converse(chat::QUESTION);
     let job = job::converse();
     let captures = [
         baseline::Captured {
@@ -151,4 +157,34 @@ fn request_baseline_per_surface() {
     baseline.assert_prefix_posture();
     assert_unregenerated_rows_are_unchanged(&baseline);
     baseline.assert_golden();
+    budget::assert_within_budget(&baseline, &budget::Budget::load(), MEASURED_SURFACES);
+}
+
+/// The PERF2 saving, pinned as a budget: a chat asked something that shows no
+/// database work sends the lean request — no database section, and the
+/// `use_database` ask instead of the family.
+#[test]
+fn a_non_database_chat_first_request_is_within_its_budget() {
+    let chat = chat::converse(chat::PLAIN_QUESTION);
+    let first = chat
+        .bodies
+        .first()
+        .expect("the chat surface sent a first request");
+    assert!(
+        !first.contains("Answer the question exactly as asked"),
+        "a message that shows no database work pays no database section"
+    );
+    assert!(
+        first.contains("use_database"),
+        "and the model keeps the ask: a request that names none of the database words still has a \
+         door to the family"
+    );
+    let captures = [baseline::Captured {
+        surface: "chat_no_database",
+        bodies: chat.bodies,
+        roots: chat.roots,
+    }];
+    let measured = baseline::Baseline::measure(&captures);
+    measured.print();
+    budget::assert_within_budget(&measured, &budget::Budget::load(), MEASURED_SURFACES);
 }

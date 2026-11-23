@@ -26,6 +26,8 @@ mod family_executor;
 #[cfg(test)]
 mod family_tests;
 #[cfg(test)]
+mod latch_order_tests;
+#[cfg(test)]
 mod learning_fixture;
 #[cfg(test)]
 mod learning_tests;

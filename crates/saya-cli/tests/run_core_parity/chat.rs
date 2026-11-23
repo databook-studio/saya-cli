@@ -19,7 +19,11 @@ use std::{
 
 use super::{capture::Advertised, harness};
 
-const QUESTION: &[u8] = b"what is the total revenue\n";
+pub(super) const QUESTION: &[u8] = b"what is the total revenue\n";
+/// The same surface asked something that shows no database work: the database
+/// family stays off, so the request carries no database section and only the
+/// `use_database` ask. This is the PERF2 saving, and `budget.json` pins it.
+pub(super) const PLAIN_QUESTION: &[u8] = b"summarise the notes in this folder\n";
 const ANSWER: &[u8] = b"the-final-answer";
 /// The file the scripted `read` opens, and the body it finds there. The call
 /// names it by a relative path, so the request carries no machine prefix.
@@ -37,7 +41,7 @@ pub(super) struct Conversation {
 }
 
 pub(super) fn capture() -> Advertised {
-    let conversation = converse();
+    let conversation = converse(QUESTION);
     let first = conversation
         .bodies
         .first()
@@ -47,7 +51,7 @@ pub(super) fn capture() -> Advertised {
     Advertised::from_body(&value)
 }
 
-pub(super) fn converse() -> Conversation {
+pub(super) fn converse(question: &[u8]) -> Conversation {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let mut server = harness::spawn_script_server(
@@ -97,7 +101,7 @@ pub(super) fn converse() -> Conversation {
     // The child's cwd is its workspace root; write the sample there once the
     // harness has created the per-run tree.
     std::fs::write(child.config_root().join("cwd").join(SAMPLE), SAMPLE_BODY).unwrap();
-    child.send(QUESTION);
+    child.send(question);
     harness::wait_for_stream(&child.stdout_buf, ANSWER, "the chat answer");
     let deadline = Instant::now() + Duration::from_secs(30);
     while server.requests.load(Ordering::SeqCst) < REQUESTS {
