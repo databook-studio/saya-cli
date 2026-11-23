@@ -111,15 +111,21 @@ fn an_undo_names_the_store_this_session_does_have() {
 }
 
 /// A context change is the session-command layer's, exactly as on the line
-/// front: the profile moves, and the surface says so.
+/// front: the profile moves, the surface says so, and the change is stated as
+/// the rollover the port performs on the live run.
 #[test]
 fn a_connect_moves_the_session_profile() {
     let fixture = Fixture::new("connect");
-    let text = answer(&fixture, "/connect local");
-    assert!(
-        text.contains("Selected profile: local"),
-        "the connect names the profile it selected: {text}"
-    );
+    match perform(&fixture.deps, command("/connect local")) {
+        Asked::Roll { request, said } => {
+            assert_eq!(request.change, ContextChange::Connect);
+            assert!(
+                said.contains("Selected profile: local"),
+                "the connect names the profile it selected: {said}"
+            );
+        }
+        other => panic!("`/connect local` states a rollover, not {other:?}"),
+    }
     assert_eq!(
         fixture.state().profile.as_deref(),
         Some("local"),

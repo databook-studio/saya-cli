@@ -13,8 +13,10 @@ use saya_agent::CancellationToken;
 use saya_store::{RedactedSession, RunLink};
 
 use super::boundary::{self, Bounded, Said, Turn};
-use super::open::LineSession;
+use super::open::{LineSession, open_run};
 use super::run::{Next, Run, Sent};
+use crate::agent::tools::shell_policy::ModeCell;
+use crate::agent::turn_config::PromptOverrides;
 use crate::chat::{
     ChatFront, ChatOutcome, ChatSession, Compaction, Rollover, RunComposition, RunPort, Transcript,
     WorkspaceShape,
@@ -27,13 +29,23 @@ use crate::local_metrics::LocalMetrics;
 /// What a line with no run left says.
 const ENDED: &str = "the session's run has ended: its replacement could not be prepared";
 
+/// What a turn no terminal front drives says: the surface reads its own turn
+/// and states it ([`Line::settled`]).
+const SURFACE_DRIVES: &str = "this session's turns are driven by the surface that holds it";
+
 /// One line session: the run it is on, the turns it settled, and the one
 /// compaction every turn crosses.
-pub(super) struct Line {
+pub(crate) struct Line {
     /// The facts every run is composed from, under a new job after a rollover.
     parts: LineSession,
-    /// The surface every turn prints on.
-    front: Arc<LineFront>,
+    /// The surface every run of this session composes its turns on: the
+    /// terminal's own for the line loop, the full-screen surface's for the other.
+    front: Arc<dyn ChatFront>,
+    /// The terminal front a line turn's outcome and words are read from. The
+    /// line loop drives its turns itself and states it ([`Line::send`]); the
+    /// full-screen surface reads its own queue and states what it read
+    /// ([`Line::settled`]), so it states none here.
+    reads: Option<Arc<LineFront>>,
     /// What a run of this folder may write: the session's own fact, taken
     /// before the first run held the lease, and stated again by every
     /// successor.
@@ -51,6 +63,9 @@ pub(super) struct Line {
     rollover: Rollover,
     /// How many runs this session has opened: the next job's name.
     opened: usize,
+    /// How many turns this session has settled: what a state change before the
+    /// first one gives the run up over.
+    settled: usize,
 }
 
 impl Line {
@@ -75,13 +90,49 @@ impl Line {
         Self {
             rollover: Rollover::new(application),
             parts,
-            front,
+            front: Arc::clone(&front) as Arc<dyn ChatFront>,
+            reads: Some(front),
             shape,
             metrics,
             run: Some(run),
             transcript,
             compaction,
             opened: 1,
+            settled: 0,
+        }
+    }
+
+    /// The same session, held by a surface that drives its own turns: the run the
+    /// launch opened, over the surface's own front. The surface sends a turn and
+    /// states how it settled ([`Line::settled`]), so no terminal front is read
+    /// here; everything else — the transcript, the compaction, the rollover — is
+    /// the line loop's own.
+    pub(crate) fn surface(
+        application: Arc<CodingApplication>,
+        parts: LineSession,
+        front: Arc<dyn ChatFront>,
+        shape: WorkspaceShape,
+        metrics: Option<Arc<LocalMetrics>>,
+        run: Run,
+    ) -> Self {
+        let transcript = Transcript::from_record(RedactedSession {
+            id: parts.session.clone(),
+            model: run.model(),
+            ..RedactedSession::default()
+        });
+        let compaction = Compaction::new().stating(parts.facts.clone());
+        Self {
+            rollover: Rollover::new(application),
+            parts,
+            front,
+            reads: None,
+            shape,
+            metrics,
+            run: Some(run),
+            transcript,
+            compaction,
+            opened: 1,
+            settled: 0,
         }
     }
 
@@ -98,107 +149,12 @@ impl Line {
 
     /// The tool tally of every turn this session ran.
     pub(super) fn tally(&self) -> ToolTally {
-        self.front.tally()
-    }
-
-    /// Sends one operator line as a turn of the run, and crosses the boundary
-    /// with the turn's own report: the compaction reads the output the engine
-    /// stated for this turn, never an earlier one.
-    pub(super) async fn send(&mut self, message: String) -> Result<Option<Sent>, String> {
-        let Some(run) = self.run.as_ref() else {
-            return Err(ENDED.to_owned());
-        };
-        // This turn's own stop token, held here as well as by the front: a bare
-        // Esc at an approval prompt cancels it from the terminal owner, and the
-        // turn — never the run — is what ends when it does.
-        let turn = CancellationToken::new();
-        self.front.set_turn(turn.clone());
-        // A one-turn surface's question carries its own stop — the elapsed
-        // budget its scope states — and that stop ends the turn: there is no
-        // next line for it to leave open.
-        let question = self.front.one_turn_stop();
-        let question_stop = async move {
-            match question {
-                Some(token) => token.cancelled().await,
-                None => std::future::pending::<()>().await,
-            }
-        };
-        {
-            let send = run.session().send(message.clone());
-            tokio::pin!(send);
-            tokio::select! {
-                _ = &mut send => {}
-                _ = tokio::signal::ctrl_c() => {
-                    // The turn's own stop and the single instant the
-                    // settlement sample is measured from. The message does not
-                    // run, and the run stays open for the next line.
-                    self.front.stop_turn();
-                    run.session().cancel().await;
-                    send.await;
-                }
-                _ = turn.cancelled() => {
-                    // The terminal owner's own stop, recorded at the one stop
-                    // instant: the question the turn left pending ends with it,
-                    // and the run stays open for the next line.
-                    self.front.stop_turn();
-                    run.session().cancel().await;
-                    send.await;
-                }
-                _ = question_stop => {
-                    // The question's configured budget ran out. Its stop is
-                    // already latched, so the settlement keeps that class; the
-                    // turn ends here rather than starting another round.
-                    self.front.stop_turn();
-                    run.session().cancel().await;
-                    send.await;
-                }
-            }
+        match self.reads.as_ref() {
+            Some(front) => front.tally(),
+            // A surface that drives its own turns states its own tally: none of
+            // the line loop's is read on its behalf.
+            None => ToolTally::default(),
         }
-        let Some(outcome) = self.front.take_outcome() else {
-            return Ok(None);
-        };
-        let record = self.front.take_record();
-        let output = self.run.as_ref().and_then(Run::take_output);
-        let said = self
-            .boundary(&outcome, output.clone(), &message, &record.answer)
-            .await;
-        Ok(Some(Sent {
-            turn: crate::front::SettledTurn { outcome, record },
-            output,
-            said,
-        }))
-    }
-
-    /// `/compact`: one compaction now, whether or not a turn crossed the
-    /// threshold — the operator's own ask, through the same operation.
-    pub(super) async fn compact(&mut self) -> Said {
-        let Some(next) = self.next() else {
-            return Said::Error(ENDED.to_owned());
-        };
-        let bounded = boundary::forced(
-            &self.compaction,
-            &self.rollover,
-            &mut self.run,
-            &mut self.transcript,
-            || next.compose(),
-        )
-        .await;
-        self.take(bounded).await
-    }
-
-    /// `/clear`: the latch is re-armed and the conversation rolls away — the
-    /// chat layer's own clear, then the rollover it asks for.
-    pub(super) async fn clear(&mut self) -> Said {
-        self.compaction.clear();
-        let Some(next) = self.next() else {
-            return Said::Nothing;
-        };
-        let bounded =
-            boundary::cleared(&self.rollover, &mut self.run, &mut self.transcript, || {
-                next.compose()
-            })
-            .await;
-        self.take(bounded).await
     }
 
     /// Ends the run: the session's own quit, stated once.
@@ -295,3 +251,7 @@ impl Line {
         format!("{}{suffix}", &self.parts.session[..keep])
     }
 }
+
+// What a surface that drives its own turns reads and moves: the run it is on
+// now, and the boundary a turn of it crosses (`surface.rs`).
+include!("surface.rs");
