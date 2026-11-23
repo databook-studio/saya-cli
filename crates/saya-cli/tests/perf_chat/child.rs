@@ -76,7 +76,10 @@ impl PerfChild {
         }
     }
 
-    /// The child's own pid: the process whose CPU the idle measure reads.
+    /// The child's own pid: the process whose CPU the idle measure reads. Both
+    /// readers are Unix rows, so a host without per-process accounting leaves
+    /// it unused.
+    #[cfg(unix)]
     pub(crate) fn pid(&self) -> u32 {
         self.child.as_ref().unwrap().id()
     }

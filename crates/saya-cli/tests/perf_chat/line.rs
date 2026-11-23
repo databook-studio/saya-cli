@@ -17,7 +17,7 @@ use std::{
 
 use crate::{
     child::PerfChild,
-    cpu, fixture,
+    fixture,
     harness::{self, MockServer, ScriptStep},
     record::{self, RunRecord},
     spawn::Roots,
@@ -75,6 +75,20 @@ pub(crate) fn server(script: Vec<ScriptStep>) -> MockServer {
     )
 }
 
+/// The idle CPU of the line front, read from the OS's accounting of the live
+/// child: the front is a process waiting on its own stdin.
+#[cfg(unix)]
+fn idle_cpu(child: &PerfChild) -> Option<f64> {
+    crate::cpu::idle_percent(child.pid(), crate::IDLE_WINDOW)
+}
+
+/// Windows has no per-process CPU accounting here, so the window is reported as
+/// skipped rather than guessed at.
+#[cfg(not(unix))]
+fn idle_cpu(_child: &PerfChild) -> Option<f64> {
+    None
+}
+
 /// Measures (a), (b), (c) and (f) on one session of `bin`.
 pub(crate) fn measure(bin: &Path, record: &mut RunRecord) {
     let roots = Roots::new(&format!("line-run{}", record.run));
@@ -100,9 +114,8 @@ pub(crate) fn measure(bin: &Path, record: &mut RunRecord) {
     let _ = child.out.wait_for_any(Duration::from_secs(15));
     thread::sleep(Duration::from_millis(500));
 
-    // (d) idle CPU of the line front: a process waiting on its own stdin. The
-    // window is read from the OS's accounting of the live child.
-    match cpu::idle_percent(child.pid(), crate::IDLE_WINDOW) {
+    // (d) idle CPU of the line front, where this host measures a live child.
+    match idle_cpu(&child) {
         Some(percent) => record.idle_cpu_line_pct = Some(percent),
         None => record.skipped.push(
             "idle CPU of the line front: this host has no per-process CPU \
