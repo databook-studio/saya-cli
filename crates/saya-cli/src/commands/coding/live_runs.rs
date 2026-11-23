@@ -55,8 +55,13 @@ pub(super) fn leased_here(root_id: &str) -> bool {
 }
 
 /// The owner this process holds `root_id`'s lease for, if it holds it: the
-/// session a job naming it is admitted as a dependent of, or the job itself.
-pub(super) fn lease_owner(root_id: &str) -> Option<String> {
+/// session the lease names, or the job that took it.
+///
+/// A folder is not "another session's" just because its lease is held: a
+/// session's own run leases the folder for as long as it is open, and a job
+/// that states that session is admitted beside it. A run's shape reads this to
+/// tell the session's own folder from a stranger's.
+pub(crate) fn lease_owner(root_id: &str) -> Option<String> {
     lock(&LEASED).get(root_id).cloned()
 }
 

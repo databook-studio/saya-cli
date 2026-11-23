@@ -135,7 +135,7 @@ async fn ask_from_home_advertises_no_workspace_tool() {
     let records = scratch("home-root");
 
     // The shape the ask's own composition reads: $HOME cannot root a job.
-    let shape = workspace_shape(&home, &records);
+    let shape = workspace_shape(&home, &records, "session-ask-from-home");
     assert!(
         matches!(shape, WorkspaceShape::NoWorkspace { .. }),
         "the home directory cannot root an in-place job: {shape:?}"
@@ -174,7 +174,7 @@ async fn ask_from_a_plain_folder_keeps_its_workspace() {
     let records = scratch("plain-state");
     // The same rule over a folder that can root a job: it reads the folder. A
     // session's records live elsewhere, never inside it.
-    let plain_shape = workspace_shape(&plain, &records);
+    let plain_shape = workspace_shape(&plain, &records, "session-ask-from-plain");
     assert_eq!(
         plain_shape.workspace(),
         Workspace::Here,

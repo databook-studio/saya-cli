@@ -94,6 +94,9 @@ mod in_place_lease;
 pub(crate) use in_place_lease::leased as folder_lease_held;
 mod integrate;
 mod live_runs;
+// The owner of a lease this process holds, so a run's shape can tell this
+// session's own folder from another owner's.
+pub(crate) use live_runs::lease_owner as folder_lease_owner;
 mod notes;
 mod oneshot;
 pub(crate) mod oneshot_cli;
@@ -352,6 +355,10 @@ mod tools_allow_tests;
 #[cfg(all(test, unix))]
 #[path = "origin_tests.rs"]
 mod origin_tests;
+
+#[cfg(test)]
+#[path = "in_place_lease_tests.rs"]
+mod in_place_lease_tests;
 
 #[cfg(all(test, unix))]
 #[path = "root_checkout_tests.rs"]
