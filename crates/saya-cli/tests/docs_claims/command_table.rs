@@ -83,7 +83,9 @@ fn the_slash_command_table_is_generated_from_the_catalogue() {
 /// line endings as the table's rather than as drift.
 #[test]
 fn a_crlf_checkout_states_the_catalogue_table() {
-    let page = include_str!("../../../../docs/commands.md").replace('\n', "\r\n");
+    let page = include_str!("../../../../docs/commands.md")
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
     let Some(found) = block(&page) else {
         panic!(
             "docs/commands.md has no generated slash command block: put `{BEGIN}` and `{END}` around the table"
