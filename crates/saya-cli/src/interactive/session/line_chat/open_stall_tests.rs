@@ -14,16 +14,19 @@
 //! The twin: a stalled setup is cut by that bound, the operator reads the
 //! bound's sentence, and the session still opens — never a hang.
 //!
-//! The connector states that sentence in two words for the same one second:
-//! the pool's `acquire_timeout` and the query's own `timeout` are both
-//! `query_timeout_seconds`, and the acquire is what a stalled handshake meets
-//! first — `PostgreSQL connection failed`, wrapped by the session as the
-//! profile it cannot open.
+//! The connector states that one bound in two words for the same second: the
+//! pool's `acquire_timeout` and the `timeout` around the acquire in
+//! `connect()` are both `query_timeout_seconds`, and a stalled handshake meets
+//! both. Which of the two equal timers fires first is the runtime's to decide,
+//! so under load either word is the bound's own: `PostgreSQL connection
+//! failed` from the acquire, `PostgreSQL connection timed out` from the
+//! timeout. The test asserts the bound was spent and that the session said the
+//! profile it cannot open; it never asserts which of the two won a race.
 
 use std::collections::BTreeMap;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -45,6 +48,48 @@ const CEILING: Duration = Duration::from_secs(10);
 
 /// The one bound the stalled connect is cut by, as this test states it.
 const QUERY_TIMEOUT_SECONDS: u64 = 1;
+
+/// The connector's own words for that one bound, in the two places it states
+/// it: the pool's acquire timing out, and the `connect()` timeout around the
+/// acquire. Either may fire first; both mean the bound cut the stalled setup.
+const BOUND_SENTENCES: [&str; 2] = [
+    "PostgreSQL connection failed",
+    "PostgreSQL connection timed out",
+];
+
+/// The silent server: it accepts each connection the client makes, holds it
+/// open and answers nothing, so the PostgreSQL handshake that follows the TCP
+/// connect is what stalls.
+struct Silent {
+    /// One token per connection accepted. Receiving one is this test's proof
+    /// that the setup reached the server and stalled there rather than being
+    /// refused at the socket.
+    accepted: mpsc::Receiver<()>,
+}
+
+impl Silent {
+    /// Bind the silent server and leave it accepting on its own thread. The
+    /// accepted sockets live in that thread for as long as this handle's
+    /// receiver does, so dropping the handle closes them.
+    fn bind() -> (Self, u16) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("the silent server binds");
+        let port = listener
+            .local_addr()
+            .expect("the silent server's address")
+            .port();
+        let (sender, accepted) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut held: Vec<TcpStream> = Vec::new();
+            while let Ok((stream, _)) = listener.accept() {
+                held.push(stream);
+                if sender.send(()).is_err() {
+                    return;
+                }
+            }
+        });
+        (Self { accepted }, port)
+    }
+}
 
 /// A front that records what the session said and never asks anybody.
 #[derive(Default)]
@@ -75,7 +120,7 @@ impl ChatFront for Recording {
 /// A folder and a configuration this test owns, whose one profile names a
 /// PostgreSQL server that accepts the socket and then says nothing: the
 /// connection completes and the protocol handshake stalls.
-fn stalling_session(label: &str) -> (PathBuf, LineSession, TcpListener) {
+fn stalling_session(label: &str) -> (PathBuf, LineSession, Silent) {
     let root = std::env::temp_dir().join(format!(
         "saya-line-chat-stall-{label}-{}-{}",
         std::process::id(),
@@ -91,14 +136,7 @@ fn stalling_session(label: &str) -> (PathBuf, LineSession, TcpListener) {
     std::fs::write(config_home.join("config.toml"), "# this row's own home\n").unwrap();
     let project = root.join("project.toml");
     std::fs::write(&project, "[ai]\nmodel = 'test-model'\n").unwrap();
-    // The silent server: bound and left alone. A completed TCP handshake sits
-    // in its backlog, so the client's `connect()` returns and the PostgreSQL
-    // handshake that follows is what stalls.
-    let silent = TcpListener::bind("127.0.0.1:0").expect("the silent server binds");
-    let port = silent
-        .local_addr()
-        .expect("the silent server's address")
-        .port();
+    let (silent, port) = Silent::bind();
     let connections = root.join("connections.toml");
     std::fs::write(
         &connections,
@@ -143,7 +181,7 @@ fn stalling_session(label: &str) -> (PathBuf, LineSession, TcpListener) {
 
 #[tokio::test]
 async fn a_stalled_connector_setup_is_cut_by_its_bound_and_the_operator_is_told() {
-    let (root, parts, _silent) = stalling_session("bound");
+    let (root, parts, silent) = stalling_session("bound");
     let front = Arc::new(Recording::default());
     let started = std::time::Instant::now();
     let run = tokio::time::timeout(
@@ -160,6 +198,13 @@ async fn a_stalled_connector_setup_is_cut_by_its_bound_and_the_operator_is_told(
     .expect("the run opens without the profile it cannot reach");
     let elapsed = started.elapsed();
 
+    // The setup reached the server and was answered nothing: the wait above was
+    // a stalled handshake, not a refused port. Waited for, never slept for: the
+    // accept lands as soon as the client's connect does.
+    silent
+        .accepted
+        .recv_timeout(CEILING)
+        .expect("the connector reached the silent server and stalled in its handshake");
     assert!(
         elapsed >= Duration::from_secs(QUERY_TIMEOUT_SECONDS),
         "the wait was the connector's own bound, not an instant refusal: {elapsed:?}"
@@ -169,12 +214,15 @@ async fn a_stalled_connector_setup_is_cut_by_its_bound_and_the_operator_is_told(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    assert_eq!(
-        said,
-        vec![String::from(
-            "cannot open profile 'demo': connection failed: PostgreSQL connection failed"
-        )],
-        "the operator reads the bound's own sentence, naming the profile"
+    let [notice] = said.as_slice() else {
+        panic!("the operator reads exactly one notice about the profile: {said:?}");
+    };
+    let reason = notice
+        .strip_prefix("cannot open profile 'demo': connection failed: ")
+        .unwrap_or_else(|| panic!("the notice names the profile it cannot open: {notice:?}"));
+    assert!(
+        BOUND_SENTENCES.contains(&reason),
+        "the operator reads the bound's own sentence: {notice:?}"
     );
     assert!(
         run.connections.is_empty(),
