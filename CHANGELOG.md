@@ -564,8 +564,8 @@ bypass` refuses at start — a run's approval is its `--allow` scopes).
   states its own scopes or takes the run default (read-only).
 
 **`saya run` — headless, resumable, budgeted runs.** A run takes a goal, proposes a
-plan, and executes it step by step without a person at the keyboard. It is the
-answer to a benchmark that dies at question 900 and has to start over.
+plan, and executes it step by step without a person at the keyboard, and a
+long run that is interrupted picks up where it stopped instead of starting over.
 
 - **Resume.** Every lifecycle event is journalled before it is mirrored to the
   store, so a run that dies resumes at its first incomplete step. A step that
@@ -733,9 +733,9 @@ over the real value.
   gains a `usage` event carrying the token counts the provider reported for a
   call — one event per provider call, labelled `call: "answer"` for the
   answering rounds and `call: "extraction"` for the post-turn learning call,
-  which is billed separately. A benchmark reading the stream can now compute a
+  which is billed separately. A consumer reading the stream can now compute a
   cache hit rate (`Σcached / Σinput` over the answering calls) without
-  hand-probing the gateway; previously a 1,534-question run produced no usage
+  hand-probing the gateway; previously a long run produced no usage
   data at all. Nothing else about the stream changes: no existing field is
   renamed or restructured, and a provider that reports no usage emits no `usage`
   event — absence means "unknown", not zero, and an unreported cache figure
@@ -755,13 +755,12 @@ over the real value.
   `LearningSkipReason::TimedOut` stays in the serialized contract (a
   resumed session's history may still carry it) but the runtime no longer
   produces it.
-- **The agent finishes the computation a question asks for.** Characterising all
-  867 failures of a 1,534-question benchmark run found two classes where the
-  agent had the right pieces and stopped short: it handed back the operands of
-  a ratio or a percentage and left the division to the reader (113 questions),
-  and it answered a superlative — "which driver had the fastest lap" — with
-  every driver ordered by lap time instead of the one row the question named
-  (65 questions, 61 with a single-row answer). The answer contract now states
+- **The agent finishes the computation a question asks for.** Two classes of
+  failure had the agent holding the right pieces and stopping short: it handed
+  back the operands of a ratio or a percentage and left the division to the
+  reader, and it answered a superlative — "which driver had the fastest lap" —
+  with every driver ordered by lap time instead of the one row the question
+  named. The answer contract now states
   both rules directly: compute the ratio, the percentage, or the difference and
   answer with that value; answer a superlative with its row and the value that
   makes it so, not the ranking it came from, with every row tied with it still
@@ -832,9 +831,9 @@ for users of the `saya` binary.
 - **`--candidates N`** answers with the best of N independent attempts, choosing
   between them by what their queries *return* rather than what their SQL says.
   Defaults to 1 — today's behaviour exactly, at no extra cost — because each
-  extra attempt is another full agent run. Measured on a 135-question benchmark,
-  three attempts agreed on 95% of questions, so the setting is unlikely to earn
-  its cost on a well-constrained question; it exists for the ones that are not.
+  extra attempt is another full agent run. Attempts usually agree on a
+  well-constrained question, so the setting is unlikely to earn its cost there;
+  it exists for the ones that are not.
 
 - **`result_shape`** runs a query and returns only its row count, whether the
   row cap was hit, and the column names and types — never a cell value. Learning
@@ -858,9 +857,8 @@ for users of the `saya` binary.
 
 ### Changed
 
-- **The agent is told what an answer should look like.** Reading every failure
-  of a 135-question benchmark, a quarter had the right numbers and the wrong
-  presentation: working columns left in, rounded values, reformatted dates, a
+- **The agent is told what an answer should look like.** Answers often had the
+  right numbers and the wrong presentation: working columns left in, rounded values, reformatted dates, a
   whole ranking returned where one row was asked for. The prompt now states the
   contract — the columns asked for and no others, no rounding, ISO dates, "the
   highest" means that row, answer every quantity the question names, and keep
@@ -935,8 +933,8 @@ for users of the `saya` binary.
   database was reported to the model as `catalog.schema.table`, including
   SQLite, which parses neither part, and MySQL, which has no separate schema.
   Shown a name its own engine rejects, the model wrote it back and the
-  statement failed — measured on 87% of questions in a SQLite benchmark, each
-  costing a wasted round trip before it retried unqualified. Keys now carry the
+  statement failed, costing a wasted round trip before it retried
+  unqualified. Keys now carry the
   depth the engine accepts, and fall back to the full name if that would make
   two tables collide. The same rule is stated in the system prompt, for every
   engine and regardless of memory mode.
