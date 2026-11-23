@@ -129,6 +129,7 @@ pub(super) const ASKING: &[&str] = &[
     "tree -o out.txt",
     "uniq a.txt b.txt",
     "file -C",
+    "file -bC",
     "rg --pre ./pre.sh foo",
     // `find` actions that run a program, delete, or write a file.
     "find . -exec rm {} \\;",

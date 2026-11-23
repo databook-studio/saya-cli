@@ -248,7 +248,7 @@ const SET: &[Vetted] = &[
     Vetted::plain("wc"),
     Vetted::plain("which"),
     // `file -C` compiles a magic database into the user's tree.
-    Vetted::new("file", &["-C", "--compile"], &[], usize::MAX),
+    Vetted::new("file", &["-C", "--compile"], &['C'], usize::MAX),
     // `tail --follow` never returns: the capture would wait on it.
     Vetted::new("tail", &["--follow"], &['f', 'F'], usize::MAX),
     // `sort -o`/`--output` writes the sorted file, and `-T` its temporaries.
