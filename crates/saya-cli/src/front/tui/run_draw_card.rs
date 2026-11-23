@@ -1,65 +1,148 @@
-//! The docked card's rows: the call the operator has to answer, laid out as the
-//! lines the frame paints.
+//! The approval panel: the call the operator has to answer, drawn as the box the
+//! frame paints directly above the composer.
 //!
-//! The words are [`approval`]'s — the caller's title, the call's facts verbatim,
-//! why it is asked and the keys that answer it. This module only says how many
-//! rows that is and turns them into lines, so the grid can reserve them before
-//! anything is painted and the card and the grid can never disagree about the
-//! card's height.
+//! The words are [`super::view::cards`]'s — the title, the call's own bytes,
+//! where it runs and the answers it offers. This module says how many rows that
+//! is and paints them inside a rule, so the grid can reserve the panel's rows
+//! before anything is painted and the two can never disagree about its height.
+//!
+//! The panel is the surface's one loud pane: a rule all the way across the
+//! content column, its title in the focus token, and the answers one per line.
+//! What it gives up on a short screen is body, never answers: an operator must
+//! always be able to see how to answer.
 
 use ratatui::text::{Line, Span};
 
 use super::model::Model;
 use super::run_draw::Facts;
-use super::theme::{Token, style};
-use super::view::approval;
+use super::theme::{Charset, Glyph, Token, glyph, style};
+use super::view::{approval_waiting, fit, pad};
 
-/// The rows the card needs: its title, the body rows it shows, the reason it is
-/// asked and the line that says which keys answer it.
-pub(crate) fn rows(model: &Model, screen_rows: u16) -> usize {
-    model.card().map_or(0, |question| {
-        let card = approval(question, model.mode(), screen_rows);
-        1 + card.shown(model.card_full()).len()
-            + usize::from(card.because().is_some())
-            + usize::from(!card.keys().is_empty())
-    })
+/// One row of the panel before it is painted: its words and the token they are
+/// painted with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Painted {
+    /// The row's text, exactly `width` cells across.
+    pub(crate) text: String,
+    /// The meaning the row is painted with.
+    pub(crate) token: Token,
 }
 
-/// The card itself: the call's own title, its body verbatim, why it is asked,
-/// and the keys that answer it, fitted to `width` cells.
+/// The rows the panel takes on a `screen_rows` screen, given at most `budget`
+/// rows to spend.
+pub(crate) fn rows(
+    model: &Model,
+    facts: &Facts,
+    screen_rows: u16,
+    width: u16,
+    budget: usize,
+) -> usize {
+    panel(model, facts, screen_rows, width, budget).len()
+}
+
+/// The panel itself, as the lines the frame paints.
 pub(crate) fn card(
     model: &Model,
     facts: &Facts,
     screen_rows: u16,
     width: u16,
+    budget: usize,
 ) -> Vec<Line<'static>> {
+    panel(model, facts, screen_rows, width, budget)
+        .into_iter()
+        .map(|row| Line::from(Span::styled(row.text, style(row.token, facts.scheme))))
+        .collect()
+}
+
+/// The panel's rows: its opening rule with the title, where the call runs, the
+/// call's own bytes in a block, the answers one per line, and its closing rule.
+fn panel(
+    model: &Model,
+    facts: &Facts,
+    screen_rows: u16,
+    width: u16,
+    budget: usize,
+) -> Vec<Painted> {
     let Some(question) = model.card() else {
         return Vec::new();
     };
-    let card = approval(question, model.mode(), screen_rows);
-    let mut lines = vec![Line::from(Span::styled(
-        card.title().to_owned(),
-        style(Token::Accent, facts.scheme),
-    ))];
-    for row in card.shown(model.card_full()) {
-        lines.push(Line::from(Span::styled(
-            row.clone(),
-            style(Token::Fg, facts.scheme),
-        )));
+    let card = approval_waiting(
+        question,
+        facts.workspace.as_deref(),
+        screen_rows,
+        model.card_waiting(),
+    );
+    let charset = facts.charset;
+    let width = width as usize;
+    // The inside of the box: a rule either side and one cell of air beside it.
+    let room = width.saturating_sub(4).max(1);
+    // The seat that holds the keyboard is the one painted loudly: the panel's
+    // rule is the accent while it answers, and dimmed while the composer does.
+    let focused = model.panel_focused();
+    let border = if focused { Token::Accent } else { Token::Dim };
+    let mut out = vec![rule(card.title(), border, width, charset, true)];
+    // What the budget leaves the body: the answers and both rules are not
+    // negotiable, so everything else gives way to them.
+    let mut spare = budget.saturating_sub(2 + card.choices().len());
+    if let Some(place) = card.place().filter(|_| spare >= 3) {
+        out.push(inside(place, Token::Dim, width, charset));
+        out.push(inside("", Token::Fg, width, charset));
+        spare -= 2;
     }
-    // Why it is asked and how it is answered are two rows: on one row the
-    // reason is long enough to clip the keys off a narrow terminal.
-    if let Some(because) = card.because() {
-        lines.push(Line::from(Span::styled(
-            because.to_owned(),
-            style(Token::Dim, facts.scheme),
-        )));
+    let shown = card.shown_rows(model.card_full(), room);
+    let take = shown.len().min(spare.max(1));
+    for row in &shown[..take] {
+        out.push(inside(row, Token::Fg, width, charset));
     }
-    if !card.keys().is_empty() {
-        lines.push(Line::from(Span::styled(
-            card.keys_for(width as usize).to_owned(),
-            style(Token::Dim, facts.scheme),
-        )));
+    if spare > take {
+        out.push(inside("", Token::Fg, width, charset));
     }
-    lines
+    for (index, choice) in card.choices().iter().enumerate() {
+        let focused = model.card_choice() == Some(index);
+        let marker = if focused {
+            glyph(Glyph::Selected, charset)
+        } else {
+            " "
+        };
+        let token = if focused { Token::Accent } else { Token::Fg };
+        out.push(inside(
+            &format!("{marker} [{}] {}", choice.key, choice.label),
+            token,
+            width,
+            charset,
+        ));
+    }
+    out.push(rule(card.hint(focused), Token::Dim, width, charset, false));
+    out
+}
+
+/// A rule across the content column, naming `label` where it opens (`top`) or
+/// closes.
+fn rule(label: &str, token: Token, width: usize, charset: Charset, top: bool) -> Painted {
+    let (left, right) = match top {
+        true => (Glyph::TopLeft, Glyph::TopRight),
+        false => (Glyph::BottomLeft, Glyph::BottomRight),
+    };
+    let label = fit(label, width.saturating_sub(4));
+    let fill = width.saturating_sub(label.chars().count() + 4);
+    let line = glyph(Glyph::Rule, charset);
+    Painted {
+        text: format!(
+            "{} {label} {}{}",
+            glyph(left, charset),
+            line.repeat(fill),
+            glyph(right, charset)
+        ),
+        token,
+    }
+}
+
+/// One row inside the box: the words, one cell in from each rule.
+fn inside(text: &str, token: Token, width: usize, charset: Charset) -> Painted {
+    let edge = glyph(Glyph::Edge, charset);
+    let room = width.saturating_sub(4);
+    Painted {
+        text: format!("{edge} {} {edge}", pad(text, room)),
+        token,
+    }
 }

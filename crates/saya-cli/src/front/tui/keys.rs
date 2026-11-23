@@ -6,9 +6,11 @@
 //! a card waits — a mode switch the operator asked for mid-answer would leave
 //! the question they were reading behind.
 //!
-//! The card owns the keyboard while it is open, and its own answers are read
-//! there ([`super::cards_keys`]); the composer owns it otherwise. A pane that
-//! owns the screen reads its keys in [`super::overlay_keys`].
+//! The card owns the keyboard while it is open, on whichever seat has it: the
+//! panel reads the answers when it is focused ([`super::cards_keys`]) and the
+//! composer reads every printable key when it is (`Tab` moves between them), so
+//! typing can never answer a call. A pane that owns the screen reads its keys in
+//! [`super::overlay_keys`].
 //!
 //! Two of the composer's own keys open a pane rather than type: `Ctrl+K` opens
 //! the command palette, and `?` — like `/` — opens it only while the composer is
@@ -49,6 +51,14 @@ pub(crate) enum Intent {
     /// Move the open card's body by this many rows; a negative count moves it
     /// up.
     ScrollCard(isize),
+    /// Walk the answers the open card offers, a negative count moving up.
+    FocusChoice(isize),
+    /// Give the answer an arrow press pointed at, and nothing at all when none
+    /// is pointed at.
+    AnswerFocused,
+    /// `Tab`: the keyboard moves between the composer and the open panel, so the
+    /// panel answers only when it has it (UI3).
+    ToggleSeat,
     /// Walk the mode cycle to its next member.
     CycleMode,
     /// Move the mode picker's selection one row up.
@@ -144,26 +154,43 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
     composer_key(model, key)
 }
 
-/// The card's keys: its own answers (`cards_keys`), and a refusal of the one
-/// global key that would otherwise act on a state the operator cannot see
-/// behind the card. Enter is deliberately none of them, so a press meant for
-/// the composer during a card can never consent.
+/// The card's keys, read by the seat that holds the keyboard (UI3): its own
+/// answers (`cards_keys`) and the arrows when the panel has it, and the
+/// composer's own keys when the composer does. `Tab` moves between them.
 ///
-/// Every other press is the composer's, exactly as it was before the card
-/// arrived: a call can land mid-sentence, and the line the operator was typing
-/// — `/job approve <id>` among them, which is how a job's consent is given by
-/// name (`02` §8) — must still be typeable and still be sent by Enter.
+/// The one global key the panel refuses outright is the mode cycle: a mode
+/// switched behind a call would leave the question being read behind.
 fn card_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
         KeyCode::BackTab => Some(Intent::Refused(CARD_HOLDS_MODE)),
         KeyCode::Tab if shift => Some(Intent::Refused(CARD_HOLDS_MODE)),
-        _ => match cards_keys::card_intent(model.card()?, key) {
-            Some(CardIntent::Answer(answer)) => Some(Intent::AnswerCard(answer)),
-            Some(CardIntent::View) => Some(Intent::ViewCard),
-            Some(CardIntent::Scroll(rows)) => Some(Intent::ScrollCard(rows)),
-            None => composer_fallback(model, key),
-        },
+        KeyCode::Tab => Some(Intent::ToggleSeat),
+        _ if model.panel_focused() => panel_key(model, key),
+        // The composer has the keyboard: a call can land mid-sentence, and the
+        // line the operator was typing — `/job approve <id>` among them, which
+        // is how a job's consent is given by name (`02` §8) — must still be
+        // typeable and still be sent by Enter.
+        _ => composer_fallback(model, key),
+    }
+}
+
+/// What a press means to the panel that has the keyboard: its answers, `v`,
+/// the arrows and the page keys — and nothing else at all. A label key the panel
+/// has no answer for is dropped here rather than falling through to the
+/// composer it disabled, so no letter ever leaks into a draft.
+fn panel_key(model: &Model, key: KeyEvent) -> Option<Intent> {
+    // Enter gives the answer an arrow press pointed at, and nothing when none
+    // is: a press meant for the composer is never a consent.
+    if key.code == KeyCode::Enter {
+        return model.card_choice().map(|_| Intent::AnswerFocused);
+    }
+    match cards_keys::card_intent(model.card()?, key) {
+        Some(CardIntent::Answer(answer)) => Some(Intent::AnswerCard(answer)),
+        Some(CardIntent::View) => Some(Intent::ViewCard),
+        Some(CardIntent::Scroll(rows)) => Some(Intent::ScrollCard(rows)),
+        Some(CardIntent::Focus(step)) => Some(Intent::FocusChoice(step)),
+        None => None,
     }
 }
 

@@ -20,8 +20,15 @@ const PANES: [&str; 3] = ["/mode", "/job", "/help"];
 fn waiting() -> Model {
     let mut model = Model::default();
     let cmds = update(&mut model, card(7));
-    assert!(cmds.is_empty(), "a card asks nothing yet: {cmds:?}");
+    assert_eq!(
+        cmds,
+        vec![Cmd::Bell],
+        "a card that takes the slot rings once"
+    );
     assert_eq!(model.card().map(|card| card.id), Some(7), "the card waits");
+    // The operator types behind the card, so the keyboard goes back to the
+    // composer: the panel answers only when it has it (UI3).
+    update(&mut model, press(KeyCode::Tab));
     model
 }
 

@@ -8,6 +8,7 @@
 //! nothing below the trait names a `Terminal<CrosstermBackend<Stdout>>`.
 
 use std::io;
+use std::io::Write;
 use std::sync::Arc;
 
 use super::model::Model;
@@ -26,6 +27,12 @@ pub(crate) trait Screen: Send {
 
     /// Paints one whole frame.
     fn draw(&mut self, model: &Model, facts: &Facts) -> io::Result<()>;
+
+    /// Rings the terminal's bell once. A screen with no terminal of its own —
+    /// a test's — records it and nothing else.
+    fn bell(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 
     /// The restore a panic hook can call. A hook cannot borrow the runtime, so
     /// a screen that can be put back from anywhere says how; one that cannot
@@ -90,6 +97,17 @@ impl Screen for TtyScreen {
             .terminal
             .draw(|frame| run_draw::frame(model, facts, frame))?;
         Ok(())
+    }
+
+    /// One bell on the real terminal: the byte a terminal rings from, written
+    /// where the surface draws rather than through the session.
+    fn bell(&mut self) -> io::Result<()> {
+        if self.guard.is_none() {
+            return Ok(());
+        }
+        let mut stdout = io::stdout();
+        stdout.write_all(b"\x07")?;
+        stdout.flush()
     }
 
     fn restorer(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {

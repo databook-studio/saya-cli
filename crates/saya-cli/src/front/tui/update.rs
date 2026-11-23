@@ -15,6 +15,7 @@
 
 use ratatui::crossterm::event::KeyEvent;
 
+use super::cards_keys;
 use super::direct;
 use super::focus_text;
 use super::history_keys;
@@ -53,7 +54,11 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             // A job's word is the run's job list, or one call it puts to the
             // operator: the call takes the same card slot as the session's.
             if let Some(report) = worker.job {
-                model.note_jobs(report);
+                // A call that takes the card rings the terminal, once: the
+                // operator may be looking at another window.
+                if model.note_jobs(report) {
+                    cmds.push(Cmd::Bell);
+                }
             }
             if !worker.message.is_empty() {
                 model.say(worker.message);
@@ -72,10 +77,20 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
 
 /// One key press, read through the keymap and carried out.
 fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
+    // The press is stamped before it is read: a call that opens next keeps the
+    // keyboard in the composer when the operator's hands are still on it.
+    model.typed_now();
     match intent(model, key) {
-        Some(Intent::Insert(character)) => model.push(character),
-        Some(Intent::Newline) => model.push('\n'),
+        Some(Intent::Insert(character)) => {
+            model.clear_choice();
+            model.push(character);
+        }
+        Some(Intent::Newline) => {
+            model.clear_choice();
+            model.push('\n');
+        }
         Some(Intent::Backspace) => {
+            model.clear_choice();
             model.backspace();
         }
         Some(Intent::Submit) => submit(model, cmds),
@@ -89,6 +104,18 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),
         Some(Intent::ScrollCard(rows)) => model.scroll_card(rows),
+        Some(Intent::FocusChoice(step)) => model.move_choice(step),
+        Some(Intent::ToggleSeat) => model.toggle_seat(),
+        Some(Intent::AnswerFocused) => {
+            // Enter answers only what an arrow press has pointed at, so a draft
+            // typed during a call can never be sent as a consent.
+            if let Some(index) = model.card_choice() {
+                let answer = answer_at(model, index);
+                if let Some(answer) = answer {
+                    answer_card(model, answer, cmds);
+                }
+            }
+        }
         Some(Intent::CycleMode) => cycle(model, cmds),
         Some(Intent::ModeUp) => {
             if let Some(picker) = model.mode_picker_mut() {
@@ -167,9 +194,21 @@ fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
     if let Some(card) = model.take_card() {
         cmds.push(Cmd::Answer(card.id, given));
         // One card at a time: the job that owed this call no longer waits, and
-        // the ask behind it takes the slot it left (`02` §5, T9/A5).
-        model.answered(card.id);
+        // the ask behind it takes the slot it left (`02` §5, T9/A5) — and rings
+        // the terminal, exactly as it did when it arrived.
+        if model.answered(card.id) {
+            cmds.push(Cmd::Bell);
+        }
     }
+}
+
+/// The answer the card offers at `index`, as the keys that answer it would give
+/// it: `y` once, `s` the session grant it named, `n` and Esc the refusal.
+fn answer_at(model: &Model, index: usize) -> Option<Answer> {
+    let question = model.card()?;
+    let answers = cards_keys::answers(question);
+    let choice = answers.get(index)?;
+    cards_keys::answer_of(choice.key)
 }
 
 /// Shift+Tab: the mode cycle's next member, skipping a withheld `bypass`. The
@@ -203,8 +242,11 @@ fn session(model: &mut Model, event: ChatEvent, cmds: &mut Vec<Cmd>) {
     let ended = matches!(&event, ChatEvent::TurnEnded(_));
     if let ChatEvent::Question(question) = &event {
         // The session's ask and a job's ask enter the same slot by the same
-        // rule: on the card when it is free, behind it otherwise.
-        model.ask(question.clone());
+        // rule: on the card when it is free, behind it otherwise — and a call
+        // that takes the card rings the terminal, once.
+        if model.ask(question.clone()) {
+            cmds.push(Cmd::Bell);
+        }
     }
     apply(&mut model.transcript, &event);
     if ended {

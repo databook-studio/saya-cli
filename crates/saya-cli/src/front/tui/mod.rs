@@ -36,6 +36,7 @@ pub(crate) mod jobs_open;
 pub(crate) mod keys;
 pub(crate) mod live;
 pub(crate) mod model;
+pub(crate) mod model_card;
 pub(crate) mod model_history;
 pub(crate) mod model_overlay;
 pub(crate) mod model_turn;
@@ -176,6 +177,14 @@ mod update_card_pane_tests;
 mod update_cycle_tests;
 
 #[cfg(test)]
+#[path = "update_seat_tests.rs"]
+mod update_seat_tests;
+
+#[cfg(test)]
+#[path = "run_draw_seat_tests.rs"]
+mod run_draw_seat_tests;
+
+#[cfg(test)]
 #[path = "history_echo_tests.rs"]
 mod history_echo_tests;
 
@@ -230,6 +239,14 @@ mod run_mode_tests;
 #[cfg(test)]
 #[path = "run_draw_tests.rs"]
 mod run_draw_tests;
+
+#[cfg(test)]
+#[path = "run_draw_card_tests.rs"]
+mod run_draw_card_tests;
+
+#[cfg(test)]
+#[path = "update_bell_tests.rs"]
+mod update_bell_tests;
 
 #[cfg(test)]
 #[path = "run_input_tests.rs"]
