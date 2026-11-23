@@ -64,6 +64,41 @@ fn the_next_delete_finishes_the_tombstone_a_stopped_delete_left() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// A pass over a directory past the per-directory bound takes the names it
+/// read and reports the bound; what it took stays taken, so the next pass — or
+/// the next delete — converges instead of meeting the same bound forever.
+#[test]
+fn a_bounded_pass_makes_progress_so_the_next_pass_converges() {
+    let root = scratch("progress");
+    let directory = records(&root, "job-progress");
+    let total = MAX_ENTRIES + 1;
+    for index in 0..total {
+        fs::write(directory.join(format!("record-{index}")), "x").expect("a record is writable");
+    }
+    let before = fs::read_dir(&directory)
+        .map(|entries| entries.count())
+        .unwrap_or_default();
+    let bounded = remove_tree(&directory, MAX_DEPTH);
+    assert!(
+        bounded.is_err(),
+        "a directory past the per-directory bound is refused: {bounded:?}"
+    );
+    let left = fs::read_dir(&directory)
+        .map(|entries| entries.count())
+        .unwrap_or_default();
+    assert_eq!(
+        before - left,
+        MAX_ENTRIES,
+        "the pass removed the names it read: {left} of {before} entries left"
+    );
+    remove_tree(&directory, MAX_DEPTH).expect("the next pass finishes it");
+    assert!(
+        !directory.exists(),
+        "the bound converges: the next pass leaves nothing"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 /// The outside folder a planted link points at: one file a removal that
 /// followed the link would take.
 #[cfg(unix)]

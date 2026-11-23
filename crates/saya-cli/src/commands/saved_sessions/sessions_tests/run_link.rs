@@ -175,31 +175,19 @@ fn a_record_without_a_link_deletes_as_it_always_did() {
 }
 
 /// Holds a folder's lease the way a live run does: one open descriptor on the
-/// same lock file, taken with the same non-blocking `flock` a run takes.
-#[cfg(unix)]
+/// same lock file, taken with the same non-blocking lock this host's
+/// `InPlaceLease` takes — a `flock` on unix and a byte-range lock on Windows, so
+/// the refusal case has a lease to hold wherever the suite runs.
 fn hold_lease(jobs: &Path, root_id: &str) -> fs::File {
-    use std::os::fd::AsRawFd;
-    use std::os::unix::fs::OpenOptionsExt;
-
     let directory = jobs.join("inplace-leases");
     fs::create_dir_all(&directory).unwrap();
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .truncate(false)
         .open(directory.join(format!("{root_id}.lock")))
         .unwrap();
-    // SAFETY: `file` owns a valid descriptor for the duration of the call.
-    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    assert_eq!(locked, 0, "the test takes the lease");
+    file.try_lock().expect("the test takes the lease");
     file
-}
-
-/// A host without `flock` never reads a lease as held, so the refusal case has
-/// nothing to hold.
-#[cfg(not(unix))]
-fn hold_lease(_jobs: &Path, _root_id: &str) -> fs::File {
-    panic!("this case needs a host that can hold a lease")
 }

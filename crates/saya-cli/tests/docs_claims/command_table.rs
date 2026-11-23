@@ -50,11 +50,14 @@ fn cell(text: &str) -> String {
     text.replace('|', "\\|")
 }
 
-/// The generated block the page holds, or `None` when it holds none.
-fn block(page: &str) -> Option<&str> {
+/// The generated block the page holds, or `None` when it holds none. The
+/// page's line endings are read as `\n` first: a Windows checkout writes CRLF,
+/// and the block's rows are the same rows either way.
+fn block(page: &str) -> Option<String> {
+    let page = page.replace("\r\n", "\n");
     let start = page.find(BEGIN)? + BEGIN.len();
     let end = page[start..].find(END)? + start;
-    Some(page[start..end].trim())
+    Some(page[start..end].trim().to_owned())
 }
 
 #[test]
@@ -72,6 +75,24 @@ fn the_slash_command_table_is_generated_from_the_catalogue() {
         "docs/commands.md's slash command table drifted from \
          crates/saya-cli/src/slash/catalog.rs: replace the block between `{BEGIN}` and `{END}` \
          with the table above"
+    );
+}
+
+/// A Windows checkout writes the page with CRLF and a unix one with LF: the
+/// block is the catalogue's table on both, so the comparison reads the page's
+/// line endings as the table's rather than as drift.
+#[test]
+fn a_crlf_checkout_states_the_catalogue_table() {
+    let page = include_str!("../../../../docs/commands.md").replace('\n', "\r\n");
+    let Some(found) = block(&page) else {
+        panic!(
+            "docs/commands.md has no generated slash command block: put `{BEGIN}` and `{END}` around the table"
+        );
+    };
+    assert_eq!(
+        found,
+        render(),
+        "a CRLF checkout's slash command table is the catalogue's table"
     );
 }
 
