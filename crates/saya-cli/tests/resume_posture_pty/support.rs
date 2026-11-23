@@ -11,7 +11,7 @@
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use saya_cli::SessionState;
 use saya_store::{FsSessionStore, SessionStore};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -19,7 +19,10 @@ use std::time::{Duration, Instant};
 /// The session both cases resume: a 0.5.0 record, saved with no run link.
 pub(crate) const RESUMED_ID: &str = "20260101-000000-pty0";
 const COLS: u16 = 80;
-const ROWS: u16 = 24;
+/// Tall enough to hold a whole `/status` panel — five sections, one fact per
+/// line — above the composer, so a case reads the fact it asks about without
+/// the panel scrolling it away.
+const ROWS: u16 = 48;
 const READ_TIMEOUT: Duration = Duration::from_millis(250);
 const DEADLINE: Duration = Duration::from_secs(30);
 
@@ -27,6 +30,7 @@ const DEADLINE: Duration = Duration::from_secs(30);
 /// together, so a failing assertion leaves no process and no fixture behind.
 pub(crate) struct Session {
     home: PathBuf,
+    writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     rx: Receiver<std::io::Result<Vec<u8>>>,
     parser: vt100::Parser,
@@ -41,6 +45,15 @@ impl Drop for Session {
 }
 
 impl Session {
+    /// Types one line into the surface and presses Enter, the way an operator
+    /// asks it a question: the whole line first, then the return.
+    pub(crate) fn send_line(&mut self, line: &str) {
+        self.writer
+            .write_all(format!("{line}\r").as_bytes())
+            .expect("the pty accepts a line");
+        self.writer.flush().expect("the pty flushes the line");
+    }
+
     /// Waits until the settled frame holds `needle`, and answers the whole
     /// screen so a case can assert on more of it.
     pub(crate) fn wait_for(&mut self, needle: &str) -> String {
@@ -166,8 +179,10 @@ pub(crate) fn launch(home: &Path, args: &[&str]) -> Session {
         .master
         .try_clone_reader()
         .expect("the pty reader clones");
+    let writer = pair.master.take_writer().expect("the pty writer is taken");
     Session {
         home: home.to_path_buf(),
+        writer,
         child,
         rx: reader_channel(reader),
         parser: vt100::Parser::new(ROWS, COLS, 0),
