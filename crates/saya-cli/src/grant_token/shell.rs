@@ -131,6 +131,7 @@ fn is_one_plain_segment(command: &str) -> bool {
         allow: vec![whole],
         deny: Vec::new(),
         diagnostics: Vec::new(),
+        ..Default::default()
     };
     decide(&rules, command, None) == CommandDecision::Allow
 }

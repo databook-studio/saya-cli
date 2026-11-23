@@ -197,6 +197,7 @@ pub fn load_with_sources(
                 allow_bypass: None,
                 allow: (!options.allow_command.is_empty()).then(|| options.allow_command.clone()),
                 deny: (!options.deny_command.is_empty()).then(|| options.deny_command.clone()),
+                ..Default::default()
             },
             trust_project_config: options.trust_project_config,
         });

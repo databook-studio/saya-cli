@@ -30,6 +30,16 @@
 //! under the proven spawn, empty-then-declared environment, bounded and
 //! redacted capture, process-group kill. This module adds no second spawn path.
 //!
+//! # A command that only reads
+//!
+//! The asking modes skip their question for a command the trusted rules read as
+//! vetted read-only ([`CommandDecision::ReadOnly`](saya_config::CommandDecision)):
+//! `ls -la`, `cat`, `git status`, and the rest of the set documented in
+//! `docs/configuration.md`. The lane
+//! still decides where it runs, and a call with no operator to skip the question
+//! for falls back exactly as before — the set skips a question, never the
+//! consent path. `[permissions] read_only_commands = false` withholds it whole.
+//!
 //! # Who is asking
 //!
 //! A helper's shell is built here too: the same policy over the
@@ -83,6 +93,14 @@ mod policy_grant_tests;
 #[cfg(test)]
 #[path = "policy_tests.rs"]
 mod policy_tests;
+
+#[cfg(test)]
+#[path = "read_only_repository_tests.rs"]
+mod read_only_repository_tests;
+
+#[cfg(test)]
+#[path = "read_only_tests.rs"]
+mod read_only_tests;
 
 #[cfg(test)]
 #[path = "schema_tests.rs"]

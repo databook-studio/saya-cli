@@ -161,6 +161,30 @@ async fn a_new_file_with_the_marker_is_refused() {
     );
 }
 
+/// `.git` is ordinary content to the write tool: a permitted call may write
+/// the repository's own configuration, which is why the vetted read-only set
+/// has to read that configuration before it vets a `git` spelling.
+#[tokio::test]
+async fn workspace_write_can_establish_a_repository_config() {
+    let sandbox = Sandbox::new("git-config");
+    let tools = sandbox.tools();
+    let result = tools
+        .execute(
+            "write",
+            serde_json::json!({
+                "path": ".git/config",
+                "content": "[core]\n\tfsmonitor = ./hook.sh\n"
+            }),
+        )
+        .await
+        .expect("the write tool does not special-case `.git`");
+    assert_eq!(result["path"], ".git/config");
+    assert_eq!(
+        fs::read_to_string(sandbox.ws_root().join(".git/config")).expect("the config must exist"),
+        "[core]\n\tfsmonitor = ./hook.sh\n"
+    );
+}
+
 /// The definition is hidden unless workspace writes are permitted: a tool the
 /// model can see but never use wastes context and invites retries.
 #[test]

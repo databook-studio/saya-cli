@@ -80,7 +80,10 @@ pub(super) fn read(segments: &[String]) -> Reading {
 /// assignments a program can arrive behind are skipped, and the program token
 /// loses the characters that open a subshell or a command substitution, so
 /// `$(curl x)` and `( curl x )` name `curl` exactly as `curl x` does.
-fn resolve(tokens: Vec<String>) -> Vec<String> {
+///
+/// The read-only set reads a segment through this too: a segment it changes is
+/// one whose written program is not the program that runs.
+pub(super) fn resolve(tokens: Vec<String>) -> Vec<String> {
     let mut start = 0;
     while let Some(token) = tokens.get(start) {
         let skip = if is_env_assignment(token) || is_opener_only(token) {
@@ -114,6 +117,25 @@ pub(super) fn mentions_program(command: &str, program: &str) -> bool {
             word == program
                 || Path::new(word).file_name().and_then(|name| name.to_str()) == Some(program)
         })
+}
+
+/// Whether `program` names `name` by the basename of the path it is written
+/// as: what a path runs is its last component, so `/bin/rm`, `./rm`, and
+/// `bin/../rm` all name `rm`. A bare `rmx` names neither.
+pub(super) fn names_by_path(program: &str, name: &str) -> bool {
+    is_path(program)
+        && Path::new(program)
+            .file_name()
+            .and_then(|file| file.to_str())
+            == Some(name)
+}
+
+/// Whether `program` is written as a path. A leading `/` is absolute in the
+/// shell command language on every host, even where the host's path syntax does
+/// not call it so: the deny side matches `/bin/rm` by its basename wherever the
+/// rules are read.
+fn is_path(program: &str) -> bool {
+    Path::new(program).is_absolute() || program.contains('/')
 }
 
 /// Whether the token is nothing but the characters that open a subshell or a
