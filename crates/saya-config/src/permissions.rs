@@ -41,7 +41,7 @@ pub mod rules;
 pub(crate) use merge::merge;
 pub use rules::{
     CommandDecision, CommandRule, CommandRules, MAX_COMMAND_RULE_BYTES, MAX_COMMAND_RULES,
-    ReadOnlySet, decide,
+    ReadOnlySet, decide, named_paths,
 };
 
 use serde::Deserialize;

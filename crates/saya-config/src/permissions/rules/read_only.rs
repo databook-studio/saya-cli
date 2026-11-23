@@ -39,7 +39,7 @@
 use std::path::{Path, PathBuf};
 
 use super::resolve::resolve;
-use super::scan::{Scan, tokens};
+use super::scan::{Scan, scan, tokens};
 
 mod catalogue;
 mod paths;
@@ -112,6 +112,36 @@ pub(super) fn qualifies(scan: &Scan, dir: WorkingDir<'_>) -> bool {
     scan.segments
         .iter()
         .all(|segment| segment_qualifies(segment, dir))
+}
+
+/// Every name the set would read as a path in `command`, in the spelling the
+/// command gives it.
+///
+/// The set's own path rule is [`crate::sensitive::sensitive_path`] — the one
+/// list a configuration crate can state. A front that can also see the
+/// workspace's private-path screen (the redactor, the session store) asks this
+/// for the names a command carries, and refuses the question-skipping answer for
+/// one of them. It is the same reading the decision itself uses
+/// ([`paths::spellings`] over every segment's arguments), never a second list.
+pub fn named_paths(command: &str) -> Vec<String> {
+    scan(command)
+        .segments
+        .iter()
+        .flat_map(|segment| {
+            // The program is not a path: the arguments are what a vetted command
+            // may read.
+            let arguments = tokens(segment);
+            arguments
+                .into_iter()
+                .skip(1)
+                .flat_map(|argument| {
+                    paths::spellings(&argument)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// Whether one segment only reads: the program it really runs is the program

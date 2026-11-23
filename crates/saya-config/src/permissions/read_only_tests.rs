@@ -11,7 +11,7 @@ use std::path::Path;
 
 use super::read_only_cases::{ASKING, QUALIFYING};
 use super::read_only_fixture::Workspace;
-use super::{CommandDecision, CommandRule, CommandRules, ReadOnlySet, decide};
+use super::{CommandDecision, CommandRule, CommandRules, ReadOnlySet, decide, named_paths};
 
 /// Whether the default table reads the command as a vetted read-only one.
 fn qualifies(root: &Path, command: &str) -> bool {
@@ -149,5 +149,32 @@ fn an_allow_rule_is_still_the_operators_own_answer() {
     assert_eq!(
         decide(&rules, "npm install left-pad", Some(workspace.path())),
         CommandDecision::Allow
+    );
+}
+
+/// The names the set reads in a command, as the front's private-path check
+/// asks for them: every argument, in every spelling the set's own path rule
+/// reads, and the program never among them.
+#[test]
+fn named_paths_reads_the_paths_the_set_reads() {
+    assert_eq!(
+        named_paths("cat .docker/config.json"),
+        vec![".docker/config.json"],
+        "a plain argument is a name"
+    );
+    assert_eq!(
+        named_paths("grep -f.env src/x"),
+        vec!["-f.env", "f.env", "src/x"],
+        "a value glued to an option is read too, exactly as the set reads it"
+    );
+    assert_eq!(
+        named_paths("ls -la"),
+        vec!["-la", "la"],
+        "an option is read as a name too: the rule errs towards asking"
+    );
+    assert_eq!(
+        named_paths("ls -la | wc -l"),
+        vec!["-la", "la", "-l", "l"],
+        "every segment's arguments, and no program"
     );
 }

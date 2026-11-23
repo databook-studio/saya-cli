@@ -133,11 +133,28 @@ impl ShellPolicy {
     }
 
     /// The command-prefix decision for this call, if the call names one.
+    ///
+    /// The vetted read-only set skips the operator's question, so it has to
+    /// read what the workspace tools would read: a command naming a path the
+    /// read tool refuses — [`saya_config::sensitive_path`], the store's screen,
+    /// or the shared redactor, which is the one [`saya_harness::workspace::
+    /// private_path`] rule — keeps its question. The configuration crate states
+    /// the names the set reads ([`saya_config::named_paths`]); the screen those
+    /// names are read against lives here, because a configuration crate cannot
+    /// see the harness's list.
     fn decision<'a>(&'a self, arguments: &Value) -> CommandDecision<'a> {
-        match arguments.get("command").and_then(Value::as_str) {
-            Some(command) => saya_config::decide(&self.rules, command, self.workspace.as_deref()),
-            None => CommandDecision::Unmatched,
+        let Some(command) = arguments.get("command").and_then(Value::as_str) else {
+            return CommandDecision::Unmatched;
+        };
+        let decision = saya_config::decide(&self.rules, command, self.workspace.as_deref());
+        if decision == CommandDecision::ReadOnly
+            && saya_config::named_paths(command)
+                .iter()
+                .any(|path| saya_harness::workspace::private_path(path))
+        {
+            return CommandDecision::Unmatched;
         }
+        decision
     }
 
     /// Whether this job's remembered answers pre-answer this call without the
