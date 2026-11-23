@@ -66,13 +66,15 @@ enum Reading {
 
 /// Reads `<directory>/.git/config`, bounded.
 fn read(directory: &Path) -> Reading {
-    let metadata = match std::fs::metadata(directory.join(".git")) {
+    // The metadata is taken without following: a `.git` that is a symlink
+    // points at a repository this reading is not bounded to, so it is not read.
+    let metadata = match std::fs::symlink_metadata(directory.join(".git")) {
         Ok(metadata) => metadata,
         Err(_) => return Reading::None,
     };
     // A `.git` pointer names a configuration this bound cannot reach (a
-    // worktree, a submodule): it is not a repository this rule can read.
-    if !metadata.is_dir() {
+    // worktree, a submodule), and a symlink names one outside the workspace.
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Reading::Runs;
     }
     match read_bounded(&directory.join(".git/config")) {

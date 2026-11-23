@@ -88,6 +88,21 @@ fn a_repository_that_cannot_be_read_keeps_the_question() {
     );
 }
 
+/// A `.git` that is a symlink points at a repository outside the workspace, so
+/// the configuration it names is not read and the question is kept.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_repository_keeps_the_question() {
+    let elsewhere = Workspace::new("elsewhere");
+    let workspace = Workspace::bare("symlinked");
+    std::os::unix::fs::symlink(elsewhere.path().join(".git"), workspace.path().join(".git"))
+        .expect("the fixture must create a symlink");
+    assert!(
+        !vetted(&workspace, "git status"),
+        "a repository reached through a symlink is outside this reading"
+    );
+}
+
 /// A directory the command changes to before `git` runs is read where it
 /// points: a nested repository's own configuration decides, whether the
 /// command states it with a leading `cd` or with `git -C`.
