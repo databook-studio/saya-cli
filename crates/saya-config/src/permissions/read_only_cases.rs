@@ -164,6 +164,11 @@ pub(super) const ASKING: &[&str] = &[
     "echo $HOME",
     "echo ${KEY}",
     "ls ~",
+    // An unquoted glob expands to names the command never wrote, hidden and
+    // private ones included.
+    "cat *",
+    "cat *.env",
+    "grep -n foo *",
     // A recursive content read reaches the hidden files a path rule cannot
     // name.
     "grep -r KEY .",

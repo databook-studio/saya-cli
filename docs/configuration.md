@@ -669,18 +669,18 @@ lexical normalisation, and be one the workspace tools also read — never a
 `.env`, a key or certificate, or a credential directory — the rule the `read`
 tool applies to its own arguments. A pipeline of such commands qualifies, and
 so does a chain of `&&`, `||`, `;` — but only when every part of it qualifies.
-One output redirect to a file, a substitution, a `$`/`~` expansion, a heredoc, a
-leading `NAME=value`, a wrapper (`env`, `xargs`, `timeout`, `sudo`, …), an
-interpreter's inline code, a path outside the workspace or on the private list,
-a recursive content read (`grep -r`), or any program outside the list keeps the
-question, and so does any `git` spelling that pages, execs, or writes (`-c`,
-`--exec-path`, `--ext-diff`, `--output`) or whose repository configuration
-names a program of its own (`core.fsmonitor`, `core.pager`, `diff.external`,
-`*.textconv`, `filter.*.process`, `core.sshCommand`, an `include`), since the
-model's own tools can write `.git/config`. The deny list is unchanged by it — a
-denied program in the set is still refused — and `bypass`, `read-only` and
-`never` read exactly as before. Set it to `false` to answer every call
-yourself; the key can withhold the set, never state one.
+One output redirect to a file, a substitution, a `$`/`~` expansion, an unquoted
+glob, a heredoc, a leading `NAME=value`, a wrapper (`env`, `xargs`, `timeout`,
+`sudo`, …), an interpreter's inline code, a path outside the workspace or on the
+private list, a recursive content read (`grep -r`), or any program outside the
+list keeps the question, and so does any `git` spelling that pages, execs, or
+writes (`-c`, `--exec-path`, `--ext-diff`, `--output`) or whose repository
+configuration names a program of its own (`core.fsmonitor`, `core.pager`,
+`diff.external`, `*.textconv`, `filter.*.process`, `core.sshCommand`, an
+`include`), since the model's own tools can write `.git/config`. The deny list
+is unchanged by it — a denied program in the set is still refused — and
+`bypass`, `read-only` and `never` read exactly as before. Set it to `false` to
+answer every call yourself; the key can withhold the set, never state one.
 
 `[permissions]` is protected whole, like `[tools]`: a project's
 `.saya/config.toml` cannot set it, and an attempt is reverted and reported as

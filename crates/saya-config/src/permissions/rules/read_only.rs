@@ -33,8 +33,8 @@
 //! A command is a statement about what a program *does*; the set is a claim
 //! about what it *reads*. The two meet on the command line: a vetted command
 //! names only paths inside the workspace that the workspace tools would also
-//! read ([`paths`]), carries no expansion the shell would perform, and reads
-//! no tree of hidden files.
+//! read ([`paths`]), carries no expansion or unquoted glob the shell would
+//! perform, and reads no tree of hidden files.
 
 use std::path::{Path, PathBuf};
 
@@ -104,8 +104,9 @@ impl<'a> WorkingDir<'a> {
 /// states.
 pub(super) fn qualifies(scan: &Scan, dir: WorkingDir<'_>) -> bool {
     // The shapes that make the written command not the command that runs: a
-    // substitution, an expansion, an unbalanced quote, an unsafe redirect.
-    if scan.substitution || scan.unbalanced || scan.unsafe_redirect || scan.expansion {
+    // substitution, an expansion, an unquoted glob, an unbalanced quote, an
+    // unsafe redirect.
+    if scan.substitution || scan.unbalanced || scan.unsafe_redirect || scan.expansion || scan.glob {
         return false;
     }
     scan.segments

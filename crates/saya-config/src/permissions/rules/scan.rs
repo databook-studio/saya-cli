@@ -18,6 +18,9 @@ pub(super) struct Scan {
     /// A `$` or `~` the shell would expand: what the command reads is then not
     /// the text that was read, so no vetted set may answer for it.
     pub(super) expansion: bool,
+    /// An unquoted glob: the shell expands it to names the command never wrote,
+    /// hidden and private ones included.
+    pub(super) glob: bool,
     pub(super) unbalanced: bool,
 }
 
@@ -29,6 +32,7 @@ pub(super) fn scan(command: &str) -> Scan {
     let mut substitution = false;
     let mut unsafe_redirect = false;
     let mut expansion = false;
+    let mut glob = false;
     while let Some(c) = chars.next() {
         match c {
             '\\' if !single => match chars.peek().copied() {
@@ -77,6 +81,12 @@ pub(super) fn scan(command: &str) -> Scan {
                 expansion = true;
                 current.push(c);
             }
+            '*' | '?' | '[' if !single && !double => {
+                // A glob outside every quote is expanded by the shell to the
+                // names that match it, which the command never wrote.
+                glob = true;
+                current.push(c);
+            }
             '<' if !single && !double => {
                 current.push(c);
                 if matches!(chars.peek(), Some('<') | Some('(')) {
@@ -121,6 +131,7 @@ pub(super) fn scan(command: &str) -> Scan {
         substitution,
         unsafe_redirect,
         expansion,
+        glob,
         unbalanced: single || double,
     }
 }
