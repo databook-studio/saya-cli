@@ -51,6 +51,9 @@ mod observations;
 mod operations;
 mod outcome;
 mod parent;
+// The workspace summary a session gathers at launch: the bounded scan the
+// first request carries, so a greeting costs no tool call.
+mod parent_summary;
 /// The per-turn inputs a surface states when it opens a run, and the plugins
 /// those turns may activate: the chat's composition states its own at
 /// `run_prepare`.

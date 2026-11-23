@@ -32,6 +32,7 @@ mod session_facts;
 mod transcript;
 mod turn;
 mod workspace_shape;
+mod workspace_summary;
 
 // This `pub(crate)` surface is the chat layer's boundary: the composition, the
 // session, the turn, the operator and the fronts above them consume it. Nothing
@@ -80,6 +81,11 @@ pub(crate) use transcript::{SettledTurn, Transcript};
 pub(crate) use turn::{ChatTurn, JobPort};
 #[allow(unused_imports)]
 pub(crate) use workspace_shape::{Workspace, WorkspaceShape, decide as workspace_shape};
+#[allow(unused_imports)]
+pub(crate) use workspace_summary::{
+    GitFacts, Limits as SummaryLimits, MAX_BYTES as SUMMARY_MAX_BYTES, SCAN_TIME as SUMMARY_TIME,
+    WorkspaceSummary, WorkspaceSummaryCell, scan as scan_workspace,
+};
 
 #[cfg(test)]
 #[path = "contract_guard_tests.rs"]
@@ -116,6 +122,10 @@ mod turn_metrics_tests;
 #[cfg(all(test, unix))]
 #[path = "compose_context_tests.rs"]
 mod compose_context_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_summary_tests.rs"]
+mod compose_summary_tests;
 
 #[cfg(all(test, unix))]
 #[path = "learning_provider_fixture.rs"]
