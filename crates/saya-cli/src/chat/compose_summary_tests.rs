@@ -20,6 +20,8 @@ use super::compose_fixture::{self, RootGuard};
 use super::operator_front_fixture;
 use crate::commands::coding::NativeCodingJob;
 use crate::commands::coding::parent_turn_provider::{Reply, Scripted};
+use crate::commands::preferences::operations::add_preference;
+use crate::commands::preferences::{PreferenceOutcome, worktree_id_for};
 
 /// Load ceiling, not a product bound: how long one scripted turn may take.
 const RUN: Duration = Duration::from_secs(120);
@@ -135,5 +137,47 @@ async fn the_second_turn_does_not_carry_the_summary_again() {
         !user_turn(&bodies[1]).contains(SUMMARY_LABEL),
         "the second turn pays nothing for a folder already stated: {}",
         user_turn(&bodies[1])
+    );
+}
+
+/// The summary follows the blocks every turn repeats: the instruction sources
+/// and the worktree's preferences keep the request's stable prefix, and the
+/// launch fact sits behind them rather than ahead of them.
+#[tokio::test]
+async fn the_summary_follows_the_instruction_and_preference_blocks() {
+    let (provider, job, root) = composed("summary-order", vec![Reply::Text("Hi!")]).await;
+    // A stored preference, so both blocks the projection emits are present and
+    // their order against the summary is pinned, not only the instructions'.
+    let application = job.application();
+    let store = application.store().clone();
+    let worktree = worktree_id_for(&root.checkout_root()).expect("the run's folder is a worktree");
+    let PreferenceOutcome::Added(_) =
+        add_preference(&store, &worktree, "prefer tabs over spaces").await
+    else {
+        panic!("the fixture's preference is stored");
+    };
+    wait_for_scan(&job);
+    let turn = tokio::time::timeout(RUN, job.run_next_turn(&NoopEventSink, "Hi"))
+        .await
+        .expect("the turn settles");
+    assert!(turn.is_ok(), "the turn must run: {turn:?}");
+    let bodies = provider.bodies();
+    let lane = user_turn(&bodies[0]);
+    let instructions = lane
+        .find("source: project-instructions")
+        .unwrap_or_else(|| panic!("the first request carries the instructions: {lane}"));
+    let preferences = lane
+        .find("source: project-preferences")
+        .unwrap_or_else(|| panic!("the first request carries the preferences: {lane}"));
+    let summary = lane
+        .find(SUMMARY_LABEL)
+        .unwrap_or_else(|| panic!("the first request carries the summary: {lane}"));
+    assert!(
+        instructions < summary,
+        "the summary follows the instruction block: {lane}"
+    );
+    assert!(
+        preferences < summary,
+        "the summary follows the preferences block: {lane}"
     );
 }
