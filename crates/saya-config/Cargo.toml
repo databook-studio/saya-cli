@@ -1,6 +1,6 @@
 [package]
 name = "saya-config"
-version = "0.5.0"
+version = "0.5.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ description = "Configuration loading and resolution for SAYA CLI."
 workspace = true
 
 [dependencies]
-saya-types = { path = "../saya-types", version = "0.5.0" }
+saya-types = { path = "../saya-types", version = "0.5.1" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

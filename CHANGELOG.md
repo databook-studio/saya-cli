@@ -3,15 +3,59 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.5.1 — 2026-11-23
+
+Chat now runs on the job engine behind a new full-screen terminal UI, and a
+session starts answering sooner and sends less on every turn.
 
 ### Breaking changes
 
 - The positional `/start <id> "<task>"` form is removed: an unquoted first
   word is task text, never an id.
+- The old full-screen UI and the old per-turn chat engine are removed; `saya`
+  opens the new UI. `saya --plain` (or `SAYA_PLAIN=1`) runs the line REPL on a
+  terminal instead.
 
 ### Changed
 
+- **A new full-screen session.** A command palette (`Ctrl+K`, or `/` on an
+  empty line) and a key sheet (`?`), input history with `Up`/`Down` recall and
+  `Ctrl+R` search (persisted, `--param` values redacted), a background jobs
+  drawer (`Ctrl+J`), approval cards that state where a job runs, `/setup`
+  handed to the guided wizard, `/reload` without a restart, and colour-free
+  (`NO_COLOR`) and `--ascii` rendering. The keys are listed in
+  `docs/commands.md`.
+- **One engine for chat and jobs.** A chat session is a run on the job engine:
+  the same tools, limits and approvals as `saya start`, and `saya ask` answers
+  through the same session.
+- **`/start` shares the session's folder**, the way a sub-agent works in its
+  parent's directory. `/start --checkout` (and `saya start --checkout`, an alias
+  of `--managed`) runs the job in a separate checkout, applied with
+  `/job apply`. `/undo`, `/rewind` and a job's rewind never overwrite a file
+  another run changed since; they list it as "changed since by another run"
+  and restore the rest.
+- **Faster first answer.** The session prepares its run while you type, so
+  sending only starts the turn.
+- **Database tools on demand.** The database tools and the database prompt are
+  sent only once a request shows database work (SQL, data words, a connection,
+  table or column name). Until then the model sees one short `use_database`
+  tool it can call to turn them on. Other requests are about half the size.
+- **One command catalogue.** `/status` is one panel; `/export` absorbs
+  `/report`; `/permissions` (alias `/grants`); `/history` (alias of
+  `/sessions`); `/rotate` is `/compact --new-session`; bare `/continue`
+  resumes a paused turn; `/job` owns the job controls (`/approve`, `/deny`,
+  `/message`, `/pause`, `/cancel-child`, `/follow-up` keep working with a
+  once-per-session note). `/run`, `/runs` and `/recovery` still run but are
+  no longer listed.
+- **Helpers in chat.** A session can use helpers; their tool steps fold under
+  the helper that made them, and `Esc` stops them.
+- **`--deny` follows the real program** through `command`, paths, `env`,
+  `sh -c`, `xargs`, `find -exec`, `eval`, `timeout`, `nice`, `nohup` and
+  `stdbuf`; inline interpreter code (`python -c` and the like) fails closed.
+- `run_command` in `[tools] allow` is a one-release alias of `shell`, and a
+  `command:<program>` grant keeps authorising that program through `shell`.
+- Deleting a session also removes its finished job; `saya job list` hides
+  session-owned jobs (`--all` shows them).
 - **A lighter `/start` in a session.** `/start <task>` generates the id (state
   `--id <id>` to choose one) and, with no `--write`, may edit the whole
   workspace, like `saya -p`; an explicit `--write` narrows it. The task is the
@@ -32,6 +76,13 @@ All notable changes to SAYA CLI are recorded here. This project follows
 - The Linux runner sandbox allows `/dev/null`, so background shell commands
   (`cmd &`) and `>/dev/null` redirections no longer fail with a permission
   error.
+- The "knowledge supplied" line is shown again in chat, the last SQL query is
+  carried into the next turn, and the session prompt states the workspace root
+  again.
+- A turn the engine refuses before sending anything (the context window is
+  too small) is reported as a budget stop, not as an answer.
+- A full disk or unwritable diagnostics directory no longer fails a job; the
+  job records one "diagnostics incomplete" event and finishes.
 
 ## 0.5.0 — 2026-11-13
 
