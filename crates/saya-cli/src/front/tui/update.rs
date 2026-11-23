@@ -16,6 +16,7 @@
 use ratatui::crossterm::event::KeyEvent;
 
 use super::cards_keys;
+use super::changes_press;
 use super::direct;
 use super::focus_text;
 use super::history_keys;
@@ -142,6 +143,16 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             | Intent::PaletteClose
             | Intent::HelpClose),
         ) => overlay_press::press(model, intent, cmds),
+        // The changes pane (UI5): opening it on the last turn that wrote, walking
+        // it a row or a screen at a time, and closing it.
+        Some(
+            intent @ (Intent::OpenChanges
+            | Intent::ChangesUp
+            | Intent::ChangesDown
+            | Intent::ChangesPageUp
+            | Intent::ChangesPageDown
+            | Intent::ChangesClose),
+        ) => changes_press::press(model, intent),
         Some(Intent::FocusUp) => model.move_focus(false),
         Some(Intent::FocusDown) => model.move_focus(true),
         Some(Intent::FocusExpand) => model.fold_focus(None),

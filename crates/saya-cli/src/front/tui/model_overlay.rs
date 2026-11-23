@@ -16,6 +16,7 @@ use saya_agent::PermissionMode;
 use super::model::Model;
 use super::view::ModePicker;
 use super::view::Palette;
+use super::view::changes::Changes;
 use super::view::mode_words;
 
 /// A pane that owns the screen and the keyboard until it closes.
@@ -33,6 +34,9 @@ pub(crate) enum Overlay {
     /// its selection live on the model, because they are the run's jobs and
     /// stay current while the drawer is closed.
     Jobs,
+    /// The changes pane (UI5): the files the last turn that wrote changed, each
+    /// with its diff (`Ctrl+D`). Its scroll is the pane's own.
+    Changes(Changes),
     /// The startup workspace-trust question (`02` §9.4, T16): opened once when
     /// the session bound no workspace, answered `y`/`n`.
     Trust,
@@ -53,7 +57,7 @@ impl Model {
     pub(crate) fn mode_picker(&self) -> Option<&ModePicker> {
         match self.overlay.as_ref()? {
             Overlay::Mode(picker) => Some(picker),
-            Overlay::Palette(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
+            _ => None,
         }
     }
 
@@ -61,7 +65,7 @@ impl Model {
     pub(crate) fn mode_picker_mut(&mut self) -> Option<&mut ModePicker> {
         match self.overlay.as_mut()? {
             Overlay::Mode(picker) => Some(picker),
-            Overlay::Palette(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
+            _ => None,
         }
     }
 
@@ -69,7 +73,7 @@ impl Model {
     pub(crate) fn palette(&self) -> Option<&Palette> {
         match self.overlay.as_ref()? {
             Overlay::Palette(palette) => Some(palette),
-            Overlay::Mode(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
+            _ => None,
         }
     }
 
@@ -77,8 +81,41 @@ impl Model {
     pub(crate) fn palette_mut(&mut self) -> Option<&mut Palette> {
         match self.overlay.as_mut()? {
             Overlay::Palette(palette) => Some(palette),
-            Overlay::Mode(_) | Overlay::Help | Overlay::Jobs | Overlay::Trust => None,
+            _ => None,
         }
+    }
+
+    /// Whether the newest turn that wrote changed a file, so the changes pane
+    /// (`Ctrl+D`) has something to open (UI5).
+    pub(crate) fn has_changes(&self) -> bool {
+        !crate::front::view::last_changed(self.turns()).is_empty()
+    }
+
+    /// The changes pane, while it is the pane that is open.
+    pub(crate) fn changes(&self) -> Option<&Changes> {
+        match self.overlay.as_ref()? {
+            Overlay::Changes(changes) => Some(changes),
+            _ => None,
+        }
+    }
+
+    /// Opens the changes pane at its first row: what the last turn that wrote
+    /// changed, read at paint time.
+    pub(crate) fn open_changes(&mut self) {
+        self.overlay = Some(Overlay::Changes(Changes::default()));
+    }
+
+    /// Walks the changes pane by `step` rows; a negative count moves it up. It
+    /// never moves above the first row.
+    pub(crate) fn scroll_changes(&mut self, step: isize) {
+        let Some(Overlay::Changes(changes)) = self.overlay.as_mut() else {
+            return;
+        };
+        changes.scroll = if step.is_negative() {
+            changes.scroll.saturating_sub(step.unsigned_abs())
+        } else {
+            changes.scroll.saturating_add(step as usize)
+        };
     }
 
     /// Opens `02` §11's command palette on an empty query: every command the

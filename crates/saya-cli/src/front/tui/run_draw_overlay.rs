@@ -15,8 +15,8 @@ use super::model_overlay::Overlay;
 use super::run_draw::{Facts, lines};
 use super::view::jobs_rows::{Placement, SHEET_ROWS, placement, side_width};
 use super::view::{
-    Context, HELP_ROWS, MODE_PICKER_ROWS, PALETTE_ROWS, TRUST_ROWS, help_rows, jobs_rows,
-    mode_picker, palette_rows, trust,
+    Context, HELP_ROWS, MODE_PICKER_ROWS, PALETTE_ROWS, TRUST_ROWS, changes_rows, help_rows,
+    jobs_rows, mode_picker, palette_rows, trust,
 };
 
 /// The overlay the model has open, as the rows it covers and the lines it
@@ -68,6 +68,18 @@ pub(crate) fn overlay(
                 help_rows(context, width, height as usize),
             )
         }
+        // The changes pane (UI5) takes the transcript's rows while it is open,
+        // like the key sheet: what it scrolls is the diff, so it wants room.
+        Overlay::Changes(changes) => (
+            area,
+            changes_rows(
+                model.turns(),
+                changes,
+                width,
+                area.height as usize,
+                facts.charset,
+            ),
+        ),
         // The drawer takes the transcript's right-hand side from 100 columns up
         // and a sheet across its bottom below that (`02` §8); the transcript
         // keeps every row and column the drawer does not cover.

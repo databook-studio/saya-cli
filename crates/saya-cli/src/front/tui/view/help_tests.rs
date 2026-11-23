@@ -9,8 +9,8 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::help::{self, Context};
 use super::help_fixture::{
-    busy, chords, ctrl_g, ctrl_k, idle, model_in, plain, probes, queued, row, with_card,
-    with_ungranted_card, words,
+    busy, changed, chords, ctrl_d, ctrl_g, ctrl_k, idle, model_in, plain, probes, queued, row,
+    with_card, with_ungranted_card, words,
 };
 use super::help_keys::{SHORTCUTS, When};
 use crate::front::tui::cards_keys::card_intent;
@@ -114,6 +114,30 @@ fn the_queue_key_appears_only_while_a_line_is_queued() {
     assert!(
         !chords(&busy()).contains(&ctrl_g()),
         "a running turn with an empty queue has nothing to drop"
+    );
+}
+
+#[test]
+fn the_changes_key_appears_only_once_a_turn_changed_a_file() {
+    assert!(
+        chords(&changed()).contains(&ctrl_d()),
+        "Ctrl+D opens the diff of what the turn wrote, so it is listed"
+    );
+    assert!(
+        !chords(&idle()).contains(&ctrl_d()),
+        "a session that has written nothing has no diff to open: {:?}",
+        chords(&idle())
+    );
+    assert!(
+        !chords(&with_card()).contains(&ctrl_d()),
+        "and a call waiting for an answer keeps the keyboard: {:?}",
+        chords(&with_card())
+    );
+    let listed = row(&changed(), ctrl_d()).expect("the row is on the sheet");
+    assert!(
+        listed.action.contains("diff"),
+        "the row says what the key opens: {}",
+        listed.action
     );
 }
 

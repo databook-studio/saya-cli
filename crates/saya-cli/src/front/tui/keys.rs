@@ -85,6 +85,19 @@ pub(crate) enum Intent {
     PaletteRun,
     /// Close the palette without running anything.
     PaletteClose,
+    /// Open the changes pane: the files the last turn that wrote changed, with
+    /// their diffs (UI5's `Ctrl+D`).
+    OpenChanges,
+    /// Walk the changes pane one row older.
+    ChangesUp,
+    /// Walk the changes pane one row newer.
+    ChangesDown,
+    /// Page the changes pane a screen up.
+    ChangesPageUp,
+    /// Page the changes pane a screen down.
+    ChangesPageDown,
+    /// Close the changes pane.
+    ChangesClose,
     /// Close the key sheet.
     HelpClose,
     /// Walk, search or leave the composer's input history (`02` §7): `Up`,
@@ -261,6 +274,10 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
         // The jobs drawer has a chord of its own, so no word of a message has to
         // give up its `j` (`02` §8).
         KeyCode::Char('j') if ctrl => Some(Intent::OpenJobs),
+        // The changes pane's chord (UI5): offered only when the last turn that
+        // wrote changed a file, so the key is not a request with nothing behind
+        // it — and `d` on its own stays a letter.
+        KeyCode::Char('d') if ctrl && model.has_changes() => Some(Intent::OpenChanges),
         // `02` §11's two panes: the palette has a chord, and both it and the key
         // sheet open from `/` and `?` only while the composer holds nothing — a
         // draft keeps the character it asked for.

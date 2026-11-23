@@ -38,6 +38,9 @@ pub(crate) struct Context {
     pub(crate) grant: bool,
     /// Whether a line is held behind the running turn.
     pub(crate) queued: bool,
+    /// Whether a turn has changed a file, so the changes pane has something to
+    /// open (UI5).
+    pub(crate) changed: bool,
     /// Whether a turn is running.
     pub(crate) busy: bool,
     /// Which glyph set the sheet draws with.
@@ -51,6 +54,7 @@ impl Context {
             card: model.card().is_some(),
             grant: model.card().is_some_and(|card| card.grant.is_some()),
             queued: model.queued().is_some(),
+            changed: !crate::front::view::last_changed(model.turns()).is_empty(),
             busy: model.is_busy(),
             charset: Charset::Utf8,
         }
@@ -63,6 +67,7 @@ impl Default for Context {
             card: false,
             grant: false,
             queued: false,
+            changed: false,
             busy: false,
             charset: Charset::Utf8,
         }
@@ -143,6 +148,7 @@ fn shows(when: When, context: &Context) -> bool {
         When::Composer => !context.card,
         When::Queued => !context.card && context.queued,
         When::Busy => !context.card && context.busy,
+        When::Changed => !context.card && context.changed,
     }
 }
 

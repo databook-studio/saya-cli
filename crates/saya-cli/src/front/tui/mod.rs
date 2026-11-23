@@ -21,6 +21,7 @@
 //! (`interactive::tui::coding`), re-exported rather than copied.
 
 pub(crate) mod cards_keys;
+pub(crate) mod changes_press;
 pub(crate) mod direct;
 pub(crate) mod direct_chart_args;
 pub(crate) mod direct_export;
@@ -123,6 +124,18 @@ pub(crate) use run_screen::{Screen, TtyScreen};
 pub(crate) use theme::{Charset, Glyph, Scheme, Token, bypass_chip, charset, form, glyph, style};
 #[allow(unused_imports)]
 pub(crate) use update::update;
+
+#[cfg(test)]
+#[path = "changes_fixture.rs"]
+pub(crate) mod changes_fixture;
+
+#[cfg(test)]
+#[path = "run_draw_changes_tests.rs"]
+mod run_draw_changes_tests;
+
+#[cfg(test)]
+#[path = "update_changes_tests.rs"]
+mod update_changes_tests;
 
 #[cfg(test)]
 #[path = "cards_keys_tests.rs"]

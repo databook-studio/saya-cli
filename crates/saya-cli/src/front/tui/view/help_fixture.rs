@@ -34,6 +34,14 @@ pub(super) const fn ctrl_k() -> Chord {
     }
 }
 
+/// Ctrl+D, the chord that opens the changes pane (UI5).
+pub(super) const fn ctrl_d() -> Chord {
+    Chord {
+        code: KeyCode::Char('d'),
+        modifiers: KeyModifiers::CONTROL,
+    }
+}
+
 /// The presses the card answers, and the ones it must not: what the sheet is
 /// asked about in either direction.
 pub(super) fn probes() -> Vec<Chord> {
@@ -97,6 +105,14 @@ pub(super) fn with_ungranted_card() -> Context {
     }
 }
 
+/// The context a surface that has changed a file is in.
+pub(super) fn changed() -> Context {
+    Context {
+        changed: true,
+        ..Context::default()
+    }
+}
+
 /// Every press the sheet lists in `context`.
 pub(super) fn chords(context: &Context) -> Vec<Chord> {
     help::listed(context)
@@ -145,6 +161,7 @@ pub(super) fn model_in(when: super::help_keys::When) -> Model {
             model.queue("and then the second one".to_owned());
         }
         When::Busy => model.start_turn(),
+        When::Changed => model = super::super::changes_fixture::model_with_edits(),
     }
     model
 }

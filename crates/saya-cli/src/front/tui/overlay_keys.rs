@@ -23,6 +23,7 @@ pub(crate) fn key(model: &Model, overlay: &Overlay, key: KeyEvent) -> Option<Int
         Overlay::Palette(_) => palette(key),
         Overlay::Help => help(key),
         Overlay::Jobs => jobs(model.jobs().is_confirming(), key),
+        Overlay::Changes(_) => changes(key),
         Overlay::Trust => trust(key),
     }
 }
@@ -86,6 +87,20 @@ fn jobs(confirming: bool, key: KeyEvent) -> Option<Intent> {
             Some(Intent::JobsCancelAsk)
         }
         KeyCode::Esc => Some(Intent::JobsClose),
+        _ => None,
+    }
+}
+
+/// The changes pane (`Ctrl+D`, UI5): ↑↓ walk the rows, the page keys walk a
+/// screen at a time, and Esc closes it. The composer behind it never sees a
+/// press, exactly as the other panes' keys work.
+fn changes(key: KeyEvent) -> Option<Intent> {
+    match key.code {
+        KeyCode::Up => Some(Intent::ChangesUp),
+        KeyCode::Down => Some(Intent::ChangesDown),
+        KeyCode::PageUp => Some(Intent::ChangesPageUp),
+        KeyCode::PageDown => Some(Intent::ChangesPageDown),
+        KeyCode::Esc => Some(Intent::ChangesClose),
         _ => None,
     }
 }

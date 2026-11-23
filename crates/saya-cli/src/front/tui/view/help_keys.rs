@@ -42,6 +42,9 @@ pub(crate) enum When {
     Queued,
     /// Only while a turn runs.
     Busy,
+    /// Only once a turn has changed a file: the changes pane has something to
+    /// open (UI5).
+    Changed,
 }
 
 /// Which of `02` §11's three columns a row is filed under.
@@ -95,6 +98,8 @@ const SHIFT_TAB: Chord = shift(KeyCode::BackTab);
 const CTRL_G: Chord = ctrl('g');
 /// The palette's chord, and the sheet's own opener: both read by the composer.
 const CTRL_K: Chord = ctrl('k');
+/// The changes pane's chord (UI5): the diff of the last turn that wrote.
+const CTRL_D: Chord = ctrl('d');
 /// The detail key: the transcript's steps in full, or one compact line each.
 const CTRL_O: Chord = ctrl('o');
 const QUESTION: Chord = bare(KeyCode::Char('?'));
@@ -224,6 +229,13 @@ pub(crate) const SHORTCUTS: &[Shortcut] = &[
         action: "show every step in full, or fold each back to one line",
         group: Group::Navigation,
         when: When::Composer,
+    },
+    Shortcut {
+        label: "Ctrl+D",
+        chords: &[CTRL_D],
+        action: "open the diff of the files the last turn changed",
+        group: Group::CopyView,
+        when: When::Changed,
     },
     Shortcut {
         label: "?",
