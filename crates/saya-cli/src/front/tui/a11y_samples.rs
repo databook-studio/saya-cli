@@ -83,7 +83,7 @@ pub(crate) fn card_rows() -> Vec<String> {
     );
     let mut rows = vec![card.title().to_owned()];
     if let Some(place) = card.place() {
-        rows.push(place.to_owned());
+        rows.push(place.line());
     }
     rows.extend(
         card.shown_rows(false, 96)
