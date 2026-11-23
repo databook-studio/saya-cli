@@ -57,6 +57,13 @@ fn handle_line_verbatim(
     };
     let action = match parsed {
         Some(command) => {
+            // A slash command may change the facts a run is composed from — the
+            // mode, the tool list, the model, the connections — so the run the
+            // loop composed for the first plain line is given up here, and that
+            // line composes the run it asks for exactly as it always did.
+            if let Some(prepared) = ctx.prepared.take() {
+                prepared.abandon();
+            }
             // The answering context before and after the command decides
             // whether this command changed it: a changed key retires the
             // question authority once the command's message is produced, an

@@ -9,12 +9,13 @@
 //! through the chat layer's own rollover, and reached by `/compact` and
 //! `/clear` through the same operation.
 //!
-//! **Opened once, prepared before the first message.** The first line that is
-//! not a slash command composes the run and opens it ([`open`]); every later
-//! line is a turn of that same run, on the lease, epoch and provider it took at
-//! open — until a compaction or `/clear` rolls it over, and the line after it
-//! is a turn of the new job. A line that is a slash command never reaches this
-//! module.
+//! **Opened once, prepared before the first message.** The run is composed and
+//! opened ahead of the first line that is not a slash command — while the
+//! operator is still at the prompt ([`LineChat::prepare`]) — and that line, and
+//! every later one, is a turn of the same run: on the lease, epoch and provider
+//! it took at open, until a compaction or `/clear` rolls it over, and the line
+//! after it is a turn of the new job. A line that is a slash command never
+//! reaches this module, and gives up a prepared run it made stale.
 //!
 //! **One runtime per session.** The run's composition, its lease and its
 //! timers belong to the tokio runtime that opened them, so every turn of one
@@ -32,6 +33,8 @@ mod run;
 mod session_host;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use saya_store::RedactedSession;
 
 use crate::interactive::turn_summary::ToolTally;
 
@@ -162,5 +165,59 @@ impl LineChat {
 
     fn lock(&self) -> MutexGuard<'_, line::Line> {
         self.line.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Starts composing and opening the session's run on a thread of its own,
+    /// before anything has been asked: the operator's typing is spent on the
+    /// run the first line is a turn of, never on composing it. The returned
+    /// handle is the loop's — it adopts the run when the first plain line
+    /// arrives ([`Preparing::adopt`]), and gives it up when a line makes it
+    /// stale or when no line ever comes ([`Preparing::abandon`]).
+    pub(crate) fn prepare(parts: LineSession, record: RedactedSession) -> Preparing {
+        let worker = std::thread::spawn(move || Self::begin(parts, record));
+        Preparing {
+            worker: Some(worker),
+        }
+    }
+}
+
+/// One word for a prepare that could not be waited for, and one for a session
+/// whose prepare never started: the first line states either in its own turn.
+const PREPARE_LOST: &str = "the session's run could not be prepared: the prepare ended \
+     without answering";
+const PREPARE_UNSTARTED: &str = "the session's run could not be prepared: no prepare was \
+     started";
+
+/// The run a line session composed ahead of its first line.
+pub(crate) struct Preparing {
+    worker: Option<std::thread::JoinHandle<Result<Begun, String>>>,
+}
+
+impl Preparing {
+    /// Waits for the composition and hands the session back: the run it opened,
+    /// or the error the first line states exactly as it would have.
+    pub(crate) fn adopt(mut self) -> Result<Begun, String> {
+        match self.worker.take() {
+            Some(worker) => worker
+                .join()
+                .unwrap_or_else(|_| Err(PREPARE_LOST.to_owned())),
+            None => Err(PREPARE_UNSTARTED.to_owned()),
+        }
+    }
+
+    /// Ends a prepare no line adopted — a slash command made the run stale, or
+    /// no line ever came: the run it composed is closed, so nothing is left
+    /// working for a session that has said nothing.
+    pub(crate) fn abandon(mut self) {
+        let Some(worker) = self.worker.take() else {
+            return;
+        };
+        if let Ok(Begun::Open { chat, .. }) = worker.join().unwrap_or_else(|_| {
+            Ok(Begun::Refused {
+                sentence: PREPARE_LOST.to_owned(),
+            })
+        }) {
+            chat.close();
+        }
     }
 }

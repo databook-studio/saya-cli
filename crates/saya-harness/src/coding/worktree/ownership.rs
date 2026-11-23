@@ -237,6 +237,7 @@ pub struct InPlaceRootInput<'a> {
 pub fn verify_in_place_root(
     input: &InPlaceRootInput<'_>,
 ) -> Result<VerifiedCheckout, OwnershipError> {
+    super::verify_census::note(input.root_path);
     let root = LocalRoot::open(input.root_path, input.state_root)?;
     if root.id().as_repository_id() != input.root_id {
         return Err(OwnershipError::RootMismatch);

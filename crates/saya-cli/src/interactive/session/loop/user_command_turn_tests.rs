@@ -75,6 +75,7 @@ fn a_user_command_turn_sends_the_expanded_prompt() {
         save_refused: false,
         launch_options: GlobalOptions::default(),
         chat: None,
+        prepared: None,
     };
 
     let outcome = handle_line_verbatim("/bypass the thing", &mut ctx).expect("the turn settles");

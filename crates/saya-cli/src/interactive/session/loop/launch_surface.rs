@@ -2,6 +2,15 @@
 // line front's own composition opens the one run, and the loop runs on the real
 // terminal until the operator leaves.
 //
+// **The run is open before the first message.** `run_surface` awaits
+// `open_surface` — the opener the line loop's first message also asks — before
+// it hands the loop the session it drives, so the surface's first send is a turn
+// of a run that already exists and never a composition: what the line front now
+// gets by preparing at the prompt, this surface has always had by opening at
+// launch. A record the launch opens read-only gets the run it prepares
+// (`line_chat::begin`), so there is no surface state in which the first message
+// pays for the composition.
+//
 // Nothing here is a second session: the folder rule, the grants, the budget, the
 // seed and the record's own resume decision are the line front's
 // (`line_chat::open_surface`), and the builders below state only what the

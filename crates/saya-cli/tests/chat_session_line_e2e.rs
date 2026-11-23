@@ -24,8 +24,8 @@ use std::time::Duration;
 
 use support::{
     ANSWER, BUDGET_SENTENCE, QUESTION, SUM_SQL, ScriptStep, as_args, config, database_args,
-    database_call, server, spawn_child_with_config_extra, sqlite_profile, stderr_of, stdout_of,
-    tool_results, wait_for_stream, wait_for_stream_timeout,
+    database_call, server, spawn_child_with_config_extra, sqlite_profile, stale_profile, stderr_of,
+    stdout_of, tool_results, wait_for_stream, wait_for_stream_timeout,
 };
 
 #[test]
@@ -114,6 +114,56 @@ fn a_turn_that_outruns_the_database_budget_stops_with_the_budget_sentence() {
     assert!(
         !stderr.contains("Request cancelled."),
         "a budget stop is not a cancel: {stderr}"
+    );
+}
+
+/// The session's run is composed and opened **before the first line is sent**:
+/// send only starts the turn. The composition's own line — the profile it could
+/// not open — is said while the operator is still at the first prompt, so it is
+/// on the child's stream with no message written to its stdin. Composing on the
+/// first message again puts that line behind the message, and this row fails.
+#[test]
+fn the_run_is_composed_before_the_first_line_is_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let connections = stale_profile(dir.path());
+    let mut mock = server(vec![ScriptStep::Natural]);
+    let args = database_args(&connections);
+    let mut child = spawn_child_with_config_extra(
+        &mock.address,
+        &config(60),
+        "line-e2e-prepared",
+        &as_args(&args),
+    );
+    // Nothing has been written to the child's stdin: the run is already
+    // composed, and its answer about the profile it could not open is already
+    // said.
+    wait_for_stream_timeout(
+        &child.stderr_buf,
+        b"cannot open profile 'local'",
+        "the composition's notice, said before the first line",
+        Duration::from_secs(20),
+    );
+    assert_eq!(
+        mock.requests.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "composing the run asks the provider nothing: the first request is the first turn's"
+    );
+    // The first line is a turn of that run, answered on the provider the
+    // composition already built.
+    child.send(QUESTION);
+    wait_for_stream(&child.stdout_buf, ANSWER.as_bytes(), "the answer");
+    let stderr = stderr_of(&child);
+    child.send(b"/exit\n");
+    child.finish();
+    mock.join();
+
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| line.contains("cannot open profile 'local'"))
+            .count(),
+        1,
+        "the composition says it once, before the turn: {stderr}"
     );
 }
 

@@ -97,6 +97,22 @@ pub(super) fn as_args(args: &[String]) -> Vec<&str> {
     args.iter().map(String::as_str).collect()
 }
 
+/// A profile whose SQLite file is not there: the run opens without a database
+/// and the session says so once, in its own words. Returns that connections
+/// file.
+pub(super) fn stale_profile(dir: &Path) -> PathBuf {
+    let connections = dir.join("stale-connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.local]\ntype = 'sqlite'\npath = '{}'\nread_only = true\n",
+            dir.join("gone.sqlite").display()
+        ),
+    )
+    .unwrap();
+    connections
+}
+
 /// The turn's first database use: the call that arms `[limits.database]`.
 pub(super) fn database_call() -> ScriptStep {
     ScriptStep::ToolCall {
