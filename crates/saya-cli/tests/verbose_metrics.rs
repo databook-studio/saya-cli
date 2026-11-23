@@ -11,10 +11,13 @@
 
 #[path = "verbose_metrics/harness.rs"]
 mod harness;
+#[path = "verbose_metrics/summary.rs"]
+mod summary;
 
 use std::time::Duration;
 
 use harness::{MockProvider, build_demo, run_ask_bounded, spawn_mock};
+use summary::without_launch_summary;
 
 /// The prompt carries the request sentinel and a SQL-looking sentinel: both
 /// reach the provider request body and must never reach stderr.
@@ -61,16 +64,30 @@ fn the_verbose_ask_changes_nothing_outside_stderr_and_adds_no_leak() {
     );
 
     // Setup-refusal guard: the mock saw exactly one answering request per
-    // run, each carrying the question, and the two requests are identical.
+    // run, each carrying the question. The two are compared with the launch
+    // summary normalised out — see `without_launch_summary` — because that one
+    // block is a race with the background scan, not a difference the flag
+    // makes; and each carries it at most once, so nothing was duplicated.
     let bodies = mock.bodies();
     assert_eq!(
         bodies.len(),
         2,
         "the mock served exactly the two answering rounds: {bodies:?}"
     );
+    for body in &bodies {
+        assert!(
+            body.matches(summary::SUMMARY_LABEL).count() <= 1,
+            "the launch summary rides a request at most once: {body}"
+        );
+        assert!(
+            without_launch_summary(body).contains(PROMPT),
+            "normalising the summary out leaves the turn's own words: {body}"
+        );
+    }
     assert_eq!(
-        bodies[0], bodies[1],
-        "identical scripts see identical requests"
+        without_launch_summary(&bodies[0]),
+        without_launch_summary(&bodies[1]),
+        "identical scripts see identical requests, the launch summary aside"
     );
     assert!(
         bodies[0].contains(PROMPT),
