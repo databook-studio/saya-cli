@@ -20,7 +20,8 @@ use serde_json::json;
 use super::ChatFront;
 use super::compose_fixture;
 use super::safety_twin_fixture::{
-    Fixed, WORKSPACE_WRITE, advertised, compose, offers, result_of, turn,
+    Fixed, HOST_MARKER, WORKSPACE_WRITE, advertised, assert_no_host_route, compose, offers,
+    refused_as_unknown, result_of, turn,
 };
 use crate::agent::tools::consent::Answer;
 use crate::commands::coding::parent_turn_provider::{Reply, Scripted};
@@ -50,6 +51,13 @@ const HIDDEN: [&str; 6] = [
 /// and `never` never consult grants, so every family stays hidden — asserted
 /// with a front that *could* answer an ask, so nothing is hidden merely because
 /// the surface has nobody to put a call to.
+///
+/// The shell half is a fact about the host, so it is stated the way the
+/// catalogue rows state it, with the `shell_policy::prove` the composition
+/// itself asks: `never` reaches no shell on any host, and `read-only` keeps the
+/// sandbox lane alone, so the host-routed `touch` this row drives runs
+/// write-denied there rather than writing a marker on the host. Never weakened:
+/// no family grant makes a host command reachable.
 #[tokio::test]
 async fn no_family_grant_widens_a_restrictive_posture() {
     for (index, mode) in [ApprovalPolicy::ReadOnly, ApprovalPolicy::Never]
@@ -57,10 +65,16 @@ async fn no_family_grant_widens_a_restrictive_posture() {
         .enumerate()
     {
         let case = format!("twin-grants-restrictive-{index}");
-        let provider = Scripted::start_with_script(vec![Reply::Text("hello")]);
+        let provider = Scripted::start_with_script(vec![
+            Reply::Call {
+                name: "shell",
+                arguments: json!({"command": format!("touch {HOST_MARKER}")}),
+            },
+            Reply::Text("hello"),
+        ]);
         let fixture = compose_fixture::in_place_with_web_search(&case, &provider.endpoint).await;
         let front = Fixed::new(Answer::Once);
-        let (composition, _root) = compose(
+        let (composition, root) = compose(
             fixture,
             Arc::clone(&front) as Arc<dyn ChatFront>,
             "twin-grants-restrictive",
@@ -71,16 +85,20 @@ async fn no_family_grant_widens_a_restrictive_posture() {
 
         let _ = turn(&composition, "hello").await;
 
-        let offered = advertised(&provider.bodies()[0]);
+        let bodies = provider.bodies();
+        let offered = advertised(&bodies[0]);
         for tool in HIDDEN {
             assert!(
                 !offers(&offered, tool),
                 "{mode:?} stays closed under every family grant: {tool} hidden: {offered:?}"
             );
         }
-        assert!(
-            !offers(&offered, "shell"),
-            "{mode:?} reaches no host command either: {offered:?}"
+        let call = result_of(&bodies, "call-0");
+        assert_no_host_route(mode, &offered, &call, &root.checkout_root());
+        assert_eq!(
+            front.seen(),
+            0,
+            "{mode:?} keeps no host route, so nothing needing the host is put to the front"
         );
     }
 }
@@ -189,10 +207,7 @@ async fn the_download_door_is_not_advertised_and_its_call_is_unknown() {
     }
     let refused = result_of(&bodies, "call-0");
     assert!(
-        refused["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("unknown tool 'http_download'"),
+        refused_as_unknown(&refused, "http_download"),
         "the foreign-host call was refused as unknown, not served: {refused}"
     );
     assert!(

@@ -90,7 +90,7 @@ async fn a_sandboxed_shell_call_runs_without_asking() {
         &[],
     )
     .await;
-    if !shell_proves(&root.checkout_root()) {
+    if !shell_proves(&root.checkout_root(), ApprovalPolicy::Ask) {
         eprintln!("skipping `a_sandboxed_shell_call_runs_without_asking`: no sandbox");
         return;
     }

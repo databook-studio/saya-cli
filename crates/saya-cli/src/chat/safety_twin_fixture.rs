@@ -112,10 +112,82 @@ pub(super) fn result_of(bodies: &[String], id: &str) -> serde_json::Value {
     panic!("the model was handed no result for {id}");
 }
 
-/// Whether this host's sandbox proves for the run's root, asked of the very
-/// probe the root's shell composition asks.
-pub(super) fn shell_proves(root: &Path) -> bool {
-    crate::agent::tools::shell_policy::prove(root, ApprovalPolicy::Ask).is_some()
+/// Whether this host's sandbox proves for the run's root under `mode`, asked of
+/// the very probe the root's shell composition asks: the composition passes the
+/// run's own mode through, so a `read-only` run asks here with `read-only` —
+/// the one mode whose probe adds the root's write denial.
+pub(super) fn shell_proves(root: &Path, mode: ApprovalPolicy) -> bool {
+    crate::agent::tools::shell_policy::prove(root, mode).is_some()
+}
+
+/// The marker a host-routed shell call would leave behind if it reached the
+/// host: inside the run's own checkout, where the sandbox works.
+pub(super) const HOST_MARKER: &str = "host-route.txt";
+
+/// Whether the result the model was handed refused `name` as a tool this run
+/// offers nowhere.
+pub(super) fn refused_as_unknown(result: &serde_json::Value, name: &str) -> bool {
+    result["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains(&format!("unknown tool '{name}'"))
+}
+
+/// The shell half of a restrictive posture's outcome, stated the way the
+/// catalogue rows state it: the probe the composition itself asks decides
+/// whether a shell is expected at all, and the one lane a `read-only` shell
+/// keeps is the sandbox's. A host-routed call is therefore served in the
+/// write-denied sandbox — it reports the sandbox and leaves no marker where a
+/// host command would have left one — and on a host that proves no sandbox
+/// read-only offers no shell, so its call is refused as unknown. `never` offers
+/// no shell on any host at all. Nobody is asked either way.
+pub(super) fn assert_no_host_route(
+    mode: ApprovalPolicy,
+    offered: &[String],
+    call: &serde_json::Value,
+    checkout: &Path,
+) {
+    let shell = offers(offered, "shell");
+    match mode {
+        ApprovalPolicy::Never => {
+            assert!(!shell, "`never` reaches no shell on any host: {offered:?}");
+            assert!(
+                refused_as_unknown(call, "shell"),
+                "`never` offers no shell: {call}"
+            );
+        }
+        ApprovalPolicy::ReadOnly if shell => {
+            // The lane the shell keeps is the sandbox's alone, so a host-routed
+            // call is served there or refused outright — either way it is not
+            // put to the host, and the marker a host command would leave is
+            // never written.
+            let sandboxed = call["sandboxed"] == serde_json::json!(true);
+            assert!(
+                sandboxed || call.get("error").is_some(),
+                "a host-routed call under read-only is served in the sandbox or refused, never \
+                 run on the host: {call}"
+            );
+            assert!(
+                shell_proves(checkout, mode),
+                "a read-only shell exists only where this host's sandbox proves: {offered:?}"
+            );
+            assert!(
+                !checkout.join(HOST_MARKER).exists(),
+                "no host command under read-only: the write-denied sandbox left no marker: {call}"
+            );
+        }
+        ApprovalPolicy::ReadOnly => {
+            assert!(
+                !shell_proves(checkout, mode),
+                "read-only composes a shell where this host's sandbox proves: {offered:?}"
+            );
+            assert!(
+                refused_as_unknown(call, "shell"),
+                "no proven sandbox, so read-only keeps no shell: {call}"
+            );
+        }
+        _ => unreachable!("only the restrictive postures hold no host route"),
+    }
 }
 
 /// A front that answers every question with one answer stated in advance, and
