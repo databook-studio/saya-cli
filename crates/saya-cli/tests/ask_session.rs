@@ -84,7 +84,9 @@ fn a_database_budget_stop_exits_six_with_the_partial_sentence() {
         &config("[limits.database]\nelapsed_seconds = 1\n"),
     );
     // The first reply arms the budget by using the database; the second is held
-    // past the ceiling it armed, so the turn's own deadline ends it.
+    // past the ceiling it armed, so the turn's own deadline ends it. The question
+    // states database work, which is what advertises the family
+    // (`plugins::database::family`).
     let provider = serve(vec![
         reply(tool_body("schema_discovery", serde_json::json!({}))),
         held(answer_body(ANSWER), Duration::from_secs(15)),
@@ -93,7 +95,7 @@ fn a_database_budget_stop_exits_six_with_the_partial_sentence() {
     let run = run_ask(
         &fixture,
         provider.address(),
-        "how many orders are there",
+        "how many rows are in the orders table",
         Duration::from_secs(90),
     );
 
@@ -129,7 +131,7 @@ fn an_ask_override_bounds_the_question_and_says_what_to_write_instead() {
     let run = run_ask(
         &fixture,
         provider.address(),
-        "how many orders are there",
+        "how many rows are in the orders table",
         Duration::from_secs(90),
     );
 
@@ -167,7 +169,7 @@ fn a_clarification_exits_six() {
     let run = run_ask(
         &fixture,
         provider.address(),
-        "which orders do you mean",
+        "which rows do you mean",
         Duration::from_secs(60),
     );
 

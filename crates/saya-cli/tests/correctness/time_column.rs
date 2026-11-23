@@ -15,7 +15,7 @@ fn scripted_count(fixture: &common::DemoFixture, sql: &str) -> (i64, Option<i32>
         common::tool_call_body("call_count", "bounded_sql_query", args),
         common::text_body("count reported"),
     ]);
-    let output = common::run_ask(fixture, mock.address(), "orders since 2026-01-01");
+    let output = common::run_ask(fixture, mock.address(), "count the orders since 2026-01-01");
     mock.join();
     let status = output.status.code();
     assert_eq!(

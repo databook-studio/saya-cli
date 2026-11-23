@@ -567,6 +567,13 @@ contract tools need a state store as well — so they stay hidden with a connect
 selected when sharing is off. Naming one is refused with that reason rather than
 silently ignored.
 
+A session advertises the database family — the tools and their section of the
+system prompt — only from the turn whose request shows database work, latched for
+the rest of the session; before that it advertises one tiny `use_database` tool,
+and a request that never touches a database never pays the family's bytes. Naming
+a database tool in this list is the one way to turn the family on from the first
+turn (see `docs/querying-databases.md`).
+
 A job persists the set it started with, so a resume runs exactly what the
 operator approved at start, and a narrowed set is shown in the start proposal.
 A helper runs the job's set minus `helpers`: only the root delegates.

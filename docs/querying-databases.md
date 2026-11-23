@@ -132,11 +132,16 @@ SAYA supports multi-database navigation by connecting additional read-only datab
 - **Default connection**: The primary database is the default target when no `connection` argument is specified.
 - **Connection failure handling**: If a secondary database fails to connect, it is skipped while the primary run continues. The primary database connection must succeed or the entire run fails.
 - **Not single-query SQL federation**: Multi-database support enables AI agent navigation across distinct live connections. It does **not** execute a single federated SQL query that JOINs across engines in a single statement.
-- **Database tools follow the connection and the data-sharing setting**:
-  `schema_discovery` is advertised whenever a connection or profile is selected;
-  the bounded SQL family, the query fan-out, and the contract tools also need
-  data sharing on, so they stay hidden with a connection selected when sharing
-  is off. None of them is governed by `[tools] allow` / `--tools` (see
+- **Database tools follow the connection, the data-sharing setting, and the request**:
+  a session with a connection advertises one tiny `use_database` tool until a
+  request shows database work — SQL text, a database word, a connection's name, or
+  a table or column of the cached schema — and the database tools and their prompt
+  section from that turn on, latched for the rest of the session. Naming a database
+  tool in `[tools] allow` / `--tools` turns the family on from the first turn.
+  Once it is on, `schema_discovery` is advertised whenever a connection or profile
+  is selected; the bounded SQL family, the query fan-out, and the contract tools
+  also need data sharing on, so they stay hidden with a connection selected when
+  sharing is off. None of them is governed by `[tools] allow` / `--tools` (see
   `docs/configuration.md`). Naming one in that list is refused with that reason
   rather than silently ignored, because the list narrows capabilities and cannot
   select a connection or turn sharing on.

@@ -18,6 +18,7 @@ mod approval_tests;
 mod capture_fixture;
 #[cfg(test)]
 mod capture_tests;
+pub(crate) mod evidence;
 pub(crate) mod family;
 mod family_executor;
 #[cfg(test)]

@@ -1,6 +1,7 @@
-//! When this run advertises the database family: the evidence that turns it on,
-//! the latch that keeps it on for the session, and the one tiny tool a model can
-//! call to ask for it.
+//! When this run advertises the database family: the latch that keeps it on for
+//! the session, the bound connections it is about, and the one tiny tool a model
+//! can call to ask for it. The evidence a request has to show lives in
+//! [`super::evidence`].
 //!
 //! A bound profile used to inject the database tools and the database section of
 //! the system prompt into every turn of a session, whatever the request was
@@ -19,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 use saya_types::SqlDialect;
 
+use super::evidence::shows_work;
 use crate::connection::ConnectionRegistry;
 
 /// The one name advertised before the family is latched: the ask a model makes
@@ -77,71 +79,21 @@ impl Bound {
     }
 
     /// The names a request may state instead of saying "database": the
-    /// connections' own names and the object names cached from their schema,
-    /// lowercased because the request is compared lowercased.
-    fn evidence_names(&self) -> Vec<String> {
+    /// connections' own names, the engines they speak, and the object names
+    /// cached from their schema — lowercased, because the request is compared
+    /// lowercased.
+    pub(super) fn evidence_names(&self) -> Vec<String> {
         self.connections
             .iter()
-            .map(|(name, _)| name.as_str())
-            .chain(self.objects.iter().map(String::as_str))
-            .map(str::to_ascii_lowercase)
+            .map(|(name, dialect)| [name.as_str(), dialect.as_str()])
+            .chain(
+                self.objects
+                    .iter()
+                    .map(|object| [object.as_str(), object.as_str()]),
+            )
+            .flat_map(|pair| pair.map(str::to_ascii_lowercase))
             .collect()
     }
-}
-
-/// The words a request may state to show database work. Deliberately short and
-/// plain: a false latch costs this session the family's bytes, never an answer,
-/// while a missed one leaves the model the one `use_database` ask.
-const WORK_WORDS: &[&str] = &[
-    "database",
-    "databases",
-    "db",
-    "sql",
-    "schema",
-    "schemas",
-    "table",
-    "tables",
-    "column",
-    "columns",
-    "query",
-    "queries",
-    "row",
-    "rows",
-    "count",
-    "sum",
-    "average",
-    "revenue",
-];
-
-/// The whole words of `text`, lowercased: punctuation is a boundary, so `table`
-/// is not read out of `comfortable` and a qualified `public.orders` states
-/// `orders`.
-fn tokens(text: &str) -> Vec<String> {
-    text.split(|character: char| !character.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect()
-}
-
-/// Whether a request shows database work: one of its words, the two a SQL
-/// statement always uses together, or a name this run's own schema holds.
-pub(crate) fn shows_work(text: &str, bound: &Bound) -> bool {
-    if bound.is_empty() {
-        return false;
-    }
-    let tokens = tokens(text);
-    if tokens
-        .iter()
-        .any(|token| WORK_WORDS.contains(&token.as_str()))
-    {
-        return true;
-    }
-    // Prose does not use `select` and `from` together; a statement does.
-    if tokens.iter().any(|token| token == "select") && tokens.iter().any(|token| token == "from") {
-        return true;
-    }
-    let names = bound.evidence_names();
-    tokens.iter().any(|token| names.contains(token))
 }
 
 /// Whether the run's one `[tools] allow` list names a database tool: the

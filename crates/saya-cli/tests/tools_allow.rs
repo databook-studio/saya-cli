@@ -90,7 +90,7 @@ fn run_ask(fixture: &DemoFixture, mock_address: &str, stated: &[&str]) -> std::p
             "read-only",
             "--allow-data-sharing",
             "ask",
-            "how many orders exist",
+            "how many rows exist in the orders table",
         ])
         .env("SAYA_CONFIG_HOME", &fixture.config_home)
         .env("SAYA_PROVIDER", "openai_compatible")

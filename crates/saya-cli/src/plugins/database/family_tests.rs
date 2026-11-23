@@ -305,3 +305,27 @@ fn a_bound_connection_name_is_database_work() {
         "the run's own connection name is evidence"
     );
 }
+
+/// Test 10 — a verb form and the engine's own name are database work too: a
+/// request that says `querying`, or names the SQLite the run is bound to, is
+/// asking for the database without saying "database".
+#[test]
+fn a_verb_form_or_the_engines_name_is_database_work() {
+    let asking = Arc::new(Family::of(local(), false));
+    assert!(asking.note("why is querying the monthly figures slow?"));
+
+    let engine = Arc::new(Family::of(local(), false));
+    assert!(engine.note("remember the SQLite answer after checking it"));
+
+    let plain = Arc::new(Family::of(local(), false));
+    assert!(
+        !plain.note("why is the monthly summary slow?"),
+        "a word that merely starts with one of the twelve is not evidence"
+    );
+
+    let plural = Arc::new(Family::of(local(), false));
+    assert!(
+        plural.note("inspect both databases"),
+        "the plural of a word is the word"
+    );
+}
