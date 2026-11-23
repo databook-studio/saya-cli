@@ -91,7 +91,9 @@ mod turn_rows;
 // re-exports read as unused in a lib build — they are the boundary, not dead
 // code.
 #[allow(unused_imports)]
-pub(crate) use cards::{BODY_ROWS, Card, Kind, approval, clarification};
+pub(crate) use cards::{
+    BODY_ROWS, Card, Choice, Family, Kind, approval, approval_waiting, cells, clarification,
+};
 #[allow(unused_imports)]
 pub(crate) use composer::{
     COMPACT_IDLE_HINT, COMPACT_WIDTH, IDLE_HINT, QUEUED_HINT, Row, Run, State, hint, placeholder,
@@ -158,6 +160,10 @@ mod blocks_tests;
 #[cfg(test)]
 #[path = "cards_tests.rs"]
 mod cards_tests;
+
+#[cfg(test)]
+#[path = "cards_panel_tests.rs"]
+mod cards_panel_tests;
 
 #[cfg(test)]
 #[path = "composer_tests.rs"]

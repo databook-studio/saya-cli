@@ -49,6 +49,8 @@ pub(crate) enum Intent {
     /// Move the open card's body by this many rows; a negative count moves it
     /// up.
     ScrollCard(isize),
+    /// Walk the answers the open card offers, a negative count moving up.
+    FocusChoice(isize),
     /// Walk the mode cycle to its next member.
     CycleMode,
     /// Move the mode picker's selection one row up.
@@ -158,6 +160,7 @@ fn card_key(model: &Model, key: KeyEvent) -> Option<Intent> {
             Some(CardIntent::Answer(answer)) => Some(Intent::AnswerCard(answer)),
             Some(CardIntent::View) => Some(Intent::ViewCard),
             Some(CardIntent::Scroll(rows)) => Some(Intent::ScrollCard(rows)),
+            Some(CardIntent::Focus(step)) => Some(Intent::FocusChoice(step)),
             None => composer_fallback(model, key),
         },
     }

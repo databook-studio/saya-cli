@@ -73,14 +73,14 @@ fn the_consent_card_lists_the_identity_facts_verbatim() {
         card.facts, CONSENT,
         "the facts are the panel's own words, line for line"
     );
-    let pane = approval(card, model.mode(), 30);
-    let rows: Vec<String> = pane.body().to_vec();
+    let pane = approval(card, None, 30);
+    let rows: Vec<String> = pane.target().to_vec();
     assert_eq!(
         rows,
         CONSENT.split('\n').map(str::to_owned).collect::<Vec<_>>(),
         "the card's body is one row per line of the consent"
     );
-    let shown = pane.shown(model.card_full());
+    let shown = pane.shown_rows(model.card_full(), 100);
     assert!(
         shown.contains(&String::from(
             "\"analytics\" p-0000000000000000000000000000000000000000000000000000000000000001"
@@ -98,7 +98,7 @@ fn the_consent_card_lists_the_identity_facts_verbatim() {
         "the paths it may write are among the facts: {shown:?}"
     );
     assert_eq!(
-        pane.withheld(),
+        pane.withheld(100),
         1,
         "only the exact proposal is below the cap"
     );

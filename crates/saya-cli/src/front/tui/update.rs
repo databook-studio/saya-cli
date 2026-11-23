@@ -88,6 +88,7 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),
         Some(Intent::ScrollCard(rows)) => model.scroll_card(rows),
+        Some(Intent::FocusChoice(step)) => model.move_choice(step),
         Some(Intent::CycleMode) => cycle(model, cmds),
         Some(Intent::ModeUp) => {
             if let Some(picker) = model.mode_picker_mut() {

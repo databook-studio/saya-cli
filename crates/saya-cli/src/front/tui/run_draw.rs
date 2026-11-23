@@ -114,7 +114,7 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
         paint(
             frame,
             area,
-            run_draw_card::card(model, facts, frame.area().height, area.width),
+            run_draw_card::card(model, facts, frame.area().height, area.width, area.height as usize),
             facts.charset,
         );
     }
@@ -139,7 +139,7 @@ pub(crate) fn regions(model: &Model, facts: &Facts, area: Rect) -> Regions {
         .min(height.saturating_sub(1))
         .max(1);
     let spare = height.saturating_sub(1 + composer);
-    let card = run_draw_card::rows(model, column.height).min(spare);
+    let card = run_draw_card::rows(model, facts, column.height, column.width, spare).min(spare);
     let [transcript, status, docked, composer] = Layout::vertical([
         Constraint::Min(0),
         Constraint::Length(1),

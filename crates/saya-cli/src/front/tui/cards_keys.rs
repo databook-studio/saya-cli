@@ -29,6 +29,8 @@ pub(crate) enum CardIntent {
     View,
     /// Move the body by this many rows; a negative count moves it up.
     Scroll(isize),
+    /// Walk the focused answer by this many rows; a negative count moves up.
+    Focus(isize),
 }
 
 /// What `key` means to the call `question` puts: an answer, a look at the
@@ -38,8 +40,8 @@ pub(crate) fn card_intent(question: &Question, key: KeyEvent) -> Option<CardInte
         return None;
     }
     match key.code {
-        KeyCode::Up => Some(CardIntent::Scroll(-1)),
-        KeyCode::Down => Some(CardIntent::Scroll(1)),
+        KeyCode::Up => Some(CardIntent::Focus(-1)),
+        KeyCode::Down => Some(CardIntent::Focus(1)),
         KeyCode::PageUp => Some(CardIntent::Scroll(-CARD_PAGE_ROWS)),
         KeyCode::PageDown => Some(CardIntent::Scroll(CARD_PAGE_ROWS)),
         KeyCode::Char('y' | 'Y' | 'a' | 'A') => Some(CardIntent::Answer(Answer::Once)),

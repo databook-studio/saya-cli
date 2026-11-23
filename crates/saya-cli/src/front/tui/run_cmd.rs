@@ -68,5 +68,9 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::CancelJob(id) => port.cancel_job(id),
         Cmd::Job(request) => port.job(request),
         Cmd::Op(command) => port.op(command),
+        // The bell is the terminal's, not the session's: the loop rings it on
+        // the screen it owns ([`super::run::Runtime::fold`]), so a port has
+        // nothing to perform here.
+        Cmd::Bell => {}
     }
 }

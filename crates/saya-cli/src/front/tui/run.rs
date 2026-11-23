@@ -209,6 +209,12 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
                 run_handoff::handoff(&mut self.screen, self.input.as_ref(), self.port.as_ref())?;
                 continue;
             }
+            // The bell is the terminal's, exactly as the handoff is: it rings on
+            // the screen the loop owns, never through the session's port.
+            if matches!(cmd, super::msg::Cmd::Bell) {
+                self.screen.bell()?;
+                continue;
+            }
             perform(self.port.as_ref(), cmd);
         }
         self.dirty = true;

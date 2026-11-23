@@ -247,3 +247,33 @@ fn a_multi_line_paste_is_one_event_that_lands_in_the_composer_intact() {
         );
     }
 }
+
+#[test]
+fn a_waiting_call_disables_the_composer_and_names_the_keys_that_answer_it() {
+    let mut model = Model {
+        database: Some("demo".to_owned()),
+        ..Default::default()
+    };
+    model.ask(crate::front::tui::view::cards_fixture::shell_question());
+
+    assert_eq!(
+        state(&model),
+        State::Disabled,
+        "a call waiting for an answer owns the surface"
+    );
+    assert!(
+        title(state(&model)).contains("disabled"),
+        "the box says it cannot be typed into: {}",
+        title(state(&model))
+    );
+    assert_eq!(
+        placeholder(&model),
+        "Answer the approval above to type again",
+        "and says what it is waiting for"
+    );
+    assert!(
+        hint(state(&model), 100).contains("y allow"),
+        "the hint row names the keys that answer: {}",
+        hint(state(&model), 100)
+    );
+}

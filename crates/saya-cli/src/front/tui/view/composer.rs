@@ -31,6 +31,8 @@ pub(crate) enum State {
     Paused,
     /// A read-only record of an older session; the next message starts a run.
     ReadOnlyRecord,
+    /// A call is waiting for an answer: the composer cannot be typed into.
+    Disabled,
 }
 
 /// The queued state's hint row, and the keys it names (`02` §7).
@@ -92,6 +94,7 @@ pub(crate) fn title(state: State) -> &'static str {
         | State::ReadOnlyRecord => "Message",
         State::TurnRunning => "Message (queued on Enter)",
         State::OneQueued => "Queued",
+        State::Disabled => "Message",
     }
 }
 
@@ -113,6 +116,7 @@ pub(crate) fn placeholder(model: &Model) -> String {
         State::ReadOnlyRecord => {
             "This is a 0.5.0 session — your next message starts a new run".to_owned()
         }
+        State::Disabled => "Ask about the approval above".to_owned(),
     }
 }
 
@@ -130,6 +134,7 @@ pub(crate) fn hint(state: State, width: usize) -> &'static str {
         State::OneQueued => QUEUED_HINT,
         State::Paused => "Enter continue · /status",
         State::ReadOnlyRecord => "Enter send",
+        State::Disabled => "Enter send · Ctrl+K commands",
     }
 }
 
