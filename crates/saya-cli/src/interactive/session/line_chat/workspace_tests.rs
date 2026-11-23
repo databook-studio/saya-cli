@@ -84,7 +84,7 @@ fn session(folder: &Path, records: &Path, state_root: Option<PathBuf>) -> LineSe
         .expect("the folder's runtime resolves");
     LineSession {
         session: "workspace-rule".into(),
-        folder: folder.to_path_buf(),
+        folder: Some(folder.to_path_buf()),
         runtime: Arc::new(runtime),
         store: SqliteStateStore::new(records.join("state.sqlite3")),
         mode: ApprovalPolicy::ReadOnly,
@@ -149,7 +149,10 @@ async fn a_session_over_a_folder_that_holds_its_state_root_advertises_no_workspa
     assert!(
         matches!(
             crate::chat::workspace_shape(
-                &parts.folder,
+                parts
+                    .folder
+                    .as_deref()
+                    .expect("the row's session bound a folder"),
                 parts.state_root.as_deref().unwrap(),
                 &parts.session,
             ),
@@ -197,7 +200,10 @@ async fn a_session_over_a_bound_workspace_keeps_its_workspace_tools() {
     let parts = session(&folder, &records, Some(state_root));
     assert_eq!(
         crate::chat::workspace_shape(
-            &parts.folder,
+            parts
+                .folder
+                .as_deref()
+                .expect("the row's session bound a folder"),
             parts.state_root.as_deref().unwrap(),
             &parts.session,
         ),

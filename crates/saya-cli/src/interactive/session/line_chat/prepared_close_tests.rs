@@ -85,7 +85,7 @@ fn session(base: &Path) -> LineSession {
     runtime.resolved.ai.timeout_seconds = 5;
     LineSession {
         session: SESSION.to_owned(),
-        folder,
+        folder: Some(folder),
         runtime: Arc::new(runtime),
         store: SqliteStateStore::new(records.join("state.sqlite3")),
         mode: ApprovalPolicy::Bypass,
@@ -111,7 +111,11 @@ fn the_run_composed_at_the_prompt_leases_the_folder_until_it_is_ended() {
     let base = case("composed");
     let parts = session(&base);
     let state = base.join("state");
-    let root = LocalRoot::open(&parts.folder, &state).expect("the folder is an in-place root");
+    let root = LocalRoot::open(
+        parts.folder.as_deref().expect("the fixture bound a folder"),
+        &state,
+    )
+    .expect("the folder is an in-place root");
     let root_id = root.id().as_str().to_owned();
 
     let chat = match LineChat::begin(parts.clone(), RedactedSession::default()) {
@@ -140,7 +144,11 @@ fn a_given_up_prepared_run_releases_the_folder_its_lease_held() {
     let base = case("lease");
     let parts = session(&base);
     let state = base.join("state");
-    let root = LocalRoot::open(&parts.folder, &state).expect("the folder is an in-place root");
+    let root = LocalRoot::open(
+        parts.folder.as_deref().expect("the fixture bound a folder"),
+        &state,
+    )
+    .expect("the folder is an in-place root");
     let root_id = root.id().as_str().to_owned();
 
     LineChat::prepare(parts.clone(), RedactedSession::default()).abandon();

@@ -160,7 +160,7 @@ fn stalling_session(label: &str) -> (PathBuf, LineSession, Silent) {
     let store = SqliteStateStore::new(root.join("state.sqlite3"));
     let parts = LineSession {
         session: String::from("stalled-profile-row"),
-        folder: folder.clone(),
+        folder: Some(folder.clone()),
         runtime: Arc::new(runtime),
         store,
         mode: ApprovalPolicy::Ask,

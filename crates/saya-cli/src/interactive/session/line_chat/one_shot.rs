@@ -36,7 +36,12 @@ use crate::commands::coding::{CodingApplication, root_mode::session_state_root};
 /// when it is not.
 pub(super) fn state_root(parts: &LineSession) -> Result<Option<PathBuf>, String> {
     let configured = session_state_root(&parts.runtime).map_err(|error| error.to_string())?;
-    let folder = std::fs::canonicalize(&parts.folder).unwrap_or_else(|_| parts.folder.clone());
+    // A session that bound no folder records nothing inside one: its records go
+    // to the configured root, which is what this answer keeps.
+    let Some(folder) = &parts.folder else {
+        return Ok(None);
+    };
+    let folder = std::fs::canonicalize(folder).unwrap_or_else(|_| folder.clone());
     if !configured.starts_with(&folder) {
         return Ok(None);
     }

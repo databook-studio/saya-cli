@@ -29,6 +29,10 @@ use crate::cli::CodingCommand;
 use crate::interactive::tui::{CodingMessage, CodingPanel, Said, started_line};
 use crate::slash::JobRequest;
 
+/// What the surface says when a job verb reaches a session that bound no
+/// workspace: a job is a job over a folder, and this session has none.
+pub(crate) const NO_WORKSPACE: &str = "this session has no workspace to run a job in: answer the trust question with `y`, or start saya in the folder the job should work in";
+
 /// What opening a job needs from the launch: the configuration in force, the
 /// state store its records and its receipts go to, the folder it roots at, the
 /// session it belongs to, and the session's approval mode — the mode the old
@@ -36,7 +40,9 @@ use crate::slash::JobRequest;
 pub(crate) struct JobDeps {
     runtime: Arc<LiveRuntime>,
     store: SqliteStateStore,
-    root: PathBuf,
+    /// The folder a job runs in, when the session bound one: a session that
+    /// bound no workspace has no folder to root a job over.
+    root: Option<PathBuf>,
     session: String,
     policy: ApprovalPolicy,
 }
@@ -45,10 +51,11 @@ impl JobDeps {
     /// A job's dependencies. `runtime` is the launch's live configuration — the
     /// same cell a direct command reads, so a job opened after a `/reload`
     /// composes over the configuration then in force. `root` is the session's
-    /// own folder — the one the line front's opener states, with the same
-    /// fallback when a session bound none. `session` is that session's own id:
-    /// the folder's lease names it, so a job this surface opens over the same
-    /// folder is admitted beside the session's run.
+    /// own folder — the one the line front's opener states, or none when the
+    /// session bound no workspace, which is a session no job is opened from.
+    /// `session` is that session's own id: the folder's lease names it, so a job
+    /// this surface opens over the same folder is admitted beside the session's
+    /// run.
     pub(crate) fn new(
         runtime: Arc<LiveRuntime>,
         store: SqliteStateStore,
@@ -56,27 +63,29 @@ impl JobDeps {
         session: &str,
         policy: ApprovalPolicy,
     ) -> Self {
-        let root = root
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
         Self {
             runtime,
             store,
-            root,
+            root: root.map(Path::to_path_buf),
             session: session.to_owned(),
             policy,
         }
     }
 
+    /// The folder this surface opens a job in: the session's own, when it
+    /// bound one.
+    pub(crate) fn folder(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
     /// Opens `command` through today's worker: one thread, one panel, and the
     /// launch's own runtime, store, folder and mode.
-    fn open(&self, command: CodingCommand) -> CodingPanel {
+    fn open(&self, root: &Path, command: CodingCommand) -> CodingPanel {
         crate::interactive::tui::spawn_job(
             command,
             self.runtime.current().as_ref().clone(),
             self.store.clone(),
-            self.root.clone(),
+            root.to_path_buf(),
             self.policy,
             Some(self.session.clone()),
         )
@@ -131,8 +140,14 @@ impl Forward {
         ) {
             return Some(NO_SUCH_JOB);
         }
+        // A job is a job over a folder: a session that bound no workspace has
+        // none, and is told so in one sentence rather than having its job rooted
+        // in whatever directory the process stands in.
+        let Some(root) = deps.folder() else {
+            return Some(NO_WORKSPACE);
+        };
         let started = started_line(&command);
-        *panel = Some(deps.open(command));
+        *panel = Some(deps.open(root, command));
         if let Some(line) = started {
             self.note(line);
         }
