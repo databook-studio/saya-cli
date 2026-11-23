@@ -63,6 +63,10 @@ mod boundary_fixture;
 #[path = "workspace_tests.rs"]
 mod workspace_tests;
 
+#[cfg(all(test, unix))]
+#[path = "prepared_close_tests.rs"]
+mod prepared_close_tests;
+
 #[cfg(test)]
 #[path = "open_tests.rs"]
 mod open_tests;
@@ -163,6 +167,17 @@ impl LineChat {
         self.runtime.block_on(line.quit());
     }
 
+    /// Ends a prepared run no line adopted — the run a slash command gave up,
+    /// and the run a session ends while it prepared: the session's own quit, and
+    /// the job's end, so the folder's lease is free again and no job is left
+    /// behind for a session that said nothing.
+    pub(crate) fn end_prepared_run(&self) {
+        let line = self.lock();
+        if let Some(run) = line.run() {
+            self.runtime.block_on(run.end_prepared_run());
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, line::Line> {
         self.line.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -206,8 +221,9 @@ impl Preparing {
     }
 
     /// Ends a prepare no line adopted — a slash command made the run stale, or
-    /// no line ever came: the run it composed is closed, so nothing is left
-    /// working for a session that has said nothing.
+    /// no line ever came: the run it composed is closed and its job ended, so
+    /// nothing is left working, no folder is left held and no job is left
+    /// recorded for a session that has said nothing.
     pub(crate) fn abandon(mut self) {
         let Some(worker) = self.worker.take() else {
             return;
@@ -217,7 +233,7 @@ impl Preparing {
                 sentence: PREPARE_LOST.to_owned(),
             })
         }) {
-            chat.close();
+            chat.end_prepared_run();
         }
     }
 }

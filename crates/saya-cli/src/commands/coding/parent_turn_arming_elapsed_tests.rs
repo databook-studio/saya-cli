@@ -95,8 +95,5 @@ async fn an_armed_elapsed_budget_stops_a_held_request() {
         None,
         "the deadline stopped the turn's token, never the run's"
     );
-    assert!(
-        fixture.job._in_place_lease.is_some(),
-        "the run is still open"
-    );
+    assert!(fixture.job.holds_folder_lease(), "the run is still open");
 }

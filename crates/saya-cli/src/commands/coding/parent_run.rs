@@ -94,6 +94,12 @@ impl RootRun {
         self.turns.fetch_add(1, Ordering::AcqRel) + 1
     }
 
+    /// How many turns this run has started: zero for a run that opened at the
+    /// prompt and no line ever reached.
+    pub(super) fn turns(&self) -> u64 {
+        self.turns.load(Ordering::Acquire)
+    }
+
     /// Claims the job's one turn slot for as long as the guard lives.
     pub(super) fn claim(&self) -> Result<TurnGuard<'_>, CodingError> {
         if self.running.swap(true, Ordering::AcqRel) {

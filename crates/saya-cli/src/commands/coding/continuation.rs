@@ -202,7 +202,7 @@ impl CodingApplication {
             project,
             records,
             before_images,
-            _in_place_lease,
+            in_place_lease: std::sync::Mutex::new(_in_place_lease),
             tools,
             cancellation: token.clone(),
             failure: std::sync::Mutex::new(super::failure::FailureState::default()),

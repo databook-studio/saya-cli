@@ -254,7 +254,7 @@ impl CodingApplication {
             project,
             records,
             before_images,
-            _in_place_lease,
+            in_place_lease: std::sync::Mutex::new(_in_place_lease),
             tools,
             cancellation: token.clone(),
             // One prompt pending at a time, whatever asks: the root's

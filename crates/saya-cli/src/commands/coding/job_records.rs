@@ -115,6 +115,28 @@ pub(crate) fn works_in_place(state_root: &Path, job: &JobId) -> bool {
         .is_ok()
 }
 
+/// Removes the records of a run that ended before its first turn — the run a
+/// slash command gave up, and the one a session closes while it prepared.
+///
+/// This is the job delete path, with the facts it reads: the job is the
+/// session's own (its request states origin `session`), no live process holds
+/// its folder, and the run is over — the caller proves the last one, because a
+/// run that took no turn records no outcome block and so can never read as
+/// `terminal` in [`JobFacts`]. Nothing is removed unless all three hold: a job
+/// the CLI opened, a folder another run holds, and a name that keeps no records
+/// are all left exactly as they are.
+///
+/// Best effort by construction — a caller giving a run up is reporting a release,
+/// not running a verb — so a deletion that fails leaves the records a session's
+/// own delete leaves, never a half job: the tombstone is what the walk takes.
+pub(crate) fn discard_prepared(state_root: &Path, job: &JobId) -> Result<(), CodingError> {
+    let facts = facts(state_root, job);
+    if !facts.records_present || facts.origin.is_cli() || facts.lease_held {
+        return Ok(());
+    }
+    delete_records(state_root, job)
+}
+
 /// Removes the job's whole records directory: renamed to a tombstone first, so a
 /// stop leaves the tombstone alone, and taken afterwards through the module that
 /// owns the one walk. An absent directory is already removed.

@@ -88,6 +88,30 @@ impl NativeCodingJob {
         self.root_run.close();
     }
 
+    /// Ends a run no line adopted: the give-up a slash command states, and the
+    /// same release for a session that ends while its run was being prepared.
+    ///
+    /// The folder's lease is the job's, so it is given back here instead of when
+    /// the job object goes — because the job would never go. Its composition
+    /// holds the job it belongs to, and so does the advisory precompute planned
+    /// for it, so a give-up that only closed the run would keep the lease, the
+    /// job object and the job's record alive for the rest of the process.
+    ///
+    /// A run that took no turn has no outcome for a precompute to plan and no
+    /// turn to continue, so its records go through the job delete path: a
+    /// session that said nothing but a slash command leaves no job of its own.
+    /// A run that took a turn is closed only — its record is the session's, and
+    /// the session keeps it.
+    pub(crate) async fn end_prepared_run(&self) -> Result<(), CodingError> {
+        self.run_close().await;
+        if self.root_run.turns() > 0 {
+            return Ok(());
+        }
+        self.forget_readiness_precompute();
+        self.release_folder_lease();
+        super::super::job_records::discard_prepared(&self.application.state_root, self.job_id())
+    }
+
     /// Ends a prepared run whose turns are done: the run's close, the implicit
     /// child join, the candidate preparation and the one terminal record — the
     /// tail a job surface gets from `run()`, stated for a run a session rolls

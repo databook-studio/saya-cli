@@ -87,7 +87,7 @@ async fn the_request_after_a_routed_call_is_refused_and_the_run_stays_open() {
     );
     assert!(stopped.truncated, "the answer it produced is partial");
     assert!(
-        fixture.job._in_place_lease.is_some(),
+        fixture.job.holds_folder_lease(),
         "the run is still open and holds its one folder lease"
     );
 

@@ -208,6 +208,11 @@ impl Line {
         }
     }
 
+    /// The run this session is on, for the give-up that ends a prepared one.
+    pub(super) fn run(&self) -> Option<&Run> {
+        self.run.as_ref()
+    }
+
     /// The turn's boundary, worded for the automatic trigger.
     async fn boundary(
         &mut self,

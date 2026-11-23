@@ -70,7 +70,7 @@ async fn a_cancelled_turn_ends_and_the_run_takes_the_next_one() {
         "the further turn is another turn of the same epoch"
     );
     assert!(
-        fixture.job._in_place_lease.is_none(),
+        !fixture.job.holds_folder_lease(),
         "and takes no folder lease: this run states no write scope"
     );
 }
