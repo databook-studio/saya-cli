@@ -34,6 +34,8 @@
 mod child;
 #[path = "perf_chat/cpu.rs"]
 mod cpu;
+#[path = "perf_chat/dialect.rs"]
+mod dialect;
 #[path = "perf_chat/fixture.rs"]
 mod fixture;
 #[path = "perf_chat/harness.rs"]
@@ -100,6 +102,15 @@ fn the_chat_session_meets_the_plans_performance_measures() {
         "SAYA_PERF_BIN names no binary: {}",
         bin.display()
     );
+    // Once per binary per invocation: the spelling this build documents for
+    // the run's read-only posture, and whether it documents `--plain`.
+    let dialect = dialect::Dialect::of(&bin);
+    println!(
+        "perf-chat {label}: {} launches with {} read-only (--plain: {})",
+        bin.display(),
+        dialect.posture.flag(),
+        dialect.plain
+    );
     let mut records = Vec::with_capacity(k);
     for run in 0..k {
         let mut record = RunRecord {
@@ -110,10 +121,12 @@ fn the_chat_session_meets_the_plans_performance_measures() {
             turns: line::STEADY_TURNS,
             provider_delay_ms: line::TURN_DELAY.as_secs_f64() * 1000.0,
             idle_window_s: IDLE_WINDOW.as_secs_f64(),
+            posture_flag: dialect.posture.flag().to_owned(),
+            plain_flag: dialect.plain,
             ..RunRecord::default()
         };
-        line::measure(&bin, &mut record);
-        measure_surface(&bin, &mut record);
+        line::measure(&bin, &dialect, &mut record);
+        measure_surface(&bin, &dialect, &mut record);
         record::append(&label, &record);
         record::print_run(&label, &record);
         records.push(record);
@@ -123,12 +136,12 @@ fn the_chat_session_meets_the_plans_performance_measures() {
 
 /// (d) for the full-screen front and (e): a pty is a Unix facility, so a host
 /// without one reports the measures as skipped rather than inventing them.
-fn measure_surface(bin: &Path, record: &mut RunRecord) {
+fn measure_surface(bin: &Path, dialect: &dialect::Dialect, record: &mut RunRecord) {
     #[cfg(unix)]
-    tui::measure(bin, record, IDLE_WINDOW);
+    tui::measure(bin, dialect, record, IDLE_WINDOW);
     #[cfg(not(unix))]
     {
-        let _ = bin;
+        let _ = (bin, dialect);
         record.skipped.push(
             "idle CPU of the TUI and draws while streaming: a pseudo-terminal is \
              unix-only"
@@ -143,5 +156,6 @@ fn measure_surface(bin: &Path, record: &mut RunRecord) {
 #[test]
 #[ignore = "perf harness: cheap self-check, runs with the harness"]
 fn a_turn_overhead_subtracts_the_providers_own_delay() {
-    line::self_check(&binary());
+    let bin = binary();
+    line::self_check(&bin, &dialect::Dialect::of(&bin));
 }

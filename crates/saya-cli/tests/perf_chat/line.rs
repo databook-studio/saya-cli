@@ -17,6 +17,7 @@ use std::{
 
 use crate::{
     child::PerfChild,
+    dialect::Dialect,
     fixture,
     harness::{self, MockServer, ScriptStep},
     record::{self, RunRecord},
@@ -89,8 +90,9 @@ fn idle_cpu(_child: &PerfChild) -> Option<f64> {
     None
 }
 
-/// Measures (a), (b), (c) and (f) on one session of `bin`.
-pub(crate) fn measure(bin: &Path, record: &mut RunRecord) {
+/// Measures (a), (b), (c) and (f) on one session of `bin`, launched in the
+/// posture `dialect` says `bin` names.
+pub(crate) fn measure(bin: &Path, dialect: &Dialect, record: &mut RunRecord) {
     let roots = Roots::new(&format!("line-run{}", record.run));
     let connections = fixture::sqlite_profile(&roots.config_root);
     let workspace = connection_workspace(&roots);
@@ -107,7 +109,7 @@ pub(crate) fn measure(bin: &Path, record: &mut RunRecord) {
         &server.address,
         roots,
         fixture::CONFIG,
-        &fixture::args(&connections, &workspace),
+        &fixture::args(dialect, &connections, &workspace),
     );
     // The front is up once it has said anything at all; a front that says
     // nothing until it is asked is given the benefit of the doubt.
@@ -197,7 +199,7 @@ fn settle(held: u64, child: &PerfChild, index: usize) -> f64 {
 /// The harness's own self-check: one turn whose provider delay is known, whose
 /// measured overhead must therefore be far below that delay. Remove the
 /// subtraction in [`overhead`] and this fails, which is the point of it.
-pub(crate) fn self_check(bin: &Path) {
+pub(crate) fn self_check(bin: &Path, dialect: &Dialect) {
     const DELAY: Duration = Duration::from_millis(400);
     let roots = Roots::new("self-check");
     let connections = fixture::sqlite_profile(&roots.config_root);
@@ -216,7 +218,7 @@ pub(crate) fn self_check(bin: &Path) {
         &server.address,
         roots,
         fixture::CONFIG,
-        &fixture::args(&connections, &workspace),
+        &fixture::args(dialect, &connections, &workspace),
     );
     let _ = child.out.wait_for_any(Duration::from_secs(15));
     child.send_line("a warm-up turn");

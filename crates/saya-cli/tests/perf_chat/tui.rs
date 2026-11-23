@@ -12,7 +12,9 @@ use std::{
 };
 
 use crate::{
-    cpu, fixture,
+    cpu,
+    dialect::Dialect,
+    fixture,
     harness::ScriptStep,
     line,
     pty::{FRAME_MARKERS, TuiChild},
@@ -28,8 +30,14 @@ const LAST_TOKEN: &str = "tok999";
 /// How long the stream may take before the harness calls it a hang.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Measures (d) for the surface and (e), on one pty session of `bin`.
-pub(crate) fn measure(bin: &Path, record: &mut RunRecord, idle_window: Duration) {
+/// Measures (d) for the surface and (e), on one pty session of `bin` launched
+/// in the posture `dialect` says `bin` names.
+pub(crate) fn measure(
+    bin: &Path,
+    dialect: &Dialect,
+    record: &mut RunRecord,
+    idle_window: Duration,
+) {
     let roots = Roots::new(&format!("tui-run{}", record.run));
     let connections = fixture::sqlite_profile(&roots.config_root);
     let workspace = line::connection_workspace(&roots);
@@ -42,7 +50,7 @@ pub(crate) fn measure(bin: &Path, record: &mut RunRecord, idle_window: Duration)
         &server.address,
         roots,
         fixture::CONFIG,
-        &fixture::args(&connections, &workspace),
+        &fixture::args(dialect, &connections, &workspace),
     );
     // The surface is drawn once the screen stops changing.
     child
