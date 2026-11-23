@@ -50,8 +50,11 @@ pub(crate) struct LineSession {
     /// The session's own name: the run's job id, and the label its request
     /// states. A saved record's link names the same job.
     pub(crate) session: String,
-    /// The folder the session was started in: the run's root.
-    pub(crate) folder: PathBuf,
+    /// The folder the session bound: the run's root. `None` for a session that
+    /// bound none — the trust question answered `n`, a launch from the OS
+    /// temporary directory — whose run is composed with no workspace at all
+    /// rather than over the directory the process stands in.
+    pub(crate) folder: Option<PathBuf>,
     pub(crate) runtime: Arc<RuntimeConfig>,
     pub(crate) store: SqliteStateStore,
     /// The session's approval mode: the consent to open the run, and the mode

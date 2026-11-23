@@ -203,6 +203,10 @@ mod jobs_desk_tests;
 mod jobs_open_tests;
 
 #[cfg(test)]
+#[path = "jobs_unbound_tests.rs"]
+mod jobs_unbound_tests;
+
+#[cfg(test)]
 #[path = "run_fixture.rs"]
 pub(crate) mod run_fixture;
 

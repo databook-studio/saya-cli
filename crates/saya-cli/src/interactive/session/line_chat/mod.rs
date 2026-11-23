@@ -43,6 +43,12 @@ pub(crate) use self::open::{LineSession, open_surface};
 #[allow(unused_imports)]
 pub(crate) use self::open::Opened;
 
+/// The one composition every line surface passes through: for the surfaces
+/// that state a run over a session's parts, and for the tests that read what
+/// shape the folder gives the run it opens.
+#[allow(unused_imports)]
+pub(crate) use self::session_host::open_host;
+
 pub(crate) use self::begin::Begun;
 
 #[allow(unused_imports)]

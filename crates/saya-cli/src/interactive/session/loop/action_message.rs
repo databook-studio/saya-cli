@@ -144,8 +144,8 @@ fn handle_message(
 }
 
 /// The facts the session's first run is composed from: the folder the session
-/// was started in, its mode, the launch's seeds, and the conversation the record
-/// keeps behind the compaction boundary.
+/// bound (none for a session that bound none), its mode, the launch's seeds, and
+/// the conversation the record keeps behind the compaction boundary.
 ///
 /// Stated once, so the run the loop composes while the operator is still at the
 /// prompt and the one a first line composes when that did not happen are the
@@ -159,11 +159,11 @@ fn first_message_parts(
     terminal: bool,
     tasks: crate::interactive::session::tasks::SessionTasks,
 ) -> Result<LineSession, Box<dyn std::error::Error>> {
-    let folder = session
-        .root()
-        .map(std::path::Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok())
-        .ok_or("the session has no folder to open a run over")?;
+    // The folder the run is composed over: the session's own, and only when it
+    // bound one. A session that bound none composes a run with no workspace at
+    // all (`session_host`), rather than one over the folder the process was
+    // started in — the folder rule stays in the one place both surfaces read.
+    let folder = session.root().map(std::path::Path::to_path_buf);
     // The session's turns spend `[limits.database]` once they use it.
     let budget = crate::plugins::database::DatabaseBudget::of(&runtime);
     Ok(LineSession {

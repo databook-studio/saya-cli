@@ -158,7 +158,7 @@ impl<'a> LiveAttemptRunner<'a> {
         let attempt = self.attempts.fetch_add(1, Ordering::Relaxed) + 1;
         crate::interactive::session::line_chat::LineSession {
             session: format!("ask-{}-{attempt}", std::process::id()),
-            folder: self.folder.clone(),
+            folder: Some(self.folder.clone()),
             runtime: Arc::new(self.runtime.clone()),
             store: self.store(),
             mode: self.approval,

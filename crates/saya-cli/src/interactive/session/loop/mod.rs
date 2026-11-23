@@ -62,3 +62,5 @@ include!("tests/setup_turn.rs");
 include!("tests/status_turn.rs");
 include!("tests/capacity_persist.rs");
 include!("tests/plain_env.rs");
+include!("tests/unbound_run.rs");
+include!("tests/bound_run.rs");

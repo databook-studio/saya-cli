@@ -142,11 +142,11 @@ pub(super) fn surface_parts(
     // through, re-seeded from the record exactly as the plain loop re-seeds it.
     let tasks = session.universe().tasks();
     tasks.replace(state.task_list.clone());
-    let folder = session
-        .root()
-        .map(std::path::Path::to_path_buf)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    // The folder the run is composed over: the session's own, and only when it
+    // bound one. A session that bound none composes a run with no workspace at
+    // all (`session_host`), never one over the folder the process was started
+    // in.
+    let folder = session.root().map(std::path::Path::to_path_buf);
     Composed {
         record: surface_record(state),
         parts: crate::interactive::session::line_chat::LineSession {
