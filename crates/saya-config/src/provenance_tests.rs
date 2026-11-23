@@ -93,6 +93,8 @@ personal_max_bytes = 512
 total_max_bytes = 2048
 [ui]
 theme = 'dark'
+notifications = false
+notify_after_seconds = 45
 ";
 
 /// Drift guard: every key in `USER_FACING` is one the merge funnels record.
