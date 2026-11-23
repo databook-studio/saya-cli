@@ -3,11 +3,11 @@
   "surfaces": [
     {
       "surface": "chat",
-      "first_request_bytes": 21808,
+      "first_request_bytes": 21942,
       "system_bytes": 5150,
       "tools_bytes": 15056,
       "tool_count": 20,
-      "reason": "measured 20769 / 4904 / 14339 and 19 tools at 0.5.1 with the database family latched, plus the stated headroom"
+      "reason": "measured 20769 / 4904 / 14339 and 19 tools at 0.5.1 with the database family latched, plus the stated headroom; UI1 raises the byte ceiling to 21942 for the bounded workspace summary the launch now carries on the first request — measured 20897, 128 bytes more than the row above, plus the same 5 % headroom"
     },
     {
       "surface": "chat_no_database",
