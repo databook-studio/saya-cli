@@ -265,6 +265,10 @@ mod transcript_tests;
 mod transcript_focus_tests;
 
 #[cfg(test)]
+#[path = "transcript_steps_fixture.rs"]
+mod transcript_steps_fixture;
+
+#[cfg(test)]
 #[path = "transcript_detail_tests.rs"]
 mod transcript_detail_tests;
 

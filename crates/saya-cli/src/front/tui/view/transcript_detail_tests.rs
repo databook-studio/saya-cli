@@ -7,130 +7,13 @@
 //! when it settles is the whole point of this pane, so the rows are read as a
 //! terminal paints them.
 
-use std::time::Duration;
+use serde_json::json;
 
-use serde_json::{Value, json};
-
-use super::transcript::TranscriptFacts;
-use super::transcript_fixture::rendered;
-use super::transcript_rows;
+use super::transcript_steps_fixture::{
+    COMMAND, PATH, done, facts, live_turn, many_step_turn, rows_in, running, step_lines, step_rows,
+    two_step_turn,
+};
 use crate::front::tui::focus::EntryPath;
-use crate::front::view::{Activity, Answer, Entry, Step, StepState, TurnView, UserMessage};
-
-/// The command the workspace turn ran: long enough that 60 columns wrap it.
-const COMMAND: &str =
-    "python3 -m unittest tests/test_pricing.py tests/test_orders.py tests/test_refunds.py -v";
-/// The file the turn read after its command.
-const PATH: &str = "pricing.py";
-
-/// The demo turn's time.
-const ELAPSED: Duration = Duration::from_secs(14);
-
-/// A step that settled with `summary` as the outcome it reported.
-fn done(tool: &str, arguments: Value, summary: &str) -> Step {
-    Step {
-        tool: tool.to_owned(),
-        arguments,
-        state: StepState::Done {
-            summary: summary.to_owned(),
-        },
-    }
-}
-
-/// A step whose call has no outcome yet.
-fn running(tool: &str, arguments: Value) -> Step {
-    Step {
-        tool: tool.to_owned(),
-        arguments,
-        state: StepState::Running,
-    }
-}
-
-/// A turn of `steps`, settled exactly as the reducer leaves one.
-fn turn(steps: Vec<Step>) -> TurnView {
-    build(steps, true)
-}
-
-/// The same turn with its call still out: the block the reducer holds while a
-/// step runs.
-fn live_turn(steps: Vec<Step>) -> TurnView {
-    build(steps, false)
-}
-
-/// A turn of `steps`, as the block stands while the turn does.
-fn build(steps: Vec<Step>, ended: bool) -> TurnView {
-    let mut turn = TurnView::default();
-    turn.push(Entry::UserMessage(UserMessage {
-        text: "check the pricing tests".to_owned(),
-    }));
-    turn.push(Entry::Activity(Activity {
-        steps,
-        ended,
-        folded: false,
-        failed: false,
-    }));
-    turn.push(Entry::Answer(Answer {
-        text: "The pricing tests fail on the old total.".to_owned(),
-    }));
-    turn
-}
-
-/// The turn this job is about: two steps — a command and a read — with the
-/// outcomes they reported.
-fn two_step_turn() -> TurnView {
-    turn(vec![
-        done("shell", json!({"command": COMMAND}), "python3 exited 1"),
-        done("read", json!({"path": PATH}), "read 40 lines"),
-    ])
-}
-
-/// A turn of `count` settled steps, for the compact cap.
-fn many_step_turn(count: usize) -> TurnView {
-    let steps = (1..=count)
-        .map(|index| {
-            done(
-                "read",
-                json!({"path": format!("file{index}.py")}),
-                "read 10 lines",
-            )
-        })
-        .collect();
-    turn(steps)
-}
-
-/// The facts the pane paints with: one turn's time, and the layout the caller
-/// names — compact, or full detail.
-fn facts(detail: bool) -> TranscriptFacts {
-    TranscriptFacts {
-        elapsed: vec![ELAPSED],
-        detail,
-        ..TranscriptFacts::default()
-    }
-}
-
-/// The rows `turn` paints at `width × height`, one string per row.
-fn rows_in(turn: &TurnView, facts: &TranscriptFacts, width: usize, height: usize) -> Vec<String> {
-    rendered(&transcript_rows(
-        std::slice::from_ref(turn),
-        facts,
-        width,
-        height,
-    ))
-}
-
-/// The step lines of `rows`: the rows under the block's own gutter, each of
-/// which a step's mark opens.
-fn step_lines(rows: &[String]) -> Vec<&String> {
-    rows.iter()
-        .filter(|row| row.starts_with("    ") && row.trim_start().starts_with("✓ "))
-        .collect()
-}
-
-/// Every step row of `rows`, in reading order: the lines a step paints, at any
-/// marking, under the block's gutter.
-fn step_rows(rows: &[String]) -> Vec<&String> {
-    rows.iter().filter(|row| row.starts_with("    ")).collect()
-}
 
 #[test]
 fn a_settled_turn_shows_a_line_for_every_step_with_what_it_ran() {
