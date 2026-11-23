@@ -226,7 +226,7 @@ pub(crate) const SHORTCUTS: &[Shortcut] = &[
     Shortcut {
         label: "↑, ↓",
         chords: &[UP, DOWN],
-        action: "scroll the body the screen withholds",
+        action: "point at an answer, then Enter gives it",
         group: Group::Navigation,
         when: When::Card,
     },

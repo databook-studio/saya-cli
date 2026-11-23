@@ -27,9 +27,10 @@ fn review(label: &str, size: Size) {
     panel.wait_for("? help", PAINT);
     panel.send_line(CALL);
     panel.wait_for("Approve job pty-job", DEADLINE);
-    // The proposal paints in more than one frame; the box is the last row to
-    // arrive, so the panel is complete when its title is on screen.
+    // The proposal paints in more than one frame, and a frame in more than one
+    // chunk: the capture is the settled screen, not a frame caught mid-write.
     panel.wait_for("Approve this job?", PAINT);
+    panel.settle();
 
     let screen = panel.screen();
     println!("---- {label} {}x{} ----\n{screen}", size.cols, size.rows);

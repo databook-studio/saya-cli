@@ -18,9 +18,12 @@ pub(crate) const DEADLINE: Duration = Duration::from_secs(120);
 /// second while it has something to say.
 pub(crate) const PAINT: Duration = Duration::from_secs(60);
 const IO_WAIT: Duration = Duration::from_millis(100);
+/// How long the screen must stay the same before a capture reads it: a frame
+/// arrives in chunks, and half a panel is not what an operator sees.
+pub(crate) const SETTLE: Duration = Duration::from_millis(600);
 const OUTPUT_LIMIT: usize = 256 * 1024;
 
-#[path = "approval_panel_pty/harness.rs"]
-pub(crate) mod harness;
 #[path = "approval_panel_pty/cases.rs"]
 mod cases;
+#[path = "approval_panel_pty/harness.rs"]
+pub(crate) mod harness;

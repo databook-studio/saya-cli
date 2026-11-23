@@ -44,10 +44,13 @@ fn a_call_that_waits_its_turn_rings_only_when_it_takes_the_card() {
         "the first call opens the card"
     );
 
-    let queued = update(&mut model, asked(crate::chat::Question {
-        id: 99,
-        ..shell_question()
-    }));
+    let queued = update(
+        &mut model,
+        asked(crate::chat::Question {
+            id: 99,
+            ..shell_question()
+        }),
+    );
     assert!(
         queued.is_empty(),
         "a call queued behind an open card is not news yet: {queued:?}"
@@ -56,7 +59,10 @@ fn a_call_that_waits_its_turn_rings_only_when_it_takes_the_card() {
     let cmds = update(&mut model, key(KeyCode::Char('y')));
     assert_eq!(
         cmds,
-        vec![Cmd::Answer(8, crate::agent::tools::consent::Answer::Once), Cmd::Bell],
+        vec![
+            Cmd::Answer(8, crate::agent::tools::consent::Answer::Once),
+            Cmd::Bell
+        ],
         "answering hands the card on, and the call that takes it rings"
     );
     assert!(

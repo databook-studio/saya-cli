@@ -297,7 +297,7 @@ fn typing_clears_the_focus_so_enter_cannot_consent_behind_a_draft() {
     update(&mut model, Msg::Key(key(KeyCode::Down)));
     assert_eq!(model.card_choice(), Some(0));
 
-    update(&mut model, Msg::Key(key(KeyCode::Char('n'))));
+    update(&mut model, Msg::Key(key(KeyCode::Char('c'))));
     assert!(
         model.card_choice().is_none(),
         "a typed character is the composer's, and drops the focus"

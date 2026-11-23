@@ -48,7 +48,7 @@ fn a_shell_call_asks_about_a_command_and_shows_it_whole() {
     );
     assert_eq!(
         labels(&card),
-        "[y] Allow once\n[s] Allow for this session · shell:python3 -m\n[n] Deny\n[Esc] Deny",
+        "[y] Allow once\n[s] Allow for this session · shell:python3\n[n] Deny\n[Esc] Deny",
         "the answers are one per line, the session grant naming what it covers"
     );
 }
@@ -227,13 +227,13 @@ fn a_clarification_offers_its_field_and_no_choices() {
 }
 
 #[test]
-fn a_call_the_panel_cannot_place_still_offers_every_answer() {
-    let card = approval(&ungranted_question(), NO_FOLDER, SCREEN_ROWS);
+fn a_call_with_no_bound_folder_names_only_what_it_has() {
+    let card = approval(&write_question(), NO_FOLDER, SCREEN_ROWS);
+
     assert_eq!(
-        card.place().map(|place| place.contains("~/shop")),
-        Some(false),
-        "an unbound launch names no folder it does not have: {:?}",
-        card.place()
+        card.place(),
+        Some("inside the workspace"),
+        "an unbound launch names no folder it does not have"
     );
-    assert_eq!(card.title(), "Allow this command?");
+    assert_eq!(card.title(), "Allow this file change?");
 }

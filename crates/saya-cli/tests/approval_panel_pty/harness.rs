@@ -5,7 +5,7 @@
 //! reports the screen the terminal came out with (`vt100`, the same parser the
 //! rest of the pty suite reads).
 
-use super::{IO_WAIT, OUTPUT_LIMIT};
+use super::{IO_WAIT, OUTPUT_LIMIT, PAINT, SETTLE};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::{
     fs,
@@ -33,10 +33,7 @@ pub(crate) const WIDE: Size = Size {
 };
 
 /// 60x24, the narrow screen the panel must stay readable on.
-pub(crate) const NARROW: Size = Size {
-    cols: 60,
-    rows: 24,
-};
+pub(crate) const NARROW: Size = Size { cols: 60, rows: 24 };
 
 /// The scratch folder a case owns, removed when it is dropped.
 struct Root(PathBuf);
@@ -141,8 +138,31 @@ impl Panel {
     pub(crate) fn send_line(&mut self, line: &str) {
         let mut bytes = line.as_bytes().to_vec();
         bytes.push(b'\r');
-        self.writer.write_all(&bytes).expect("the line reaches the pty");
+        self.writer
+            .write_all(&bytes)
+            .expect("the line reaches the pty");
         self.writer.flush().expect("the line is flushed");
+    }
+
+    /// Drains the pty until the screen has stopped changing: a frame is written
+    /// in more than one chunk, and a capture taken between them would show half
+    /// a panel. What a test reads is the settled screen an operator sees.
+    pub(crate) fn settle(&mut self) {
+        let mut previous = self.screen();
+        let mut stable = Instant::now();
+        let started = Instant::now();
+        while stable.elapsed() < SETTLE && started.elapsed() < PAINT {
+            self.pump();
+            let now = self.screen();
+            if now != previous {
+                previous = now;
+                stable = Instant::now();
+            }
+        }
+        assert!(
+            started.elapsed() < PAINT,
+            "the screen never settled; screen:\n{previous}"
+        );
     }
 
     /// Waits until `needle` is on screen, draining the pty as it goes.
@@ -175,7 +195,10 @@ impl Panel {
             Ok(bytes) if bytes.is_empty() => {}
             Ok(bytes) => {
                 self.raw.extend_from_slice(&bytes);
-                assert!(self.raw.len() <= OUTPUT_LIMIT, "the pty transcript is bounded");
+                assert!(
+                    self.raw.len() <= OUTPUT_LIMIT,
+                    "the pty transcript is bounded"
+                );
                 self.parser.process(&bytes);
             }
             Err(_) => {}

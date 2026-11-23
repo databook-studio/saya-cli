@@ -74,8 +74,8 @@ fn a_jobs_call_queues_behind_the_open_card_and_shows_once_it_is_answered() {
     let cmds = update(&mut model, press(KeyCode::Char('y')));
     assert_eq!(
         cmds,
-        vec![Cmd::Answer(1, Answer::Once)],
-        "the first card is answered first"
+        vec![Cmd::Answer(1, Answer::Once), Cmd::Bell],
+        "the first card is answered first, and the call behind it rings as it takes the card"
     );
     assert_eq!(
         model.card().map(|card| card.id),

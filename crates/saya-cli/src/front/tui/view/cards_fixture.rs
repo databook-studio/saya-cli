@@ -94,7 +94,7 @@ pub(crate) fn scope_question() -> Question {
 /// break it where the cells run out.
 pub(crate) fn long_path_question() -> Question {
     Question {
-        facts: format!("path: src/{}/pricing.py", "component/".repeat(6)),
+        facts: format!("path: src/{}/pricing.py", "component/".repeat(20)),
         ..write_question()
     }
 }

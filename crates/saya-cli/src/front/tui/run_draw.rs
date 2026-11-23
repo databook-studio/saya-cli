@@ -29,6 +29,11 @@ use super::view::{
     rows as composer_rows, status_line, transcript_rows,
 };
 
+/// The spare rows a screen must have beyond the panel before it is centred
+/// rather than docked: below this the panel belongs where the operator's eye
+/// already is, and the rows are the transcript's.
+const TALL_ROWS: usize = 20;
+
 /// What a frame is painted with, besides the model: the token column and glyph
 /// set the session was launched under, how long the running turn has run, and
 /// the two launch facts the model does not hold — whether a provider answers,
@@ -114,7 +119,13 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
         paint(
             frame,
             area,
-            run_draw_card::card(model, facts, frame.area().height, area.width, area.height as usize),
+            run_draw_card::card(
+                model,
+                facts,
+                frame.area().height,
+                area.width,
+                area.height as usize,
+            ),
             facts.charset,
         );
     }
@@ -140,9 +151,16 @@ pub(crate) fn regions(model: &Model, facts: &Facts, area: Rect) -> Regions {
         .max(1);
     let spare = height.saturating_sub(1 + composer);
     let card = run_draw_card::rows(model, facts, column.height, column.width, spare).min(spare);
-    let [transcript, status, docked, composer] = Layout::vertical([
+    // A tall screen lifts the panel off the status line instead of crowding it.
+    // The gap is only taken from a screen with rows to burn: the transcript
+    // keeps everything else, a short screen docks the panel where the
+    // operator's eye already is, and either way the panel closes on the
+    // composer's first row.
+    let lift = centring(spare, card);
+    let [transcript, status, _gap, docked, composer] = Layout::vertical([
         Constraint::Min(0),
         Constraint::Length(1),
+        Constraint::Length(lift as u16),
         Constraint::Length(card as u16),
         Constraint::Length(composer as u16),
     ])
@@ -153,6 +171,18 @@ pub(crate) fn regions(model: &Model, facts: &Facts, area: Rect) -> Regions {
         card: (card > 0).then_some(docked),
         composer,
     }
+}
+
+/// The blank rows a tall screen leaves between the status line and the panel.
+/// A screen with room to spare for the transcript keeps the panel docked; one
+/// with rows to burn centres it in the room above the composer, which is the
+/// design's "centred on a tall terminal": the panel is never crowded against
+/// the status line, and it still closes on the composer's first row.
+fn centring(spare: usize, card: usize) -> usize {
+    if card == 0 || spare < card + TALL_ROWS {
+        return 0;
+    }
+    (spare - card) / 2
 }
 
 /// `02` §1's content column: one cell of gutter on each side.

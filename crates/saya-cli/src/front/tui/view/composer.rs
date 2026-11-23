@@ -72,6 +72,11 @@ pub(crate) fn search_prompt(model: &Model) -> Option<String> {
 pub(crate) fn state(model: &Model) -> State {
     if model.is_read_only_record() {
         State::ReadOnlyRecord
+    } else if model.card().is_some() {
+        // A call waiting for an answer owns the surface: the composer is
+        // where the next message would go, and nothing goes anywhere until
+        // the call is answered.
+        State::Disabled
     } else if model.is_paused() {
         State::Paused
     } else if model.queued().is_some() {
@@ -94,7 +99,7 @@ pub(crate) fn title(state: State) -> &'static str {
         | State::ReadOnlyRecord => "Message",
         State::TurnRunning => "Message (queued on Enter)",
         State::OneQueued => "Queued",
-        State::Disabled => "Message",
+        State::Disabled => "Message (disabled — answer the approval above)",
     }
 }
 
@@ -116,7 +121,7 @@ pub(crate) fn placeholder(model: &Model) -> String {
         State::ReadOnlyRecord => {
             "This is a 0.5.0 session — your next message starts a new run".to_owned()
         }
-        State::Disabled => "Ask about the approval above".to_owned(),
+        State::Disabled => "Answer the approval above to type again".to_owned(),
     }
 }
 
@@ -134,7 +139,7 @@ pub(crate) fn hint(state: State, width: usize) -> &'static str {
         State::OneQueued => QUEUED_HINT,
         State::Paused => "Enter continue · /status",
         State::ReadOnlyRecord => "Enter send",
-        State::Disabled => "Enter send · Ctrl+K commands",
+        State::Disabled => "y allow once · s this session · n deny · Esc deny",
     }
 }
 

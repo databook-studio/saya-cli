@@ -34,6 +34,11 @@ pub(crate) struct Model {
     /// The run's jobs, as the job plumbing reports them (`02` §8): the drawer's
     /// rows, kept current whether or not the drawer is open.
     pub(crate) jobs: Drawer,
+    /// The answer the operator's arrows point at while a card is open: `None`
+    /// until an arrow press lands on the first answer, and `None` again as soon
+    /// as a character is typed — the composer's Enter must never become a
+    /// consent by accident.
+    pub(crate) card_choice: Option<usize>,
     /// The mode the run's next call reads, and whether this process allows
     /// `bypass` at all — the key cycle skips what the configuration withholds.
     pub(crate) mode: PermissionMode,
@@ -169,12 +174,14 @@ impl Model {
         self.card = Some(card);
         self.card_full = false;
         self.card_scroll = 0;
+        self.card_choice = None;
     }
 
     /// Takes the open card, if one is waiting for an answer.
     pub(crate) fn take_card(&mut self) -> Option<Question> {
         self.card_full = false;
         self.card_scroll = 0;
+        self.card_choice = None;
         self.card.take()
     }
 

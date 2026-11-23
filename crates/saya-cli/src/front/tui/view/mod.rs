@@ -53,6 +53,9 @@ mod blocks;
 mod blocks_question;
 mod blocks_stop;
 pub(crate) mod cards;
+mod cards_body;
+mod cards_choices;
+mod cards_family;
 mod composer;
 mod composer_frame;
 mod empty;
@@ -100,7 +103,7 @@ pub(crate) use composer::{
     state, title,
 };
 #[allow(unused_imports)]
-pub(crate) use composer_frame::rows;
+pub(crate) use composer_frame::{fit, pad, rows};
 #[allow(unused_imports)]
 pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]

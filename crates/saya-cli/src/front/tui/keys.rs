@@ -51,6 +51,9 @@ pub(crate) enum Intent {
     ScrollCard(isize),
     /// Walk the answers the open card offers, a negative count moving up.
     FocusChoice(isize),
+    /// Give the answer an arrow press pointed at, and nothing at all when none
+    /// is pointed at.
+    AnswerFocused,
     /// Walk the mode cycle to its next member.
     CycleMode,
     /// Move the mode picker's selection one row up.
@@ -154,6 +157,10 @@ pub(crate) fn intent(model: &Model, key: KeyEvent) -> Option<Intent> {
 fn card_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
+        // Enter is the composer's unless the operator has pointed at an answer
+        // with the arrows: only then is it one of the card's own keys, and the
+        // press cannot be a draft's.
+        KeyCode::Enter if model.card_choice().is_some() => Some(Intent::AnswerFocused),
         KeyCode::BackTab => Some(Intent::Refused(CARD_HOLDS_MODE)),
         KeyCode::Tab if shift => Some(Intent::Refused(CARD_HOLDS_MODE)),
         _ => match cards_keys::card_intent(model.card()?, key) {

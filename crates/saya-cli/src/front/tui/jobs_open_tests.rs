@@ -165,7 +165,11 @@ fn a_consent_queued_behind_an_open_card_waits_its_turn() {
 
     // Answering the open card hands the slot on, in arrival order.
     let cmds = update(&mut model, press(KeyCode::Char('y')));
-    assert_eq!(cmds, vec![Cmd::Answer(1, Answer::Once)]);
+    assert_eq!(
+        cmds,
+        vec![Cmd::Answer(1, Answer::Once), Cmd::Bell],
+        "answering hands the card on, and the call that takes it rings"
+    );
     assert_eq!(
         model.card().map(|card| card.id),
         Some(7),

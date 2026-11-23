@@ -14,11 +14,27 @@
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::view::cards::{Choice, choices_of, family_of};
 use crate::agent::tools::consent::Answer;
 use crate::chat::Question;
 
 /// How far one page key moves the card's body, in rows.
 pub(crate) const CARD_PAGE_ROWS: isize = 6;
+
+/// The answers the card `question` puts offers, in the order it shows them.
+pub(crate) fn answers(question: &Question) -> Vec<Choice> {
+    choices_of(question, family_of(question))
+}
+
+/// The answer a choice's key gives, as the same press on the keyboard gives it.
+pub(crate) fn answer_of(key: &str) -> Option<Answer> {
+    match key {
+        "y" => Some(Answer::Once),
+        "s" => Some(Answer::Session),
+        "n" | "Esc" => Some(Answer::Deny),
+        _ => None,
+    }
+}
 
 /// What one press means to the open card.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,30 +1,41 @@
-//! The card docked above the composer: the call the operator has to answer,
+//! The panel docked above the composer: the call the operator has to answer,
 //! as the rows a pane paints.
 //!
 //! Strings only — no widget, no colour, no clock — so a test asserts the words
 //! without a terminal (the same rule the transcript's `steps.rs` follows).
 //!
-//! One thing this module must never do is reword the call: the body is the
-//! question's own facts, line for line, because the operator is answering for
-//! the bytes they read and nothing else.
+//! One thing this module must never do is reword the call: the block is the
+//! question's own bytes, line for line, because the operator is answering for
+//! the bytes they read and nothing else. What the module decides is how loudly
+//! that call is put — a title that names what is being allowed, a place line,
+//! and the answers one per line — never what is asked or what an answer grants.
 
-use crate::agent::tools::coding::plan_gate;
-use crate::agent::tools::consent::Caller;
+use super::cards_body::{self, Parts};
+use super::cards_choices;
+use super::cards_family;
 use crate::chat::Question;
-use crate::interactive::tui::wrap::cell_width;
 
-/// The most body rows a docked card shows at the design's 80x24.
+use crate::interactive::tui::wrap::cell_width;
+pub(crate) use cards_choices::choices as choices_of;
+pub(crate) use cards_family::family as family_of;
+
+/// The most body rows a docked card shows at the design's 80x24: the panel's
+/// chrome — title, place, answers and borders — takes the rows above and below,
+/// and the call itself gets six.
 pub(crate) const BODY_ROWS: usize = 6;
 
 /// The rows a card's chrome needs on a screen, so the body gets what is left.
 const CHROME_ROWS: usize = 18;
+
+/// What the panel's last row says the keys do.
+pub(crate) const HINT: &str = "↑↓ choose · Enter answer";
 
 /// Which of the three cards this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     /// A call with an effect, put to the operator.
     Approval,
-    /// The plan gate's ask: the plan is the body, and the answers open or
+    /// The plan gate's ask: the plan is the block, and the answers open or
     /// keep closed the write surface.
     Plan,
     /// A clarification: the model's own question, answered by typing.
@@ -71,7 +82,7 @@ pub(crate) struct Card {
     family: Family,
     title: String,
     /// The call's own bytes, verbatim and complete.
-    body: Vec<String>,
+    target: Vec<String>,
     place: Option<String>,
     choices: Vec<Choice>,
     /// The body rows this card may show before `v` opens the rest.
@@ -89,17 +100,17 @@ impl Card {
         self.family
     }
 
-    /// The title.
+    /// The title: what is being allowed, and which of how many this is.
     pub(crate) fn title(&self) -> &str {
         &self.title
     }
 
     /// The call's own bytes, verbatim.
     pub(crate) fn target(&self) -> &[String] {
-        &self.body
+        &self.target
     }
 
-    /// Where the call runs, when the card can say.
+    /// Where the call runs, when the panel can say.
     pub(crate) fn place(&self) -> Option<&str> {
         self.place.as_deref()
     }
@@ -109,20 +120,12 @@ impl Card {
         &self.choices
     }
 
-    /// The rows the body shows: `full` shows all of it.
-    pub(crate) fn shown_rows(&self, full: bool, _room: usize) -> Vec<String> {
-        if full {
-            return self.body.clone();
-        }
-        self.body[..self.cap.min(self.body.len())].to_vec()
+    /// What the panel's last row says the keys do.
+    pub(crate) const fn hint(&self) -> &'static str {
+        HINT
     }
 
-    /// How many body rows the cap withholds.
-    pub(crate) fn withheld(&self, _room: usize) -> usize {
-        self.body.len().saturating_sub(self.cap)
-    }
-
-    /// The answer field of a clarification card, as its placeholder.
+    /// The answer field's placeholder, on a card whose answer is typed.
     pub(crate) fn field(&self) -> Option<&str> {
         if self.kind == Kind::Question {
             Some("Type a number or your own answer")
@@ -130,72 +133,81 @@ impl Card {
             None
         }
     }
-}
 
-/// The approval card for `question`.
-pub(crate) fn approval(question: &Question, _folder: Option<&str>, screen_rows: u16) -> Card {
-    let kind = kind_of(question);
-    let title = match kind {
-        Kind::Plan => format!("Approve plan? · {}", question.caller),
-        Kind::Approval => format!("Approve? · {}", question.caller),
-        Kind::Question => String::from("Question"),
-    };
-    Card {
-        kind,
-        family: Family::Other,
-        title,
-        body: rows(&question.facts),
-        place: None,
-        choices: Vec::new(),
-        cap: body_cap(screen_rows),
+    /// The rows the block shows at `room` cells: wrapped, never cut, and a
+    /// prefix of the call itself unless `full`.
+    pub(crate) fn shown_rows(&self, full: bool, room: usize) -> Vec<String> {
+        let wrapped = cards_body::wrap(&self.target, room);
+        if full {
+            return wrapped;
+        }
+        wrapped[..self.cap.min(wrapped.len())].to_vec()
+    }
+
+    /// How many rows the cap withholds, so `v` knows whether it has anything to
+    /// open.
+    pub(crate) fn withheld(&self, room: usize) -> usize {
+        cards_body::wrap(&self.target, room)
+            .len()
+            .saturating_sub(self.cap)
     }
 }
 
-/// The approval card of a call that is one of `waiting` in the queue.
+/// The approval card for `question`: its family's title, the call's own bytes,
+/// where it runs, and the answers it offers.
+pub(crate) fn approval(question: &Question, folder: Option<&str>, screen_rows: u16) -> Card {
+    approval_waiting(question, folder, screen_rows, 1)
+}
+
+/// The approval card of a call that is one of `waiting`, oldest on the card.
 pub(crate) fn approval_waiting(
     question: &Question,
     folder: Option<&str>,
     screen_rows: u16,
-    _waiting: usize,
+    waiting: usize,
 ) -> Card {
-    approval(question, folder, screen_rows)
+    let family = cards_family::family(question);
+    let Parts { target, in_facts } = cards_body::parts(&question.facts, family);
+    Card {
+        kind: kind_of(family),
+        family,
+        title: cards_family::title(family, waiting.max(1)),
+        place: cards_family::place(family, in_facts, folder),
+        target,
+        choices: cards_choices::choices(question, family),
+        cap: body_cap(screen_rows),
+    }
 }
 
-/// The clarification card for `text`.
+/// The clarification card for `text`: the model's question as the block and the
+/// field the answer is typed into — the answer is the next turn, so no key of
+/// the card's own grants anything.
 pub(crate) fn clarification(text: &str, screen_rows: u16) -> Card {
     Card {
         kind: Kind::Question,
         family: Family::Other,
         title: String::from("Question"),
-        body: rows(text),
+        target: text.split('\n').map(str::to_owned).collect(),
         place: None,
         choices: Vec::new(),
         cap: body_cap(screen_rows),
     }
 }
 
-/// The body rows a card of `screen_rows` total rows may spend.
+/// The body rows a card of `screen_rows` total rows may spend: what the panel's
+/// chrome leaves, and never more than [`BODY_ROWS`]. At 80x24 that is exactly
+/// the design's six.
 fn body_cap(screen_rows: u16) -> usize {
     (screen_rows as usize)
         .saturating_sub(CHROME_ROWS)
         .clamp(1, BODY_ROWS)
 }
 
-/// Which card an approval-shaped question is.
-fn kind_of(question: &Question) -> Kind {
-    if question.caller.contains(&plan_line()) {
+/// Which card a family is: the plan gate's ask has answers of its own.
+fn kind_of(family: Family) -> Kind {
+    if family == Family::Plan {
         Kind::Plan
     } else {
         Kind::Approval
     }
-}
-
-/// `text` as body rows, verbatim: one row per line, empty lines kept.
-fn rows(text: &str) -> Vec<String> {
-    text.split('\n').map(str::to_owned).collect()
-}
-
-/// The plan gate's line, as the card reads it.
-fn plan_line() -> String {
-    plan_gate::line(&Caller::Session)
 }

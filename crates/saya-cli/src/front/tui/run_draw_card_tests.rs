@@ -59,7 +59,7 @@ fn the_panel_is_a_full_width_box_docked_above_the_composer() {
         "the panel opens with a rule: {top:?}"
     );
     assert_eq!(
-        top.chars().count(),
+        top.trim().chars().count(),
         98,
         "the panel spans the content column: {top:?}"
     );
@@ -109,7 +109,7 @@ fn twenty_four_rows_keep_every_choice_and_the_whole_command() {
     );
     let top = row_of(&rows, "Allow this query?");
     assert_eq!(
-        rows[top].chars().count(),
+        rows[top].trim().chars().count(),
         58,
         "the panel is the content column's width: {:?}",
         rows[top]
@@ -171,18 +171,28 @@ fn an_ascii_panel_draws_only_seven_bit_bytes() {
 }
 
 #[test]
-fn a_tall_screen_centres_the_panel_away_from_the_composer() {
+fn a_tall_screen_gives_the_panel_room_instead_of_crowding_the_status_line() {
     let (model, facts) = waiting(shell_question());
-    let rows = painted(&model, &facts, 100, 44);
-    let composer = row_of(&rows, "╭ Message");
-    let close = rows
-        .iter()
-        .rposition(|row| row.contains('╰') && row.contains("choose"))
-        .unwrap_or_else(|| panic!("the panel's closing rule: {rows:#?}"));
+    let tall = painted(&model, &facts, 100, 44);
+    let status = row_of(&tall, "? help");
+    let top = row_of(&tall, "Allow this command?");
+    let composer = row_of(&tall, "╭ Message");
 
     assert!(
-        composer > close + 1,
-        "a tall screen leaves room between the panel and the composer: {rows:#?}"
+        top > status + 1,
+        "a tall screen leaves blank rows above the panel: {tall:#?}"
+    );
+    assert_eq!(
+        composer,
+        row_of(&tall, "╰ ↑↓ choose") + 1,
+        "and the panel is still docked directly above the composer"
+    );
+
+    let short = painted(&model, &facts, 100, 30);
+    assert_eq!(
+        row_of(&short, "Allow this command?"),
+        row_of(&short, "? help") + 1,
+        "a short screen docks the panel under the status line, where the eye is: {short:#?}"
     );
 }
 
@@ -195,11 +205,19 @@ fn the_focused_choice_is_marked() {
         "no choice is focused until an arrow is pressed: {rows:#?}"
     );
 
+    // The first press lands on the first answer; the next walks on.
+    model.move_choice(1);
+    let rows = painted(&model, &facts, 100, 30);
+    assert!(
+        row_of(&rows, "▸ [y] Allow once") > row_of(&rows, "Allow this command?"),
+        "the first answer is the marked one: {rows:#?}"
+    );
+
     model.move_choice(1);
     let rows = painted(&model, &facts, 100, 30);
     let marked = row_of(&rows, "▸ [s] Allow for this session");
     assert!(
         marked > row_of(&rows, "[y] Allow once"),
-        "the second choice is the focused one: {rows:#?}"
+        "the second answer is the marked one now: {rows:#?}"
     );
 }
