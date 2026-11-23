@@ -48,7 +48,13 @@ fn inside(row: &Row) -> String {
 pub(super) fn model_in(when: When) -> Model {
     let mut model = Model::default();
     match when {
-        When::Card | When::CardGrant => model.show_card(shell_question()),
+        // A card is open with its panel holding the keyboard, and its arrows
+        // have pointed at an answer: the one state in which every key the
+        // approvals group lists — Enter among them — answers the call.
+        When::Card | When::CardGrant => {
+            model.show_card(shell_question());
+            model.move_choice(1);
+        }
         When::Composer => {}
         When::Queued => {
             model.start_turn();

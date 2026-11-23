@@ -14,7 +14,10 @@ use saya_store::{FsSessionStore, SqliteStateStore};
 /// commands, which answer for their names in `/help`, and everything the
 /// operations read or move.
 pub(crate) struct OpsDeps {
-    pub(crate) chat: ChatOps,
+    /// The chat layer's own operations, over the run the session is on now: a
+    /// rollover replaces that run, and the table is re-stated with it
+    /// ([`OpsDeps::restate`]).
+    chat: Mutex<ChatOps>,
     pub(crate) commands: UserCommands,
     /// The configuration this surface runs on, as `/reload` leaves it: the
     /// profile list `/connections` names is read here, never cached.
@@ -70,7 +73,7 @@ impl OpsDeps {
         parts: OpsParts,
     ) -> Self {
         Self {
-            chat,
+            chat: Mutex::new(chat),
             commands,
             runtime,
             state,
@@ -83,6 +86,17 @@ impl OpsDeps {
             universe: parts.universe,
             recovery: parts.recovery,
         }
+    }
+
+    /// The chat layer's table, as the run the session is on now states it.
+    pub(crate) fn chat(&self) -> MutexGuard<'_, ChatOps> {
+        self.chat.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Re-states the table over the run a rollover prepared: its port and the
+    /// mode cell its commands move are the new run's, never the closed one's.
+    pub(crate) fn restate(&self, chat: ChatOps) {
+        *self.chat() = chat;
     }
 
     /// The session's state, with a poisoned lock read as the value it last held:

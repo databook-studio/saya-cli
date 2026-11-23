@@ -3,6 +3,7 @@
 //! taller than the screen.
 
 use super::help::{self, Context};
+use super::help_fixture::{idle, words};
 use crate::interactive::tui::wrap::cell_width;
 
 /// The sheet's inner rows, without its border cells.
@@ -88,6 +89,29 @@ fn every_key_the_surface_answers_is_listed() {
         "x",
     ] {
         assert!(rows.contains(key), "the sheet lists {key:?}: {rows}");
+    }
+}
+
+#[test]
+fn the_approvals_group_lists_every_key_the_panel_answers() {
+    let sheet = words(idle(), 120, 70).join("\n");
+
+    for key in ["Tab", "↑, ↓", "Enter", "y, a", "s", "n, d", "Esc", "v"] {
+        assert!(
+            sheet.contains(key),
+            "the sheet lists the panel's {key:?}: {sheet}"
+        );
+    }
+    for words in [
+        "give the keyboard to the panel, or back",
+        "choose an answer",
+        "give the answer the arrows point at",
+        "open the full details, or fold them back",
+    ] {
+        assert!(
+            sheet.contains(words),
+            "the approvals group says what the panel's keys do ({words:?}): {sheet}"
+        );
     }
 }
 

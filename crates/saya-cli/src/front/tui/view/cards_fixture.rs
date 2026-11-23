@@ -58,6 +58,56 @@ pub(crate) fn ungranted_question() -> Question {
     }
 }
 
+/// A workspace write, as the operator puts it: the path the call touches.
+pub(crate) fn write_question() -> Question {
+    Question {
+        id: 11,
+        caller: Caller::Session.line("Change a workspace file", "change a workspace file"),
+        facts: "path: src/pricing.py".to_owned(),
+        grant: Some("workspace-write".to_owned()),
+    }
+}
+
+/// A page fetch, as the operator puts it: the URL it reaches.
+pub(crate) fn web_question() -> Question {
+    Question {
+        id: 12,
+        caller: Caller::Session.line("Fetch a web page", "fetch a web page"),
+        facts: "GET https://example.invalid/pricing".to_owned(),
+        grant: Some("fetch:example.invalid".to_owned()),
+    }
+}
+
+/// A coding job's start consent (TX5): the scope it asks for, as one body —
+/// the human lines, then the proposal's own bytes on the last line, exactly as
+/// `interactive::tui::coding::consent` states them.
+pub(crate) fn scope_question() -> Question {
+    Question {
+        id: 13,
+        caller: String::from("pty-job"),
+        facts: "Approve job pty-job with this exact scope:\ntask: tighten the pricing tests\n\
+                write: a.txt, b.txt\nUse `/job approve pty-job` or `/job deny pty-job`.\n\
+                {\"job_id\":\"pty-job\",\"operation\":\"start\",\"plan_sha256\":\"00\"}"
+            .to_owned(),
+        grant: None,
+    }
+}
+
+/// A path long enough to pass any panel's width: one token, so a wrap can only
+/// break it where the cells run out.
+pub(crate) fn long_path_question() -> Question {
+    Question {
+        facts: format!("path: src/{}/pricing.py", "component/".repeat(20)),
+        ..write_question()
+    }
+}
+
+/// The folder the launch bound, as the panel is handed it.
+pub(crate) const FOLDER: Option<&str> = Some("~/shop");
+
+/// A launch that bound no workspace.
+pub(crate) const NO_FOLDER: Option<&str> = None;
+
 /// The plan gate's ask: the plan itself as the body, and no token, because no
 /// grant pre-answers a plan.
 pub(crate) fn plan_question() -> Question {

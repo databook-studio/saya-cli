@@ -153,14 +153,21 @@ fn narrow_frames_keep_every_caveat_and_every_answering_key() {
         let screen = rows.join("\n");
         if width == 80 {
             assert!(
-                screen.contains("unsandboxed"),
+                screen.contains("on your machine, not sandboxed"),
                 "{width}x{height}: the approval card states the host lane: {screen}"
             );
         }
-        for key in ["y allow once", "shell:python3", "n deny", "v view"] {
+        for key in [
+            "[y] Allow once",
+            "[s] Allow for this session",
+            "shell:python3",
+            "[n] Deny",
+            "[Esc] Deny",
+            "v full details",
+        ] {
             assert!(
                 screen.contains(key),
-                "{width}x{height}: the card's keys row says {key:?}: {screen}"
+                "{width}x{height}: the panel says {key:?}: {screen}"
             );
         }
     }
@@ -204,25 +211,30 @@ fn every_ascii_frame_is_seven_bit() {
     }
 }
 
-/// The card is the one pane whose asking line and keys are two rows: the sample
-/// says so, which is what makes the narrow-frame assertion above about the keys
-/// row rather than a clipped tail.
+/// The card is the one pane whose call and answers are their own rows: the
+/// sample says so, which is what makes the narrow-frame assertion above about
+/// the panel rather than a clipped tail.
 #[test]
-fn the_card_states_its_reason_and_its_keys_on_separate_rows() {
+fn the_card_states_the_call_and_its_answers_on_separate_rows() {
     let rows = a11y_fixture::render(Pane::Card, Scheme::NoColour, Charset::Utf8);
-    let because = rows
+    let place = rows
         .iter()
-        .position(|row| row.starts_with("asked because:"))
-        .expect("the card says why it is asked");
-    let keys = rows
+        .position(|row| row.starts_with("in "))
+        .expect("the card says where the call runs");
+    let command = rows
         .iter()
-        .position(|row| row.starts_with("y allow once"))
+        .position(|row| row.starts_with("$ "))
+        .expect("the card states the command");
+    let allow = rows
+        .iter()
+        .position(|row| row.starts_with("[y] Allow once"))
         .expect("the card says how it is answered");
-    assert!(because < keys, "the reason sits above the keys: {rows:#?}");
+    assert!(place < command, "the place sits above the call: {rows:#?}");
+    assert!(command < allow, "and the answers under it: {rows:#?}");
     assert!(
-        !rows[because].contains("n deny"),
-        "the reason row carries no key: {:?}",
-        rows[because]
+        !rows[command].contains("[n]"),
+        "the call's row carries no answer: {:?}",
+        rows[command]
     );
 }
 

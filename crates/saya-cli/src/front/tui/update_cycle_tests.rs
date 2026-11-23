@@ -127,7 +127,9 @@ fn a_card_holds_the_switch_with_one_pinned_toast() {
     // `/mode` typed behind the card opens no picker: a pane never opens over a
     // card that is waiting for an answer, and what the composer holds is the
     // operator's own line — here the turn `/mode` is (K2 gives it its
-    // argument).
+    // argument). `Tab` puts the keyboard in the composer first (UI3): the card
+    // answers only while it has it.
+    update(&mut model, press(KeyCode::Tab));
     model.insert("/mode");
     let enter_cmds = update(&mut model, enter());
     assert_eq!(

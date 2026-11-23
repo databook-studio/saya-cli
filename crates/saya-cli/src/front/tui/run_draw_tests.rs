@@ -53,7 +53,7 @@ fn the_frame_stacks_the_transcript_the_status_line_the_card_and_the_composer() {
     let rows = painted(&model, &Facts::default(), 100, 30);
     let question = row_of(&rows, "how many orders did we get?");
     let status = row_of(&rows, "help");
-    let card = row_of(&rows, "Approve? · the shell tool");
+    let card = row_of(&rows, "Allow this call?");
     let body = row_of(&rows, "cargo test");
     let composer = row_of(&rows, "╭ Message");
     assert!(question < status, "the transcript is above the status line");
@@ -66,7 +66,7 @@ fn the_frame_stacks_the_transcript_the_status_line_the_card_and_the_composer() {
         "the box's three rows close the screen"
     );
     assert!(
-        rows.iter().any(|row| row.contains("y allow once")),
+        rows.iter().any(|row| row.contains("[y] Allow once")),
         "the card says how it is answered"
     );
 }

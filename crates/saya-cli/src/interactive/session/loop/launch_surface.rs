@@ -27,9 +27,9 @@ use crate::interactive::session::line_chat::open_surface;
 
 /// What a launch hands the surface: the session its run is composed from, and
 /// the record the one opener reads the resume decision from.
-pub(super) struct Composed {
-    pub(super) parts: crate::interactive::session::line_chat::LineSession,
-    pub(super) record: saya_store::RedactedSession,
+pub(crate) struct Composed {
+    pub(crate) parts: crate::interactive::session::line_chat::LineSession,
+    pub(crate) record: saya_store::RedactedSession,
 }
 
 /// Everything the surface is started with: the session it opens, the model it
@@ -99,14 +99,25 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
         // loaded once, here at launch, so the first `↑` recalls the lines an
         // earlier session submitted (`SAYA_HISTORY` still turns it off).
         model.open_history();
-        if let Some(skipped) = opened.skipped_primary()
-            && model.database.as_deref() == Some(skipped)
+        // The line the surface drives: the run the launch opened, and the
+        // transcript, compaction and rollover the line front holds — so a
+        // `/clear`, a `/compact` or a `/rotate` moves the run the operator is
+        // talking to, and a turn waits for one that is still running.
+        let allow_bypass = model.allow_bypass;
+        let line = Arc::new(crate::front::tui::line_surface::SurfaceLine::new(
+            opened.into_line(),
+            Arc::clone(&front),
+        ));
+        if let Some(skipped) = line.skipped_primary()
+            && model.database.as_deref() == Some(skipped.as_str())
         {
             model.database = None;
         }
-        let allow_bypass = model.allow_bypass;
         let deps = Arc::new(OpsDeps::new(
-            crate::chat::ChatOps::new(opened.run_port(), opened.context(allow_bypass)),
+            crate::chat::ChatOps::new(
+                line.run_port().expect("the launch's run has a port"),
+                line.context(allow_bypass).expect("the launch's run has a mode cell"),
+            ),
             commands.clone(),
             Arc::clone(&live),
             Arc::clone(&state),
@@ -117,8 +128,7 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
             msgs,
             queue,
             front,
-            session: opened.chat(),
-            ops: opened.context(allow_bypass),
+            line,
             deps,
             direct,
             jobs,
@@ -137,7 +147,7 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
 /// The session this surface's run is composed from: the session's own folder,
 /// mode, overrides, grants, budget and seed — every fact the plain loop's first
 /// message states, stated here once — and the record that message's opener reads.
-pub(super) fn surface_parts(
+pub(crate) fn surface_parts(
     state: &crate::interactive::session::state::SessionState,
     session: &crate::interactive::session::runtime::SessionRuntime,
     runtime: &crate::config::runtime::RuntimeConfig,

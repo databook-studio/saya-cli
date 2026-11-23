@@ -60,33 +60,37 @@ impl Model {
     }
 
     /// Folds one word from the job's plumbing: the list as it now is, or one
-    /// call the job puts to the operator.
-    pub(crate) fn note_jobs(&mut self, report: JobReport) {
+    /// call the job puts to the operator. True when that call took the card —
+    /// the surface rings the bell then, and only then.
+    pub(crate) fn note_jobs(&mut self, report: JobReport) -> bool {
         match report {
             JobReport::Listed(rows) => {
                 self.jobs.rows = rows;
                 self.jobs.selected = self.jobs.selected();
+                false
             }
             JobReport::Ask { job, question } => {
                 self.owe(&job, question.id);
-                self.ask(question);
+                self.ask(question)
             }
         }
     }
 
     /// Puts one call to the operator: on the card when none is open, and behind
-    /// the open one otherwise — in the order the asks arrived.
-    pub(crate) fn ask(&mut self, question: Question) {
+    /// the open one otherwise — in the order the asks arrived. True when the
+    /// call took the card.
+    pub(crate) fn ask(&mut self, question: Question) -> bool {
         if self.card.is_some() {
             self.held.push(question);
-            return;
+            return false;
         }
         self.show_card(question);
+        true
     }
 
     /// One card answered: the job that owed that call no longer waits on it, and
-    /// the next ask takes the slot it left.
-    pub(crate) fn answered(&mut self, id: u64) {
+    /// the next ask takes the slot it left. True when a held call took the card.
+    pub(crate) fn answered(&mut self, id: u64) -> bool {
         for row in &mut self.jobs.rows {
             if row.call == Some(id) {
                 row.call = None;
@@ -95,7 +99,9 @@ impl Model {
         if self.card.is_none() && !self.held.is_empty() {
             let next = self.held.remove(0);
             self.show_card(next);
+            return true;
         }
+        false
     }
 
     /// States that `job` owes the call asked under `call`, listing the job when

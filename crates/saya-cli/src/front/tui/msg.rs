@@ -101,4 +101,7 @@ pub(crate) enum Cmd {
     /// One line the surface does not answer itself: a session operation, which
     /// the chat layer's own table names ([`super::ops`]).
     Op(crate::slash::SlashCommand),
+    /// Ring the terminal's bell once: a call took the card, and the operator
+    /// may be looking elsewhere.
+    Bell,
 }

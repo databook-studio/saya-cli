@@ -106,7 +106,13 @@ pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
         paint(
             frame,
             area,
-            run_draw_card::card(model, facts, frame.area().height, area.width),
+            run_draw_card::card(
+                model,
+                facts,
+                frame.area().height,
+                area.width,
+                area.height as usize,
+            ),
             facts.charset,
         );
     }

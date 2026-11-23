@@ -40,6 +40,11 @@ use crate::interactive::turn_summary::ToolTally;
 
 pub(crate) use self::open::{LineSession, open_surface};
 
+/// The line session a surface outside the line loop holds: its run, its
+/// transcript, its compaction and its rollover.
+#[allow(unused_imports)]
+pub(crate) use self::line::Line;
+
 #[allow(unused_imports)]
 pub(crate) use self::open::Opened;
 

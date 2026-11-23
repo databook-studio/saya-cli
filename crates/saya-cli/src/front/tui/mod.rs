@@ -36,6 +36,7 @@ pub(crate) mod jobs_open;
 pub(crate) mod keys;
 pub(crate) mod live;
 pub(crate) mod model;
+pub(crate) mod model_card;
 pub(crate) mod model_history;
 pub(crate) mod model_overlay;
 pub(crate) mod model_turn;
@@ -179,6 +180,14 @@ mod update_card_pane_tests;
 mod update_cycle_tests;
 
 #[cfg(test)]
+#[path = "update_seat_tests.rs"]
+mod update_seat_tests;
+
+#[cfg(test)]
+#[path = "run_draw_seat_tests.rs"]
+mod run_draw_seat_tests;
+
+#[cfg(test)]
 #[path = "history_echo_tests.rs"]
 mod history_echo_tests;
 
@@ -239,6 +248,14 @@ mod run_draw_calm_tests;
 mod run_draw_tests;
 
 #[cfg(test)]
+#[path = "run_draw_card_tests.rs"]
+mod run_draw_card_tests;
+
+#[cfg(test)]
+#[path = "update_bell_tests.rs"]
+mod update_bell_tests;
+
+#[cfg(test)]
 #[path = "run_input_tests.rs"]
 mod run_input_tests;
 
@@ -278,6 +295,10 @@ mod setup_tests;
 #[path = "ops_fixture.rs"]
 pub(crate) mod ops_fixture;
 
+// The line the surface drives: the same session the line loop holds.
+#[path = "line_surface.rs"]
+pub(crate) mod line_surface;
+
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod ops_tests;
@@ -285,3 +306,13 @@ mod ops_tests;
 #[cfg(test)]
 #[path = "ops_catalog_tests.rs"]
 mod ops_catalog_tests;
+
+// The surface's run, driven by a scripted provider: what a command does to the
+// conversation the live run replays.
+#[cfg(all(test, unix))]
+#[path = "surface_fixture.rs"]
+pub(crate) mod surface_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "surface_tests.rs"]
+mod surface_tests;

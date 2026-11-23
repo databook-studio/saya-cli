@@ -14,7 +14,7 @@ use super::msg::{Cmd, Msg};
 use super::update::update;
 use super::view::cards::approval;
 use super::view::cards_fixture::{
-    ASK, SCREEN_ROWS, helper_question, plan_question, shell_question, ungranted_question,
+    FOLDER, SCREEN_ROWS, helper_question, plan_question, shell_question, ungranted_question,
 };
 use crate::agent::tools::consent::Answer;
 use crate::chat::{ChatEvent, Question};
@@ -45,11 +45,16 @@ fn y_and_a_allow_the_call_once() {
 #[test]
 fn s_grants_the_token_the_card_showed_and_is_nothing_when_none_was_offered() {
     let question = shell_question();
-    let card = approval(&question, ASK, SCREEN_ROWS);
+    let card = approval(&question, FOLDER, SCREEN_ROWS);
+    let labels: String = card
+        .choices()
+        .iter()
+        .map(|choice| choice.label.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        card.keys().contains("shell:python3"),
-        "the card states the token `s` would record: {}",
-        card.keys()
+        labels.contains("shell:python3"),
+        "the card states the token `s` would record: {labels}"
     );
 
     assert_eq!(
@@ -118,7 +123,7 @@ fn a_held_chord_is_never_an_answer() {
 #[test]
 fn the_plan_card_answers_approve_or_keep_planning() {
     let question = plan_question();
-    let card = approval(&question, ASK, SCREEN_ROWS);
+    let card = approval(&question, FOLDER, SCREEN_ROWS);
 
     assert_eq!(
         card_intent(&question, typed('y')),
@@ -133,8 +138,8 @@ fn the_plan_card_answers_approve_or_keep_planning() {
     assert_eq!(
         card_intent(&question, typed('s')),
         None,
-        "no token pre-answers a plan, so `s` grants nothing: {}",
-        card.keys()
+        "no token pre-answers a plan, so `s` grants nothing: {:?}",
+        card.choices()
     );
     assert_eq!(
         card_intent(&question, typed('v')),
@@ -144,17 +149,23 @@ fn the_plan_card_answers_approve_or_keep_planning() {
 }
 
 #[test]
-fn v_opens_the_body_and_the_arrows_move_it() {
+fn v_opens_the_body_and_the_arrows_focus_a_choice() {
     let question = shell_question();
 
     assert_eq!(card_intent(&question, typed('v')), Some(CardIntent::View));
     assert_eq!(
         card_intent(&question, key(KeyCode::Down)),
-        Some(CardIntent::Scroll(1))
+        Some(CardIntent::Focus(1)),
+        "an arrow walks the answers the panel offers"
+    );
+    assert_eq!(
+        card_intent(&question, key(KeyCode::Up)),
+        Some(CardIntent::Focus(-1))
     );
     assert_eq!(
         card_intent(&question, key(KeyCode::PageUp)),
-        Some(CardIntent::Scroll(-super::cards_keys::CARD_PAGE_ROWS))
+        Some(CardIntent::Scroll(-super::cards_keys::CARD_PAGE_ROWS)),
+        "the page keys still move the body"
     );
 }
 
@@ -191,7 +202,7 @@ fn the_models_card_answers_with_once_and_with_the_session_grant() {
 }
 
 #[test]
-fn v_opens_the_whole_body_in_the_model_and_the_arrows_move_it() {
+fn v_opens_the_whole_body_in_the_model_and_the_page_keys_move_it() {
     let mut model = model_with(shell_question());
     assert!(
         !model.card_full() && model.card_scroll() == 0,
@@ -205,12 +216,10 @@ fn v_opens_the_whole_body_in_the_model_and_the_arrows_move_it() {
     assert!(model.card_full(), "`v` opens the whole body");
     assert!(model.card().is_some(), "and the card is still the open one");
 
-    update(&mut model, Msg::Key(key(KeyCode::Down)));
-    assert_eq!(model.card_scroll(), 1, "an arrow moves the body one row");
     update(&mut model, Msg::Key(key(KeyCode::PageDown)));
     assert_eq!(
         model.card_scroll(),
-        1 + super::cards_keys::CARD_PAGE_ROWS as usize,
+        super::cards_keys::CARD_PAGE_ROWS as usize,
         "a page key moves a page"
     );
     press(&mut model, 'v');
@@ -221,6 +230,11 @@ fn v_opens_the_whole_body_in_the_model_and_the_arrows_move_it() {
 fn enter_over_a_card_never_answers_it_and_still_sends_the_composer() {
     let question = helper_question();
     let mut model = model_with(question);
+    // The operator moves the keyboard from the panel back to the composer
+    // before typing: a card that opens on a quiet, empty line answers where it
+    // stands, and `Tab` is how a draft is written under it (UI3).
+    update(&mut model, Msg::Key(key(KeyCode::Tab)));
+    assert!(!model.panel_focused(), "the composer has the keyboard");
     update(&mut model, Msg::Paste("count the orders".to_owned()));
 
     let cmds = update(&mut model, Msg::Key(key(KeyCode::Enter)));
@@ -244,6 +258,7 @@ fn typing_over_a_card_reaches_the_composer_and_never_answers_it() {
     // A job's consent is given by name as well as by key (`02` §8): the
     // operator types `/job approve <id>` while the card asks.
     let mut model = model_with(helper_question());
+    update(&mut model, Msg::Key(key(KeyCode::Tab)));
     update(&mut model, Msg::Key(key(KeyCode::Char('/'))));
     update(&mut model, Msg::Key(key(KeyCode::Char('j'))));
     update(&mut model, Msg::Key(key(KeyCode::Char('o'))));
@@ -254,4 +269,72 @@ fn typing_over_a_card_reaches_the_composer_and_never_answers_it() {
         "the composer is where typing goes"
     );
     assert!(model.card().is_some(), "and the card is untouched");
+}
+
+#[test]
+fn enter_answers_the_choice_the_arrows_focused() {
+    let question = shell_question();
+    let mut model = model_with(question.clone());
+    assert!(
+        model.card_choice().is_none(),
+        "a call opens with no answer focused"
+    );
+
+    update(&mut model, Msg::Key(key(KeyCode::Down)));
+    assert_eq!(model.card_choice(), Some(0), "the first answer is focused");
+    update(&mut model, Msg::Key(key(KeyCode::Down)));
+    assert_eq!(model.card_choice(), Some(1), "and an arrow walks on");
+
+    let cmds = update(&mut model, Msg::Key(key(KeyCode::Enter)));
+
+    assert_eq!(
+        cmds,
+        vec![Cmd::Answer(question.id, Answer::Session)],
+        "Enter answers with the answer the operator was looking at"
+    );
+    assert!(model.card().is_none(), "the card is answered");
+}
+
+#[test]
+fn typing_clears_the_focus_so_enter_cannot_consent_behind_a_draft() {
+    let question = helper_question();
+    let mut model = model_with(question);
+
+    update(&mut model, Msg::Key(key(KeyCode::Down)));
+    assert_eq!(model.card_choice(), Some(0));
+
+    // `Tab` gives the keyboard back to the composer: from here a character is
+    // the draft's, and never the panel's.
+    update(&mut model, Msg::Key(key(KeyCode::Tab)));
+    update(&mut model, Msg::Key(key(KeyCode::Char('c'))));
+    assert!(
+        model.card_choice().is_none(),
+        "a typed character is the composer's, and drops the focus"
+    );
+    let cmds = update(&mut model, Msg::Key(key(KeyCode::Enter)));
+    assert!(
+        matches!(cmds.as_slice(), [Cmd::Send(_)]),
+        "Enter then sends the draft, as it always has: {cmds:?}"
+    );
+    assert!(model.card().is_some(), "and the call is still waiting");
+}
+
+#[test]
+fn the_focus_walks_the_answers_that_are_offered_and_no_others() {
+    let mut model = model_with(ungranted_question());
+    update(&mut model, Msg::Key(key(KeyCode::Up)));
+    assert_eq!(
+        model.card_choice(),
+        Some(0),
+        "an arrow up from nothing lands on the first answer"
+    );
+
+    for _ in 0..9 {
+        update(&mut model, Msg::Key(key(KeyCode::Down)));
+    }
+    assert_eq!(
+        model.card_choice(),
+        Some(2),
+        "three answers: y, n and Esc — the walk stops at the last"
+    );
 }

@@ -54,6 +54,9 @@ mod blocks_notice;
 mod blocks_question;
 mod blocks_stop;
 pub(crate) mod cards;
+mod cards_body;
+mod cards_choices;
+mod cards_family;
 mod composer;
 mod composer_frame;
 mod empty;
@@ -95,14 +98,16 @@ mod turn_rows;
 // re-exports read as unused in a lib build — they are the boundary, not dead
 // code.
 #[allow(unused_imports)]
-pub(crate) use cards::{BODY_ROWS, Card, Kind, approval, clarification};
+pub(crate) use cards::{
+    BODY_ROWS, Card, Choice, Family, Kind, approval, approval_waiting, cells, clarification,
+};
 #[allow(unused_imports)]
 pub(crate) use composer::{
     COMPACT_IDLE_HINT, COMPACT_WIDTH, IDLE_HINT, QUEUED_HINT, Row, Run, State, hint, placeholder,
     state, title,
 };
 #[allow(unused_imports)]
-pub(crate) use composer_frame::rows;
+pub(crate) use composer_frame::{fit, pad, rows};
 #[allow(unused_imports)]
 pub(crate) use empty::{Database, EmptyFacts, State as EmptyState, rows as empty_rows};
 #[allow(unused_imports)]
@@ -168,6 +173,10 @@ mod blocks_tests;
 #[cfg(test)]
 #[path = "cards_tests.rs"]
 mod cards_tests;
+
+#[cfg(test)]
+#[path = "cards_panel_tests.rs"]
+mod cards_panel_tests;
 
 #[cfg(test)]
 #[path = "composer_tests.rs"]

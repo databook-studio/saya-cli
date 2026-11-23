@@ -55,19 +55,22 @@ pub(crate) fn draft() -> Model {
     model
 }
 
-/// The docked card's words: the shell call of `02` §5, its reason and keys.
+/// The docked card's words: the shell call of `02` §5, where it runs and the
+/// answers it offers.
 pub(crate) fn card_rows() -> Vec<String> {
     let card = approval(
         &super::view::cards_fixture::shell_question(),
-        PermissionMode::Ask,
+        Some("~/shop"),
         24,
     );
     let mut rows = vec![card.title().to_owned()];
-    rows.extend(card.shown(false).iter().cloned());
-    if let Some(because) = card.because() {
-        rows.push(because.to_owned());
+    if let Some(place) = card.place() {
+        rows.push(place.to_owned());
     }
-    rows.push(card.keys().to_owned());
+    rows.extend(card.shown_rows(false, 96));
+    for choice in card.choices() {
+        rows.push(format!("[{}] {}", choice.key, choice.label));
+    }
     rows
 }
 

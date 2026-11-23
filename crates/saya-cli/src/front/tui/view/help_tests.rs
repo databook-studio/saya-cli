@@ -9,7 +9,7 @@ use ratatui::crossterm::event::KeyCode;
 
 use super::help::{self, Context};
 use super::help_fixture::{idle, model_in, plain, words};
-use super::help_keys::{When, shortcuts};
+use super::help_keys::{Group, When, shortcuts};
 use crate::front::tui::keys::{Intent, intent};
 use crate::interactive::tui::wrap::cell_width;
 
@@ -137,5 +137,38 @@ fn every_key_the_sheet_shows_is_handled_by_the_keymap() {
     assert!(
         shortcuts().any(|shortcut| shortcut.chords.contains(&plain(KeyCode::Char('?')))),
         "the sheet lists the key that opens it"
+    );
+}
+
+#[test]
+fn the_approvals_rows_are_answered_by_the_panel_seat() {
+    let mut pressed = 0;
+    for shortcut in shortcuts().filter(|shortcut| shortcut.group == Group::Approvals) {
+        assert!(
+            matches!(shortcut.when, When::Card | When::CardGrant),
+            "`{}` is filed under approvals, so a card is the state it acts in",
+            shortcut.label
+        );
+        let model = model_in(shortcut.when);
+        for chord in shortcut.chords {
+            match intent(&model, chord.event()) {
+                Some(
+                    Intent::ToggleSeat
+                    | Intent::AnswerFocused
+                    | Intent::AnswerCard(_)
+                    | Intent::ViewCard
+                    | Intent::FocusChoice(_)
+                    | Intent::ScrollCard(_),
+                ) => pressed += 1,
+                other => panic!(
+                    "the panel answers `{}` ({:?}) as its own: got {other:?}",
+                    shortcut.label, chord.code
+                ),
+            }
+        }
+    }
+    assert!(
+        pressed >= 10,
+        "the panel's own keys were pressed through the keymap: {pressed}"
     );
 }

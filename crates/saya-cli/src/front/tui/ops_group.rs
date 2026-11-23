@@ -57,9 +57,12 @@ pub(super) fn read(deps: &OpsDeps, command: SlashCommand, read: ReadOp) -> Asked
 
 /// A context change. The conversation's own two — `/clear`, and the one
 /// compaction operation `/compact` and `/rotate` state — are the chat layer's
-/// rollover, and the session performs them ([`Asked::Roll`]). The rest are the
-/// session-command layer's, exactly as on the line front: it states the new
-/// value, and says what it stated.
+/// rollover, and the session performs them ([`Asked::Roll`]). So is every change
+/// of what the session talks to — the model, the provider, the connection, the
+/// privacy setting — because the run already open cannot absorb one: its
+/// request, its prompt prefix and its provider were composed once, at open
+/// (`chat::rollover`). The session-command layer states the new value, says what
+/// it stated, and the run is composed from it before the next message.
 pub(super) fn roll(deps: &OpsDeps, command: SlashCommand, request: RolloverRequest) -> Asked {
     match request.change {
         ContextChange::Clear => Asked::Roll {
@@ -75,7 +78,10 @@ pub(super) fn roll(deps: &OpsDeps, command: SlashCommand, request: RolloverReque
         | ContextChange::Exclude
         | ContextChange::Provider
         | ContextChange::Model
-        | ContextChange::Privacy => apply(deps, command),
+        | ContextChange::Privacy => Asked::Roll {
+            said: apply(deps, command).into_words(),
+            request,
+        },
         // A record is opened at launch, never swapped under a live run.
         ContextChange::Resume => Asked::Error(RESUME_AT_LAUNCH.to_owned()),
     }
@@ -116,27 +122,6 @@ impl Asked {
             Asked::Notice(words) | Asked::Error(words) => words,
             _ => String::new(),
         }
-    }
-}
-
-/// What a rollover says about the run it is on. The session's own command layer
-/// has already moved the state this surface keeps — the conversation it
-/// replays, the profile it names — and a run already composed keeps what it was
-/// opened with, so the operator is told exactly that rather than being told a
-/// conversation changed when the run it is on has not rolled.
-pub(crate) fn rollover_boundary(request: &RolloverRequest) -> String {
-    match request.change {
-        ContextChange::Clear => {
-            "conversation cleared for the next run: this run keeps the turns it \
-             was opened with until it ends"
-                .to_owned()
-        }
-        ContextChange::Compact | ContextChange::Rotate => {
-            "compaction applies at the run's boundary: this run keeps its working memory until it \
-             rolls"
-                .to_owned()
-        }
-        _ => "the change applies at the run's boundary".to_owned(),
     }
 }
 

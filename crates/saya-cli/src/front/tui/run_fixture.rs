@@ -29,6 +29,8 @@ pub(crate) enum Act {
     Restore,
     /// One frame painted.
     Draw,
+    /// The terminal's bell rung once.
+    Bell,
 }
 
 /// What a fake screen recorded.
@@ -113,6 +115,11 @@ impl Screen for FakeScreen {
         let mut recorded = self.record();
         recorded.acts.push(Act::Draw);
         recorded.frames.push(painted);
+        Ok(())
+    }
+
+    fn bell(&mut self) -> io::Result<()> {
+        self.record().acts.push(Act::Bell);
         Ok(())
     }
 

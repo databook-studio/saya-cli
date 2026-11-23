@@ -29,7 +29,6 @@ use crate::chat::{OpResult, ReadOp, RolloverRequest, SessionOp};
 use crate::slash::{SlashCommand, help_for};
 
 pub(crate) use super::ops_deps::OpsParts;
-pub(crate) use super::ops_group::rollover_boundary;
 
 /// What the surface must do for one command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +69,8 @@ pub(crate) enum Asked {
 
 /// Performs one submitted command as the operation the chat layer states.
 pub(crate) fn perform(deps: &OpsDeps, command: SlashCommand) -> Asked {
-    match deps.chat.run(command.clone()) {
+    let asked = deps.chat().run(command.clone());
+    match asked {
         OpResult::Done(words) => Asked::Notice(words),
         OpResult::Refused(words) => Asked::Error(words),
         OpResult::Unavailable(wording) => Asked::Error(wording),

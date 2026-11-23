@@ -27,7 +27,12 @@ pub(crate) fn rows(model: &Model, width: usize, charset: Charset) -> Vec<Row> {
         Glyph::TopLeft,
         Glyph::TopRight,
         title(state),
-        Token::Accent,
+        // A disabled box says so with its title's weight as well as its words.
+        if state == State::Disabled {
+            Token::Dim
+        } else {
+            Token::Accent
+        },
         width,
         charset,
     )];
@@ -118,8 +123,9 @@ fn border(
 }
 
 /// Fits a label or a line to `room` columns, marking the cut with an ellipsis
-/// rather than letting it spill over the border.
-fn fit(text: &str, room: usize) -> String {
+/// rather than letting it spill over the border. Shared with the approval
+/// panel, which draws the same box around the call it puts.
+pub(crate) fn fit(text: &str, room: usize) -> String {
     if text.chars().count() <= room {
         return text.to_owned();
     }
@@ -132,7 +138,7 @@ fn fit(text: &str, room: usize) -> String {
 
 /// Pads `text` to `room` columns: the box's body keeps its right edge in line
 /// with every other row.
-fn pad(text: &str, room: usize) -> String {
+pub(crate) fn pad(text: &str, room: usize) -> String {
     let fitted = fit(text, room);
     let used = fitted.chars().count();
     format!("{fitted}{}", " ".repeat(room.saturating_sub(used)))

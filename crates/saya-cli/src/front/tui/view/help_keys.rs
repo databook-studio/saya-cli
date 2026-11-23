@@ -117,6 +117,7 @@ pub(super) const ALT_ENTER: Chord = alt(KeyCode::Enter);
 pub(super) const ESCAPE: Chord = bare(KeyCode::Esc);
 pub(super) const BACKSPACE: Chord = bare(KeyCode::Backspace);
 pub(super) const SHIFT_TAB: Chord = shift(KeyCode::BackTab);
+pub(super) const TAB: Chord = bare(KeyCode::Tab);
 pub(super) const CTRL_G: Chord = ctrl('g');
 pub(super) const CTRL_J: Chord = ctrl('j');
 pub(super) const CTRL_K: Chord = ctrl('k');

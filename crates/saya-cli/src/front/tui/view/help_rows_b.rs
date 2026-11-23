@@ -5,6 +5,27 @@ use super::help_keys::*;
 /// The rows, in the order the sheet reads them.
 pub(super) const ROWS: &[Shortcut] = &[
     Shortcut {
+        label: "Tab",
+        chords: &[TAB],
+        action: "give the keyboard to the panel, or back — while a card is open",
+        group: Group::Approvals,
+        when: When::Card,
+    },
+    Shortcut {
+        label: "↑, ↓",
+        chords: &[UP, DOWN],
+        action: "choose an answer — while the panel holds the keyboard",
+        group: Group::Approvals,
+        when: When::Card,
+    },
+    Shortcut {
+        label: "Enter",
+        chords: &[ENTER],
+        action: "give the answer the arrows point at",
+        group: Group::Approvals,
+        when: When::Card,
+    },
+    Shortcut {
         label: "y, a",
         chords: &[YES, ALSO_YES],
         action: "allow this call once — while a card is open",
@@ -35,14 +56,7 @@ pub(super) const ROWS: &[Shortcut] = &[
     Shortcut {
         label: "v",
         chords: &[VIEW],
-        action: "show the whole body, or fold it back",
-        group: Group::Approvals,
-        when: When::Card,
-    },
-    Shortcut {
-        label: "↑, ↓",
-        chords: &[UP, DOWN],
-        action: "scroll the body the card withholds",
+        action: "open the full details, or fold them back",
         group: Group::Approvals,
         when: When::Card,
     },

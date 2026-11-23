@@ -8,7 +8,7 @@ use super::model::Model;
 use super::msg::Msg;
 use super::run_draw::{Facts, frame};
 use super::update::update;
-use crate::chat::Question;
+use super::view::cards_fixture::shell_question;
 
 /// The screen `model` paints at `width × height`.
 fn painted(model: &Model, facts: &Facts, width: u16, height: u16) -> Vec<String> {
@@ -116,14 +116,11 @@ fn a_toast_never_touches_the_status_row() {
 }
 
 #[test]
-fn an_unsandboxed_launch_warns_on_the_card_and_in_status_not_on_the_row() {
+fn an_unsandboxed_launch_warns_on_the_card_and_never_on_the_row() {
     let mut model = session();
-    model.show_card(Question {
-        id: 1,
-        caller: String::from("the shell tool"),
-        facts: String::from("cargo test"),
-        grant: Some(String::from("shell:cargo")),
-    });
+    // A shell's call: the one family whose ask is answered on the host lane, so
+    // the one whose place line states the lane.
+    model.show_card(shell_question());
     let facts = Facts {
         model: String::from("deepseek-v4.1-flash"),
         host_unsandboxed: true,
@@ -138,8 +135,8 @@ fn an_unsandboxed_launch_warns_on_the_card_and_in_status_not_on_the_row() {
     );
     assert!(
         rows.iter()
-            .any(|row| row.contains("host commands run unsandboxed")),
-        "the approval card says the lane is unsandboxed: {rows:#?}"
+            .any(|row| row.contains("on your machine, not sandboxed")),
+        "the approval card's place line says the lane is unsandboxed: {rows:#?}"
     );
 }
 
