@@ -30,11 +30,15 @@
 //! is answered without it (`take` says nothing is ready) and is never held open
 //! waiting for it.
 
-use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use saya_harness::workspace::Workspace;
+
+#[path = "workspace_summary_listing.rs"]
+mod listing;
 
 /// The most top-level entries one summary names.
 pub(crate) const MAX_ENTRIES: usize = 40;
@@ -192,44 +196,34 @@ impl WorkspaceSummaryCell {
 /// that meets a bound keeps what it read, states what it could not read, and
 /// says it is partial; a folder it could not list at all is partial too, and is
 /// never called empty.
-pub(crate) fn scan(folder: &Path, limits: Limits, git: Option<GitFacts>) -> WorkspaceSummary {
+///
+/// The entries are the workspace's own listing when the run holds one
+/// (`workspace`): the same bounded, name-sorted, truncation-counting operation
+/// the `list` tool serves, so a crowded folder names the same first entries the
+/// model would see. A folder without a bound workspace lists exactly as
+/// deterministically: it reads a fixed cap, sorts, and serves the first names.
+pub(crate) fn scan(
+    folder: &Path,
+    limits: Limits,
+    git: Option<GitFacts>,
+    workspace: Option<&Workspace>,
+) -> WorkspaceSummary {
     let start = Instant::now();
-    let mut partial = false;
-    let mut entries: Vec<String> = Vec::new();
-    match fs::read_dir(folder) {
-        Ok(listing) => {
-            for entry in listing.flatten() {
-                if start.elapsed() >= limits.time || entries.len() >= limits.entries {
-                    partial = true;
-                    break;
-                }
-                partial |= start.elapsed() >= limits.time;
-                // A directory is marked with its trailing `/`, so the model can
-                // tell a file from a folder it may open without a call.
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
-                entries.push(match is_dir {
-                    true => format!("{name}/"),
-                    false => name,
-                });
-            }
-        }
-        // A folder that cannot be listed is stated as partial, never as empty:
-        // they are different facts about the workspace.
-        Err(_) => partial = true,
-    }
-    entries.sort();
+    let found = listing::of(folder, limits, workspace, start);
+    let listing::Listing {
+        entries,
+        omitted,
+        exact,
+        partial: caught,
+    } = found;
+    let partial = caught || omitted > 0;
     let mut body = String::new();
     let name = folder
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| folder.to_string_lossy().into_owned());
     body.push_str(&format!("folder: {name}\n"));
-    body.push_str(&match (entries.is_empty(), partial) {
-        (true, false) => format!("entries: none — {EMPTY_FOLDER}\n"),
-        (true, true) => "entries: none read before the bound\n".to_owned(),
-        (false, _) => format!("entries (top level): {}\n", entries.join(", ")),
-    });
+    body.push_str(&listing::entries_line(&entries, omitted, exact, partial));
     if folder.join(".git").exists() {
         body.push_str(&match git {
             Some(facts) => format!(

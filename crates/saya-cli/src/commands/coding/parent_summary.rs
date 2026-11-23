@@ -34,7 +34,12 @@ impl NativeCodingJob {
         let folder = self.application.root_path().to_path_buf();
         Some(WorkspaceSummaryCell::spawn(move || {
             let git = job.git_facts();
-            scan_workspace(&folder, SummaryLimits::default(), git)
+            // The entries come from the workspace's own bounded listing, the
+            // one the `list` tool serves, so a crowded folder names the first
+            // entries by name. A root the workspace cannot open falls back to
+            // the plain folder, which lists deterministically too.
+            let workspace = job.read_only_workspace().ok();
+            scan_workspace(&folder, SummaryLimits::default(), git, workspace.as_deref())
         }))
     }
 

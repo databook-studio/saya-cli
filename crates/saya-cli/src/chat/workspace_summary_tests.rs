@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use super::{EMPTY_FOLDER, GitFacts, Limits, MAX_BYTES, MAX_ENTRIES, PARTIAL_MARK, scan};
+use saya_harness::workspace::Workspace;
 
 /// A throwaway folder under `target/`, cleaned by whoever stops needing it.
 fn folder(case: &str) -> PathBuf {
@@ -32,7 +33,7 @@ fn the_scan_names_the_top_level_manifest_and_instructions() {
     fs::create_dir(folder.join("src")).expect("the fixture directory creates");
     write_file(&folder, "Cargo.toml", "[package]\n");
     write_file(&folder, "AGENTS.md", "guard rails\n");
-    let summary = scan(&folder, Limits::default(), None);
+    let summary = scan(&folder, Limits::default(), None, None);
     assert!(
         !summary.partial,
         "a small folder is read whole: {summary:?}"
@@ -65,7 +66,7 @@ fn the_scan_names_the_top_level_manifest_and_instructions() {
 #[test]
 fn an_empty_folder_says_it_is_empty() {
     let folder = folder("empty");
-    let summary = scan(&folder, Limits::default(), None);
+    let summary = scan(&folder, Limits::default(), None, None);
     assert!(
         !summary.partial,
         "an empty folder is read whole: {summary:?}"
@@ -85,7 +86,7 @@ fn the_entry_list_is_capped_and_says_so() {
     for index in 0..(MAX_ENTRIES * 3) {
         write_file(&folder, &format!("file-{index:03}.txt"), "x");
     }
-    let summary = scan(&folder, Limits::default(), None);
+    let summary = scan(&folder, Limits::default(), None, None);
     assert!(
         summary.partial,
         "a capped scan says it is partial: {summary:?}"
@@ -116,7 +117,7 @@ fn a_huge_folder_stays_inside_its_bounds() {
     for index in 0..10_000 {
         write_file(&folder, &format!("f{index:05}.txt"), "");
     }
-    let summary = scan(&folder, Limits::default(), None);
+    let summary = scan(&folder, Limits::default(), None, None);
     assert!(
         summary.partial,
         "the scan stopped at its bound: {summary:?}"
@@ -144,7 +145,7 @@ fn a_scan_past_its_time_bound_says_partial() {
         time: Duration::ZERO,
         ..Limits::default()
     };
-    let summary = scan(&folder, limits, None);
+    let summary = scan(&folder, limits, None, None);
     assert!(
         summary.partial,
         "a scan out of time is partial: {summary:?}"
@@ -173,18 +174,62 @@ fn a_git_folder_states_its_branch_and_changed_paths() {
         branch: Some("main".to_owned()),
         changed: 3,
     };
-    let summary = scan(&folder, Limits::default(), Some(git));
+    let summary = scan(&folder, Limits::default(), Some(git), None);
     assert!(
         summary.body.contains("repository on main, 3 changed paths"),
         "the branch and the changed count are stated: {}",
         summary.body
     );
     // A repository whose state could not be read is still a repository.
-    let unread = scan(&folder, Limits::default(), None);
+    let unread = scan(&folder, Limits::default(), None, None);
     assert!(
         unread.body.contains("git: repository"),
         "an unread repository is still named: {}",
         unread.body
     );
+    let _ = fs::remove_dir_all(&folder);
+}
+
+/// A folder past the entry bound names the first entries by name and states
+/// how many it left out: the order the list operation serves, never the
+/// filesystem's own read order — reproducibly, with a bound workspace and
+/// without one.
+#[test]
+fn a_crowded_folder_names_the_first_entries_by_name_and_counts_the_rest() {
+    let folder = folder("crowded");
+    for index in 0..60 {
+        write_file(&folder, &format!("e{index:02}.txt"), "x");
+    }
+    let workspace = Workspace::open(&folder).expect("the fixture workspace opens");
+    let expected: Vec<String> = (0..MAX_ENTRIES)
+        .map(|index| format!("e{index:02}.txt"))
+        .collect();
+    for summary in [
+        scan(&folder, Limits::default(), None, Some(&workspace)),
+        scan(&folder, Limits::default(), None, None),
+    ] {
+        let listed = summary
+            .body
+            .split("entries (top level): ")
+            .nth(1)
+            .and_then(|rest| rest.split('\n').next())
+            .expect("the entries are stated");
+        assert!(
+            listed.starts_with(&expected.join(", ")),
+            "the scan names the first entries by name: {listed}"
+        );
+        assert!(
+            listed.contains("(and 20 more)"),
+            "the scan states how many entries it left out: {listed}"
+        );
+        assert!(
+            !listed.contains("e40.txt"),
+            "an entry past the bound is not named: {listed}"
+        );
+        assert!(
+            summary.partial,
+            "a capped scan says it is partial: {summary:?}"
+        );
+    }
     let _ = fs::remove_dir_all(&folder);
 }
