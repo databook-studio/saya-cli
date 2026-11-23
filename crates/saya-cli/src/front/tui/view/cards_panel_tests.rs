@@ -281,3 +281,21 @@ fn a_call_with_no_bound_folder_names_only_what_it_has() {
     );
     assert_eq!(card.title(), "Allow this file change?");
 }
+
+#[test]
+fn a_command_in_the_launch_folder_names_that_folder_and_never_a_dot() {
+    // The operator's default working directory is the launch's own folder, and
+    // the facts state it as `.` — the place line names the folder instead.
+    let question = super::cards_fixture::shell_question();
+    let question = crate::chat::Question {
+        facts: String::from("in: .\n$ cargo test"),
+        ..question
+    };
+    let card = approval(&question, Some("/home/me/demo"), SCREEN_ROWS);
+
+    assert_eq!(
+        card.place(),
+        Some("in demo · on your machine, not sandboxed"),
+        "the place line names the folder, never `.`"
+    );
+}

@@ -133,6 +133,50 @@ async fn a_command_outside_the_set_still_asks() {
     }
 }
 
+/// The read tool's private-path set is one rule, not the configuration's alone:
+/// the vetted set must not read what the workspace tools refuse. A path the
+/// store's screen or the shared redactor refuses — and `sensitive_path` by
+/// itself allows — is still a path the shell asks about.
+#[tokio::test]
+async fn a_private_path_outside_the_sensitive_set_still_asks() {
+    let private = [
+        // The store's credential directories: `.docker` is deliberately not in
+        // the configuration's own set (it is ordinary repository content).
+        ".docker/config.json",
+        // A database export the screen refuses by extension.
+        "data/app.sqlite3",
+    ];
+    for path in private {
+        assert!(
+            saya_harness::workspace::private_path(path),
+            "the workspace's own rule refuses `{path}`"
+        );
+        assert!(
+            !saya_config::sensitive_path(path),
+            "and the configuration's set alone allows it, which is the gap"
+        );
+    }
+    for command in [
+        "cat .docker/config.json",
+        "head data/app.sqlite3",
+        "tail -n 5 data/app.sqlite3",
+    ] {
+        let (shell, asked) = reviewing(ApprovalPolicy::Ask, CommandRules::default());
+        let call = call(command);
+        assert_eq!(
+            shell.lane(&call),
+            Lane::Host(false),
+            "`{command}` names a path the read tool refuses"
+        );
+        assert!(shell.would_ask(&call), "`{command}` asks");
+        assert!(
+            !shell.approve(&call).await,
+            "`{command}` reaches the operator, whose answer stands"
+        );
+        assert_eq!(asked.load(Ordering::Relaxed), 1, "`{command}` asked once");
+    }
+}
+
 /// The deny list always wins: a denied program in the set is refused, and the
 /// operator is never asked about it.
 #[tokio::test]

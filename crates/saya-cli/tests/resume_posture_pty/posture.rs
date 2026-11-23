@@ -1,15 +1,16 @@
 //! The host posture a `--resume` launch derives: the real binary, on a pty,
 //! with a recorded session whose pin binds a root. The piped REPL never prints
-//! the status line (it is TTY-gated), so the pty surface is the observable
-//! header: the status line must carry the route the resumed universe composed
-//! (`host unsandboxed`) and the deny list the user-layer config composed into it
-//! (`deny: curl`) — facts that ride `SessionState` and are derived on a resume as
-//! well as on a fresh start.
+//! a panel (it is TTY-gated), so the pty surface is the observable one: after
+//! the resume the session must still state the route the resumed universe
+//! composed (`Host lane: composed`) and the deny list the user-layer config
+//! composed into it (`Deny list: curl`) — facts that ride `SessionState` and are
+//! derived on a resume as well as on a fresh start.
 //!
-//! The words are the new surface's (T19 switched the launch over):
-//! `view::status_segments` states both as caveat segments on the one status
-//! line, where the old status bar said `Host commands unsandboxed` and
-//! `Denied: curl` on its own context line.
+//! Both facts used to ride the status row (`host unsandboxed`, `deny: curl`).
+//! UI4 cleared that row to the mode, the model and the database, so they are
+//! read where they live now, on the commands that state the session's
+//! universe: `/status`'s Workspace section states the host posture, and the
+//! `/permissions` view states the deny list beside it.
 
 use crate::support::{RESUMED_ID, fixture, launch};
 
@@ -21,10 +22,13 @@ fn a_resumed_launch_paints_the_host_posture_the_universe_composed() {
         &["--approval-mode", "read-only", "--resume", RESUMED_ID],
     );
 
-    // The status line's posture facts, from the state the launch derived: the
-    // resumed universe composed the route (the pin re-binds), and the config
-    // deny list composed into it. The workspace segment yields to fit on a
-    // narrow row; the posture segments never do.
-    session.wait_for("host unsandboxed");
-    session.wait_for("deny: curl");
+    // The surface is up before a line is typed into it.
+    session.wait_for("? help");
+    // The resumed universe composed the route (the pin re-binds) and `/status`
+    // states it: the Workspace section's own line.
+    session.send_line("/status");
+    session.wait_for("Host lane: composed");
+    // The deny list the same universe composed, in the view that names it.
+    session.send_line("/permissions");
+    session.wait_for("Deny list: curl");
 }

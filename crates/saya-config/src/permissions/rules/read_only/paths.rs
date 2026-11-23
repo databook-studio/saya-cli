@@ -12,7 +12,11 @@
 //!   `../x`);
 //! - it must not match the read tool's private-path set
 //!   ([`sensitive_path`]) — `.env`, a key or certificate, the credential
-//!   directories;
+//!   directories. That is this crate's own list; the rest of the read tool's
+//!   rule (the store's screen and the shared redactor) lives in the harness,
+//!   which a configuration crate cannot see, so the shell's own policy reads the
+//!   names this rule vets against those two screens as well
+//!   ([`super::read_only::named_paths`]);
 //! - `/dev/null` is the one absolute name that is allowed, because it is the
 //!   null device rather than a file.
 //!
@@ -38,7 +42,7 @@ fn argument_vetted(argument: &str) -> bool {
 /// Every spelling of a path one token states: the token itself, and the
 /// remainders after each separator an option uses to attach a value
 /// (`--file=../x`, `-f.env`, `-C/tmp`).
-fn spellings(argument: &str) -> impl Iterator<Item = &str> {
+pub(super) fn spellings(argument: &str) -> impl Iterator<Item = &str> {
     std::iter::once(argument).chain(
         argument
             .char_indices()

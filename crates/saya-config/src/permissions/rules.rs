@@ -47,6 +47,7 @@ mod resolve;
 mod scan;
 
 pub use read_only::ReadOnlySet;
+pub use read_only::named_paths;
 
 use resolve::mentions_program;
 use scan::{scan, strip_leading_cd, tokens};

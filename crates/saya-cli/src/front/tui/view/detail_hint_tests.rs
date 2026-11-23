@@ -25,18 +25,18 @@ fn the_composer_hint_names_the_detail_key() {
     for width in [100, 80, 60] {
         let idle = Model::default();
         assert!(
-            hint(state(&idle), width).contains("Ctrl+O"),
+            hint(&idle, width).contains("Ctrl+O"),
             "{width}: the idle hint row names the key that opens the steps: {:?}",
-            hint(state(&idle), width)
+            hint(&idle, width)
         );
         let busy = Model {
             busy: true,
             ..Model::default()
         };
         assert!(
-            hint(state(&busy), width).contains("Ctrl+O"),
+            hint(&busy, width).contains("Ctrl+O"),
             "{width}: and so does the running turn's, where the steps arrive: {:?}",
-            hint(state(&busy), width)
+            hint(&busy, width)
         );
         assert_eq!(
             state(&busy),

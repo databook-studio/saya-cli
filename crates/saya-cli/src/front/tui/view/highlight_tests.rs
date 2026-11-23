@@ -28,41 +28,45 @@ fn outline(line: &str, language: Option<super::Language>, scheme: Scheme) -> Vec
         .collect()
 }
 
-/// The three languages a fenced answer carries most often.
+/// A Rust line: the keyword, the string and the comment, each its own run.
+///
+/// One language per test, so each snapshot's own name is the test that writes
+/// it — the name `insta` derives by itself.
 #[test]
-fn three_languages_read_as_their_own_shape() {
-    insta::assert_debug_snapshot!(
-        "rust_line",
-        outline(
-            "fn main() { let name = \"saya\"; // the entry",
-            Some(super::Language::Rust),
-            Scheme::Dark,
-        )
-    );
-    insta::assert_debug_snapshot!(
-        "python_line",
-        outline(
-            "def total(items):  # sum them",
-            Some(super::Language::Python),
-            Scheme::Dark,
-        )
-    );
-    insta::assert_debug_snapshot!(
-        "sql_line",
-        outline(
-            "SELECT id, name FROM users WHERE id = 42; -- one row",
-            Some(super::Language::Sql),
-            Scheme::Dark,
-        )
-    );
+fn rust_line_reads_as_its_own_shape() {
+    insta::assert_debug_snapshot!(outline(
+        "fn main() { let name = \"saya\"; // the entry",
+        Some(super::Language::Rust),
+        Scheme::Dark,
+    ));
+}
+
+/// A Python line: the same three runs, read by Python's words.
+#[test]
+fn python_line_reads_as_its_own_shape() {
+    insta::assert_debug_snapshot!(outline(
+        "def total(items):  # sum them",
+        Some(super::Language::Python),
+        Scheme::Dark,
+    ));
+}
+
+/// A SQL line: keywords, a number and a trailing comment.
+#[test]
+fn sql_line_reads_as_its_own_shape() {
+    insta::assert_debug_snapshot!(outline(
+        "SELECT id, name FROM users WHERE id = 42; -- one row",
+        Some(super::Language::Sql),
+        Scheme::Dark,
+    ));
 }
 
 /// A fence naming a language this table does not know — or naming none — is one
 /// plain run, exactly as it painted before there was a highlighter.
 #[test]
-fn an_unknown_language_keeps_the_line_plain() {
+fn fallback_line_keeps_the_line_plain() {
     let line = ";; a form (let ((x 1)) x)";
-    insta::assert_debug_snapshot!("fallback_line", outline(line, None, Scheme::Dark));
+    insta::assert_debug_snapshot!(outline(line, None, Scheme::Dark));
     assert_eq!(
         outline(line, None, Scheme::Dark),
         vec![format!("plain    {line}")],
@@ -79,10 +83,10 @@ fn an_unknown_language_keeps_the_line_plain() {
 /// Colour off is the same words in the same order: no run carries a hue, and
 /// joining them gives the line back character for character.
 #[test]
-fn colour_off_keeps_every_word() {
+fn no_colour_runs_keep_every_word() {
     let line = "fn main() { let name = \"saya\"; // the entry";
     let plain = spans(line, Some(super::Language::Rust), Scheme::NoColour);
-    insta::assert_debug_snapshot!("no_colour_runs", runs(line, Some(super::Language::Rust)));
+    insta::assert_debug_snapshot!(runs(line, Some(super::Language::Rust)));
     for span in &plain {
         assert_eq!(span.style, style(Token::Code, Scheme::NoColour), "no hue");
     }
