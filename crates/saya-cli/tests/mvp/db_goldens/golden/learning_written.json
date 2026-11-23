@@ -11,8 +11,9 @@
         "write",
         "shell",
         "rewind",
-        "schema_discovery",
+        "use_database",
         "request_clarification",
+        "schema_discovery",
         "bounded_sql_query",
         "bounded_sql_query_all",
         "result_shape",
@@ -22,7 +23,7 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21143,
+      "body_bytes": 21362,
       "messages": 2
     },
     {
@@ -35,8 +36,9 @@
         "write",
         "shell",
         "rewind",
-        "schema_discovery",
+        "use_database",
         "request_clarification",
+        "schema_discovery",
         "bounded_sql_query",
         "bounded_sql_query_all",
         "result_shape",
@@ -46,7 +48,7 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21540,
+      "body_bytes": 21759,
       "messages": 4
     },
     {

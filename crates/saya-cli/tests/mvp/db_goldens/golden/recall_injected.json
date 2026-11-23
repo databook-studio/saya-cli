@@ -11,8 +11,9 @@
         "write",
         "shell",
         "rewind",
-        "schema_discovery",
+        "use_database",
         "request_clarification",
+        "schema_discovery",
         "bounded_sql_query",
         "bounded_sql_query_all",
         "result_shape",
@@ -22,7 +23,7 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21463,
+      "body_bytes": 21682,
       "messages": 2,
       "recall": {
         "present": true,
