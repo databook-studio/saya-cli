@@ -64,9 +64,20 @@ fn advertised(body: &str) -> Vec<String> {
 
 /// One turn on the composed run, waited for under the fixture's load ceiling.
 async fn turn(composition: &RunComposition) {
+    turn_asking(composition, "hello").await;
+}
+
+/// One turn on a request that shows database work: the database family is
+/// advertised from the turn whose own words asked for it
+/// (`plugins::database::family`).
+async fn turn_about_data(composition: &RunComposition) {
+    turn_asking(composition, "which tables hold the users?").await;
+}
+
+async fn turn_asking(composition: &RunComposition, request: &str) {
     let turn = tokio::time::timeout(
         RUN,
-        composition.job().run_next_turn(&NoopEventSink, "hello"),
+        composition.job().run_next_turn(&NoopEventSink, request),
     )
     .await
     .expect("the turn settles");
@@ -141,7 +152,7 @@ async fn the_plugins_database_tools_follow_the_cores_catalogue() {
     let front = operator_front_fixture::non_interactive();
     let (composition, root) = compose_case(fixture, front.front(), "session-catalog-order").await;
     let shell = shell_proves(&root.checkout_root());
-    turn(&composition).await;
+    turn_about_data(&composition).await;
 
     let bodies = provider.bodies();
     let offered = advertised(&bodies[0]);

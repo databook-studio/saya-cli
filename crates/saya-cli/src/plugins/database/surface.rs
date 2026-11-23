@@ -3,12 +3,12 @@
 //! read-only pair over the authority view its consent selected. The
 //! constructors live here so the plugin keeps that difference in one place.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use saya_harness::coding::policy::ChildAuthorityView;
 
 use super::prompt::ChatPrompt;
-use super::{DatabaseBudget, DatabasePlugin};
+use super::{DatabaseBudget, DatabasePlugin, Family};
 use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::commands::coding::database::CodingDatabaseTools;
 
@@ -68,6 +68,10 @@ impl DatabasePlugin {
                 budget,
                 prompt,
             }),
+            // A surface that states no evidence rule sees the family from its
+            // first turn, exactly as it did before the rule existed.
+            family: Arc::new(Family::always()),
+            executor: OnceLock::new(),
             capture,
             recall: None,
             learning: None,
@@ -85,6 +89,10 @@ impl DatabasePlugin {
     ) -> Self {
         Self {
             surface: Surface::Job(Box::new(JobSurface { tools, view })),
+            // A job's database scope was narrowed by its own consent before the
+            // run existed, so its family is on from the first turn.
+            family: Arc::new(Family::always()),
+            executor: OnceLock::new(),
             capture: None,
             recall: None,
             learning: None,

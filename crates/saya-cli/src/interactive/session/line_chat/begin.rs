@@ -194,6 +194,7 @@ async fn resume_run(
     application.with_launch_grants(parts.grants.clone());
     let stated = session_run(parts, Arc::clone(&front), parts.session.clone(), &shape).await?;
     let plugins = RunComposition::resumed_plugins(&application, &job, stated)
+        .await
         .map_err(|error| error.to_string())?;
     job.run_prepare(
         &NoopEventSink,

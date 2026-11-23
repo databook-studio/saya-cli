@@ -104,6 +104,7 @@ pub const DATABASE_TOOLS: &[&str] = &[
     "join_check",
     "result_shape",
     "schema_discovery",
+    "use_database",
 ];
 
 /// The namespace prefix every MCP-sourced tool name carries. The double

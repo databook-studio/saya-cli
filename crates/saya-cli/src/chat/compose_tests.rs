@@ -41,9 +41,20 @@ async fn compose_case(
 
 /// The run's first turn, waited for under the fixture's load ceiling.
 async fn first_turn(composition: &RunComposition) {
+    first_turn_asking(composition, "hello").await;
+}
+
+/// The run's first turn on a request that shows database work: the database
+/// family is advertised from the turn whose own words asked for it
+/// (`plugins::database::family`), never from the bound profile alone.
+async fn first_turn_about_data(composition: &RunComposition) {
+    first_turn_asking(composition, "which tables hold the users?").await;
+}
+
+async fn first_turn_asking(composition: &RunComposition, request: &str) {
     let turn = tokio::time::timeout(
         RUN,
-        composition.job().run_next_turn(&NoopEventSink, "hello"),
+        composition.job().run_next_turn(&NoopEventSink, request),
     )
     .await
     .expect("the turn settles");
@@ -83,7 +94,7 @@ async fn a_session_with_a_database_composes_the_plugin_and_its_section() {
     let front = operator_front_fixture::non_interactive();
     let (composition, _root) = compose_case(fixture, front.front(), "session-with-db").await;
     composition.open().await.expect("the run opens");
-    first_turn(&composition).await;
+    first_turn_about_data(&composition).await;
 
     let mut bodies = provider.bodies();
     let body = bodies.remove(0);

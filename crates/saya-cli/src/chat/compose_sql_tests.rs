@@ -52,7 +52,7 @@ async fn a_call_that_names_no_connection_is_granted_as_the_primary() {
         RUN,
         composition
             .job()
-            .run_next_turn(&NoopEventSink, "who are the users?"),
+            .run_next_turn(&NoopEventSink, "who are the users in the users table?"),
     )
     .await
     .expect("the turn settles");

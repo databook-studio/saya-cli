@@ -192,6 +192,19 @@ fn declared_tools_cover_every_definition_and_no_workspace_name() {
     for clarification in [false, true] {
         offered.extend(names(&job_tools(&root, clarification).definitions(None)));
     }
+    // The ask a bound chat run advertises before its family is latched: the one
+    // name only that state offers.
+    offered.extend(
+        super::family::Family::of(
+            super::family::Bound::new(
+                vec![(String::from("local"), saya_types::SqlDialect::Sqlite)],
+                Vec::new(),
+            ),
+            false,
+        )
+        .announces()
+        .map(|definition| definition.name),
+    );
 
     for name in &offered {
         assert!(

@@ -145,7 +145,7 @@ impl NativeCodingJob {
                 std::env::var_os("PATH").as_deref(),
             ),
         );
-        let mut system_prompt = match self.has_workspace() {
+        let system_prompt = match self.has_workspace() {
             true => super::super::prompts::system_with_file_sources(
                 self.request.plan,
                 self.is_read_only_root(),
@@ -155,28 +155,20 @@ impl NativeCodingJob {
             // told that rather than told to read a workspace it does not have.
             false => super::super::prompts::NO_WORKSPACE.to_owned(),
         };
-        // The active plugins' sections ride after the core prompt, composed
-        // here with the rest of the run's one-time setup: every turn of the run
-        // sends these exact bytes, so the request prefix never moves. A run
-        // given no registry appends nothing and sends today's prompt.
-        if let Some(plugins) = plugins.as_ref() {
-            let sections = plugins.system_sections();
-            if !sections.is_empty() {
-                system_prompt.push_str("\n\n");
-                system_prompt.push_str(&sections.join("\n\n"));
-            }
-        }
-        // The session's own facts ride the same one-time composition: the
-        // folder this run works in is stated once, exactly as the old session
-        // stated it, so every turn sends the same bytes and the request prefix
-        // never moves. A run with no workspace states none of it, and a job
-        // surface states none: its section is the job's own.
-        if chat_surface && let Some(verified) = checkout.as_ref() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&crate::agent::session_facts::workspace_root_text(
-                std::path::Path::new(verified.path().as_str()),
-            ));
-        }
+        // The active plugins' sections and the session's own facts are stated
+        // per turn by `RootSession::prompt_for_turn`, in the order they ride
+        // here: a family that latches mid-run has no section at the run's open,
+        // so the section a plugin states is composed on the turn that latched
+        // it and frozen from then on. The folder fact keeps its place after
+        // those sections, exactly where it rode before they were deferred.
+        let root_facts = match chat_surface {
+            true => checkout.as_ref().map(|verified| {
+                crate::agent::session_facts::workspace_root_text(std::path::Path::new(
+                    verified.path().as_str(),
+                ))
+            }),
+            false => None,
+        };
         let system_prompt = Some(system_prompt);
         self.record_observation_boundary("started", false).await?;
         Ok(RootSession {
@@ -187,6 +179,8 @@ impl NativeCodingJob {
             executor,
             checkout,
             system_prompt,
+            sections: Mutex::new(None),
+            root_facts,
             model: config.ai.model.clone(),
             mailbox: Mutex::new(Some(mailbox)),
             // A run opens with no completed turn, ahead of the conversation it

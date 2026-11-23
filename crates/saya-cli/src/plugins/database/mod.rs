@@ -18,6 +18,10 @@ mod approval_tests;
 mod capture_fixture;
 #[cfg(test)]
 mod capture_tests;
+pub(crate) mod family;
+mod family_executor;
+#[cfg(test)]
+mod family_tests;
 #[cfg(test)]
 mod learning_fixture;
 #[cfg(test)]
@@ -43,10 +47,11 @@ mod job_adapter;
 mod learning;
 pub(crate) mod prompt;
 mod recall;
+mod state;
 mod surface;
 mod turn_policy;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use saya_agent::{
@@ -56,9 +61,10 @@ use saya_agent::{
 
 use crate::agent::knowledge_event::knowledge_supplied_event;
 use crate::agent::tools::workspace::is_tool_name;
-use crate::agent::tools::{CaptureEvent, CaptureHook, DatabaseTools, clarification};
+use crate::agent::tools::{CaptureHook, DatabaseTools, clarification};
 use crate::contracts::RecallReceipt;
 
+pub(crate) use family::{Bound, Family};
 pub(crate) use learning::LearningSource;
 pub(crate) use recall::RecallSource;
 // The two surfaces' constructors and gates live in `surface`; the chat's gate
@@ -68,22 +74,12 @@ pub(crate) use turn_policy::DatabaseBudget;
 
 use surface::{ChatSurface, Surface};
 
-/// Writes one SQL statement into the shared slot both the plugin and the chat
-/// surface's capture hook hold. A poisoned lock still holds the slot — a plain
-/// string is no half-written value — so it is written rather than lost.
-fn record(slot: &Mutex<Option<String>>, sql: Option<&str>) {
-    let mut slot = match slot.lock() {
-        Ok(slot) => slot,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    *slot = sql.map(str::to_owned);
-}
-
 /// Every database tool name either surface can offer. The registry checks
 /// collisions against this list once, so it is the whole of what the plugin may
 /// ever route — never only what it advertises on this run. No workspace file
 /// tool is here: those belong to the core.
-const DECLARED_TOOLS: [&str; 10] = [
+const DECLARED_TOOLS: [&str; 11] = [
+    "use_database",
     "schema_discovery",
     "request_clarification",
     "bounded_sql_query",
@@ -105,6 +101,13 @@ pub(crate) fn routes(name: &str) -> bool {
 
 pub(crate) struct DatabasePlugin {
     surface: Surface,
+    /// Whether this run advertises the database family yet, and the evidence
+    /// that turns it on: a bound profile alone is not the request to use it.
+    family: Arc<Family>,
+    /// The chat surface's executor, composed once: the ask's wrapper over the
+    /// surface's own tools. Composed here rather than per call, so every route
+    /// to a chat database name is the same executor.
+    executor: OnceLock<Arc<dyn ToolExecutor>>,
     /// The run's query-capture hook, when the surface publishes captures: the
     /// chat previews and exports the queries it runs, so its tools receive
     /// this hook. A job surface's queries are the job's own evidence, never a
@@ -128,40 +131,19 @@ pub(crate) struct DatabasePlugin {
 }
 
 impl DatabasePlugin {
-    /// Records the SQL the run just executed, so `context()` can carry the
-    /// adapt-this-query hint the chat's turn carried. `None` clears it — a turn
-    /// that ran no SQL states nothing about one.
-    pub(crate) fn record_last_sql(&self, sql: Option<&str>) {
-        record(&self.last_sql, sql);
-    }
-
-    /// The capture hook the chat surface's tools carry: the front's own hook
-    /// (when it drives one) behind the record the next turn's context reads.
-    ///
-    /// A capture is emitted only for a query that executed — the single
-    /// connection arm, on success, either as evidence or refused for its size —
-    /// so this is where the run learns the SQL it most recently ran, and the
-    /// hint for it rides the NEXT turn's user tail
-    /// ([`Self::context`] → `last_sql_hint_block`).
-    fn capture_hook(&self) -> CaptureHook {
-        let last_sql = Arc::clone(&self.last_sql);
-        let front = self.capture.clone();
-        Arc::new(move |event: CaptureEvent| {
-            let sql = match &event {
-                CaptureEvent::Captured(capture) => Some(capture.sql.as_str()),
-                CaptureEvent::Refused { sql, .. } => Some(sql.as_str()),
-            };
-            record(&last_sql, sql);
-            if let Some(front) = &front {
-                front(event);
-            }
-        })
-    }
-
     /// Attaches the run's recall source: with one, `context()` recalls this
     /// turn's database contracts. Without one, it contributes nothing.
     pub(crate) fn with_recall(mut self, source: RecallSource) -> Self {
         self.recall = Some(source);
+        self
+    }
+
+    /// Attaches the run's family rule: whether this run advertises the database
+    /// family yet, and the evidence that turns it on. A surface that never
+    /// states one keeps the family on from its first turn ([`Family::always`])
+    /// — the constructor's default.
+    pub(crate) fn with_family(mut self, family: Arc<Family>) -> Self {
+        self.family = family;
         self
     }
 
@@ -171,39 +153,6 @@ impl DatabasePlugin {
     pub(crate) fn with_learning(mut self, source: LearningSource) -> Self {
         self.learning = Some(source);
         self
-    }
-
-    /// The receipt from the last `context()` call, or `None` when the hook
-    /// never recalled — no source attached, or not called yet.
-    pub(crate) fn last_receipt(&self) -> Option<Arc<RecallReceipt>> {
-        match self.last_receipt.lock() {
-            Ok(slot) => slot.clone(),
-            // A poisoned lock still holds what the hook wrote: the receipt is a
-            // plain value, so read it rather than lose it to an unrelated panic.
-            Err(poisoned) => poisoned.into_inner().clone(),
-        }
-    }
-
-    /// Keeps `receipt` for the executor. One receipt per turn: the newest
-    /// recall wins, exactly as the chat's turn reports its own.
-    fn store_receipt(&self, receipt: Arc<RecallReceipt>) {
-        let mut slot = match self.last_receipt.lock() {
-            Ok(slot) => slot,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        *slot = Some(receipt);
-    }
-
-    /// The last-SQL hint block for this turn, or `None` when the run stated no
-    /// SQL — the same block the chat's turn appended, built by the same
-    /// function, so the two cannot word it differently.
-    fn last_sql_block(&self) -> Option<ContextBlock> {
-        let sql = match self.last_sql.lock() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        };
-        sql.as_deref()
-            .and_then(crate::agent::turn_context::last_sql_hint_block)
     }
 }
 
@@ -241,6 +190,12 @@ impl RunPlugin for DatabasePlugin {
     /// the chat's turn appended: the hint is per turn, so it never enters the
     /// run's system prompt where it would move the prefix a provider caches.
     async fn context(&self, _ctx: &RunContext, prompt: &str) -> Vec<ContextBlock> {
+        // The turn's own words are the evidence the family is advertised from,
+        // and the same latch gates what the turn is told: a request that never
+        // showed database work is not handed database contracts.
+        if !self.family.note(prompt) {
+            return Vec::new();
+        }
         let mut blocks = Vec::new();
         if let Some(source) = self.recall.as_ref() {
             let (recalled, receipt) = source.recall(prompt).await;
@@ -271,6 +226,12 @@ impl RunPlugin for DatabasePlugin {
     /// with no database never reaches here (the plugin does not activate), and
     /// a job surface states none: its event stream is the job's own record.
     fn knowledge_event(&self, _ctx: &RunContext) -> Option<AgentEvent> {
+        // Nothing was recalled before the family is on, so there is nothing to
+        // report: a turn that never reached the database says no line at all,
+        // never "memory supplied · 0 claims".
+        if !self.family.latched() {
+            return None;
+        }
         match &self.surface {
             Surface::Chat(_) => Some(knowledge_supplied_event(
                 &self
@@ -289,6 +250,12 @@ impl RunPlugin for DatabasePlugin {
     /// or a helper keeps its own prompt for now and states nothing here, so its
     /// request bytes do not move.
     fn system_section(&self, _ctx: &RunContext) -> Option<String> {
+        // The section is the family's too: it states the answer contract, the
+        // dialect and the session's databases, which a request that never
+        // mentioned a database must not pay for.
+        if !self.family.latched() {
+            return None;
+        }
         match &self.surface {
             Surface::Chat(chat) => Some(chat.prompt.section()),
             Surface::Job(_) => None,
@@ -302,16 +269,26 @@ impl RunPlugin for DatabasePlugin {
             // chat has always advertised it, so the cached prefix is unchanged.
             // The ask is the plugin's own name, so it is placed here rather than
             // by the core list this surface builds from.
+            //
+            // While the family is off, the whole of what the plugin offers is
+            // the one ask: the family is appended after it once the latch
+            // lands, so the list only ever grows at its end.
             Surface::Chat(ChatSurface { flags, .. }) => {
-                let mut definitions: Vec<ToolDefinition> = DatabaseTools::definitions(
-                    flags.allow_query_data,
-                    flags.has_state_store,
-                    flags.permit_candidate_writes,
-                    false,
-                )
-                .into_iter()
-                .filter(|definition| !is_tool_name(&definition.name))
-                .collect();
+                let mut definitions: Vec<ToolDefinition> = Vec::new();
+                definitions.extend(self.family.announces());
+                if !self.family.latched() {
+                    return definitions;
+                }
+                definitions.extend(
+                    DatabaseTools::definitions(
+                        flags.allow_query_data,
+                        flags.has_state_store,
+                        flags.permit_candidate_writes,
+                        false,
+                    )
+                    .into_iter()
+                    .filter(|definition| !is_tool_name(&definition.name)),
+                );
                 clarification::advertise(&mut definitions);
                 definitions
             }
@@ -319,16 +296,29 @@ impl RunPlugin for DatabasePlugin {
         }
     }
 
+    /// The executor that serves this plugin's tools: the chat surface's own
+    /// toolset with the ask's wrapper over it, or the job surface's adapter.
+    ///
+    /// The chat surface's executor is composed once and reused: the ask's
+    /// wrapper over the surface's own tools, so every route to a chat database
+    /// name is the one executor.
     fn executor(&self) -> Option<Arc<dyn ToolExecutor>> {
         match &self.surface {
             // The chat surface's executor is `DatabaseTools` itself — never a
-            // wrapper — so the tools the loop already runs are the ones this
-            // plugin routes to, and they are the ones that capture: the run's
-            // hook is installed on them here, before the loop can call them.
-            // No hook installs nothing, leaving the tools as built.
+            // wrapper the route cannot see — so the tools the loop already runs
+            // are the ones this plugin routes to, and they are the ones that
+            // capture: the run's hook is installed on them here, before the
+            // loop can call them. No hook installs nothing, leaving the tools
+            // as built. `use_database` is served beside them rather than by
+            // them: it is the plugin's own ask, not a database query.
             Surface::Chat(ChatSurface { tools, .. }) => {
-                tools.set_capture_hook(self.capture_hook());
-                Some(tools.clone())
+                Some(Arc::clone(self.executor.get_or_init(|| {
+                    tools.set_capture_hook(self.capture_hook());
+                    Arc::new(family_executor::UseDatabase::new(
+                        tools.clone(),
+                        Arc::clone(&self.family),
+                    )) as Arc<dyn ToolExecutor>
+                })))
             }
             Surface::Job(job) => Some(Arc::new(job_adapter::JobToolExecutor::new(
                 job.tools.clone(),

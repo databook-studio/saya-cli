@@ -99,7 +99,7 @@ impl NativeCodingJob {
                 Some(self.application.root_path()),
                 Some(&self.application.store),
                 &asked,
-                session.system_prompt.as_deref(),
+                session.prompt_for_turn().as_deref(),
                 context_blocks,
             )
             .await;
@@ -143,7 +143,7 @@ impl NativeCodingJob {
             prompt,
             profile_names: vec![],
             model: session.model.clone(),
-            system_prompt: session.system_prompt.clone(),
+            system_prompt: session.prompt_for_turn(),
             // Chat's own shape of history — one (prompt, final answer) pair per
             // completed turn, tool arguments and results never replayed — left
             // for the shared assembly to bound by this run's context byte
