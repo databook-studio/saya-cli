@@ -10,5 +10,6 @@ mod starter;
 
 // The new front's transcript renders the answer body with this renderer, not a
 // second copy of it (`06` §5, T5).
-pub(crate) use markdown::markdown_spans_fenced;
+#[allow(unused_imports)]
+pub(crate) use markdown::markdown_spans;
 pub(crate) use starter::starter_questions;

@@ -58,7 +58,7 @@ pub(crate) use history::History;
 #[allow(unused_imports)]
 pub(crate) use input::InputBuffer;
 #[allow(unused_imports)]
-pub(crate) use ui::surface::markdown_spans_fenced;
+pub(crate) use ui::surface::markdown_spans;
 
 // The new front paints its result tables from today's rendering rather than a
 // second copy of it: the box table and its alignment, the wide-table scroller,

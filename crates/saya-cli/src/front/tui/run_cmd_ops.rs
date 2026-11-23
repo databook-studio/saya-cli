@@ -77,6 +77,11 @@ impl SessionPort {
         let state = self.state();
         let view = crate::interactive::session_prompt::status_segments(&state);
         self.front.restated(view.model, state.profile.clone());
+        // The model the session is on now is the one whose window the meter
+        // divides by; an unknown window keeps the row quiet rather than guessing.
+        let runtime = self.deps.runtime.current();
+        self.front
+            .set_window(super::live::context_window(&runtime, &state.model));
     }
 
     /// One shared operation: it takes as long as it takes, so it runs on a

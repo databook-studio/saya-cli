@@ -48,6 +48,16 @@ pub(super) fn segments(facts: &StatusFacts) -> Vec<Segment> {
             .shortening(format!("{mark} sharing")),
         );
     }
+    // The meter is one short segment — `ctx 42% · $0.03` — and it is the first
+    // thing the row gives up: the mode, the model and the database are what the
+    // row exists for, and this is the newest, least urgent fact it can carry.
+    if let Some(text) = facts.meters.segment() {
+        segments.push(Segment::new(
+            text,
+            style(Token::Dim, facts.scheme),
+            Some(Step::Meters),
+        ));
+    }
     segments
 }
 

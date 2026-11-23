@@ -1,0 +1,34 @@
+---
+source: crates/saya-cli/src/front/tui/view/highlight_tests.rs
+expression: "runs(line, Some(super::Language::Rust))"
+---
+[
+    Run {
+        text: "fn",
+        kind: Keyword,
+    },
+    Run {
+        text: " main() { ",
+        kind: Plain,
+    },
+    Run {
+        text: "let",
+        kind: Keyword,
+    },
+    Run {
+        text: " name = ",
+        kind: Plain,
+    },
+    Run {
+        text: "\"saya\"",
+        kind: Str,
+    },
+    Run {
+        text: "; ",
+        kind: Plain,
+    },
+    Run {
+        text: "// the entry",
+        kind: Comment,
+    },
+]

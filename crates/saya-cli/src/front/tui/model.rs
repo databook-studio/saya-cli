@@ -17,6 +17,7 @@ use super::model_mention::Mention;
 use super::model_overlay::Overlay;
 use super::view::jobs::Drawer;
 use crate::chat::Question;
+use crate::front::tui::view::Meters;
 use crate::front::tui::view::Toast;
 use crate::front::{TranscriptView, TurnView};
 use crate::interactive::tui::History;
@@ -64,6 +65,9 @@ pub(crate) struct Model {
     /// The model the session talks to now, when a command has restated it: the
     /// status row names this rather than the model the launch resolved.
     pub(crate) model_name: Option<String>,
+    /// What the last request left of the window and what the session has cost
+    /// so far, as the run reported them: the row's one meter segment.
+    pub(crate) meters: Meters,
     /// Whether the run is paused at a stop the operator can continue from.
     pub(crate) paused: bool,
     /// Whether this surface is a read-only record of an older (0.5.0) session:
@@ -167,6 +171,22 @@ impl Model {
     pub(crate) fn restated(&mut self, model: String, database: Option<String>) {
         self.model_name = Some(model);
         self.database = database;
+    }
+
+    /// What the row's meter segment says: the last request's share of the
+    /// window, and what the session has cost so far — each present only when
+    /// the session was told.
+    pub(crate) const fn meters(&self) -> Meters {
+        self.meters
+    }
+
+    /// Takes what the settled turn reported: the meters the row shows from the
+    /// next frame on. A turn that reported nothing leaves the last ones stated,
+    /// because an unreported figure is not a measurement of zero.
+    pub(crate) fn metered(&mut self, meters: Meters) {
+        if meters.input_tokens.is_some() || meters.cost_micros.is_some() {
+            self.meters = meters;
+        }
     }
 
     /// Whether the run is paused at a stop the operator can continue from.

@@ -105,6 +105,11 @@ fn lines_of(section: Section, facts: &StatusFacts) -> Vec<String> {
                 "unknown — no answering call has reported a window this session",
             ),
             fact("Tokens", Some(&facts.tokens), "not reported"),
+            fact(
+                "Cost",
+                facts.cost.as_deref(),
+                "unknown — no answering call has reported a cost this session",
+            ),
         ],
         Section::Workspace => vec![
             fact(
@@ -157,3 +162,7 @@ fn fact(label: &str, value: Option<&str>, absent: &str) -> String {
 #[cfg(test)]
 #[path = "ops_status_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_status_window_tests.rs"]
+mod window_tests;

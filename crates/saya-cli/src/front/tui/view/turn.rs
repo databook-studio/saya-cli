@@ -17,11 +17,13 @@ use ratatui::text::{Line, Span};
 
 use super::transcript::TranscriptFacts;
 use super::turn_rows::{GUTTER, indented, wrapped};
-use super::{blocks, blocks_question, blocks_stop, inspector, result, turn_activity, turn_focus};
+use super::{
+    blocks, blocks_question, blocks_stop, highlight, inspector, result, turn_activity, turn_focus,
+};
 use crate::front::tui::focus::EntryPath;
 use crate::front::tui::theme::{Charset, Glyph, Token, glyph, style};
 use crate::front::view::{Entry, TurnView};
-use crate::interactive::tui::markdown_spans_fenced;
+use crate::interactive::tui::markdown_spans;
 use crate::interactive::tui::wrap::cell_width;
 
 /// One turn's rows, its blocks in reading order. `place` is the turn's place in
@@ -118,7 +120,7 @@ fn block(
         Entry::Activity(activity) => {
             turn_activity::rows(activity, elapsed, facts, focused, content)
         }
-        Entry::Answer(answer) => answer_rows(&answer.text, content),
+        Entry::Answer(answer) => answer_rows(&answer.text, facts, content),
         Entry::ResultPreview(preview) => result::rows(preview, facts, content),
         Entry::Notice(notice) => super::blocks_notice::system_line(notice, facts, content),
         Entry::Edit(edit) => blocks::edit_rows(edit, facts, content),
@@ -155,23 +157,35 @@ fn quoted(text: &str, facts: &TranscriptFacts, content: usize) -> Vec<Line<'stat
         .collect()
 }
 
-/// Saya's answer: today's markdown renderer, one row per wrapped line.
+/// Saya's answer: the markdown renderer for its prose, and this job's reader for
+/// the code a fence carries.
 ///
-/// The renderer is the interactive surface's own ([`markdown_spans_fenced`]),
-/// reused rather than copied, so a marker the model writes — bold, inline code,
-/// a fence, a bullet — reads the same in both surfaces. The wrap happens first,
-/// in cells, so a row can never be wider than the pane whatever the renderer
-/// hands back.
-fn answer_rows(text: &str, content: usize) -> Vec<Line<'static>> {
+/// The prose is the interactive surface's own renderer
+/// ([`markdown_spans`]), reused rather than copied, so a marker the model writes
+/// — bold, inline code, a bullet — reads the same in both surfaces. The fence is
+/// this pane's: it opens on a line of backticks, names its language, and its
+/// body is read as code ([`highlight`]) in the active token column, so a keyword
+/// is a keyword while colour is on and the same words when it is off. The wrap
+/// happens first, in cells, so a row can never be wider than the pane whatever
+/// the renderer hands back.
+fn answer_rows(text: &str, facts: &TranscriptFacts, content: usize) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    let mut fence = false;
+    let mut fence = highlight::Fence::default();
     for line in text.lines() {
-        let rows = match !fence && opens_a_bullet(line) {
+        if fence.toggle(line).is_some() {
+            out.push(indented(vec![fence.marker(facts.scheme)]));
+            continue;
+        }
+        let rows = match !fence.open() && opens_a_bullet(line) {
             true => bullet(line, content),
             false => wrapped(line, content),
         };
         for row in rows {
-            out.push(indented(markdown_spans_fenced(&row, &mut fence)));
+            let spans = match fence.open() {
+                true => highlight::spans(&row, fence.language(), facts.scheme),
+                false => markdown_spans(&row),
+            };
+            out.push(indented(spans));
         }
     }
     out

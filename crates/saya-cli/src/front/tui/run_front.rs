@@ -28,6 +28,7 @@ use super::msg::{Msg, Worker};
 use crate::agent::tools::consent::Answer;
 use crate::chat::{ChatEvent, ChatFront, ChatOutcome, Question};
 use crate::front::line::{SettledTurn, StreamSink, TurnStream};
+use crate::interactive::session::state::SessionState;
 use crate::interactive::tui::CodingPanel;
 
 /// The surface one session drives: its events in, its calls answered.
@@ -48,6 +49,12 @@ pub(crate) struct Forward {
     /// How the last turn ended, as the session stated it: taken once at the same
     /// settlement, so the boundary a turn crosses knows what the turn was.
     ended: Mutex<Option<ChatOutcome>>,
+    /// The session's own books, when the launch handed them over: the settled
+    /// turn folds into them, and the row's meter reads its spend from there.
+    pub(super) state: Mutex<Option<Arc<Mutex<SessionState>>>>,
+    /// The window the model in force is known to have. `None` is an unknown
+    /// window, which the row states by showing no meter rather than a guess.
+    pub(super) window: Mutex<Option<u64>>,
 }
 
 impl Forward {
@@ -60,6 +67,8 @@ impl Forward {
             panel: Mutex::new(None),
             stream: Arc::new(TurnStream::default()),
             ended: Mutex::new(None),
+            state: Mutex::new(None),
+            window: Mutex::new(None),
         }
     }
 
@@ -72,10 +81,9 @@ impl Forward {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()?;
-        Some(SettledTurn {
-            outcome,
-            record: self.stream.take(),
-        })
+        let record = self.stream.take();
+        super::run_front_meter::note(self, &outcome, &record);
+        Some(SettledTurn { outcome, record })
     }
 
     /// How the last settled turn ended, without taking it: the loop's own

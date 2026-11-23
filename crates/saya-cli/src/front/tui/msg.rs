@@ -72,6 +72,10 @@ pub(crate) enum Msg {
         /// The database the session is connected to, if it is.
         database: Option<String>,
     },
+    /// What a settled turn reported: the share of the model's window its last
+    /// request used, and what the session has cost so far. Both are reported
+    /// figures, never estimates, and either may be absent.
+    Meters(super::view::Meters),
 }
 
 /// One side effect the runtime performs after an [`update`](super::update).

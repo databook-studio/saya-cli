@@ -129,11 +129,6 @@ pub(in crate::interactive::tui) fn accent() -> Color {
     pick(hue::ACCENT_DARK, hue::ACCENT_LIGHT)
 }
 
-/// Secondary/de-emphasised text: tool + system lines, hints.
-pub(in crate::interactive::tui) fn secondary() -> Color {
-    pick(hue::DIM_DARK, hue::DIM_LIGHT)
-}
-
 /// Inline `code` in assistant answers.
 pub(in crate::interactive::tui) fn code_color() -> Color {
     pick(hue::CODE_DARK, hue::CODE_LIGHT)

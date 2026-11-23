@@ -73,11 +73,30 @@ struct TurnUsage {
     answering: AnsweringReceipts,
     /// The extraction call's usage; `None` when the provider reported none.
     learning: Mutex<Option<TokenUsage>>,
+    /// The last answering report itself, not the sum of them: the last request
+    /// is what the model's window was measured against, and a meter over the
+    /// sum of a turn's rounds would overstate it.
+    latest: Mutex<Option<TokenUsage>>,
+    /// The costs the turn's calls reported, summed: what the provider priced
+    /// this turn at, or `None` when no call reported a cost.
+    cost: Mutex<Option<u64>>,
 }
 
 impl TurnUsage {
     fn record(&self, event: &AgentEvent) {
         self.answering.record(event);
+        if let AgentEvent::Usage {
+            call: UsageCall::Answer,
+            usage,
+        }
+        | AgentEvent::FailedAttemptUsage { usage } = event
+        {
+            *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(*usage);
+            if let Some(cost) = usage.cost_micros {
+                let mut total = self.cost.lock().unwrap_or_else(PoisonError::into_inner);
+                *total = Some(total.unwrap_or(0).saturating_add(cost));
+            }
+        }
         if let AgentEvent::Usage {
             call: UsageCall::Extraction,
             usage,
@@ -93,6 +112,16 @@ impl TurnUsage {
             answering: self.answering.take(),
             learning: self
                 .learning
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take(),
+            latest: self
+                .latest
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take(),
+            cost_micros: self
+                .cost
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take(),
@@ -118,6 +147,11 @@ pub(crate) struct TurnRecord {
 pub(crate) struct TurnTotals {
     pub(crate) answering: Option<TokenUsage>,
     pub(crate) learning: Option<TokenUsage>,
+    /// The turn's last answering report as it arrived: the request the model's
+    /// window was measured against, which the summed `answering` cannot state.
+    pub(crate) latest: Option<TokenUsage>,
+    /// What the turn's calls reported they cost, summed; `None` when none did.
+    pub(crate) cost_micros: Option<u64>,
 }
 
 impl TurnTotals {

@@ -10,6 +10,7 @@
 use ratatui::text::{Line, Span};
 use saya_agent::PermissionMode;
 
+use super::meters::Meters;
 use super::status_fit::{GAP, Right, SEP, Segment, fit, left_width};
 use super::status_segments::segments;
 use crate::front::tui::theme::{Charset, Glyph, Scheme, Token, glyph, style};
@@ -73,6 +74,10 @@ pub(crate) struct StatusFacts {
     pub(crate) sharing: bool,
     /// What the surface is doing.
     pub(crate) activity: ActivityState,
+    /// What the last request left of the model's window and what the session has
+    /// cost so far: one short segment, and absent entirely when nothing was
+    /// reported.
+    pub(crate) meters: Meters,
     /// Which token column paints the row.
     pub(crate) scheme: Scheme,
     /// Which glyph set the row draws with.
@@ -87,6 +92,7 @@ impl Default for StatusFacts {
             model: String::new(),
             sharing: false,
             activity: ActivityState::default(),
+            meters: Meters::default(),
             scheme: Scheme::Dark,
             charset: Charset::Utf8,
         }

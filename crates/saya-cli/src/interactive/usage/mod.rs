@@ -7,9 +7,27 @@
 
 mod totals;
 
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
+
 pub(crate) use totals::UsageTotals;
 
 use saya_agent::TokenUsage;
+
+/// A reported cost, as money: dollars with up to four decimals and the trailing
+/// zeros a reader does not need. `$0.03` for three cents, `$0.0125` for a tenth
+/// of a cent, `$0` for nothing. One function, because the status row's meter and
+/// `/status`'s cost line are the same figure stated twice.
+pub(crate) fn cost_text(micros: u64) -> String {
+    let whole = micros / 1_000_000;
+    let fraction = micros % 1_000_000;
+    if fraction == 0 {
+        return format!("${whole}");
+    }
+    let digits = format!("{fraction:06}");
+    format!("${whole}.{}", digits.trim_end_matches('0'))
+}
 
 /// Session-wide token usage accumulator. Sums every field `TokenUsage`
 /// accounts for, kept in two labelled totals: the answering call and the
@@ -39,6 +57,31 @@ impl SessionUsage {
         self.answering.record(usage);
     }
 
+    /// Input tokens the last answering call reported: what the last request
+    /// sent, which is what the context meter measures against the window.
+    pub(crate) fn last_input_tokens(&self) -> Option<u64> {
+        self.answering.last_input_tokens
+    }
+
+    /// What the provider reported this session has cost so far, in micro-USD.
+    /// `None` until a call reports a cost — a reported zero is `Some(0)`.
+    pub(crate) fn cost_micros(&self) -> Option<u64> {
+        self.answering.cost_micros
+    }
+
+    /// States what the turn's last answering request sent and what the provider
+    /// priced it at. Two figures of a call, never the session's sums: the meter
+    /// divides one request by the window it was sent to, and the spend adds up
+    /// only across costs a provider actually reported.
+    pub(crate) fn note_request(&mut self, input_tokens: Option<u64>, cost_micros: Option<u64>) {
+        if input_tokens.is_some() {
+            self.answering.last_input_tokens = input_tokens;
+        }
+        if let Some(cost) = cost_micros {
+            let spent = self.answering.cost_micros.unwrap_or(0);
+            self.answering.cost_micros = Some(spent.saturating_add(cost));
+        }
+    }
     /// Folds one extraction call's usage into the learning total. `None` (the
     /// provider reported nothing) skips entirely — absent is not zero, and
     /// must stay distinguishable from a reported zero, which is recorded as a

@@ -8,6 +8,7 @@ use super::model::Model;
 use super::msg::Msg;
 use super::run_draw::{Facts, frame};
 use super::update::update;
+use super::view::Meters;
 use super::view::cards_fixture::shell_question;
 
 /// The screen `model` paints at `width × height`.
@@ -68,6 +69,71 @@ fn the_status_row_is_the_mode_the_model_and_the_database() {
             "{width}x{height}: the short model has no provider prefix: {row:?}"
         );
     }
+}
+
+/// The meter the settled turn reported paints on the row's left group, and it
+/// is the first thing a narrow row gives up: at 60 columns the mode, the model,
+/// the database and `? help` all stay.
+#[test]
+fn the_meter_paints_wide_and_goes_first_narrow() {
+    let facts = Facts {
+        model: String::from("deepseek/deepseek-v4.1-flash"),
+        sharing: true,
+        ..Facts::default()
+    };
+    let mut model = session();
+    update(
+        &mut model,
+        Msg::Meters(Meters {
+            input_tokens: Some(51_200),
+            window_tokens: Some(128_000),
+            cost_micros: Some(31_200),
+        }),
+    );
+
+    let wide = painted(&model, &facts, 100, 30);
+    assert!(
+        status(&wide).contains("ask │ deepseek-v4.1-flash │ demo")
+            && status(&wide).contains("ctx 40% · $0.0312"),
+        "the meter joins the row's left group: {:?}",
+        status(&wide)
+    );
+
+    let narrow = painted(&model, &facts, 60, 24);
+    let row = status(&narrow);
+    assert!(
+        row.contains("ask │ deepseek-v4.1-flash │ demo") && row.contains("? help"),
+        "mode, model, database and help stay: {row:?}"
+    );
+    assert!(
+        !row.contains("ctx") && !row.contains('$'),
+        "the meter is dropped first: {row:?}"
+    );
+}
+
+/// A turn that reported input tokens against no known window leaves the row
+/// without a meter: the window is never guessed from the count.
+#[test]
+fn an_unknown_window_paints_no_meter() {
+    let facts = Facts {
+        model: String::from("gpt-4o"),
+        ..Facts::default()
+    };
+    let mut model = session();
+    update(
+        &mut model,
+        Msg::Meters(Meters {
+            input_tokens: Some(51_200),
+            ..Meters::default()
+        }),
+    );
+
+    let rows = painted(&model, &facts, 100, 30);
+    assert!(
+        !status(&rows).contains("ctx") && !status(&rows).contains('$'),
+        "nothing reported, nothing shown: {:?}",
+        status(&rows)
+    );
 }
 
 #[test]

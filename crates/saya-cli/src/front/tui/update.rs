@@ -79,6 +79,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             model: name,
             database,
         } => model.restated(name, database),
+        // The settled turn said what it measured: the row's meter segment is
+        // those figures from the next frame on.
+        Msg::Meters(meters) => model.metered(meters),
     }
     cmds
 }

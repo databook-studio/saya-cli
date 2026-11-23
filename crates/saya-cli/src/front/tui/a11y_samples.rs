@@ -30,6 +30,7 @@ pub(crate) fn status_facts(scheme: Scheme, charset: Charset) -> StatusFacts {
         model: String::from("deepseek-v4.1-flash"),
         sharing: true,
         activity: ActivityState::Working { seconds: 6 },
+        meters: super::view::Meters::default(),
         scheme,
         charset,
     }
@@ -194,7 +195,11 @@ pub(crate) fn conversation() -> TurnView {
         failed: false,
     }));
     turn.push(Entry::Answer(Answer {
-        text: String::from("110 orders since December."),
+        // The answer carries a fenced block: the parity checks then cover the
+        // highlight too — the same words with colour off, and in seven bits.
+        text: String::from(
+            "110 orders since December.\n\n```sql\nSELECT count(*) FROM orders; -- one row\n```",
+        ),
     }));
     turn.push(Entry::ResultPreview(preview()));
     turn

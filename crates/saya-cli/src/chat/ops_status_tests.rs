@@ -16,6 +16,7 @@ fn facts() -> StatusFacts {
         model: "sonnet".into(),
         context_use: Some("12% of a 200000-token window".into()),
         tokens: "Session token usage (2 turns):\n\n Input tokens: 120\n Output tokens: 40".into(),
+        cost: Some("$0.0125".into()),
         workspace_root: Some("/w/saya".into()),
         host_lane: true,
         instructions: Some("Loaded:\n  project: AGENTS.md (bounded, digest 1a2b)".into()),

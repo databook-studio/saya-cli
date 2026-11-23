@@ -101,6 +101,7 @@ pub(crate) fn status_facts(model: &Model, facts: &Facts) -> StatusFacts {
         model: model.model_name().unwrap_or(&facts.model).to_owned(),
         sharing: facts.sharing,
         activity: activity(model, facts),
+        meters: model.meters(),
         scheme: facts.scheme,
         charset: facts.charset,
     }

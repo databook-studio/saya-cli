@@ -4,6 +4,7 @@
 use ratatui::text::Line;
 use saya_agent::PermissionMode;
 
+use super::meters::Meters;
 use super::status::{ActivityState, StatusFacts};
 use super::status_fit::GAP;
 use crate::interactive::tui::wrap::cell_width;
@@ -19,6 +20,19 @@ pub(crate) fn full() -> StatusFacts {
         sharing: true,
         activity: ActivityState::Working { seconds: 6 },
         ..StatusFacts::default()
+    }
+}
+
+/// The same row with what the last request and the session's spend reported: a
+/// window the launch knows, a request measured against it, and a cost.
+pub(crate) fn metered() -> StatusFacts {
+    StatusFacts {
+        meters: Meters {
+            input_tokens: Some(51_200),
+            window_tokens: Some(128_000),
+            cost_micros: Some(31_200),
+        },
+        ..full()
     }
 }
 
