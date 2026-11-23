@@ -299,7 +299,7 @@ fn a_clarification_prints_the_question_block_and_the_next_line_answers_it() {
             "bypass",
         ],
     );
-    child.send(b"which one do you mean\n");
+    child.send(b"which rows do you mean\n");
     wait_for_stream(
         &child.stdout_buf,
         "⏸ question".as_bytes(),

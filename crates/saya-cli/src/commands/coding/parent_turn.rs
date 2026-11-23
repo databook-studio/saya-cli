@@ -46,7 +46,18 @@ pub(super) struct RootSession {
     /// The run's working checkout, resolved once: every checkpoint of the run
     /// is of this one directory.
     pub(super) checkout: Option<Arc<VerifiedCheckout>>,
+    /// The run's prompt as it was composed at open, holding the core prompt
+    /// only: the active plugins' sections and the session's own facts ride
+    /// after it, where [`RootSession::prompt_for_turn`] states them.
     pub(super) system_prompt: Option<String>,
+    /// The active plugins' sections, frozen the first time a plugin states one.
+    /// A family that latches mid-run states its section on the turn that
+    /// latched it, and every turn after sends the same bytes — so the request
+    /// prefix moves at the latch and never again.
+    pub(super) sections: Mutex<Option<String>>,
+    /// The folder this run works in, stated once for a chat surface: it rides
+    /// after the plugins' sections, where it rode before they were deferred.
+    pub(super) root_facts: Option<String>,
     pub(super) model: String,
     /// The run's mailbox. The first turn takes it, because the loop consumes
     /// the receiver; a later turn carries none, so steering a root between
@@ -68,6 +79,47 @@ pub(super) struct RootSession {
     /// the compaction narrative and the continuation record its loop holds.
     /// `None` is a job surface, which carries neither.
     pub(super) facts: Option<Arc<crate::chat::SessionFacts>>,
+}
+
+impl RootSession {
+    /// The system prompt this turn sends: the run's one-time composition, then
+    /// the active plugins' sections, then the session's own facts.
+    ///
+    /// A plugin's section is asked for on every turn until one answers, because
+    /// a family that latches mid-run has none at the run's open; the first
+    /// non-empty answer is frozen, so no later turn re-asks and no later turn
+    /// moves the prefix. A plugin that states its section at the open — every
+    /// one that did before this rule — is composed exactly once, as it was.
+    pub(super) fn prompt_for_turn(&self) -> Option<String> {
+        let mut prompt = self.system_prompt.clone()?;
+        if let Some(sections) = self.sections() {
+            prompt.push_str("\n\n");
+            prompt.push_str(&sections);
+        }
+        if let Some(facts) = self.root_facts.as_ref() {
+            prompt.push_str("\n\n");
+            prompt.push_str(facts);
+        }
+        Some(prompt)
+    }
+
+    /// The active plugins' sections, as the run holds them now: composed once,
+    /// and frozen from the first turn one of them states anything.
+    fn sections(&self) -> Option<String> {
+        let mut slot = self
+            .sections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none()
+            && let Some(plugins) = self.plugins.as_ref()
+        {
+            let sections = plugins.system_sections();
+            if !sections.is_empty() {
+                *slot = Some(sections.join("\n\n"));
+            }
+        }
+        slot.clone()
+    }
 }
 
 impl NativeCodingJob {

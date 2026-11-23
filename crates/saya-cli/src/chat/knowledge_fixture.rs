@@ -36,8 +36,11 @@ use crate::connection::ConnectionRegistry;
 const RUN: Duration = Duration::from_secs(120);
 
 /// The user turn whose terms select the seeded claim: it names the table the
-/// claim is filed under, at the name tier recall ranks highest.
-pub(super) const QUESTION: &str = "orders by month";
+/// claim is filed under, at the name tier recall ranks highest. It states the
+/// word `table` too, so the turn shows database work and the plugin's family —
+/// and with it the knowledge line — is advertised from this turn
+/// (`plugins::database::family`).
+pub(super) const QUESTION: &str = "the orders table by month";
 
 /// The claimed time column, and the different time-named column the
 /// contradicting statement references instead.

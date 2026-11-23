@@ -167,7 +167,7 @@ fn a_clarification_exits_six() {
     let run = run_ask(
         &fixture,
         provider.address(),
-        "which orders do you mean",
+        "which rows do you mean",
         Duration::from_secs(60),
     );
 

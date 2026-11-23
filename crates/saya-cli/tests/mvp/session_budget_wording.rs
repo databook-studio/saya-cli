@@ -75,7 +75,7 @@ fn a_question_budget_stop_says_the_partial_wording_not_request_cancelled() {
             "bypass",
         ],
     );
-    spawned.send(b"any question at all\n");
+    spawned.send(b"any question about the rows at all\n");
 
     // The silent-held establishment never answers, so the 2s database budget is
     // what ends the turn. The answering recovery first prints its (cancelled)

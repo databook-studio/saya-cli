@@ -2,9 +2,9 @@
   "surfaces": [
     {
       "surface": "chat",
-      "first_request_bytes": 20550,
-      "tool_count": 18,
-      "tools_bytes": 14120,
+      "first_request_bytes": 20769,
+      "tool_count": 19,
+      "tools_bytes": 14339,
       "system_bytes": 4904,
       "prefix_stable": true
     },

@@ -20,14 +20,15 @@ use std::sync::Arc;
 
 use saya_agent::{PluginRegistry, RunContext, RunPlugin, RunSurface};
 use saya_config::MemoryMode;
+use saya_store::SchemaStore;
 
 use crate::agent::tools::{CaptureHook, DatabaseTools};
 use crate::commands::coding::{CodingApplication, CodingError, NativeCodingJob, RunPlugins};
 use crate::connection::ConnectionRegistry;
 use crate::plugins::database::prompt::ChatPrompt;
 use crate::plugins::database::{
-    ChatDatabaseFlags, DatabaseBudget, DatabasePlugin, LearningSource as DatabasePluginLearning,
-    RecallSource as DatabasePluginRecall,
+    Bound, ChatDatabaseFlags, DatabaseBudget, DatabasePlugin, Family,
+    LearningSource as DatabasePluginLearning, RecallSource as DatabasePluginRecall,
 };
 
 /// What a session hands the database plugin once, at composition.
@@ -52,7 +53,7 @@ pub(super) struct PluginSetup {
 
 /// The registry a session's run activates its plugins out of, and the context
 /// they activate for.
-pub(super) fn run_plugins(
+pub(super) async fn run_plugins(
     application: &CodingApplication,
     job: &NativeCodingJob,
     setup: PluginSetup,
@@ -75,6 +76,16 @@ pub(super) fn run_plugins(
     let prompt = ChatPrompt::of(&connections, memory, memory_reachable);
     let context = run_context(&connections);
     let primary = connections.primary().map(str::to_owned);
+    // Whether this run advertises its database family yet, and the evidence
+    // that turns it on: the connections it holds, the object names the state
+    // store has cached for their profiles, and the one stated allow list. A
+    // chat with a profile no longer pays the family's bytes on a request that
+    // never asked for it (`plugins::database::family`).
+    let family = Arc::new(Family::of(
+        Bound::of(&connections)
+            .with_objects(cached_objects(application.store(), &connections).await),
+        crate::plugins::database::family::stated_by(&runtime.resolved.tools),
+    ));
     // What this session's memory mode attaches: the write permission and the
     // observation log the learning pass reads, both absent with memory off.
     let setup_learning = crate::agent::learning::LearningSetup::from(memory);
@@ -106,7 +117,8 @@ pub(super) fn run_plugins(
         budget,
         prompt,
         capture,
-    );
+    )
+    .with_family(family);
     // A turn recalls the session's stored knowledge before it is sent, through
     // the one function the chat's turn calls — the same store the session opened,
     // the same bounds its `[memory]` resolved and the same conversation byte
@@ -155,4 +167,48 @@ fn run_context(connections: &ConnectionRegistry) -> RunContext {
         surface: RunSurface::Chat,
         database_profiles: connections.len(),
     }
+}
+
+/// How many cached object names the evidence rule reads: enough to name every
+/// table of an ordinary schema, bounded so a very large one cannot put the
+/// session's first request behind a scan of it.
+const CACHED_OBJECT_LIMIT: usize = 512;
+
+/// The object names the run's bound profiles have in the state store's cached
+/// schema. Every one of them is evidence: a request that names `orders` is
+/// database work without ever saying "database".
+async fn cached_objects(
+    store: &saya_store::SqliteStateStore,
+    connections: &ConnectionRegistry,
+) -> Vec<String> {
+    let mut objects: Vec<String> = Vec::new();
+    for (_, entry) in connections.entries() {
+        let Some(id) = entry.profile_id.as_deref() else {
+            continue;
+        };
+        let Ok(identity) = saya_types::ProfileIdentity::parse(id) else {
+            continue;
+        };
+        let Some(tree) = store
+            .get_schema(identity.as_str())
+            .await
+            .ok()
+            .flatten()
+            .map(|cached| cached.schema)
+        else {
+            continue;
+        };
+        for database in tree.databases {
+            for schema in database.schemas {
+                for table in schema.tables {
+                    objects.push(table.name);
+                    objects.extend(table.columns.into_iter().map(|column| column.name));
+                }
+            }
+        }
+    }
+    objects.sort();
+    objects.dedup();
+    objects.truncate(CACHED_OBJECT_LIMIT);
+    objects
 }

@@ -176,7 +176,8 @@ impl RunComposition {
                 learning,
                 budget,
             },
-        )?;
+        )
+        .await?;
         let mode = job.approval_mode();
         Ok(Self {
             job,
@@ -196,7 +197,7 @@ impl RunComposition {
     /// The plugins a run the front resumed activates, out of the same registry
     /// a composed run's are composed from: a resumed session keeps the database
     /// plugin it had, on the same connections and under the same budget.
-    pub(crate) fn resumed_plugins(
+    pub(crate) async fn resumed_plugins(
         application: &CodingApplication,
         job: &NativeCodingJob,
         run: SessionRun,
@@ -214,6 +215,7 @@ impl RunComposition {
                 budget: run.budget,
             },
         )
+        .await
     }
 
     /// Opens the run and runs no turn. After it the run holds its provider,

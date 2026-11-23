@@ -67,6 +67,16 @@ pub(super) const KNOWN_GAPS: &[Gap] = &[
         "request_clarification",
         "no operator is attached to the job fixture, so the helper advertises no ask",
     ),
+    Gap::missing(
+        "job",
+        "use_database",
+        "the ask is the chat's: a chat advertises it only while its database family is off, and a job's family is on from its first turn (`plugins::database::family`)",
+    ),
+    Gap::missing(
+        "helper",
+        "use_database",
+        "the ask is the chat's: a chat advertises it only while its database family is off, and a helper's family is on from its first turn (`plugins::database::family`)",
+    ),
     Gap::schema_differs(
         "job",
         "bounded_sql_query",

@@ -238,7 +238,7 @@ fn a_clarification_reply_prints_a_cumulative_section() {
     );
 
     // Turn 1: the question clarifies; its settled section has one sample.
-    spawned.send(b"which one do you mean\n");
+    spawned.send(b"which rows do you mean\n");
     wait_for_stream(
         &spawned.stdout_buf,
         "⏸ question".as_bytes(),

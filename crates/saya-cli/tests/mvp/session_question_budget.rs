@@ -100,7 +100,7 @@ fn a_clarification_reply_after_a_long_idle_wait_is_not_budget_stopped() {
         "budget",
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
     );
-    spawned.send(b"which one do you mean\n");
+    spawned.send(b"which rows do you mean\n");
 
     wait_for_stream(
         &spawned.stdout_buf,
@@ -190,7 +190,7 @@ fn a_clarification_reply_arms_its_own_database_budget_at_its_first_use() {
         "budget-remain",
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
     );
-    spawned.send(b"which one do you mean\n");
+    spawned.send(b"which rows do you mean\n");
 
     wait_for_stream_timeout(
         &spawned.stdout_buf,

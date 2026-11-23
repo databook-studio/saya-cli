@@ -128,7 +128,9 @@ async fn a_spent_known_token_wallet_gates_the_next_real_tool_call() {
 
     let turn = tokio::time::timeout(
         RUN,
-        composition.job().run_next_turn(&sink, "who are the users?"),
+        composition
+            .job()
+            .run_next_turn(&sink, "who are the users in the users table?"),
     )
     .await
     .expect("the turn settles");

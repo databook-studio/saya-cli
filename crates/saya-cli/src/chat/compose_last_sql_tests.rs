@@ -83,7 +83,9 @@ async fn the_last_sql_rides_the_next_turns_user_tail_and_the_prefix_stays() {
 
     let first = tokio::time::timeout(
         RUN,
-        composition.job().run_next_turn(&sink, "who are the users?"),
+        composition
+            .job()
+            .run_next_turn(&sink, "who are the users in the users table?"),
     )
     .await
     .expect("the first turn settles")

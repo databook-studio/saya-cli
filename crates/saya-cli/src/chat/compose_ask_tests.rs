@@ -88,7 +88,9 @@ async fn a_session_with_a_database_advertises_and_serves_the_ask() {
     let (composition, _root) = compose_case(fixture, front.front(), "session-ask-db").await;
     let turn = tokio::time::timeout(
         RUN,
-        composition.job().run_next_turn(&NoopEventSink, "which one"),
+        composition
+            .job()
+            .run_next_turn(&NoopEventSink, "which column do you mean?"),
     )
     .await
     .expect("the turn settles")

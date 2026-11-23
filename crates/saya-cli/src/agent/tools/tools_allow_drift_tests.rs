@@ -37,9 +37,12 @@ fn names(definitions: Vec<ToolDefinition>) -> Vec<String> {
         .collect()
 }
 
-/// The widest database composition: every optional member switched on.
+/// The widest database composition: every optional member switched on, plus
+/// the plugin's own ask, which it advertises before its family is latched.
 fn database_names() -> Vec<String> {
-    names(DatabaseTools::definitions(true, true, true, true))
+    let mut names = names(DatabaseTools::definitions(true, true, true, true));
+    names.push(crate::plugins::database::family::USE_DATABASE.to_owned());
+    names
 }
 
 /// The session's own remaining member: the job-local checklist. The
