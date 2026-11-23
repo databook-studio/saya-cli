@@ -49,6 +49,7 @@ fn run_headless(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
             save_refused: false,
             launch_options: cli.options.clone(),
             chat: None,
+            prepared: None,
         };
         let outcome = run_single_turn(turn, &mut ctx);
         // The turn's settled summary and the save-refusal fact, taken before
@@ -138,8 +139,12 @@ fn run_headless(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         save_refused: false,
         launch_options: cli.options.clone(),
         chat: None,
+        prepared: None,
     };
     let outcome = run_plain_loop(&mut ctx);
+    // A run composed for a first line that never came is given up with the loop
+    // that composed it: a session that says nothing leaves no run working.
+    ctx.give_up_prepared_run();
     // The session's run ends with the loop that owned it: its close is stated
     // once, so the job's records finalize as a finished run.
     if let Some(chat) = ctx.chat.take() {

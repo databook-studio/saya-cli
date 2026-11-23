@@ -19,9 +19,6 @@ fn handle_message(
     let save_refused = &mut ctx.save_refused;
     let state = &mut *ctx.state;
     let session = &mut *ctx.session;
-    let approval = state
-        .approval_mode_parsed()
-        .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?;
     // The session's live task list: the cell the run's `checklist` writes
     // through. The record re-seeds it here, so a resumed session's list rides
     // its next request, and the cell is synced back after the turn however the
@@ -31,54 +28,23 @@ fn handle_message(
     let said = match ctx.chat.as_ref() {
         Some(chat) => chat.send(line.to_owned())?,
         None => {
-            // The session's first message: the run is composed over the folder
-            // the session was started in and opened before this turn.
-            let folder = session
-                .root()
-                .map(std::path::Path::to_path_buf)
-                .or_else(|| std::env::current_dir().ok())
-                .ok_or("the session has no folder to open a run over")?;
-            // The session's turns spend `[limits.database]` once they use it.
-            let budget = crate::plugins::database::DatabaseBudget::of(&runtime);
-            let parts = LineSession {
-                session: state.id.clone(),
-                folder,
-                runtime,
-                store: state_db.clone(),
-                mode: approval,
-                overrides: state.prompt_overrides(),
-                format,
-                // The plain loop renders its turns on the terminal itself.
-                sink: None,
-                budget,
-                can_prompt: terminal,
-                // The launch statement's seeds, as the session that stated them
-                // holds them: a resumed session restarts unstated, and its store
-                // is empty because nothing was seeded into it.
-                grants: session.policy().grants().clone(),
-                // The plain loop takes the configured root: it works in the
-                // folder, so its records are the folder's.
-                state_root: None,
-                // Its turns are its own: no question token is stated here.
-                cancellation: None,
-                // The session's own task cell, and the facts its requests are
-                // rendered from: the compaction narrative and the continuation
-                // record the loop's state holds now.
-                tasks: Some(tasks.clone()),
-                facts: Some(crate::chat::SessionFacts::of(state, session.universe().workspace())),
-                // The conversation the record keeps behind the compaction
-                // boundary: a resumed session replays its kept tail exactly as
-                // the run before it did.
-                seed: state.replayed_pairs(),
+            // The session's first message: the run it is a turn of. The loop
+            // composed one while the operator was still at the prompt; when it
+            // did not — a slash command made it stale, or there was none — the
+            // run is composed here, over the same facts.
+            let opened = match ctx.prepared.take() {
+                Some(prepared) => prepared.adopt(),
+                None => {
+                    let parts = first_message_parts(
+                        state, session, runtime, state_db, format, terminal, tasks.clone(),
+                    )?;
+                    // One opener for both surfaces: the loop's first line asks
+                    // the decision the full-screen launch asks, and enters the
+                    // run it opens.
+                    LineChat::begin(parts, surface_record(state))
+                }
             };
-            // The record this process resumed decides what its link means — the
-            // run it names, a run of the record's own, or one sentence and a
-            // refusal — and the decision is acted on once, here. The record is
-            // read the one way both surfaces read it (`surface_record`).
-            let record = surface_record(state);
-            // One opener for both surfaces: the loop's first line asks the
-            // decision the full-screen launch asks, and enters the run it opens.
-            let chat = match LineChat::begin(parts, record) {
+            let chat = match opened {
                 Ok(Begun::Open { chat, said }) => {
                     if let Some(said) = said {
                         session_emit::emit_action(
@@ -175,4 +141,65 @@ fn handle_message(
         return Ok(outcome);
     }
     Ok(outcome)
+}
+
+/// The facts the session's first run is composed from: the folder the session
+/// was started in, its mode, the launch's seeds, and the conversation the record
+/// keeps behind the compaction boundary.
+///
+/// Stated once, so the run the loop composes while the operator is still at the
+/// prompt and the one a first line composes when that did not happen are the
+/// same run: the same folder, the same mode, the same databases, the same seed.
+fn first_message_parts(
+    state: &SessionState,
+    session: &SessionRuntime,
+    runtime: Arc<RuntimeConfig>,
+    state_db: &SqliteStateStore,
+    format: RenderFormat,
+    terminal: bool,
+    tasks: crate::interactive::session::tasks::SessionTasks,
+) -> Result<LineSession, Box<dyn std::error::Error>> {
+    let folder = session
+        .root()
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or("the session has no folder to open a run over")?;
+    // The session's turns spend `[limits.database]` once they use it.
+    let budget = crate::plugins::database::DatabaseBudget::of(&runtime);
+    Ok(LineSession {
+        session: state.id.clone(),
+        folder,
+        runtime,
+        store: state_db.clone(),
+        mode: state
+            .approval_mode_parsed()
+            .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?,
+        overrides: state.prompt_overrides(),
+        format,
+        // The plain loop renders its turns on the terminal itself.
+        sink: None,
+        budget,
+        can_prompt: terminal,
+        // The launch statement's seeds, as the session that stated them holds
+        // them: a resumed session restarts unstated, and its store is empty
+        // because nothing was seeded into it.
+        grants: session.policy().grants().clone(),
+        // The plain loop takes the configured root: it works in the folder, so
+        // its records are the folder's.
+        state_root: None,
+        // Its turns are its own: no question token is stated here.
+        cancellation: None,
+        // The session's own task cell, and the facts its requests are rendered
+        // from: the compaction narrative and the continuation record the loop's
+        // state holds now.
+        tasks: Some(tasks),
+        facts: Some(crate::chat::SessionFacts::of(
+            state,
+            session.universe().workspace(),
+        )),
+        // The conversation the record keeps behind the compaction boundary: a
+        // resumed session replays its kept tail exactly as the run before it
+        // did.
+        seed: state.replayed_pairs(),
+    })
 }

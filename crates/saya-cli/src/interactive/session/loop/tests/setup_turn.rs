@@ -126,6 +126,7 @@ mod setup_turn_tests {
             save_refused: false,
             launch_options: GlobalOptions::default(),
             chat: None,
+            prepared: None,
         };
         let outcome = handle_line_verbatim("/setup", &mut ctx).expect("the turn runs");
         assert!(
