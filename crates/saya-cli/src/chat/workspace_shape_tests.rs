@@ -15,6 +15,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// The session these cases run as: no case's folder is leased for it.
+const SESSION: &str = "session-shape-case";
+
 /// A throwaway directory removed when the case ends.
 struct Scratch(PathBuf);
 
@@ -69,7 +72,7 @@ fn hold_lease(state_root: &Path, folder: &Path) -> fs::File {
 #[test]
 fn a_free_folder_is_writable() {
     let (_scratch, folder, state) = case("free");
-    assert_eq!(decide(&folder, &state), WorkspaceShape::Writable);
+    assert_eq!(decide(&folder, &state, SESSION), WorkspaceShape::Writable);
 }
 
 /// A folder whose lease another live owner holds reads only, and the reason
@@ -79,14 +82,14 @@ fn a_leased_folder_reads_only_and_the_reason_names_the_other_session() {
     let (_scratch, folder, state) = case("leased");
     let held = hold_lease(&state, &folder);
     assert_eq!(
-        decide(&folder, &state),
+        decide(&folder, &state, SESSION),
         WorkspaceShape::ReadOnlyFiles {
             reason: "another session owns this folder".to_owned()
         }
     );
     // The lease the test gave back is not an owner any more.
     drop(held);
-    assert_eq!(decide(&folder, &state), WorkspaceShape::Writable);
+    assert_eq!(decide(&folder, &state, SESSION), WorkspaceShape::Writable);
 }
 
 /// The filesystem root, the home directory and saya's own state directory are
@@ -105,11 +108,11 @@ fn a_root_that_cannot_be_a_workspace_is_refused() {
         (state.as_path(), "state directory"),
         (absent.as_path(), "does not exist"),
     ] {
-        let WorkspaceShape::NoWorkspace { reason } = decide(path, &state) else {
+        let WorkspaceShape::NoWorkspace { reason } = decide(path, &state, SESSION) else {
             panic!(
                 "{} must be no workspace: {:?}",
                 path.display(),
-                decide(path, &state)
+                decide(path, &state, SESSION)
             );
         };
         assert!(

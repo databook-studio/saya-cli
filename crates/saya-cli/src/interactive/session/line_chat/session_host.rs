@@ -34,7 +34,7 @@ pub(super) async fn open_host(
     // read before the application opens, because the shape decides which root
     // the application opens over.
     let state_root = state_root(parts)?;
-    let shape = workspace_shape(&parts.folder, &state_root);
+    let shape = workspace_shape(&parts.folder, &state_root, &parts.session);
     let application = match shape.workspace() {
         Workspace::None => {
             CodingApplication::session_without_workspace(

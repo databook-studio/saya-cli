@@ -7,12 +7,15 @@
 //!
 //! - [`WorkspaceShape::Writable`]: nothing holds the folder's lease, so a
 //!   write-scoped run may take it.
+//! - [`WorkspaceShape::Writable`] too when the lease this process holds for the
+//!   folder names the very session asking: that run is the session's own, and a
+//!   job stating the session is admitted beside it.
 //! - [`WorkspaceShape::ReadOnlyFiles`]: another live owner holds the lease, so
 //!   this run reads the folder's files and stages its own state under the
 //!   state root.
 //! - [`WorkspaceShape::NoWorkspace`]: the folder cannot be a root at all.
 
-use crate::commands::coding::{folder_lease_held, resolve_in_place};
+use crate::commands::coding::{folder_lease_held, folder_lease_owner, resolve_in_place};
 use std::{fs, path::Path};
 
 /// What a run may do with the folder its session opened in.
@@ -64,8 +67,9 @@ impl WorkspaceShape {
     }
 }
 
-/// The shape of a run over `folder`, whose own records live under `state_root`.
-pub(crate) fn decide(folder: &Path, state_root: &Path) -> WorkspaceShape {
+/// The shape of a run over `folder`, whose own records live under `state_root`
+/// and which the session named `session` composes.
+pub(crate) fn decide(folder: &Path, state_root: &Path, session: &str) -> WorkspaceShape {
     let Ok(canonical) = fs::canonicalize(folder) else {
         return WorkspaceShape::NoWorkspace {
             reason: "the folder does not exist".to_owned(),
@@ -86,6 +90,12 @@ pub(crate) fn decide(folder: &Path, state_root: &Path) -> WorkspaceShape {
     };
     match folder_lease_held(state_root, root.id().as_str()) {
         Ok(false) => WorkspaceShape::Writable,
+        // The folder is leased for this session itself: the run asking is the
+        // session's next one, and it is admitted beside that lease rather than
+        // reading the folder as another owner's.
+        Ok(true) if folder_lease_owner(root.id().as_str()).as_deref() == Some(session) => {
+            WorkspaceShape::Writable
+        }
         Ok(true) => WorkspaceShape::ReadOnlyFiles {
             reason: "another session owns this folder".to_owned(),
         },

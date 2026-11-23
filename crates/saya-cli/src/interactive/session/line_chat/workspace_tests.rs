@@ -148,7 +148,11 @@ async fn a_session_over_a_folder_that_holds_its_state_root_advertises_no_workspa
     let parts = session(&folder, &records, Some(state_root));
     assert!(
         matches!(
-            crate::chat::workspace_shape(&parts.folder, parts.state_root.as_deref().unwrap()),
+            crate::chat::workspace_shape(
+                &parts.folder,
+                parts.state_root.as_deref().unwrap(),
+                &parts.session,
+            ),
             WorkspaceShape::NoWorkspace { .. }
         ),
         "the folder that holds the job's private state root cannot root it"
@@ -192,7 +196,11 @@ async fn a_session_over_a_bound_workspace_keeps_its_workspace_tools() {
     private_dir(&state_root);
     let parts = session(&folder, &records, Some(state_root));
     assert_eq!(
-        crate::chat::workspace_shape(&parts.folder, parts.state_root.as_deref().unwrap()),
+        crate::chat::workspace_shape(
+            &parts.folder,
+            parts.state_root.as_deref().unwrap(),
+            &parts.session,
+        ),
         WorkspaceShape::Writable,
         "a bound folder roots the run"
     );
