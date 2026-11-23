@@ -230,6 +230,11 @@ fn v_opens_the_whole_body_in_the_model_and_the_page_keys_move_it() {
 fn enter_over_a_card_never_answers_it_and_still_sends_the_composer() {
     let question = helper_question();
     let mut model = model_with(question);
+    // The operator moves the keyboard from the panel back to the composer
+    // before typing: a card that opens on a quiet, empty line answers where it
+    // stands, and `Tab` is how a draft is written under it (UI3).
+    update(&mut model, Msg::Key(key(KeyCode::Tab)));
+    assert!(!model.panel_focused(), "the composer has the keyboard");
     update(&mut model, Msg::Paste("count the orders".to_owned()));
 
     let cmds = update(&mut model, Msg::Key(key(KeyCode::Enter)));
@@ -253,6 +258,7 @@ fn typing_over_a_card_reaches_the_composer_and_never_answers_it() {
     // A job's consent is given by name as well as by key (`02` §8): the
     // operator types `/job approve <id>` while the card asks.
     let mut model = model_with(helper_question());
+    update(&mut model, Msg::Key(key(KeyCode::Tab)));
     update(&mut model, Msg::Key(key(KeyCode::Char('/'))));
     update(&mut model, Msg::Key(key(KeyCode::Char('j'))));
     update(&mut model, Msg::Key(key(KeyCode::Char('o'))));
@@ -297,6 +303,9 @@ fn typing_clears_the_focus_so_enter_cannot_consent_behind_a_draft() {
     update(&mut model, Msg::Key(key(KeyCode::Down)));
     assert_eq!(model.card_choice(), Some(0));
 
+    // `Tab` gives the keyboard back to the composer: from here a character is
+    // the draft's, and never the panel's.
+    update(&mut model, Msg::Key(key(KeyCode::Tab)));
     update(&mut model, Msg::Key(key(KeyCode::Char('c'))));
     assert!(
         model.card_choice().is_none(),

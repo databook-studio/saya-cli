@@ -130,6 +130,39 @@ fn a_jobs_consent_keeps_its_own_title_and_states_the_scope_whole() {
 }
 
 #[test]
+fn a_jobs_raw_proposal_sits_behind_v_and_not_in_the_panel_body() {
+    let card = approval(&scope_question(), FOLDER, SCREEN_ROWS);
+    let room = 90;
+
+    assert!(
+        !card.target().iter().any(|row| row.starts_with('{')),
+        "the panel's body is the human lines only: {:?}",
+        card.target()
+    );
+    assert!(
+        card.target()
+            .contains(&String::from("Approve job pty-job with this exact scope:")),
+        "and the scope line is still the first row: {:?}",
+        card.target()
+    );
+    let folded = card.shown_rows(false, room).join("\n");
+    assert!(
+        !folded.contains("{\"job_id\""),
+        "the raw proposal is not on the folded body: {folded}"
+    );
+
+    let full = card.shown_rows(true, room).join("\n");
+    assert!(
+        full.contains("{\"job_id\":\"pty-job\""),
+        "`v` opens the exact bytes the yes covers: {full}"
+    );
+    assert!(
+        card.withheld(room) > 0,
+        "and the card counts what it is withholding, so `v` says it has more"
+    );
+}
+
+#[test]
 fn a_session_answer_is_offered_only_when_the_call_named_one() {
     let offered = approval(&shell_question(), FOLDER, SCREEN_ROWS);
     assert_eq!(keys(&offered), ["y", "s", "n", "Esc"]);

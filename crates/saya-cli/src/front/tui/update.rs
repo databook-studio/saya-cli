@@ -76,6 +76,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
 
 /// One key press, read through the keymap and carried out.
 fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
+    // The press is stamped before it is read: a call that opens next keeps the
+    // keyboard in the composer when the operator's hands are still on it.
+    model.typed_now();
     match intent(model, key) {
         Some(Intent::Insert(character)) => {
             model.clear_choice();
@@ -101,6 +104,7 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::ViewCard) => model.toggle_card_full(),
         Some(Intent::ScrollCard(rows)) => model.scroll_card(rows),
         Some(Intent::FocusChoice(step)) => model.move_choice(step),
+        Some(Intent::ToggleSeat) => model.toggle_seat(),
         Some(Intent::AnswerFocused) => {
             // Enter answers only what an arrow press has pointed at, so a draft
             // typed during a call can never be sent as a consent.

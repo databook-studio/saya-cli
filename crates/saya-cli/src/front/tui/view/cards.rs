@@ -27,8 +27,12 @@ pub(crate) const BODY_ROWS: usize = 6;
 /// The rows a card's chrome needs on a screen, so the body gets what is left.
 const CHROME_ROWS: usize = 18;
 
-/// What the panel's last row says the keys do.
-pub(crate) const HINT: &str = "↑↓ choose · Enter answer";
+/// What the panel's last row says the keys do, while the panel answers.
+pub(crate) const HINT: &str = "↑↓ choose · Enter answer · v full details";
+
+/// What the panel's last row says while the composer holds the keyboard: the
+/// one key that gives it to the panel, and the one that opens the details.
+pub(crate) const HINT_UNFOCUSED: &str = "Tab to answer · v full details";
 
 /// Which of the three cards this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +87,9 @@ pub(crate) struct Card {
     title: String,
     /// The call's own bytes, verbatim and complete.
     target: Vec<String>,
+    /// The call's exact machine bytes — a job's proposal line — which belong
+    /// behind `v`, not in the body an operator reads at a glance.
+    details: Vec<String>,
     place: Option<String>,
     choices: Vec<Choice>,
     /// The body rows this card may show before `v` opens the rest.
@@ -110,6 +117,12 @@ impl Card {
         &self.target
     }
 
+    /// The exact bytes the card holds behind `v`: the proposal a job's consent
+    /// covers, never a line of the body it reads first.
+    pub(crate) fn details(&self) -> &[String] {
+        &self.details
+    }
+
     /// Where the call runs, when the panel can say.
     pub(crate) fn place(&self) -> Option<&str> {
         self.place.as_deref()
@@ -120,9 +133,10 @@ impl Card {
         &self.choices
     }
 
-    /// What the panel's last row says the keys do.
-    pub(crate) const fn hint(&self) -> &'static str {
-        HINT
+    /// What the panel's last row says the keys do, read by the seat that has
+    /// the keyboard.
+    pub(crate) const fn hint(&self, focused: bool) -> &'static str {
+        if focused { HINT } else { HINT_UNFOCUSED }
     }
 
     /// The answer field's placeholder, on a card whose answer is typed.
@@ -135,21 +149,24 @@ impl Card {
     }
 
     /// The rows the block shows at `room` cells: wrapped, never cut, and a
-    /// prefix of the call itself unless `full`.
+    /// prefix of the call itself unless `full` — when `v` opens the rest of the
+    /// body and the exact bytes the card was holding back.
     pub(crate) fn shown_rows(&self, full: bool, room: usize) -> Vec<String> {
-        let wrapped = cards_body::wrap(&self.target, room);
+        let mut wrapped = cards_body::wrap(&self.target, room);
         if full {
+            wrapped.extend(cards_body::wrap(&self.details, room));
             return wrapped;
         }
         wrapped[..self.cap.min(wrapped.len())].to_vec()
     }
 
-    /// How many rows the cap withholds, so `v` knows whether it has anything to
-    /// open.
+    /// How many rows the card holds back, so `v` knows whether it has anything
+    /// to open: the cap's remainder, and the exact bytes it always keeps behind
+    /// `v` however short they are.
     pub(crate) fn withheld(&self, room: usize) -> usize {
-        cards_body::wrap(&self.target, room)
-            .len()
-            .saturating_sub(self.cap)
+        let body = cards_body::wrap(&self.target, room).len();
+        let capped = body.saturating_sub(self.cap);
+        capped + cards_body::wrap(&self.details, room).len()
     }
 }
 
@@ -167,13 +184,18 @@ pub(crate) fn approval_waiting(
     waiting: usize,
 ) -> Card {
     let family = cards_family::family(question);
-    let Parts { target, in_facts } = cards_body::parts(&question.facts, family);
+    let Parts {
+        target,
+        details,
+        in_facts,
+    } = cards_body::parts(&question.facts, family);
     Card {
         kind: kind_of(family),
         family,
         title: cards_family::title(family, waiting.max(1)),
         place: cards_family::place(family, in_facts, folder),
         target,
+        details,
         choices: cards_choices::choices(question, family),
         cap: body_cap(screen_rows),
     }
@@ -188,6 +210,7 @@ pub(crate) fn clarification(text: &str, screen_rows: u16) -> Card {
         family: Family::Other,
         title: String::from("Question"),
         target: text.split('\n').map(str::to_owned).collect(),
+        details: Vec::new(),
         place: None,
         choices: Vec::new(),
         cap: body_cap(screen_rows),

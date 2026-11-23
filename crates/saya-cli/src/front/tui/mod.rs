@@ -172,6 +172,14 @@ mod update_card_pane_tests;
 mod update_cycle_tests;
 
 #[cfg(test)]
+#[path = "update_seat_tests.rs"]
+mod update_seat_tests;
+
+#[cfg(test)]
+#[path = "run_draw_seat_tests.rs"]
+mod run_draw_seat_tests;
+
+#[cfg(test)]
 #[path = "history_echo_tests.rs"]
 mod history_echo_tests;
 

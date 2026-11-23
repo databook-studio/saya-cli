@@ -136,12 +136,16 @@ impl Panel {
 
     /// Types one line and presses Enter.
     pub(crate) fn send_line(&mut self, line: &str) {
-        let mut bytes = line.as_bytes().to_vec();
-        bytes.push(b'\r');
+        self.send(line.as_bytes());
+        self.send(b"\r");
+    }
+
+    /// Types raw bytes: a key, or a line without its Enter.
+    pub(crate) fn send(&mut self, bytes: &[u8]) {
         self.writer
-            .write_all(&bytes)
-            .expect("the line reaches the pty");
-        self.writer.flush().expect("the line is flushed");
+            .write_all(bytes)
+            .expect("the bytes reach the pty");
+        self.writer.flush().expect("the bytes are flushed");
     }
 
     /// Drains the pty until the screen has stopped changing: a frame is written

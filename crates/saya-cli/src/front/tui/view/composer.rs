@@ -31,8 +31,12 @@ pub(crate) enum State {
     Paused,
     /// A read-only record of an older session; the next message starts a run.
     ReadOnlyRecord,
-    /// A call is waiting for an answer: the composer cannot be typed into.
+    /// A call is waiting for an answer and the panel holds the keyboard: the
+    /// composer cannot be typed into.
     Disabled,
+    /// A call is waiting but the composer holds the keyboard, so a draft is
+    /// typed here and `Tab` gives the keyboard to the panel.
+    ApprovalTyping,
 }
 
 /// The queued state's hint row, and the keys it names (`02` §7).
@@ -52,6 +56,10 @@ pub(crate) const COMPACT_WIDTH: usize = 100;
 /// The hint row a reverse search draws in place of the state's own: the keys
 /// that act on a search, and nothing else.
 pub(crate) const SEARCH_HINT: &str = "Enter accept · Ctrl+R older · Esc cancel";
+
+/// The hint row that names the one key which answers a waiting call while the
+/// composer has the keyboard (UI3).
+pub(crate) const APPROVAL_HINT: &str = "Tab answer the approval · Enter send";
 
 /// The prompt a reverse search draws on the composer's line (`Ctrl+R`): what is
 /// being looked for, and the entry it found — or `(no match)` when its query
@@ -73,10 +81,14 @@ pub(crate) fn state(model: &Model) -> State {
     if model.is_read_only_record() {
         State::ReadOnlyRecord
     } else if model.card().is_some() {
-        // A call waiting for an answer owns the surface: the composer is
-        // where the next message would go, and nothing goes anywhere until
-        // the call is answered.
-        State::Disabled
+        // A call waiting for an answer owns the surface: which of its two seats
+        // holds the keyboard decides whether the composer takes a draft at all
+        // (UI3).
+        if model.panel_focused() {
+            State::Disabled
+        } else {
+            State::ApprovalTyping
+        }
     } else if model.is_paused() {
         State::Paused
     } else if model.queued().is_some() {
@@ -100,6 +112,9 @@ pub(crate) fn title(state: State) -> &'static str {
         State::TurnRunning => "Message (queued on Enter)",
         State::OneQueued => "Queued",
         State::Disabled => "Message (disabled — answer the approval above)",
+        // The composer has the keyboard, so it is a working box: the title says
+        // so, and the hint row names the key that answers the call above.
+        State::ApprovalTyping => "Message",
     }
 }
 
@@ -122,6 +137,7 @@ pub(crate) fn placeholder(model: &Model) -> String {
             "This is a 0.5.0 session — your next message starts a new run".to_owned()
         }
         State::Disabled => "Answer the approval above to type again".to_owned(),
+        State::ApprovalTyping => "Type a follow-up — Tab answers the approval above".to_owned(),
     }
 }
 
@@ -140,6 +156,7 @@ pub(crate) fn hint(state: State, width: usize) -> &'static str {
         State::Paused => "Enter continue · /status",
         State::ReadOnlyRecord => "Enter send",
         State::Disabled => "y allow once · s this session · n deny · Esc deny",
+        State::ApprovalTyping => APPROVAL_HINT,
     }
 }
 

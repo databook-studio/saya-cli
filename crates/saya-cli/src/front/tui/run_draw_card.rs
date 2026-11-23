@@ -76,7 +76,11 @@ fn panel(
     let width = width as usize;
     // The inside of the box: a rule either side and one cell of air beside it.
     let room = width.saturating_sub(4).max(1);
-    let mut out = vec![rule(card.title(), Token::Accent, width, charset, true)];
+    // The seat that holds the keyboard is the one painted loudly: the panel's
+    // rule is the accent while it answers, and dimmed while the composer does.
+    let focused = model.panel_focused();
+    let border = if focused { Token::Accent } else { Token::Dim };
+    let mut out = vec![rule(card.title(), border, width, charset, true)];
     // What the budget leaves the body: the answers and both rules are not
     // negotiable, so everything else gives way to them.
     let mut spare = budget.saturating_sub(2 + card.choices().len());
@@ -108,7 +112,7 @@ fn panel(
             charset,
         ));
     }
-    out.push(rule(card.hint(), Token::Dim, width, charset, false));
+    out.push(rule(card.hint(focused), Token::Dim, width, charset, false));
     out
 }
 

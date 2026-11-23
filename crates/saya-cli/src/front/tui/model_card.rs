@@ -10,10 +10,72 @@
 //! draft into a consent. Only an arrow press points at an answer, and typing
 //! puts the pointer down again.
 
+use std::time::{Duration, Instant};
+
 use super::model::Model;
 use super::view::cards::choices_of;
 
+/// How long after a key press the operator still counts as typing: a call that
+/// opens inside this window leaves the keyboard in the composer.
+pub(crate) const QUIET_OF_TYPING: Duration = Duration::from_millis(1500);
+
+/// Which of the two seats holds the keyboard while a call waits (UI3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Seat {
+    /// The composer: every printable key is the draft's.
+    #[default]
+    Composer,
+    /// The approval panel: its keys answer the call, and a key it has no
+    /// answer for does nothing at all.
+    Panel,
+}
+
 impl Model {
+    /// Takes the reading of the injected clock the message being folded was
+    /// stamped with. The model never reads a clock of its own.
+    pub(crate) fn at(&mut self, now: Instant) {
+        self.now = Some(now);
+    }
+
+    /// Records that a key was pressed at the reading just taken: a call that
+    /// opens inside [`QUIET_OF_TYPING`] of it leaves the keyboard in the
+    /// composer.
+    pub(crate) fn typed_now(&mut self) {
+        if self.now.is_some() {
+            self.typed_at = self.now;
+        }
+    }
+
+    /// Whether the open card's panel holds the keyboard, so its keys answer.
+    pub(crate) fn panel_focused(&self) -> bool {
+        self.card.is_some() && self.seat == Seat::Panel
+    }
+
+    /// The seat a call that opens now must take: the panel only on an empty
+    /// composer that has been quiet for [`QUIET_OF_TYPING`], because a call can
+    /// land in the middle of a sentence.
+    pub(crate) fn opening_seat(&self) -> Seat {
+        if !self.composer.is_empty() {
+            return Seat::Composer;
+        }
+        match (self.typed_at, self.now) {
+            (Some(typed), Some(now)) if now.saturating_duration_since(typed) < QUIET_OF_TYPING => {
+                Seat::Composer
+            }
+            _ => Seat::Panel,
+        }
+    }
+
+    /// `Tab`: the keyboard moves to the other seat, or back. Only a waiting
+    /// card has two seats; with the slot free this changes nothing an operator
+    /// can see.
+    pub(crate) fn toggle_seat(&mut self) {
+        self.seat = match self.seat {
+            Seat::Panel => Seat::Composer,
+            Seat::Composer => Seat::Panel,
+        };
+    }
+
     /// How many calls are waiting for an answer: the one on the card and the
     /// ones queued behind it, in the order they arrived. Zero with the slot
     /// free.

@@ -75,10 +75,22 @@ fn the_consent_card_lists_the_identity_facts_verbatim() {
     );
     let pane = approval(card, None, 30);
     let rows: Vec<String> = pane.target().to_vec();
+    let human = |line: &&str| !line.trim_start().starts_with('{');
+    let wanted: Vec<String> = CONSENT
+        .split('\n')
+        .filter(human)
+        .map(str::to_owned)
+        .collect();
     assert_eq!(
-        rows,
-        CONSENT.split('\n').map(str::to_owned).collect::<Vec<_>>(),
-        "the card's body is one row per line of the consent"
+        rows, wanted,
+        "the card's body is one row per human line of the consent"
+    );
+    assert_eq!(
+        pane.details(),
+        [String::from(
+            "{\"job_id\":\"pty-job\",\"operation\":\"start\"}"
+        )],
+        "and the exact proposal the yes covers is held behind `v` (UI3)"
     );
     let shown = pane.shown_rows(model.card_full(), 100);
     assert!(
@@ -113,7 +125,10 @@ fn deny_never_starts_the_job() {
     update(&mut model, look(&front, &mut queue));
     let call = model.card().expect("the consent is the card").id;
 
-    // The controlling spelling, exactly as the operator types it.
+    // The controlling spelling, exactly as the operator types it — with the
+    // keyboard moved back to the composer, where a card that answers where it
+    // stands leaves it to `Tab` (UI3).
+    update(&mut model, press(KeyCode::Tab));
     model.insert("/deny pty-job");
     let cmds = update(&mut model, press(KeyCode::Enter));
     assert_eq!(cmds, vec![Cmd::Answer(call, Answer::Deny)]);
@@ -158,12 +173,15 @@ fn a_consent_queued_behind_an_open_card_waits_its_turn() {
     );
 
     // `/approve` names the job, and never jumps the card that is open.
+    update(&mut model, press(KeyCode::Tab));
     model.insert("/approve pty-job");
     let cmds = update(&mut model, press(KeyCode::Enter));
     assert!(cmds.is_empty(), "no consent is given blind: {cmds:?}");
     assert_eq!(model.toast(), Some(CARD_FIRST));
 
-    // Answering the open card hands the slot on, in arrival order.
+    // Answering the open card hands the slot on, in arrival order — the
+    // keyboard goes back to the panel first, where `y` is the answer.
+    update(&mut model, press(KeyCode::Tab));
     let cmds = update(&mut model, press(KeyCode::Char('y')));
     assert_eq!(
         cmds,
@@ -176,6 +194,8 @@ fn a_consent_queued_behind_an_open_card_waits_its_turn() {
         "then the consent is what the operator is looking at"
     );
 
+    // The keyboard goes back to the composer for the controlling line.
+    update(&mut model, press(KeyCode::Tab));
     model.insert("/approve pty-job");
     let cmds = update(&mut model, press(KeyCode::Enter));
     assert_eq!(

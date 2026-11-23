@@ -200,6 +200,9 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             self.leaving = true;
         }
         let busy = self.model.is_busy();
+        // The reading the message is stamped with: the model turns no clock of
+        // its own, and a call that opens decides its seat from this one.
+        self.model.at(self.clock.now());
         let cmds = update(&mut self.model, msg);
         for cmd in cmds {
             // `/setup` needs the terminal's mode pair as well as the port, and

@@ -3,12 +3,15 @@
 //! One owner of state, as the Elm shape of the front needs: the conversation
 //! the view model folds, the composer's text, the call the operator has to
 //! answer, the mode in force and the one message a running turn holds behind
-//! it. Plain data — no terminal, no widget, no clock — so a test can drive a
-//! whole session by hand ([`super::update`]).
+//! it. Plain data — no terminal, no widget, and a clock it is handed rather
+//! than read — so a test can drive a whole session by hand ([`super::update`]).
+
+use std::time::Instant;
 
 use saya_agent::PermissionMode;
 
 use super::focus::EntryPath;
+use super::model_card::Seat;
 use super::model_history::Search;
 use super::model_overlay::Overlay;
 use super::view::jobs::Drawer;
@@ -39,6 +42,15 @@ pub(crate) struct Model {
     /// as a character is typed — the composer's Enter must never become a
     /// consent by accident.
     pub(crate) card_choice: Option<usize>,
+    /// Which seat holds the keyboard while a card is open (UI3): the panel
+    /// answers only when it has it, and typing is never an answer.
+    pub(crate) seat: Seat,
+    /// The injected clock's last reading: taken at the message being folded,
+    /// never read here (a test turns it by hand).
+    pub(crate) now: Option<Instant>,
+    /// The reading the last key press was folded at, so a call that opens while
+    /// the operator is typing leaves the keyboard where their hands are.
+    pub(crate) typed_at: Option<Instant>,
     /// The mode the run's next call reads, and whether this process allows
     /// `bypass` at all — the key cycle skips what the configuration withholds.
     pub(crate) mode: PermissionMode,
@@ -169,12 +181,14 @@ impl Model {
     }
 
     /// Puts a call to the operator: one card at a time, opening folded at its
-    /// first row.
+    /// first row, with the keyboard where the operator's hands are
+    /// ([`Model::opening_seat`]).
     pub(crate) fn show_card(&mut self, card: Question) {
         self.card = Some(card);
         self.card_full = false;
         self.card_scroll = 0;
         self.card_choice = None;
+        self.seat = self.opening_seat();
     }
 
     /// Takes the open card, if one is waiting for an answer.
@@ -182,6 +196,7 @@ impl Model {
         self.card_full = false;
         self.card_scroll = 0;
         self.card_choice = None;
+        self.seat = Seat::Composer;
         self.card.take()
     }
 

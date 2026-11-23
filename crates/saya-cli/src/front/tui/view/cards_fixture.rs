@@ -78,13 +78,16 @@ pub(crate) fn web_question() -> Question {
     }
 }
 
-/// A coding job's start consent (TX5): the scope it asks for, as one body.
+/// A coding job's start consent (TX5): the scope it asks for, as one body —
+/// the human lines, then the proposal's own bytes on the last line, exactly as
+/// `interactive::tui::coding::consent` states them.
 pub(crate) fn scope_question() -> Question {
     Question {
         id: 13,
         caller: String::from("pty-job"),
         facts: "Approve job pty-job with this exact scope:\ntask: tighten the pricing tests\n\
-                write: a.txt, b.txt\nUse `/job approve pty-job` or `/job deny pty-job`."
+                write: a.txt, b.txt\nUse `/job approve pty-job` or `/job deny pty-job`.\n\
+                {\"job_id\":\"pty-job\",\"operation\":\"start\",\"plan_sha256\":\"00\"}"
             .to_owned(),
         grant: None,
     }

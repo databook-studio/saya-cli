@@ -26,6 +26,9 @@ fn waiting() -> Model {
         "a card that takes the slot rings once"
     );
     assert_eq!(model.card().map(|card| card.id), Some(7), "the card waits");
+    // The operator types behind the card, so the keyboard goes back to the
+    // composer: the panel answers only when it has it (UI3).
+    update(&mut model, press(KeyCode::Tab));
     model
 }
 
