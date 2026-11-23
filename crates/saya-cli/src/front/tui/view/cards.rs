@@ -86,14 +86,18 @@ pub(crate) struct Card {
     family: Family,
     title: String,
     /// The call's own bytes, verbatim and complete.
-    target: Vec<String>,
+    pub(super) target: Vec<String>,
+    /// The change the call makes to a file, as the bounded diff rows the panel
+    /// paints under the path — built from the call's own bytes before it runs.
+    /// Empty for a call that changes no file text.
+    pub(super) change: Vec<String>,
     /// The call's exact machine bytes — a job's proposal line — which belong
     /// behind `v`, not in the body an operator reads at a glance.
-    details: Vec<String>,
+    pub(super) details: Vec<String>,
     place: Option<String>,
     choices: Vec<Choice>,
     /// The body rows this card may show before `v` opens the rest.
-    cap: usize,
+    pub(super) cap: usize,
 }
 
 impl Card {
@@ -115,6 +119,13 @@ impl Card {
     /// The call's own bytes, verbatim.
     pub(crate) fn target(&self) -> &[String] {
         &self.target
+    }
+
+    /// The change the call makes to a file, one row per line, bounded: the
+    /// `@@` hunk headers, the rows it takes away and the rows it adds — or a
+    /// single size row for a change too large or not text.
+    pub(crate) fn change(&self) -> &[String] {
+        &self.change
     }
 
     /// The exact bytes the card holds behind `v`: the proposal a job's consent
@@ -147,27 +158,6 @@ impl Card {
             None
         }
     }
-
-    /// The rows the block shows at `room` cells: wrapped, never cut, and a
-    /// prefix of the call itself unless `full` — when `v` opens the rest of the
-    /// body and the exact bytes the card was holding back.
-    pub(crate) fn shown_rows(&self, full: bool, room: usize) -> Vec<String> {
-        let mut wrapped = cards_body::wrap(&self.target, room);
-        if full {
-            wrapped.extend(cards_body::wrap(&self.details, room));
-            return wrapped;
-        }
-        wrapped[..self.cap.min(wrapped.len())].to_vec()
-    }
-
-    /// How many rows the card holds back, so `v` knows whether it has anything
-    /// to open: the cap's remainder, and the exact bytes it always keeps behind
-    /// `v` however short they are.
-    pub(crate) fn withheld(&self, room: usize) -> usize {
-        let body = cards_body::wrap(&self.target, room).len();
-        let capped = body.saturating_sub(self.cap);
-        capped + cards_body::wrap(&self.details, room).len()
-    }
 }
 
 /// The approval card for `question`: its family's title, the call's own bytes,
@@ -195,6 +185,7 @@ pub(crate) fn approval_waiting(
         title: cards_family::title(family, waiting.max(1)),
         place: cards_family::place(family, in_facts, folder),
         target,
+        change: question.change.clone(),
         details,
         choices: cards_choices::choices(question, family),
         cap: body_cap(screen_rows),
@@ -210,6 +201,7 @@ pub(crate) fn clarification(text: &str, screen_rows: u16) -> Card {
         family: Family::Other,
         title: String::from("Question"),
         target: text.split('\n').map(str::to_owned).collect(),
+        change: Vec::new(),
         details: Vec::new(),
         place: None,
         choices: Vec::new(),

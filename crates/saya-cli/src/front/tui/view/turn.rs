@@ -86,6 +86,48 @@ pub(super) fn rows(
         above = Some(entry);
         index += count;
     }
+    out.extend(changed_rows(turn, facts, content));
+    out
+}
+
+/// The turn's `Changed:` line (UI5): the files it changed, both counts, and the
+/// key that opens their diffs.
+///
+/// It closes the turn rather than opening it: an operator reads what the turn
+/// answered, then what it wrote. A turn that changed no file adds no row, and a
+/// turn whose calls have not landed says nothing it cannot state.
+fn changed_rows(turn: &TurnView, facts: &TranscriptFacts, content: usize) -> Vec<Line<'static>> {
+    let Some(line) = crate::front::view::change_summary(&crate::front::view::changed(turn)) else {
+        return Vec::new();
+    };
+    // One wording, read from the view model: the label is what the line is, and
+    // the words after it are what changed — the same string the pane's title
+    // names, never a second spelling of it.
+    let (label, body) = match line.strip_prefix("Changed: ") {
+        Some(body) => ("Changed: ", body),
+        None => ("", line.as_str()),
+    };
+    let runs = vec![(label.to_owned(), Token::Dim), (body.to_owned(), Token::Fg)];
+    vec![Line::from(
+        std::iter::once(Span::raw(" ".repeat(GUTTER)))
+            .chain(clipped(runs, facts, content))
+            .collect::<Vec<_>>(),
+    )]
+}
+
+/// The runs cut to `room` cells: the line is one row, so what does not fit is
+/// left off rather than wrapped under it.
+fn clipped(runs: Vec<(String, Token)>, facts: &TranscriptFacts, room: usize) -> Vec<Span<'static>> {
+    let mut left = room;
+    let mut out = Vec::new();
+    for (text, token) in runs {
+        if left == 0 {
+            break;
+        }
+        let kept = super::palette_frame::fit(&text, left);
+        left = left.saturating_sub(cell_width(&kept));
+        out.push(Span::styled(kept, style(token, facts.scheme)));
+    }
     out
 }
 

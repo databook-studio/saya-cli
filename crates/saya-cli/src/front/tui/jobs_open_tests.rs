@@ -92,7 +92,11 @@ fn the_consent_card_lists_the_identity_facts_verbatim() {
         )],
         "and the exact proposal the yes covers is held behind `v` (UI3)"
     );
-    let shown = pane.shown_rows(model.card_full(), 100);
+    let shown: Vec<String> = pane
+        .shown_rows(model.card_full(), 100)
+        .iter()
+        .map(|row| row.text().to_owned())
+        .collect();
     assert!(
         shown.contains(&String::from(
             "\"analytics\" p-0000000000000000000000000000000000000000000000000000000000000001"
@@ -161,6 +165,7 @@ fn a_consent_queued_behind_an_open_card_waits_its_turn() {
                     caller: String::from("pty-job"),
                     facts: String::from(CONSENT),
                     grant: None,
+                    ..Default::default()
                 },
             }),
             ..Worker::default()

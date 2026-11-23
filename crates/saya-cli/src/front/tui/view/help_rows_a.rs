@@ -101,6 +101,13 @@ pub(super) const ROWS: &[Shortcut] = &[
         when: When::Composer,
     },
     Shortcut {
+        label: "Ctrl+D",
+        chords: &[CTRL_D],
+        action: "open the diff of the files the last turn changed — once a turn has written",
+        group: Group::Steps,
+        when: When::Changed,
+    },
+    Shortcut {
         label: "Alt+↑, Alt+↓",
         chords: &[ALT_UP, ALT_DOWN],
         action: "walk the block cursor through the transcript",

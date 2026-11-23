@@ -145,13 +145,23 @@ fn a_jobs_raw_proposal_sits_behind_v_and_not_in_the_panel_body() {
         "and the scope line is still the first row: {:?}",
         card.target()
     );
-    let folded = card.shown_rows(false, room).join("\n");
+    let folded = card
+        .shown_rows(false, room)
+        .iter()
+        .map(|row| row.text())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         !folded.contains("{\"job_id\""),
         "the raw proposal is not on the folded body: {folded}"
     );
 
-    let full = card.shown_rows(true, room).join("\n");
+    let full = card
+        .shown_rows(true, room)
+        .iter()
+        .map(|row| row.text())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
         full.contains("{\"job_id\":\"pty-job\""),
         "`v` opens the exact bytes the yes covers: {full}"
@@ -204,14 +214,15 @@ fn a_call_longer_than_the_panel_wraps_and_is_never_cut() {
     let whole = card.target().join("\n");
     let room = 30;
     let rows = card.shown_rows(true, room);
+    let texts: Vec<String> = rows.iter().map(|row| row.text().to_owned()).collect();
 
     assert!(rows.len() > 1, "a long path needs more than one row");
     assert!(
-        rows.iter().all(|row| super::cards::cells(row) <= room),
-        "no row passes the room it was given: {rows:?}"
+        texts.iter().all(|row| super::cards::cells(row) <= room),
+        "no row passes the room it was given: {texts:?}"
     );
     assert_eq!(
-        rows.concat(),
+        texts.concat(),
         whole,
         "the rows join back into the path the operator is approving"
     );
@@ -224,8 +235,8 @@ fn the_body_the_screen_withholds_is_counted_and_viewable() {
 
     let folded = card.shown_rows(false, 30);
     assert!(
-        folded.len() <= super::cards::BODY_ROWS,
-        "80x24 shows at most the card's body rows: {folded:?}"
+        folded.len() <= super::cards::BODY_ROWS + 1,
+        "80x24 shows at most the card's body rows, and the count after them: {folded:?}"
     );
     assert!(
         card.withheld(30) > 0,

@@ -1,6 +1,7 @@
 //! The transcript view model: what a turn's stream folds into, and the pure
 //! reducer that folds it.
 
+mod change;
 mod entry;
 mod entry_blocks;
 mod entry_result;
@@ -10,6 +11,10 @@ mod steps_sql;
 
 // The view model's boundary: the pane above it reads these, so nothing in this
 // module is referenced by its own build yet.
+#[allow(unused_imports)]
+pub(crate) use change::{
+    Change, KEY as CHANGE_KEY, changed, last_changed, summary as change_summary,
+};
 #[allow(unused_imports)]
 pub(crate) use entry::{
     Activity, Answer, Entry, Notice, Step, StepState, TranscriptView, TurnView, UserMessage,
@@ -29,6 +34,10 @@ pub(crate) use steps::{
 };
 #[allow(unused_imports)]
 pub(crate) use steps_sql::one_line as sql_one_line;
+
+#[cfg(test)]
+#[path = "change_tests.rs"]
+mod change_tests;
 
 #[cfg(test)]
 #[path = "reduce_fixture.rs"]

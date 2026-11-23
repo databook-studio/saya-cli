@@ -19,6 +19,14 @@ pub(super) const fn plain(code: KeyCode) -> Chord {
     }
 }
 
+/// Ctrl+D, the chord that opens the changes pane (UI5).
+pub(super) const fn ctrl_d() -> Chord {
+    Chord {
+        code: KeyCode::Char('d'),
+        modifiers: KeyModifiers::CONTROL,
+    }
+}
+
 /// The context an idle surface is in: the glyph set, nothing else.
 pub(super) fn idle() -> Context {
     Context::default()
@@ -61,6 +69,9 @@ pub(super) fn model_in(when: When) -> Model {
             model.queue("and then the second one".to_owned());
         }
         When::Busy => model.start_turn(),
+        // The changes pane is offered once a turn has written: the pane has a
+        // diff behind it in this state and no other (UI5).
+        When::Changed => model = super::super::changes_fixture::model_with_edits(),
         When::Search => model.open_search(),
         When::Cursor => {
             model.start_turn();

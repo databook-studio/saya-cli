@@ -54,6 +54,7 @@ pub(super) fn card(id: u64) -> Msg {
         caller: "Saya".to_owned(),
         facts: "SELECT COUNT(*) FROM orders".to_owned(),
         grant: Some("sql:demo".to_owned()),
+        ..Default::default()
     }))
 }
 

@@ -16,7 +16,20 @@ use ratatui::text::{Line, Span};
 use super::model::Model;
 use super::run_draw::Facts;
 use super::theme::{Charset, Glyph, Token, glyph, style};
-use super::view::{approval_waiting, fit, pad};
+use super::view::{Ink, approval_waiting, fit, pad};
+
+/// The token a body row is painted with, by the meaning the card gave it: a
+/// line the change adds is `ok`, one it takes away is `bad`, and a hunk header
+/// or the count of what is withheld is dim — the same three meanings with the
+/// colour gone, because the sign is in the row's own text.
+pub(crate) const fn token_of(ink: Ink) -> Token {
+    match ink {
+        Ink::Added => Token::Ok,
+        Ink::Removed => Token::Bad,
+        Ink::Context | Ink::Withheld => Token::Dim,
+        Ink::Plain => Token::Fg,
+    }
+}
 
 /// One row of the panel before it is painted: its words and the token they are
 /// painted with.
@@ -92,7 +105,7 @@ fn panel(
     let shown = card.shown_rows(model.card_full(), room);
     let take = shown.len().min(spare.max(1));
     for row in &shown[..take] {
-        out.push(inside(row, Token::Fg, width, charset));
+        out.push(inside(row.text(), token_of(row.ink), width, charset));
     }
     if spare > take {
         out.push(inside("", Token::Fg, width, charset));

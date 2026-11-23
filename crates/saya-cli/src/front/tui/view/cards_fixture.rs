@@ -22,6 +22,7 @@ pub(crate) fn sql_question() -> Question {
         facts: "on: demo\nSELECT COUNT(*) AS orders_since_december\n  FROM orders\n WHERE order_date >= '2025-12-01'"
             .to_owned(),
         grant: Some("sql:demo".to_owned()),
+        ..Default::default()
     }
 }
 
@@ -33,6 +34,7 @@ pub(crate) fn shell_question() -> Question {
         caller: Caller::Session.line("Run a command", "run a command"),
         facts: "in: ~/shop\n$ python3 -m unittest".to_owned(),
         grant: Some("shell:python3".to_owned()),
+        ..Default::default()
     }
 }
 
@@ -47,6 +49,7 @@ pub(crate) fn helper_question() -> Question {
         .line("Run a shell command", "run a shell command"),
         facts: "in: ~/shop\n$ cargo test".to_owned(),
         grant: Some("shell:cargo".to_owned()),
+        ..Default::default()
     }
 }
 
@@ -65,7 +68,49 @@ pub(crate) fn write_question() -> Question {
         caller: Caller::Session.line("Change a workspace file", "change a workspace file"),
         facts: "path: src/pricing.py".to_owned(),
         grant: Some("workspace-write".to_owned()),
+        ..Default::default()
     }
+}
+
+/// The same write with the change the call states: an anchored replace of one
+/// line, as `chat::operator` builds it from the call's own bytes (UI5).
+pub(crate) fn change_question() -> Question {
+    Question {
+        change: change_rows(serde_json::json!({
+            "path": "src/pricing.py",
+            "old_text": "    return total - discount - discount",
+            "new_text": "    return total - discount",
+        })),
+        ..write_question()
+    }
+}
+
+/// A change longer than the panel's body: twelve rows written into a new file.
+pub(crate) fn long_change_question() -> Question {
+    let content = (0..12)
+        .map(|line| format!("  row {line:02} of the new file\n"))
+        .collect::<String>();
+    Question {
+        change: change_rows(serde_json::json!({"path": "src/new.py", "content": content})),
+        facts: "path: src/new.py".to_owned(),
+        ..write_question()
+    }
+}
+
+/// A change that is not text, stated as its size rather than as bytes.
+pub(crate) fn binary_change_question() -> Question {
+    Question {
+        change: change_rows(serde_json::json!({"path": "logo.png", "content": "abc\u{0}def"})),
+        facts: "path: logo.png".to_owned(),
+        ..write_question()
+    }
+}
+
+/// The change rows of one call, exactly as the panel is handed them.
+fn change_rows(arguments: serde_json::Value) -> Vec<String> {
+    crate::change_diff::of(&arguments)
+        .expect("the fixture's call states a change")
+        .rows
 }
 
 /// A page fetch, as the operator puts it: the URL it reaches.
@@ -75,6 +120,7 @@ pub(crate) fn web_question() -> Question {
         caller: Caller::Session.line("Fetch a web page", "fetch a web page"),
         facts: "GET https://example.invalid/pricing".to_owned(),
         grant: Some("fetch:example.invalid".to_owned()),
+        ..Default::default()
     }
 }
 
@@ -90,6 +136,7 @@ pub(crate) fn scope_question() -> Question {
                 {\"job_id\":\"pty-job\",\"operation\":\"start\",\"plan_sha256\":\"00\"}"
             .to_owned(),
         grant: None,
+        ..Default::default()
     }
 }
 
@@ -117,6 +164,7 @@ pub(crate) fn plan_question() -> Question {
         facts: "1. Read the orders schema\n2. Count December orders\n3. Chart them by month"
             .to_owned(),
         grant: None,
+        ..Default::default()
     }
 }
 

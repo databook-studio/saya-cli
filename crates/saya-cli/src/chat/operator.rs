@@ -95,6 +95,11 @@ impl SessionOperator {
             caller: caller.to_owned(),
             facts,
             grant: crate::grant_token::shell_token_for_host_route(arguments),
+            // The change the call makes, from its own bytes: the panel paints
+            // it under the path, so the operator answers for what they read.
+            change: crate::change_diff::of(arguments)
+                .map(|change| change.rows)
+                .unwrap_or_default(),
         })
     }
 }

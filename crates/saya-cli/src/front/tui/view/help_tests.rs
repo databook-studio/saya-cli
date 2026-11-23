@@ -8,7 +8,7 @@
 use ratatui::crossterm::event::KeyCode;
 
 use super::help::{self, Context};
-use super::help_fixture::{idle, model_in, plain, words};
+use super::help_fixture::{ctrl_d, idle, model_in, plain, words};
 use super::help_keys::{Group, When, shortcuts};
 use crate::front::tui::keys::{Intent, intent};
 use crate::interactive::tui::wrap::cell_width;
@@ -45,6 +45,29 @@ fn the_sheet_says_which_state_a_key_acts_in() {
             "a key that only acts in one state says so ({words:?}): {sheet}"
         );
     }
+}
+
+#[test]
+fn the_changes_key_is_on_the_sheet_and_the_keymap_opens_the_pane() {
+    let listed = shortcuts()
+        .find(|shortcut| shortcut.chords.contains(&ctrl_d()))
+        .expect("the sheet lists the key that opens the changes pane");
+
+    assert_eq!(listed.label, "Ctrl+D", "the sheet names the chord it lists");
+    assert!(
+        listed.action.contains("diff"),
+        "the row says what the key opens: {}",
+        listed.action
+    );
+    assert_eq!(
+        intent(&model_in(listed.when), ctrl_d().event()),
+        Some(Intent::OpenChanges),
+        "pressed in the state it names, the keymap opens the pane"
+    );
+    assert!(
+        words(idle(), 120, 60).join("\n").contains("Ctrl+D"),
+        "and the sheet paints the row"
+    );
 }
 
 #[test]
@@ -128,6 +151,7 @@ fn every_key_the_sheet_shows_is_handled_by_the_keymap() {
         When::Cursor,
         When::Jobs,
         When::JobsConfirm,
+        When::Changed,
     ] {
         assert!(
             shortcuts().any(|shortcut| shortcut.when == when),

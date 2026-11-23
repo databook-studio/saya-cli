@@ -56,6 +56,7 @@ pub(super) fn asked(job: &str, id: u64) -> Msg {
                 caller: format!("{job}: the shell tool"),
                 facts: format!("$ run {id}"),
                 grant: None,
+                ..Default::default()
             },
         }),
         ..Worker::default()
@@ -69,6 +70,7 @@ pub(super) fn card(id: u64) -> Msg {
         caller: String::from("Saya"),
         facts: String::from("SELECT COUNT(*) FROM orders"),
         grant: Some(String::from("sql:demo")),
+        ..Default::default()
     }))
 }
 

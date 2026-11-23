@@ -25,6 +25,7 @@ fn question(id: u64) -> Question {
         caller: String::from("the shell tool"),
         facts: String::from("rm -rf build"),
         grant: None,
+        ..Default::default()
     }
 }
 

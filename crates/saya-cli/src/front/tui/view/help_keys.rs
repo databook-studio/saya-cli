@@ -51,6 +51,9 @@ pub(crate) enum When {
     Jobs,
     /// Only while the drawer's cancel confirm is open.
     JobsConfirm,
+    /// Only once a turn has changed a file: the changes pane has something to
+    /// open (UI5).
+    Changed,
 }
 
 /// Which of the sheet's groups a row is filed under.
@@ -123,6 +126,9 @@ pub(super) const CTRL_J: Chord = ctrl('j');
 pub(super) const CTRL_K: Chord = ctrl('k');
 pub(super) const CTRL_O: Chord = ctrl('o');
 pub(super) const CTRL_R: Chord = ctrl('r');
+/// The changes pane's chord (UI5): the diff of the last turn that wrote. `d`
+/// alone stays a letter, and a deny alias on a focused panel.
+pub(super) const CTRL_D: Chord = ctrl('d');
 pub(super) const QUESTION: Chord = bare(KeyCode::Char('?'));
 pub(super) const SLASH: Chord = bare(KeyCode::Char('/'));
 pub(super) const YES: Chord = bare(KeyCode::Char('y'));
