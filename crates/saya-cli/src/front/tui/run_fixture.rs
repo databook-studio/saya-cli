@@ -31,6 +31,8 @@ pub(crate) enum Act {
     Draw,
     /// The terminal's bell rung once.
     Bell,
+    /// A notification written: the bell and the desktop sequence.
+    Notify,
 }
 
 /// What a fake screen recorded.
@@ -120,6 +122,11 @@ impl Screen for FakeScreen {
 
     fn bell(&mut self) -> io::Result<()> {
         self.record().acts.push(Act::Bell);
+        Ok(())
+    }
+
+    fn notify(&mut self) -> io::Result<()> {
+        self.record().acts.push(Act::Notify);
         Ok(())
     }
 

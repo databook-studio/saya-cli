@@ -35,11 +35,11 @@ fn keys_pastes_and_resizes_become_the_messages_they_mean() {
 }
 
 #[test]
-fn nothing_else_on_the_terminal_is_a_message() {
-    // A focus change is not a key press, and the surface has nothing to do
-    // about it: no message, no frame.
-    assert!(msg_of(Event::FocusGained).is_none());
-    assert!(msg_of(Event::FocusLost).is_none());
+fn focus_changes_become_the_focus_fact() {
+    // The terminal reports whether the window has the operator's focus; the
+    // long-turn notification reads it, so it is one message, never a key.
+    assert!(matches!(msg_of(Event::FocusGained), Some(Msg::Focus(true))));
+    assert!(matches!(msg_of(Event::FocusLost), Some(Msg::Focus(false))));
 }
 
 #[test]

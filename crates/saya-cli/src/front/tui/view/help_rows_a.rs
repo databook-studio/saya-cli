@@ -28,6 +28,13 @@ pub(super) const ROWS: &[Shortcut] = &[
         when: When::Composer,
     },
     Shortcut {
+        label: "Esc, Esc",
+        chords: &[ESCAPE, ESCAPE],
+        action: "edit your last message — empty line, no turn running",
+        group: Group::Conversation,
+        when: When::Idle,
+    },
+    Shortcut {
         label: "Esc",
         chords: &[ESCAPE],
         action: "stop the running turn",

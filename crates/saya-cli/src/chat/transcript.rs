@@ -68,6 +68,14 @@ impl Transcript {
         self.folded = 0;
     }
 
+    /// Forgets the last settled turn: the edited message replaces it, so the
+    /// conversation the next run is composed from no longer carries it. The
+    /// compaction fold is clamped with it, exactly as a shorter record leaves it.
+    pub(crate) fn forget_last(&mut self) {
+        self.record.turns.pop();
+        self.folded = self.folded.min(self.record.turns.len());
+    }
+
     /// Saves the narrative a compaction folded the older turns into: it is the
     /// working memory the run after the rollover replays, ahead of the pairs the
     /// compaction kept verbatim. The turns themselves stay — what was said does

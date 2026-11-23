@@ -78,6 +78,14 @@ fn steps_screen(cols: u16, rows: u16) {
         .expect("the composer's hint row is back to naming the key");
 
     tui.send("?").expect("press `?`");
+    tui.wait_for("Conversation", INTERACTIVE)
+        .expect("the key sheet opens on its first group");
+    // The sheet is the whole keyboard, in six groups, and it is taller than a
+    // short screen: the steps' rows can sit below the fold, so the body is
+    // paged once. The sheet scrolls its rows; it never drops one.
+    if !tui.screen().contains("show every step in full") {
+        tui.send("\x1b[6~").expect("press PageDown");
+    }
     tui.wait_for("show every step in full", INTERACTIVE)
         .expect("the key sheet names the key and what it does");
     let sheet = tui.screen();

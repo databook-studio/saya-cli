@@ -37,6 +37,8 @@ pub(crate) enum When {
     Card,
     /// Only while the open card offered a token a session grant could record.
     CardGrant,
+    /// Only while no card is open and no turn runs: the composer's idle keys.
+    Idle,
     /// Only while no card is open: the composer's own keys.
     Composer,
     /// Only while a line is held behind a running turn.

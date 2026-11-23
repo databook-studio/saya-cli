@@ -288,6 +288,7 @@ where editing is the reader's `Up`/`Down` recall and no key below applies.
 | `?` on an empty line | Open the key sheet; `Esc` closes it |
 | `Shift+Tab` | Walk the mode cycle: `ask → accept-edits → plan → bypass`, skipping `bypass` when it is withheld. `read-only` and `never` are reachable only by naming them. Refused with a note while an approval card is open |
 | `Esc` while a turn runs | Stop that turn: the run stays open, and a helper the turn launched is stopped with it |
+| `Esc` twice on an empty line, with no turn running | Put the last message back in the composer, to edit and send again. Sending it replaces that turn: the previous turn's file changes are rewound first (a file another run changed since is skipped and named), and the confirmation line says what was undone |
 | `Esc` on an approval card | Deny the call it asks about |
 | `y` or `a` | Allow the call the card asks about once |
 | `s` | Allow calls like it for this session (only when the card offers a session grant) |

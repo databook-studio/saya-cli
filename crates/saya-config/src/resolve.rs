@@ -165,6 +165,12 @@ pub struct ResolvedConfig {
     pub output_format: OutputFormat,
     pub output_color: ColorChoice,
     pub ui_theme: ThemeChoice,
+    /// The `[ui] notifications` switch: whether the surface rings the terminal
+    /// and asks for a desktop notification when it needs the operator.
+    pub ui_notifications: bool,
+    /// The `[ui] notify_after_seconds` threshold: how long a turn must run
+    /// before its end is worth a notification.
+    pub ui_notify_after_seconds: u64,
     pub memory: ResolvedMemory,
     /// The resolved `[instructions]` sources and their validated byte
     /// limits: which instruction files load and how many bytes of them may

@@ -213,12 +213,20 @@ pub(super) fn surface_record(
 /// database it talks to, and whether the record is a runless one (`04` §8: a
 /// record with no link is a 0.5.0 record, which opens read-only and prepares a
 /// run on the next message).
-pub(super) fn surface_model(state: &crate::interactive::session::state::SessionState, fresh: bool) -> Model {
+pub(super) fn surface_model(
+    state: &crate::interactive::session::state::SessionState,
+    fresh: bool,
+    resolved: &saya_config::ResolvedConfig,
+) -> Model {
     Model {
         mode: crate::interactive::session::permissions::mode::current(state).unwrap_or_default(),
         allow_bypass: state.allow_bypass,
         database: state.profile.clone(),
         read_only_record: !fresh && state.run.is_none(),
+        notify: Some(crate::front::tui::Notify {
+            enabled: resolved.ui_notifications,
+            after: std::time::Duration::from_secs(resolved.ui_notify_after_seconds),
+        }),
         ..Model::default()
     }
 }

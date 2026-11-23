@@ -63,6 +63,8 @@ pub(super) fn receipt_runtime() -> RuntimeConfig {
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
             ui_theme: ThemeChoice::Auto,
+            ui_notifications: true,
+            ui_notify_after_seconds: 30,
             memory: ResolvedMemory {
                 mode: MemoryMode::Off,
                 max_contracts: 5,

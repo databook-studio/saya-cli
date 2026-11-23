@@ -38,11 +38,13 @@ pub(crate) mod keys;
 pub(crate) mod live;
 pub(crate) mod model;
 pub(crate) mod model_card;
+pub(crate) mod model_edit;
 pub(crate) mod model_history;
 pub(crate) mod model_mention;
 pub(crate) mod model_overlay;
 pub(crate) mod model_turn;
 pub(crate) mod msg;
+pub(crate) mod notify;
 pub(crate) mod ops;
 pub(crate) mod ops_deps;
 pub(crate) mod ops_group;
@@ -102,9 +104,13 @@ pub(crate) use live::LiveRuntime;
 #[allow(unused_imports)]
 pub(crate) use model::Model;
 #[allow(unused_imports)]
+pub(crate) use model_edit::Edit;
+#[allow(unused_imports)]
 pub(crate) use model_overlay::Overlay;
 #[allow(unused_imports)]
 pub(crate) use msg::{Cmd, Msg, Worker};
+#[allow(unused_imports)]
+pub(crate) use notify::Notify;
 #[allow(unused_imports)]
 pub(crate) use ops::{Asked, OpsDeps};
 #[allow(unused_imports)]
@@ -284,6 +290,18 @@ mod run_draw_card_tests;
 #[cfg(test)]
 #[path = "update_bell_tests.rs"]
 mod update_bell_tests;
+
+#[cfg(test)]
+#[path = "update_edit_tests.rs"]
+mod update_edit_tests;
+
+#[cfg(test)]
+#[path = "run_notify_tests.rs"]
+mod run_notify_tests;
+
+#[cfg(all(test, unix))]
+#[path = "surface_rewind_tests.rs"]
+mod surface_rewind_tests;
 
 #[cfg(test)]
 #[path = "run_input_tests.rs"]

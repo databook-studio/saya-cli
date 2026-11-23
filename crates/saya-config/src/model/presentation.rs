@@ -13,6 +13,12 @@ pub struct OutputFile {
 #[serde(deny_unknown_fields)]
 pub struct UiFile {
     pub theme: Option<ThemeChoice>,
+    /// Whether the surface tells the operator a call is waiting or a long turn
+    /// ended: the terminal's bell and a desktop notification. Default on.
+    pub notifications: Option<bool>,
+    /// How long a turn must run before its end is worth a notification.
+    /// Default thirty seconds.
+    pub notify_after_seconds: Option<u64>,
 }
 
 /// The `[memory]` section.

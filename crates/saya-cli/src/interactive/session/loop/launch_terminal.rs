@@ -50,7 +50,7 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         &state_db,
         format,
     );
-    let model = surface_model(&state, fresh);
+    let model = surface_model(&state, fresh, &runtime.resolved);
     // `NO_COLOR` is read here, once, and handed to the pure resolver: any
     // non-empty value selects the no-colour column (02 §12 rule 4, no-color.org),
     // and nothing later in the process reads it again.

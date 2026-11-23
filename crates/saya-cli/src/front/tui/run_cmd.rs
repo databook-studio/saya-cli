@@ -22,6 +22,9 @@ use crate::slash::SlashCommand;
 pub(crate) trait CmdPort: Send + Sync {
     /// Run one message as a turn.
     fn send(&self, message: String);
+    /// Replace the last turn: rewind its file changes through the run's own
+    /// checkpoints, say what changed, then run this message in its place.
+    fn replace_last(&self, message: String);
     /// Ask the turn in flight to stop.
     fn cancel(&self);
     /// Answer the call put under `id`.
@@ -62,6 +65,7 @@ pub(crate) trait CmdPort: Send + Sync {
 pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
     match cmd {
         Cmd::Send(message) => port.send(message),
+        Cmd::ReplaceLastTurn(message) => port.replace_last(message),
         Cmd::CancelTurn => port.cancel(),
         Cmd::Answer(id, answer) => port.answer(id, answer),
         Cmd::SwitchMode(mode) => port.switch_mode(mode),

@@ -63,7 +63,9 @@ pub(super) fn model_in(when: When) -> Model {
             model.show_card(shell_question());
             model.move_choice(1);
         }
-        When::Composer => {}
+        // With nothing running and nothing on the line, `Esc` starts an edit:
+        // the idle composer is the one state the new row acts in.
+        When::Idle | When::Composer => {}
         When::Queued => {
             model.start_turn();
             model.queue("and then the second one".to_owned());

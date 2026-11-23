@@ -93,6 +93,20 @@ fn every_key_the_surface_answers_is_listed() {
 }
 
 #[test]
+fn the_conversation_group_lists_the_edit_key() {
+    let sheet = words(idle(), 100, 60).join("\n");
+
+    assert!(
+        sheet.contains("Esc, Esc"),
+        "the sheet lists the key that edits the last message: {sheet}"
+    );
+    assert!(
+        sheet.contains("edit your last message — empty line, no turn running"),
+        "and says the state it acts in: {sheet}"
+    );
+}
+
+#[test]
 fn the_approvals_group_lists_every_key_the_panel_answers() {
     let sheet = words(idle(), 120, 70).join("\n");
 

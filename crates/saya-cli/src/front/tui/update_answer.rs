@@ -19,8 +19,9 @@ pub(super) fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>)
         cmds.push(Cmd::Answer(card.id, given));
         // One card at a time: the job that owed this call no longer waits, and
         // the ask behind it takes the slot it left (`02` §5, T9/A5) — and rings
-        // the terminal, exactly as it did when it arrived.
-        if model.answered(card.id) {
+        // the terminal, exactly as it did when it arrived, unless the operator
+        // turned notifications off.
+        if model.answered(card.id) && model.notifications_enabled() {
             cmds.push(Cmd::Bell);
         }
     }

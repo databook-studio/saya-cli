@@ -72,6 +72,9 @@ impl Current {
 enum Op {
     /// One operator message, as a turn of the run the session is on now.
     Turn(String),
+    /// One operator message replacing the last turn: its file changes are
+    /// rewound through the line's own checkpoints before the turn runs.
+    Replace(String),
     /// `/continue`: the paused turn's continuation, through the session's own
     /// path.
     Continue,
@@ -179,6 +182,13 @@ impl SurfaceLine {
         self.hand(Op::Turn(message));
     }
 
+    /// A message edited back onto the composer: rewind the last turn's file
+    /// changes through the run's own checkpoints, say what changed, and run the
+    /// edited line in that turn's place.
+    pub(crate) fn replace_last(&self, message: String) {
+        self.hand(Op::Replace(message));
+    }
+
     /// Asks the turn in flight to stop. The line's thread performs it while the
     /// turn is suspended, so the turn ends as the session's own cancel.
     pub(crate) fn cancel(&self) {
@@ -281,6 +291,10 @@ async fn drive(line: Line, front: &Forward, worker: Worker) {
         match op {
             Op::Turn(message) => {
                 let said = turn(&mut line, front, message, &mut cancelled).await;
+                settle(front, said);
+            }
+            Op::Replace(message) => {
+                let said = line.replace_last(message, front).await;
                 settle(front, said);
             }
             Op::Continue => continue_turn(&line, front).await,

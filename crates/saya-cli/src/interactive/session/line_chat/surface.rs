@@ -33,6 +33,14 @@ pub(crate) fn skipped_primary(&self) -> Option<&str> {
     self.run.as_ref().and_then(Run::skipped_primary)
 }
 
+/// The run's own checkpoints: the rewind an edited resend performs, through
+/// exactly the store `/undo` reads.
+pub(crate) fn checkpoints(&self) -> Option<crate::chat::RunCheckpoints> {
+    self.run
+        .as_ref()
+        .map(|run| crate::chat::RunCheckpoints::new(Arc::clone(run.job())))
+}
+
 /// One operator message, as a turn of the run the session is on now, and the
 /// boundary that follows it: the turn's own report is what the surface's front
 /// read from it, never a second read of the engine.
@@ -50,6 +58,49 @@ pub(crate) async fn turn(&mut self, message: String, front: &crate::front::tui::
         return Said::Nothing;
     };
     self.settled(&message, &settled).await
+}
+
+/// Replace the last turn with an edited message: the previous turn's file
+/// changes are rewound through the run's own checkpoints — skipping a file
+/// another run changed since, and naming it — before the edited line runs.
+/// The visible transcript drops the old turn, so the next run replays the
+/// edited conversation, not both.
+pub(crate) async fn replace_last(
+    &mut self,
+    message: String,
+    front: &crate::front::tui::run_front::Forward,
+) -> Said {
+    let checkpoints = self.checkpoints();
+    Self::rewind_last(
+        &mut self.transcript,
+        checkpoints.as_ref().map(|run| run as &dyn crate::chat::Checkpoints),
+        front,
+    )
+    .await;
+    self.turn(message, front).await
+}
+
+/// The rewind half of a replace: drop the replaced turn from the conversation,
+/// then put its file changes back through the run's own checkpoints. The
+/// confirmation line names what was restored and what another run changed; a
+/// refusal is said too, and never stops the edited line from running.
+pub(crate) async fn rewind_last(
+    transcript: &mut crate::chat::Transcript,
+    checkpoints: Option<&dyn crate::chat::Checkpoints>,
+    front: &crate::front::tui::run_front::Forward,
+) {
+    transcript.forget_last();
+    let Some(checkpoints) = checkpoints else {
+        return;
+    };
+    // A turn is not running: this operation is queued behind the previous
+    // one, and the edited message has not started yet.
+    match crate::chat::undo(checkpoints, false).await {
+        Ok(words) => front.note(words),
+        // Nothing to rewind is still worth stating, and the edited line still
+        // runs: the operator asked for it.
+        Err(refusal) => front.note(refusal.sentence()),
+    }
 }
 
 /// The turn a surface's own loop drove, as its front read it: the same

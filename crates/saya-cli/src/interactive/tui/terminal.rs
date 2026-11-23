@@ -4,7 +4,10 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::{
     cursor::Show,
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -24,6 +27,7 @@ impl TerminalGuard {
             stdout,
             EnterAlternateScreen,
             EnableBracketedPaste,
+            EnableFocusChange,
             EnableMouseCapture
         )?;
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
@@ -51,6 +55,7 @@ pub(crate) fn restore_terminal() -> io::Result<()> {
     let screen = execute!(
         io::stdout(),
         DisableMouseCapture,
+        DisableFocusChange,
         DisableBracketedPaste,
         LeaveAlternateScreen,
         Show

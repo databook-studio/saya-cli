@@ -12,7 +12,7 @@ use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::update::update;
 use super::view::cards_fixture::shell_question;
-use crate::chat::ChatEvent;
+use crate::chat::{ChatEvent, ChatOutcome};
 
 /// One character, as the input thread hands it over.
 fn typed(character: char) -> Msg {
@@ -116,6 +116,46 @@ fn esc_closes_the_list_and_keeps_the_draft() {
     assert!(model.mention().is_none());
     assert_eq!(model.composer(), "@src", "the draft keeps what was typed");
     assert!(cmds.is_empty(), "closing the list does nothing else");
+}
+
+/// Esc closes the list, and an `Esc, Esc` edit never fires while it is open:
+/// the list's own close is the press, and it arms nothing.
+#[test]
+fn esc_closes_the_list_and_never_edits_the_last_message() {
+    let mut model = Model::default();
+    // One settled turn: its message is what an edit would put back on the line.
+    let _ = type_text(&mut model, "count the orders");
+    let _ = update(&mut model, key(KeyCode::Enter));
+    let _ = update(
+        &mut model,
+        Msg::Chat(ChatEvent::TurnEnded(ChatOutcome::Answered)),
+    );
+    assert_eq!(model.composer(), "", "the sent line left the composer");
+
+    // The operator starts a mention on the line that is now empty.
+    let _ = type_text(&mut model, "@");
+    assert!(model.mention().is_some(), "the list is open");
+
+    let cmds = update(&mut model, key(KeyCode::Esc));
+    assert!(model.mention().is_none(), "the first Esc closed the list");
+    assert!(cmds.is_empty(), "and asked nothing of the run");
+    assert_eq!(model.composer(), "@", "the edit put nothing back");
+
+    // The draft is cleared: one Esc is still only the arm, never a restore.
+    let _ = update(&mut model, key(KeyCode::Backspace));
+    assert_eq!(model.composer(), "", "the draft is empty again");
+    let _ = update(&mut model, key(KeyCode::Esc));
+    assert_eq!(
+        model.composer(),
+        "",
+        "closing the list armed nothing: one Esc still only arms"
+    );
+    let _ = update(&mut model, key(KeyCode::Esc));
+    assert_eq!(
+        model.composer(),
+        "count the orders",
+        "the second Esc, with no list open, is the edit"
+    );
 }
 
 /// A space ends the mention: the path is named, and the list goes away.
