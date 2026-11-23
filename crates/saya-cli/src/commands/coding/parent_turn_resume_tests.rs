@@ -121,7 +121,7 @@ async fn a_resume_while_the_root_turn_runs_is_refused_without_taking_the_epoch()
         "the refused resume took no epoch"
     );
     assert!(
-        fixture.job._in_place_lease.is_none(),
+        !fixture.job.holds_folder_lease(),
         "and the running job holds no folder lease: it states no write scope"
     );
     let after = fixture.job.ledger.snapshot().await;

@@ -122,6 +122,15 @@ impl Run {
         }
     }
 
+    /// Ends the run a line never adopted: the session's own quit, stated once,
+    /// and the job's end — the folder's lease given back, and a run that took no
+    /// turn leaving no records. A prepared run is released by nobody else, so
+    /// what it holds goes through here.
+    pub(super) async fn end_prepared_run(&self) {
+        self.session.quit().await.ok();
+        self.job.end_prepared_run().await.ok();
+    }
+
     /// The typed output the last turn of this run reported, taken once by the
     /// surface above: the turn's own report, as the engine stated it.
     pub(super) fn take_output(&self) -> Option<saya_agent::AgentOutput> {

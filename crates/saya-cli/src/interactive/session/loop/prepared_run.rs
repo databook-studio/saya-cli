@@ -15,7 +15,9 @@
 // **Nothing is left working.** A prepared run the first line does not adopt —
 // a slash command changed what a run is composed from, a refusal, or a session
 // that ends without sending — is given up here: its run is closed where one
-// opened, so a session that says nothing leaves no run working.
+// opened, its folder's lease is given back and, because no turn ever held the
+// job's record, that record goes too. A session that says nothing leaves no run
+// working, no folder held and no job of its own.
 
 impl TurnContext<'_> {
     /// Starts composing the session's first run, before the first line is read.

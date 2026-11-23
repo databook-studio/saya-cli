@@ -84,7 +84,7 @@ async fn a_turn_budget_stop_ends_the_turn_and_the_run_keeps_taking_turns() {
         "two requests were admitted and the third never arrived"
     );
     assert!(
-        fixture.job._in_place_lease.is_some(),
+        fixture.job.holds_folder_lease(),
         "the run is still open and holds its one folder lease"
     );
 
@@ -103,7 +103,7 @@ async fn a_turn_budget_stop_ends_the_turn_and_the_run_keeps_taking_turns() {
         "the further turn reached the provider"
     );
     assert!(
-        fixture.job._in_place_lease.is_some(),
+        fixture.job.holds_folder_lease(),
         "the further turn ran on the lease the run already held"
     );
 }

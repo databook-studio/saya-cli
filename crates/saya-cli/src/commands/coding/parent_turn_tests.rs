@@ -65,7 +65,7 @@ async fn a_second_message_is_a_second_turn_of_the_same_open_run() {
     let first = first_turn(&fixture.job).await;
     assert!(first.is_ok(), "the first turn must run: {first:?}");
     assert!(
-        fixture.job._in_place_lease.is_none(),
+        !fixture.job.holds_folder_lease(),
         "a run with no write scope takes no folder lease"
     );
 
@@ -93,7 +93,7 @@ async fn a_second_message_is_a_second_turn_of_the_same_open_run() {
         "a further turn is another turn of the same epoch, not a new one"
     );
     assert!(
-        fixture.job._in_place_lease.is_none(),
+        !fixture.job.holds_folder_lease(),
         "and the further turn takes no lease either: the run never held one"
     );
     assert_eq!(
