@@ -7,6 +7,8 @@
 //! Unix host. Windows has no measure here, and the harness reports the window
 //! as skipped there rather than guessing.
 
+// Every measure below is Unix-only, so a host without one imports nothing.
+#[cfg(unix)]
 use std::time::Duration;
 
 /// The CPU `pid` has used so far: user plus system time.
@@ -32,6 +34,7 @@ pub(crate) fn idle_percent(pid: u32, window: Duration) -> Option<f64> {
 }
 
 /// `used` as a percentage of `window`.
+#[cfg(unix)]
 pub(crate) fn percent(used: Duration, window: Duration) -> f64 {
     used.as_secs_f64() / window.as_secs_f64() * 100.0
 }

@@ -102,7 +102,9 @@ mod root_shell_mode_tests;
 #[path = "plan_gate_tests.rs"]
 mod plan_gate_tests;
 
-#[cfg(test)]
+// The twins read `plan_gate_tests` and the root-compose fixture, both gated
+// `any(target_os = "macos", target_os = "linux")`, so they carry their gate.
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 #[path = "plan_gate_twin_tests.rs"]
 mod plan_gate_twin_tests;
 

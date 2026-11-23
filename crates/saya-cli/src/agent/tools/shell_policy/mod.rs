@@ -197,9 +197,14 @@ fn width(mode: ApprovalPolicy) -> u8 {
 pub(crate) use compose::{Background, HostLane, advertised, compose};
 // The sandbox and host-lane constructors are read only from the
 // platform-gated shell tests (the deleted session shell was their last
-// production caller), so they are re-exported for those tests alone.
+// production caller), so they are re-exported for those tests alone. The
+// sandbox pair's only callers are the macOS/Linux shell-test hooks, so they
+// carry that gate too; `compose_host_only` is read by Unix test modules only
+// and by no non-Unix one.
 #[cfg(test)]
-pub(crate) use compose::{compose_host_only, compose_sandboxed, prove};
+pub(crate) use compose::compose_host_only;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(crate) use compose::{compose_sandboxed, prove};
 pub(crate) use placement::ShellPlacement;
 pub(crate) use poll::WallClock;
 // The refusal and notice texts are read only from test code and `ShellPolicy`

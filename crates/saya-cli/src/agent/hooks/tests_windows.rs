@@ -24,7 +24,8 @@ fn a_host_only_hook_engine_composes_on_windows() {
         resolved.hooks,
         &std::env::temp_dir(),
         HostPolicy::default(),
-        HookCaller::Ask,
+        // A session that has no record id, the caller a `saya` session states.
+        HookCaller::Session(None),
         CancellationToken::new(),
     )
     .expect("the host lane composes on Windows");
