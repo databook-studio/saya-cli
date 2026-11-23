@@ -95,11 +95,7 @@ impl Card {
     /// behind `v` however short they are.
     pub(crate) fn withheld(&self, room: usize) -> usize {
         let body = self.body_rows(room).len();
-        let cut = if body > self.cap {
-            body.saturating_sub(self.cap.saturating_sub(1))
-        } else {
-            0
-        };
+        let cut = body.saturating_sub(self.cap);
         cut + cards_body::wrap(&self.details, room).len()
     }
 
@@ -129,19 +125,20 @@ fn change_rows(change: &[String], room: usize) -> Vec<Row> {
         .collect()
 }
 
-/// `rows` cut to `cap`, with one row saying how many the cut left out.
+/// `rows` cut to the card's `cap`, with one row after them saying how many the
+/// cut left out.
+///
+/// The cap states whole rows an operator reads — the same rows the panel showed
+/// before the count existed — and the count comes on top of them, so the cut is
+/// never silent and never costs a row the operator was reading. At the tightest
+/// frame the frame's own budget is what gives way, and the count is the first to
+/// go: the answers, and the rows above them, never do.
 fn capped(mut rows: Vec<Row>, cap: usize) -> Vec<Row> {
     if rows.len() <= cap {
         return rows;
     }
-    // A one-row body is the row itself: there is no room for the count, and a
-    // cut of nothing would say nothing.
-    if cap <= 1 {
-        rows.truncate(1);
-        return rows;
-    }
-    let withheld = rows.len() - (cap - 1);
-    rows.truncate(cap - 1);
+    let withheld = rows.len() - cap;
+    rows.truncate(cap.max(1));
     rows.push(Row::withheld(withheld));
     rows
 }

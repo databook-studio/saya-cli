@@ -85,22 +85,21 @@ fn eighty_by_twenty_four_caps_the_body_at_six_rows_and_offers_view_all() {
     );
     assert_eq!(
         card.shown_rows(false, 96).len(),
-        BODY_ROWS,
-        "80x24 shows six body rows: {:?}",
+        BODY_ROWS + 1,
+        "80x24 shows six body rows and the count after them: {:?}",
         card.shown_rows(false, 96)
     );
     let folded = texts(card.shown_rows(false, 96));
     assert_eq!(
-        folded[..BODY_ROWS - 1],
-        card.target()[..BODY_ROWS - 1],
+        folded[..BODY_ROWS],
+        card.target()[..BODY_ROWS],
         "the visible rows are the body's first rows, verbatim"
     );
     assert_eq!(
-        folded[BODY_ROWS - 1],
-        "+7 more lines",
+        folded[BODY_ROWS], "+6 more lines",
         "and the cap says how many it is not showing: {folded:?}"
     );
-    assert_eq!(card.withheld(96), 7, "`v` opens the seven the cap left out");
+    assert_eq!(card.withheld(96), 6, "`v` opens the six the cap left out");
     assert_eq!(
         texts(card.shown_rows(true, 96)),
         card.target(),

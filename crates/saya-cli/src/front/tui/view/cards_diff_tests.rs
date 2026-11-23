@@ -87,8 +87,8 @@ fn the_folded_body_states_the_lines_it_is_not_showing() {
 
     assert_eq!(
         folded.len(),
-        BODY_ROWS,
-        "80x24 shows at most the panel's own six rows"
+        BODY_ROWS + 1,
+        "80x24 shows the panel's own six rows and the count after them"
     );
     let last = folded.last().expect("the body has rows");
     assert_eq!(
@@ -98,12 +98,12 @@ fn the_folded_body_states_the_lines_it_is_not_showing() {
     );
     assert_eq!(
         last.text(),
-        "+9 more lines",
+        "+8 more lines",
         "and it says how many the cap left out: {folded:?}"
     );
     assert_eq!(
         card.withheld(90),
-        9,
+        8,
         "`v` opens exactly what the count states"
     );
 }

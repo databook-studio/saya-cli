@@ -235,8 +235,8 @@ fn the_body_the_screen_withholds_is_counted_and_viewable() {
 
     let folded = card.shown_rows(false, 30);
     assert!(
-        folded.len() <= super::cards::BODY_ROWS,
-        "80x24 shows at most the card's body rows: {folded:?}"
+        folded.len() <= super::cards::BODY_ROWS + 1,
+        "80x24 shows at most the card's body rows, and the count after them: {folded:?}"
     );
     assert!(
         card.withheld(30) > 0,
