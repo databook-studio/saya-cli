@@ -77,6 +77,13 @@ pub(crate) struct Model {
     pub(crate) focus: Option<EntryPath>,
     /// Whether the focused entry shows its inspector line (`02` §6's `i`).
     pub(crate) inspector: bool,
+    /// Whether the transcript shows every step's full command and the outcome
+    /// it reported (`Ctrl+O`), or one compact line per step. The compact
+    /// transcript is the default: the steps are visible without a key.
+    pub(crate) detail: bool,
+    /// The frame a running step's spinner is drawn from: one step per tick, so
+    /// a step in flight reads as working rather than as a settled dot.
+    pub(crate) spinner: usize,
 }
 
 impl Model {
@@ -211,5 +218,12 @@ impl Model {
         {
             self.toast = None;
         }
+    }
+
+    /// One tick of the surface's clock: the toast ages, and the spinner turns
+    /// one frame, so a step in flight moves on a screen nothing else moves.
+    pub(crate) fn tick(&mut self) {
+        self.spinner = self.spinner.wrapping_add(1);
+        self.tick_toast();
     }
 }

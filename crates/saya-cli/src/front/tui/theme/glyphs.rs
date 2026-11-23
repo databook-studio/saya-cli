@@ -167,3 +167,21 @@ pub(crate) fn glyph(glyph: Glyph, charset: Charset) -> &'static str {
         Charset::Ascii => glyph.ascii(),
     }
 }
+
+/// The frames a step in flight turns through, in the order a tick spends them.
+/// Every frame is one cell wide, so a turning spinner never moves the words
+/// beside it.
+const SPINNER: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
+
+/// The same four beats in seven-bit form, for a terminal without the UTF-8 set.
+const SPINNER_ASCII: [&str; 4] = ["|", "/", "-", "\\"];
+
+/// The glyph a running step draws on frame `frame`: one turn of the spinner per
+/// tick, so a step being waited on reads as working rather than as a settled
+/// mark. The frame wraps, so any counter is a frame.
+pub(crate) fn spinner(frame: usize, charset: Charset) -> &'static str {
+    match charset {
+        Charset::Utf8 => SPINNER[frame % SPINNER.len()],
+        Charset::Ascii => SPINNER_ASCII[frame % SPINNER_ASCII.len()],
+    }
+}

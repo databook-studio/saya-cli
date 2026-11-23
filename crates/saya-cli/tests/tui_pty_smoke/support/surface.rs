@@ -114,7 +114,6 @@ impl SurfaceTui {
 fn surface_tui(home: &Path, provider: Option<&MockProvider>) -> Result<SurfaceTui, String> {
     surface_over(home, provider, true)
 }
-
 /// The same launch with the configured profile pointing at a SQLite file that
 /// is not there: the launch that must still open — as a session with no
 /// database — and say why.
@@ -125,6 +124,21 @@ fn surface_tui_without_database(
     surface_over(home, provider, false)
 }
 
+/// The same launch at a size the caller states, in the approval posture it
+/// states, with its own arguments appended: a pane's look is asserted at the
+/// sizes `02` draws it in, and a case that states a width differs in nothing
+/// else.
+fn surface_sized(
+    home: &Path,
+    provider: Option<&str>,
+    cols: u16,
+    rows: u16,
+    mode: &str,
+    args: &[&str],
+) -> Result<SurfaceTui, String> {
+    open_surface(home, provider, true, cols, rows, mode, args)
+}
+
 /// `database_present` decides whether the profile's file exists: a profile
 /// naming a missing file is the stale-config case, and every other byte of the
 /// launch is the same.
@@ -132,6 +146,29 @@ fn surface_over(
     home: &Path,
     provider: Option<&MockProvider>,
     database_present: bool,
+) -> Result<SurfaceTui, String> {
+    let base_url = provider.map(MockProvider::base_url);
+    open_surface(
+        home,
+        base_url.as_deref(),
+        database_present,
+        COLS,
+        ROWS,
+        READ_ONLY,
+        &[],
+    )
+}
+
+/// The launch every surface case starts from: a scratch HOME's config and one
+/// `demo` profile, a pty of the caller's size, and the caller's arguments.
+fn open_surface(
+    home: &Path,
+    provider: Option<&str>,
+    database_present: bool,
+    cols: u16,
+    rows: u16,
+    mode: &str,
+    args: &[&str],
 ) -> Result<SurfaceTui, String> {
     let config = home.join("config.toml");
     let memory = if provider.is_some() {
@@ -162,17 +199,18 @@ fn surface_over(
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
-            rows: ROWS,
-            cols: COLS,
+            rows,
+            cols,
             pixel_width: 0,
             pixel_height: 0,
         })
         .map_err(|e| format!("could not allocate pty: {e}"))?;
-    let mut command = tui_command(home, &config, &connections);
-    if let Some(provider) = provider {
+    let mut command = tui_command_in(home, &config, &connections, mode);
+    command.args(args.iter().copied());
+    if let Some(base_url) = provider {
         command.env("SAYA_PROVIDER", "openai_compatible");
         command.env("SAYA_MODEL", "mock");
-        command.env("SAYA_PROVIDER_BASE_URL", provider.base_url());
+        command.env("SAYA_PROVIDER_BASE_URL", base_url);
         command.env("SAYA_API_KEY", "test-only");
     }
     let child = pair
@@ -191,7 +229,7 @@ fn surface_over(
     let rx = reader_channel(reader);
     Ok(SurfaceTui {
         writer,
-        parser: vt100::Parser::new(ROWS, COLS, 0),
+        parser: vt100::Parser::new(rows, cols, 0),
         rx,
         master: pair.master,
         child: ChildGuard::new(child),

@@ -24,7 +24,9 @@ pub(crate) use entry_result::ResultPreview;
 #[allow(unused_imports)]
 pub(crate) use reduce::apply;
 #[allow(unused_imports)]
-pub(crate) use steps::{elapsed_text, folded_summary, own_words as command_words, step_line};
+pub(crate) use steps::{
+    elapsed_text, folded_summary, own_words as command_words, step_fact, step_line,
+};
 #[allow(unused_imports)]
 pub(crate) use steps_sql::one_line as sql_one_line;
 

@@ -194,6 +194,8 @@ fn transcript(model: &Model, facts: &Facts, area: Rect) -> Vec<Line<'static>> {
             charset: facts.charset,
             focus: model.focus(),
             inspector: model.inspector(),
+            detail: model.detail(),
+            spinner: model.spinner(),
             ..TranscriptFacts::default()
         },
         width,

@@ -134,4 +134,22 @@ impl Model {
     pub(crate) fn toggle_inspector(&mut self) {
         self.inspector = !self.inspector;
     }
+
+    /// Whether the transcript shows every step's full command and its outcome,
+    /// or one compact line per step.
+    pub(crate) const fn detail(&self) -> bool {
+        self.detail
+    }
+
+    /// Turns full detail on, or folds the transcript back to its compact step
+    /// lines. One key for every turn: the choice is the surface's, not a
+    /// block's.
+    pub(crate) fn toggle_detail(&mut self) {
+        self.detail = !self.detail;
+    }
+
+    /// The frame a running step's spinner is drawn from.
+    pub(crate) const fn spinner(&self) -> usize {
+        self.spinner
+    }
 }

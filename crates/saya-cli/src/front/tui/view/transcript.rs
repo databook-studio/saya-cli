@@ -34,6 +34,13 @@ pub(crate) struct TranscriptFacts {
     pub(crate) focus: Option<EntryPath>,
     /// Whether the focused entry shows its inspector line (`i`).
     pub(crate) inspector: bool,
+    /// Whether the transcript shows every step's full command and the outcome
+    /// it reported (`Ctrl+O`), or one compact line per step. The compact
+    /// layout is the default: the steps are visible without a key.
+    pub(crate) detail: bool,
+    /// The frame a step in flight draws its spinner from: one per tick, so a
+    /// step being waited on reads as working.
+    pub(crate) spinner: usize,
 }
 
 impl Default for TranscriptFacts {
@@ -45,6 +52,8 @@ impl Default for TranscriptFacts {
             charset: Charset::Utf8,
             focus: None,
             inspector: false,
+            detail: false,
+            spinner: 0,
         }
     }
 }

@@ -26,7 +26,7 @@ const MIN_WIDTH: usize = 12;
 
 /// The rows the sheet asks the frame for: its two borders, the columns' three
 /// headings, and a row for each key an idle surface answers.
-pub(crate) const ROWS: usize = 16;
+pub(crate) const ROWS: usize = 17;
 
 /// The facts the sheet reads: which state the surface is in, and the glyph set
 /// it draws with.

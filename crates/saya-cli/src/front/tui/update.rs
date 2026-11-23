@@ -60,8 +60,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
             }
         }
         // The spinner reads this tick, and so does the toast's clock: four
-        // seconds of ticks spend it (`02` §4).
-        Msg::Tick => model.tick_toast(),
+        // seconds of ticks spend it, and a step in flight turns one frame
+        // (`02` §4).
+        Msg::Tick => model.tick(),
         // Leaving is the loop's decision, not the model's: the runtime ends on
         // this message and the model state it leaves behind is never painted.
         Msg::Quit => {}
@@ -120,6 +121,7 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::FocusFold) => model.fold_focus(Some(true)),
         Some(Intent::FocusCopy) => copy(model, cmds),
         Some(Intent::FocusInspector) => model.toggle_inspector(),
+        Some(Intent::ToggleDetail) => model.toggle_detail(),
         Some(Intent::FocusLeave) => model.clear_focus(),
         Some(Intent::TrustAccept) => {
             model.close_overlay();

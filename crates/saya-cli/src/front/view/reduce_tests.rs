@@ -1,6 +1,7 @@
 //! The reducer's contract, against the two recorded demos: one prompt folds
 //! into one message, ONE activity block with a line per tool call, the answer
-//! and a result preview — and a failed block never folds.
+//! and a result preview — a block keeps its lines when the turn ends, and a
+//! failed one never folds at all.
 
 use serde_json::json;
 
@@ -57,8 +58,9 @@ fn a_database_turn_is_one_message_one_block_one_answer_one_preview() {
     );
     assert!(!block.failed, "a turn that answered has no failed step");
     assert!(
-        block.folded,
-        "a successful block folds once the turn ends: {:?}",
+        !block.folded,
+        "a successful block keeps its step lines once the turn ends — the steps \
+         stay readable without a key: {:?}",
         block
     );
 }
@@ -109,8 +111,9 @@ fn a_workspace_turn_folds_the_edit_and_both_commands_into_one_block() {
         block.steps
     );
     assert!(
-        block.folded,
-        "the block folds once the turn ends: {:?}",
+        !block.folded,
+        "the block keeps its lines once the turn ends: the commands it ran are \
+         why the operator is reading it: {:?}",
         block
     );
     assert_eq!(

@@ -164,7 +164,7 @@ fn the_run_rows_are_above_the_status_line_at_100x30() {
                 " │ Ask about local or describe a change                                                           │"
             ),
             String::from(
-                " ╰ Enter send · Ctrl+K commands ──────────────────────────────────────────────────────────────────╯"
+                " ╰ Enter send · Ctrl+O detail · Ctrl+K commands ──────────────────────────────────────────────────╯"
             ),
         ],
         "the status line keeps its own row, and the composer closes the screen under it: {rows:#?}"
@@ -204,7 +204,7 @@ fn the_run_rows_are_above_the_status_line_at_80x24() {
                 " │ Ask about local or describe a change                                       │"
             ),
             String::from(
-                " ╰ Enter send · Ctrl+K commands ──────────────────────────────────────────────╯"
+                " ╰ Enter send · Ctrl+O detail · Ctrl+K commands ──────────────────────────────╯"
             ),
         ],
         "the status line keeps its own row, and the composer closes the screen under it: {rows:#?}"

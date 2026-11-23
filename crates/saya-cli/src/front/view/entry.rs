@@ -123,7 +123,8 @@ impl TurnView {
 pub(crate) enum Entry {
     /// The operator's own words, opening the turn.
     UserMessage(UserMessage),
-    /// The turn's tool steps as one block, folded once a successful turn ends.
+    /// The turn's tool steps as one block: a line per step while the turn
+    /// runs, and the same lines once it settles.
     Activity(Activity),
     /// The model's answer, as its text streams in.
     Answer(Answer),
@@ -188,10 +189,16 @@ pub(crate) struct UserMessage {
 }
 
 /// The turn's single activity block: one line per tool step, in call order.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Activity {
     pub(crate) steps: Vec<Step>,
-    /// Whether the block paints as one summary line.
+    /// Whether the turn that owns the block has ended. The header reads as the
+    /// block's summary once it has, and as the running turn's clock before
+    /// that; the steps themselves are shown either way.
+    pub(crate) ended: bool,
+    /// Whether the operator folded the block back to its one summary line —
+    /// `Enter` on the block the cursor holds, `←` to fold it. A settled block
+    /// never folds itself: the steps are what the operator came back for.
     pub(crate) folded: bool,
     /// Whether a step failed. A failed block keeps every line open: what went
     /// wrong is the part the operator has to read.
@@ -203,6 +210,7 @@ impl Activity {
     pub(crate) const fn live() -> Self {
         Self {
             steps: Vec::new(),
+            ended: false,
             folded: false,
             failed: false,
         }

@@ -56,13 +56,13 @@ fn idle_with_a_database_states_the_table_row() {
     );
     assert_eq!(
         hint(state(&model), 100),
-        "Enter send · Alt+Enter newline · Ctrl+K commands",
+        "Enter send · Alt+Enter newline · Ctrl+O detail · Ctrl+K commands",
         "`02` §7: idle, db, full layout"
     );
     assert_eq!(
         hint(state(&model), 80),
-        "Enter send · Ctrl+K commands",
-        "80x24 keeps the hint row to the two keys"
+        "Enter send · Ctrl+O detail · Ctrl+K commands",
+        "80x24 keeps the hint row to the keys an operator needs"
     );
     let narrow = render(&model);
     let wide = text(&rows(&model, 100, Charset::Utf8));
@@ -71,10 +71,13 @@ fn idle_with_a_database_states_the_table_row() {
         "{narrow}"
     );
     assert!(
-        wide.contains("Enter send · Alt+Enter newline · Ctrl+K commands"),
+        wide.contains("Enter send · Alt+Enter newline · Ctrl+O detail · Ctrl+K commands"),
         "{wide}"
     );
-    assert!(narrow.contains("Enter send · Ctrl+K commands"), "{narrow}");
+    assert!(
+        narrow.contains("Enter send · Ctrl+O detail · Ctrl+K commands"),
+        "{narrow}"
+    );
 }
 
 #[test]
@@ -89,10 +92,13 @@ fn idle_without_a_database_states_the_table_row() {
     );
     assert_eq!(
         hint(state(&model), 100),
-        "Enter send · Alt+Enter newline · Ctrl+K commands",
+        "Enter send · Alt+Enter newline · Ctrl+O detail · Ctrl+K commands",
         "`02` §7 gives the idle, no db row the same hint"
     );
-    assert_eq!(hint(state(&model), 80), "Enter send · Ctrl+K commands");
+    assert_eq!(
+        hint(state(&model), 80),
+        "Enter send · Ctrl+O detail · Ctrl+K commands"
+    );
 }
 
 #[test]
@@ -107,11 +113,14 @@ fn a_running_turn_states_the_table_row() {
         placeholder(&model),
         "Type a follow-up — it is sent when this turn ends"
     );
-    assert_eq!(hint(state(&model), 100), "Enter queue · Esc stop turn");
+    assert_eq!(
+        hint(state(&model), 100),
+        "Enter queue · Ctrl+O detail · Esc stop turn"
+    );
     assert_eq!(
         hint(state(&model), 80),
-        "Enter queue · Esc stop turn",
-        "the running hint is short enough for 80 columns as it stands"
+        "Enter queue · Ctrl+O detail · Esc stop turn",
+        "the running hint names the steps' key and is short enough for 80 columns"
     );
 }
 
@@ -194,7 +203,7 @@ fn ctrl_g_drops_the_queued_line_and_never_sends_it() {
         "the queued state's hint is gone with the line: {after}"
     );
     assert!(
-        after.contains("Enter queue · Esc stop turn"),
+        after.contains("Enter queue · Ctrl+O detail · Esc stop turn"),
         "the composer is back to the running turn's row: {after}"
     );
 }
