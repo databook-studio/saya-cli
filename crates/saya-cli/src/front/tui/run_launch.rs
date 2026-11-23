@@ -29,7 +29,6 @@ use super::run_draw::Facts;
 use super::run_front::Forward;
 use super::run_input::{self, InputGate};
 use super::run_screen::TtyScreen;
-use crate::chat::{ChatSession, OpsContext};
 use crate::cli::GlobalOptions;
 use crate::interactive::SessionState;
 use crate::local_metrics::LocalMetrics;
@@ -47,10 +46,9 @@ pub(crate) struct Surface {
     pub(crate) msgs: UnboundedSender<Msg>,
     pub(crate) queue: UnboundedReceiver<Msg>,
     pub(crate) front: Arc<Forward>,
-    /// The session the run was opened with, and the operations its commands
-    /// state ([`super::ops`]).
-    pub(crate) session: Arc<ChatSession>,
-    pub(crate) ops: OpsContext,
+    /// The line the run was opened with: the session the surface drives, its
+    /// transcript, its compaction and its rollover.
+    pub(crate) line: Arc<super::line_surface::SurfaceLine>,
     pub(crate) deps: Arc<OpsDeps>,
     /// What a direct source's commands need from the launch.
     pub(crate) direct: Arc<DirectDeps>,
@@ -81,8 +79,7 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         msgs,
         queue,
         front,
-        session,
-        ops,
+        line,
         deps,
         direct,
         jobs,
@@ -93,16 +90,17 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         metrics,
         entered,
     } = surface;
+    let allow_bypass = model.allow_bypass;
     let port = Arc::new(SessionPort::new(PortParts {
-        session,
+        line,
         front: Arc::clone(&front),
-        ops,
         direct,
         deps,
         options,
         runtime,
         state,
         jobs,
+        allow_bypass,
     }));
     let input = Arc::new(InputGate::new());
     let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port)

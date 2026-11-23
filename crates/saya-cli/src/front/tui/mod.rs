@@ -271,6 +271,10 @@ mod setup_tests;
 #[path = "ops_fixture.rs"]
 pub(crate) mod ops_fixture;
 
+// The line the surface drives: the same session the line loop holds.
+#[path = "line_surface.rs"]
+pub(crate) mod line_surface;
+
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod ops_tests;
@@ -278,3 +282,13 @@ mod ops_tests;
 #[cfg(test)]
 #[path = "ops_catalog_tests.rs"]
 mod ops_catalog_tests;
+
+// The surface's run, driven by a scripted provider: what a command does to the
+// conversation the live run replays.
+#[cfg(all(test, unix))]
+#[path = "surface_fixture.rs"]
+pub(crate) mod surface_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "surface_tests.rs"]
+mod surface_tests;

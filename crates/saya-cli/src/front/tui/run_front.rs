@@ -26,7 +26,8 @@ use tokio::sync::{mpsc::UnboundedSender, oneshot};
 use super::jobs_desk::JobDesk;
 use super::msg::{Msg, Worker};
 use crate::agent::tools::consent::Answer;
-use crate::chat::{ChatEvent, ChatFront, Question};
+use crate::chat::{ChatEvent, ChatFront, ChatOutcome, Question};
+use crate::front::line::{SettledTurn, StreamSink, TurnStream};
 use crate::interactive::tui::CodingPanel;
 
 /// The surface one session drives: its events in, its calls answered.
@@ -40,6 +41,13 @@ pub(crate) struct Forward {
     pub(super) desk: Mutex<JobDesk>,
     /// The panel a job of this run reports through, once one is running.
     pub(super) panel: Mutex<Option<CodingPanel>>,
+    /// This turn's stream, read the way the line front reads its own: the
+    /// answer the operator saw and what the turn spent, taken once at the
+    /// turn's settlement for the session's transcript and books.
+    stream: Arc<TurnStream>,
+    /// How the last turn ended, as the session stated it: taken once at the same
+    /// settlement, so the boundary a turn crosses knows what the turn was.
+    ended: Mutex<Option<ChatOutcome>>,
 }
 
 impl Forward {
@@ -50,7 +58,33 @@ impl Forward {
             pending: Mutex::new(HashMap::new()),
             desk: Mutex::new(JobDesk::default()),
             panel: Mutex::new(None),
+            stream: Arc::new(TurnStream::default()),
+            ended: Mutex::new(None),
         }
+    }
+
+    /// The turn that just settled, as this front read it off the stream: how it
+    /// ended, what it said, what it spent. `None` when the session stated no end
+    /// — a turn the run refused, or one still queued.
+    pub(crate) fn take_settled(&self) -> Option<SettledTurn> {
+        let outcome = self
+            .ended
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()?;
+        Some(SettledTurn {
+            outcome,
+            record: self.stream.take(),
+        })
+    }
+
+    /// How the last settled turn ended, without taking it: the loop's own
+    /// bookkeeping reads it after the boundary has crossed.
+    pub(crate) fn last_outcome(&self) -> Option<ChatOutcome> {
+        self.ended
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The run's jobs, as today's job plumbing states them.
@@ -132,9 +166,15 @@ impl Forward {
 #[async_trait]
 impl ChatFront for Forward {
     fn sink(&self) -> Arc<dyn AgentEventSink> {
-        Arc::new(Sink {
-            msgs: self.msgs.clone(),
-        })
+        // The turn's stream is read before it is rendered: the session's
+        // transcript and books read what the operator saw and what the turn
+        // spent, and the loop paints every event unchanged and in order.
+        Arc::new(StreamSink::new(
+            Arc::new(Sink {
+                msgs: self.msgs.clone(),
+            }),
+            Arc::clone(&self.stream),
+        ))
     }
 
     async fn ask(&self, question: &Question) -> Answer {
@@ -159,6 +199,11 @@ impl ChatFront for Forward {
     }
 
     fn emit(&self, event: ChatEvent) {
+        // The turn's end is the settlement's own fact: recorded before the event
+        // is handed on, so the boundary that follows the turn reads it.
+        if let ChatEvent::TurnEnded(outcome) = &event {
+            *self.ended.lock().unwrap_or_else(PoisonError::into_inner) = Some(outcome.clone());
+        }
         let _ = self.send(event);
     }
 }

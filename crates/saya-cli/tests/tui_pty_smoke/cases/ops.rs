@@ -41,3 +41,46 @@ fn tui_palette_status_paints_the_panel() {
         "the TUI is still alive after the read"
     );
 }
+
+/// A message, `/clear`, a message: the run the surface is on is the one the
+/// clear prepared, and the transcript says so. Typed at a real terminal, so the
+/// keys, the turn and the clear all pass through the surface's own loop.
+#[test]
+fn tui_clear_moves_the_live_run_and_the_notice_paints() {
+    let home = scratch_home("clear-notice");
+    let _cleanup = HomeGuard(home.clone());
+    let provider = MockProvider::spawn();
+    let mut tui = match surface_tui(&home, Some(&provider)) {
+        Ok(tui) => tui,
+        Err(reason) => {
+            eprintln!("skipping tui_clear_moves_the_live_run: {reason}");
+            return;
+        }
+    };
+    tui.dismiss_trust();
+    tui.send_line("what is two plus two?")
+        .expect("send the first question");
+    tui.wait_for(MockProvider::ANSWER, INTERACTIVE)
+        .expect("the first answer paints");
+
+    tui.send_line("/clear").expect("send /clear");
+    tui.wait_for("conversation cleared", INTERACTIVE)
+        .expect("the cleared notice paints in the transcript");
+
+    // The next message is a turn of the run the clear prepared: the provider is
+    // asked again, and the surface is still the one the operator is typing at.
+    tui.send_line("and now?").expect("send the second question");
+    let deadline = std::time::Instant::now() + INTERACTIVE;
+    while provider.requests() < 2 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        provider.requests() >= 2,
+        "the message after the clear ran a turn: {} requests",
+        provider.requests()
+    );
+    assert!(
+        tui.still_running(),
+        "the surface is alive after the clear and the turn that followed it"
+    );
+}

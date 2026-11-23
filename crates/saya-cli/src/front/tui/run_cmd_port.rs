@@ -16,6 +16,7 @@ use super::direct::Direct;
 use super::direct_run::{DirectDeps, perform as perform_direct};
 use super::direct_trust;
 use super::jobs_open::JobDeps;
+use super::line_surface::SurfaceLine;
 use super::live::LiveRuntime;
 use super::msg::Worker;
 use super::ops::{self, Asked, OpsDeps};
@@ -24,7 +25,6 @@ use super::run_cmd::CmdPort;
 use super::run_front::Forward;
 use super::setup;
 use crate::agent::tools::consent::Answer;
-use crate::chat::{ChatSession, OpsContext, SessionState as Phase};
 use crate::cli::GlobalOptions;
 use crate::config::reload::ReloadInputs;
 use crate::interactive::SessionState;
@@ -38,9 +38,10 @@ use crate::slash::SlashCommand;
 /// direct commands need, the launch's own options, the configuration and
 /// session state a reload moves, and what opening a job needs.
 pub(crate) struct PortParts {
-    pub(crate) session: Arc<ChatSession>,
+    /// The line the surface drives: the run it is on now, its transcript, its
+    /// compaction and its rollover — the same session the line loop holds.
+    pub(crate) line: Arc<SurfaceLine>,
     pub(crate) front: Arc<Forward>,
-    pub(crate) ops: OpsContext,
     pub(crate) direct: Arc<DirectDeps>,
     pub(crate) deps: Arc<OpsDeps>,
     pub(crate) options: GlobalOptions,
@@ -48,13 +49,16 @@ pub(crate) struct PortParts {
     pub(crate) state: Arc<Mutex<SessionState>>,
     /// What opening a job needs from the launch (`/start`, `02` §8).
     pub(crate) jobs: Arc<JobDeps>,
+    /// Whether `bypass` is reachable at all in this launch: the answer the mode
+    /// switch is stated with.
+    pub(crate) allow_bypass: bool,
 }
 
 /// The real port.
 pub(crate) struct SessionPort {
-    pub(super) session: Arc<ChatSession>,
+    pub(super) line: Arc<SurfaceLine>,
     pub(super) front: Arc<Forward>,
-    ops: OpsContext,
+    pub(super) allow_bypass: bool,
     direct: Arc<DirectDeps>,
     pub(super) deps: Arc<OpsDeps>,
     /// The launch's own options: what `/reload` re-reads and what the guided
@@ -76,20 +80,20 @@ impl SessionPort {
     /// A port over one session and everything a command of the surface's needs.
     pub(crate) fn new(parts: PortParts) -> Self {
         let PortParts {
-            session,
+            line,
             front,
-            ops,
             direct,
             deps,
             options,
             runtime,
             state,
             jobs,
+            allow_bypass,
         } = parts;
         Self {
-            session,
+            line,
             front,
-            ops,
+            allow_bypass,
             direct,
             deps,
             options,
@@ -129,7 +133,7 @@ impl SessionPort {
             Asked::Setup => {}
             // `/continue` is the one session op that states a turn: the chat
             // session sends the paused turn's message through its own path.
-            Asked::Continue => self.continue_turn(),
+            Asked::Continue => self.line.continue_turn(),
             Asked::Job(request) => self.perform_job(request),
             // A rollover: the conversation's own two are the chat layer's
             // compaction and clear, which the session performs; the change
@@ -144,7 +148,7 @@ impl SessionPort {
 
     /// The session's state, with a poisoned lock read as the value it last
     /// held: a panicking reader must not take the session's own state with it.
-    fn state(&self) -> MutexGuard<'_, SessionState> {
+    pub(super) fn state(&self) -> MutexGuard<'_, SessionState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -154,18 +158,14 @@ impl CmdPort for SessionPort {
         // The turn runs on a task of its own: its events come back through the
         // front, so the loop keeps folding them and reading keys while the
         // session works. A turn that takes the loop's thread would freeze the
-        // surface it is drawing.
-        let session = Arc::clone(&self.session);
-        tokio::spawn(async move {
-            let _ = session.send(message).await;
-        });
+        // surface it is drawing. It runs as a turn of the line the surface
+        // holds, so the boundary that follows it — the automatic compaction
+        // included — is the line front's own.
+        self.line.send(message);
     }
 
     fn cancel(&self) {
-        let session = Arc::clone(&self.session);
-        tokio::spawn(async move {
-            session.cancel().await;
-        });
+        self.line.cancel();
     }
 
     fn answer(&self, id: u64, answer: Answer) {
@@ -174,8 +174,13 @@ impl CmdPort for SessionPort {
 
     fn switch_mode(&self, mode: PermissionMode) {
         // A refusal is the operator's business, and the front is how this port
-        // says anything: it lands as the surface's own words, never dropped.
-        if let Err(refusal) = self.ops.state_mode(mode) {
+        // says anything: it lands as the surface's own words, never dropped. The
+        // cell is the run's own, read through the line, so a rollover's cell is
+        // the one the next switch moves.
+        let Some(ops) = self.line.context(self.allow_bypass) else {
+            return;
+        };
+        if let Err(refusal) = ops.state_mode(mode) {
             self.front.say(refusal);
         }
     }
@@ -237,6 +242,15 @@ impl CmdPort for SessionPort {
         // refusal is the operator's business, `/exit` asks the loop to leave,
         // and `/reload` is performed here, with the launch's own options. A
         // stateless statement — no turn is entered either way.
+        //
+        // The table states its operations over the run the session is on NOW: a
+        // rollover replaced the run, so its port and its mode cell are re-stated
+        // here before the command that reads them.
+        if let Some(port) = self.line.run_port()
+            && let Some(context) = self.line.context(self.allow_bypass)
+        {
+            self.deps.restate(crate::chat::ChatOps::new(port, context));
+        }
         self.say(ops::perform(self.deps.as_ref(), command));
     }
 
@@ -252,7 +266,8 @@ impl CmdPort for SessionPort {
         // The old surface's busy gate: the wizard owns the screen, and a turn
         // streaming behind it would be painted under the wizard. A run in
         // flight is the operator's to cancel, and this says so.
-        if self.session.state() == Phase::Busy {
+        // A turn in flight — or a command that moves the run — holds the line.
+        if self.line.busy() {
             self.front.say(setup::WHILE_BUSY);
             return Ok(());
         }

@@ -13,7 +13,7 @@ mod turn;
 #[allow(unused_imports)]
 pub(crate) use front::{LineFront, wording};
 #[allow(unused_imports)]
-pub(crate) use turn::{SettledTurn, TurnRecord, TurnTotals};
+pub(crate) use turn::{SettledTurn, StreamSink, TurnRecord, TurnStream, TurnTotals};
 
 #[cfg(test)]
 #[path = "front_tests.rs"]

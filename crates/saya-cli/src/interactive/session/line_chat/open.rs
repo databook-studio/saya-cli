@@ -33,9 +33,7 @@ use crate::agent::turn_config::PromptOverrides;
 use crate::agent::turn_config::query_data_allowed_for_endpoint;
 use crate::agent::turn_context::memory_reachable;
 use crate::agent::turn_inputs::prepare_turn;
-use crate::chat::{
-    ChatFront, ChatSession, OpsContext, RunComposition, RunPort, SessionRun, WorkspaceShape,
-};
+use crate::chat::{ChatFront, RunComposition, SessionRun, WorkspaceShape};
 use crate::commands::coding::CodingApplication;
 use crate::config::runtime::RuntimeConfig;
 use crate::front::LineFront;
@@ -148,8 +146,8 @@ async fn assemble(parts: LineSession, one_shot: bool) -> Result<Line, String> {
 /// The host a run is composed over: the application it composes on, and the
 /// shape of the folder it opened over.
 pub(super) struct Hosted {
-    application: Arc<CodingApplication>,
-    shape: WorkspaceShape,
+    pub(super) application: Arc<CodingApplication>,
+    pub(super) shape: WorkspaceShape,
 }
 
 /// The host `parts` state: the folder's shape first, because it decides which
@@ -201,8 +199,24 @@ pub(crate) async fn open_surface(
     record: &RedactedSession,
     front: Arc<dyn ChatFront>,
 ) -> Result<Opened, String> {
+    // The front the run composes on is also the front every run after a
+    // rollover composes on, so the line keeps its own handle to it.
+    let composing = Arc::clone(&front);
     match super::begin::decided(&parts, record, front, None).await? {
-        super::begin::Decided::Open(open) => Ok(Opened { run: open.run }),
+        // The whole line, not just the run: the surface holds the session's
+        // transcript, compaction and rollover, so a `/clear` on the live run is
+        // the line front's own clear.
+        super::begin::Decided::Open(open) => {
+            let super::begin::OpenRun {
+                run,
+                application,
+                shape,
+                ..
+            } = *open;
+            Ok(Opened {
+                line: Line::surface(application, parts, composing, shape, None, run),
+            })
+        }
         // A job this release takes no further turn on states its one sentence;
         // the surface opens nothing and the launch reports it.
         super::begin::Decided::Refused { sentence } => Err(sentence),
@@ -213,31 +227,14 @@ pub(crate) async fn open_surface(
 /// surface lives: the run owns the folder's lease, so it must outlive every
 /// handle taken from it.
 pub(crate) struct Opened {
-    run: Run,
+    line: Line,
 }
 
 impl Opened {
-    /// The chat session this run's turns are sent to.
-    pub(crate) fn chat(&self) -> Arc<ChatSession> {
-        self.run.chat()
-    }
-
-    /// The profile this run was configured on and could not open, when there is
-    /// one: the run holds no database, so a surface names the absence.
-    pub(crate) fn skipped_primary(&self) -> Option<&str> {
-        self.run.skipped_primary()
-    }
-
-    /// The context an operation states a mode on: the run's own cell, with the
-    /// launch's answer about whether `bypass` is reachable at all.
-    pub(crate) fn context(&self, allow_bypass: bool) -> OpsContext {
-        OpsContext::new(self.run.mode_cell(), allow_bypass)
-    }
-
-    /// The port this run's turns run through, for the operations a surface
-    /// states without running a turn.
-    pub(crate) fn run_port(&self) -> Arc<dyn RunPort> {
-        self.run.run_port()
+    /// The line session this run is the first of: the surface keeps it for as
+    /// long as it drives the run.
+    pub(crate) fn into_line(self) -> Line {
+        self.line
     }
 }
 
