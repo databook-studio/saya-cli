@@ -55,10 +55,15 @@ fn palette(key: KeyEvent) -> Option<Intent> {
     }
 }
 
-/// The key sheet (`02` §11): it says what the keys do, and Esc closes it.
+/// The key sheet (`02` §11): it says what the keys do, Esc closes it, and
+/// ↑↓ and PgUp/PgDn scroll its body when the screen is shorter than the sheet.
 fn help(key: KeyEvent) -> Option<Intent> {
     match key.code {
         KeyCode::Esc => Some(Intent::HelpClose),
+        KeyCode::Up => Some(Intent::HelpUp),
+        KeyCode::Down => Some(Intent::HelpDown),
+        KeyCode::PageUp => Some(Intent::HelpPageUp),
+        KeyCode::PageDown => Some(Intent::HelpPageDown),
         _ => None,
     }
 }

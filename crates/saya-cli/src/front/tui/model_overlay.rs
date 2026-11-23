@@ -124,10 +124,24 @@ impl Model {
         self.overlay = Some(Overlay::Palette(Palette::default()));
     }
 
-    /// Opens `02` §11's key sheet: the keys valid in the state the model is in,
-    /// read at paint time rather than captured here.
+    /// Opens `02` §11's key sheet: the whole keyboard, grouped, read at paint
+    /// time rather than captured here. It opens at its first row.
     pub(crate) fn open_help(&mut self) {
         self.overlay = Some(Overlay::Help);
+        self.help_scroll = 0;
+    }
+
+    /// How far the key sheet's body is scrolled.
+    pub(crate) const fn help_scroll(&self) -> usize {
+        self.help_scroll
+    }
+
+    /// Moves the key sheet's body by `rows`, a negative count moving it up. It
+    /// never moves above its first row; the pane clamps the far end against the
+    /// body it paints.
+    pub(crate) fn scroll_help(&mut self, rows: isize) {
+        let moved = self.help_scroll as isize + rows;
+        self.help_scroll = moved.max(0) as usize;
     }
 
     /// Opens the workspace-trust question (`02` §9.4): the one decision a
@@ -152,17 +166,19 @@ impl Model {
         self.overlay = None;
     }
 
-    /// Says a mode change where it happened: one compact line in the
-    /// transcript (`02` §3.10) and the one-sentence toast of `02` §4. Both come
-    /// from the picker's own word table, so the transcript, the toast and the
-    /// pane cannot disagree about a mode's words (J6).
+    /// Says a mode change where it happened: the one-sentence toast of `02` §4,
+    /// and — only once there is a conversation to say it in — one compact line
+    /// in the transcript (`02` §3.10). On a screen with no turns the notice is
+    /// not written, so the welcome screen a Shift+Tab arrived on survives it.
     pub(crate) fn note_mode(&mut self, mode: PermissionMode) {
-        let message = mode_words::line(mode);
-        self.transcript
-            .current()
-            .push(crate::front::Entry::Notice(crate::front::Notice {
-                message,
-            }));
+        if !self.transcript.turns().is_empty() {
+            let message = mode_words::line(mode);
+            self.transcript
+                .current()
+                .push(crate::front::Entry::Notice(crate::front::Notice {
+                    message,
+                }));
+        }
         self.say(mode_words::toast(mode));
     }
 }

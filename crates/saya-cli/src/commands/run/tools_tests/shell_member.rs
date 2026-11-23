@@ -126,6 +126,7 @@ async fn a_headless_host_call_under_an_allowed_prefix_runs_on_the_host() {
         ],
         deny: Vec::new(),
         diagnostics: Vec::new(),
+        ..Default::default()
     };
     let Some(shell) = run_shell_host_only_with_rules(&ws, rules.clone()) else {
         return;

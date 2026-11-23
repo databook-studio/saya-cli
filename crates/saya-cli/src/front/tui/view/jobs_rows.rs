@@ -154,6 +154,14 @@ fn bottom(drawer: &Drawer, width: usize, charset: Charset) -> Row {
     frame(Glyph::BottomLeft, Glyph::BottomRight, label, width, charset)
 }
 
+/// The one-line notice a drawer with no jobs paints: a notice, not a panel.
+pub(crate) fn notice(width: usize, charset: Charset) -> Row {
+    let _ = (width, charset);
+    Row {
+        runs: vec![empty()],
+    }
+}
+
 /// The row a drawer with no jobs paints.
 fn empty() -> Run {
     Run {

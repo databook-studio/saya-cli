@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use super::model::Model;
 use super::view::cards::choices_of;
+use crate::chat::Question;
 
 /// How long after a key press the operator still counts as typing: a call that
 /// opens inside this window leaves the keyboard in the composer.
@@ -31,6 +32,54 @@ pub(crate) enum Seat {
 }
 
 impl Model {
+    /// Puts a call to the operator: one card at a time, opening folded at its
+    /// first row, with the keyboard where the operator's hands are
+    /// ([`Model::opening_seat`]).
+    pub(crate) fn show_card(&mut self, card: Question) {
+        self.card = Some(card);
+        // A card owns the surface: the `@` list is the composer's, and `Tab`
+        // answers the card now, so a list that was open goes away rather than
+        // taking the one key the operator needs (UI3).
+        self.mention = None;
+        self.card_full = false;
+        self.card_scroll = 0;
+        self.card_choice = None;
+        self.seat = self.opening_seat();
+    }
+
+    /// Takes the open card, if one is waiting for an answer.
+    pub(crate) fn take_card(&mut self) -> Option<Question> {
+        self.card_full = false;
+        self.card_scroll = 0;
+        self.card_choice = None;
+        self.seat = Seat::Composer;
+        self.card.take()
+    }
+
+    /// Whether the open card's whole body is shown, or only the rows the
+    /// screen has for it.
+    pub(crate) const fn card_full(&self) -> bool {
+        self.card_full
+    }
+
+    /// How far the open card's body is scrolled, in rows.
+    pub(crate) const fn card_scroll(&self) -> usize {
+        self.card_scroll
+    }
+
+    /// Shows the open card's whole body, or folds it back to its rows.
+    pub(crate) fn toggle_card_full(&mut self) {
+        self.card_full = !self.card_full;
+    }
+
+    /// Moves the open card's body by `rows`, a negative count moving it up. It
+    /// never moves above its first row; the pane clamps the far end against
+    /// the body it paints.
+    pub(crate) fn scroll_card(&mut self, rows: isize) {
+        let moved = self.card_scroll as isize + rows;
+        self.card_scroll = moved.max(0) as usize;
+    }
+
     /// Takes the reading of the injected clock the message being folded was
     /// stamped with. The model never reads a clock of its own.
     pub(crate) fn at(&mut self, now: Instant) {

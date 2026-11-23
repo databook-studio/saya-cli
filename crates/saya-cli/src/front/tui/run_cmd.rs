@@ -52,6 +52,10 @@ pub(crate) trait CmdPort: Send + Sync {
     /// The terminal is the loop's, so the loop passes its mode pair here; the
     /// port owns the launch's options, the session and the words.
     fn guided_setup(&self, modes: &mut (dyn TerminalModes + Send)) -> io::Result<()>;
+    /// Gather the paths the composer's `@` list offers. A surface with no
+    /// workspace — and every test's fake port — offers nothing, which is the
+    /// right answer for both: there is no file a run without one may read.
+    fn mentions(&self) {}
 }
 
 /// Performs one command on the port that can.
@@ -68,6 +72,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::CancelJob(id) => port.cancel_job(id),
         Cmd::Job(request) => port.job(request),
         Cmd::Op(command) => port.op(command),
+        Cmd::Mentions => port.mentions(),
         // The bell is the terminal's, not the session's: the loop rings it on
         // the screen it owns ([`super::run::Runtime::fold`]), so a port has
         // nothing to perform here.

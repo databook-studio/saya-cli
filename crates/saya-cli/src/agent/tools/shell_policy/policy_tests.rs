@@ -42,6 +42,7 @@ fn rules(allow: &[&str], deny: &[&str]) -> CommandRules {
             .map(|text| CommandRule::parse(text).expect("the test rule parses"))
             .collect(),
         diagnostics: Vec::new(),
+        ..Default::default()
     }
 }
 

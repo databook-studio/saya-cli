@@ -195,7 +195,7 @@ fn the_open_help_sheet_is_painted_over_the_transcript() {
     model.begin_turn(String::from("how many orders did we get?"));
     model.open_help();
 
-    let rows = painted(&model, &Facts::default(), 100, 30);
+    let rows = painted(&model, &Facts::default(), 100, 60);
     let title = row_of(&rows, "╭ Help");
     let conversation = row_of(&rows, "Conversation");
     let navigation = row_of(&rows, "Navigation");

@@ -52,6 +52,13 @@ session starts answering sooner and sends less on every turn.
 - **`--deny` follows the real program** through `command`, paths, `env`,
   `sh -c`, `xargs`, `find -exec`, `eval`, `timeout`, `nice`, `nohup` and
   `stdbuf`; inline interpreter code (`python -c` and the like) fails closed.
+- **A vetted read-only command runs without asking.** Under `ask` and
+  `accept-edits` a `shell` call whose every part only reads (`ls -la`, `cat`,
+  `git status`, a pipeline of such commands) no longer puts a question to the
+  operator. The set is decided by the same reading `--deny` uses, so a write, a
+  substitution, a wrapper, an environment assignment, a path or an unknown
+  program still asks; `--deny` still refuses first, and
+  `[permissions] read_only_commands = false` turns the set off.
 - `run_command` in `[tools] allow` is a one-release alias of `shell`, and a
   `command:<program>` grant keeps authorising that program through `shell`.
 - Deleting a session also removes its finished job; `saya job list` hides

@@ -13,6 +13,7 @@ mod compose_plugins;
 mod event;
 mod front;
 mod link;
+pub(crate) mod mentions;
 mod operator;
 mod ops;
 mod ops_context;
@@ -48,6 +49,8 @@ pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
 pub(crate) use front::ChatFront;
 #[allow(unused_imports)]
 pub(crate) use link::{Resume, RunFacts, after_prepare, decide};
+#[allow(unused_imports)]
+pub(crate) use mentions::{attach as attach_mentions, candidates as mention_candidates};
 #[allow(unused_imports)]
 pub(crate) use operator::SessionOperator;
 #[allow(unused_imports)]

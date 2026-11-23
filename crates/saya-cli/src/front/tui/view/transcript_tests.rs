@@ -21,7 +21,7 @@ fn the_hundred_column_turn_reads_as_02_section_2() {
     assert_eq!(
         rendered(&rows),
         vec![
-            "  ❯ how many orders did we get since December?",
+            "  │ ❯ how many orders did we get since December?",
             "",
             "  ✓ 4 steps · read schema, 3 queries · 14s                                           Ctrl+O detail",
             "    ✓ Read schema demo",
@@ -59,7 +59,7 @@ fn the_eighty_column_turn_reads_as_02_section_2() {
     assert_eq!(
         &shown[..7],
         [
-            "  ❯ how many orders did we get since December?",
+            "  │ ❯ how many orders did we get since December?",
             "",
             "  ✓ 4 steps · read schema, 3 queries · 14s                       Ctrl+O detail",
             "    ✓ Read schema demo",
@@ -115,7 +115,7 @@ fn a_running_turn_shows_its_live_steps() {
     assert_eq!(
         rendered(&rows),
         vec![
-            "  ❯ how many orders did we get since December?",
+            "  │ ❯ how many orders did we get since December?",
             "",
             "  ● Working · 14s                                                                    Ctrl+O detail",
             "    +2 earlier steps",
@@ -175,7 +175,7 @@ fn a_failed_step_stays_unfolded() {
     assert_eq!(
         rendered(&rows),
         vec![
-            "  ❯ how many orders did we get since December?",
+            "  │ ❯ how many orders did we get since December?",
             "",
             "  ✓ 2 steps · read schema, 1 query · 14s                                             Ctrl+O detail",
             "    ✓ Read schema demo",

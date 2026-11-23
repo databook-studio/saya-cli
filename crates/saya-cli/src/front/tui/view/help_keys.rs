@@ -1,14 +1,16 @@
 //! The one table of keys the help sheet draws (`02` §11).
 //!
-//! A row names the presses it covers, the words the sheet shows beside them and
-//! the state it is valid in. The presses themselves are read by `keys.rs` and
-//! `cards_keys.rs`, never here: this table only says them, and the guard test in
-//! `help_tests.rs` presses every row through that keymap, so a row the keymap
+//! A row names the presses it covers, the words the sheet shows beside them,
+//! the group it is filed under and the state it answers in. The presses
+//! themselves are read by `keys.rs`, `cards_keys.rs`, `history_keys.rs` and
+//! `overlay_keys.rs`, never here: this table only says them, and the guard test
+//! in `help_tests.rs` presses every row through that keymap, so a row the keymap
 //! has stopped handling fails the suite instead of misleading an operator.
 //!
-//! `02` §11 asks for "only the keys valid in the current state (e.g. approval
-//! keys only while a card is open)": that condition is [`When`], and the sheet
-//! filters this table by it rather than keeping a list per state.
+//! The sheet is the whole keyboard, not one state's slice of it: every group is
+//! always listed, and the action says which state the key acts in ("while a
+//! card is open", "while the drawer is open"). That keeps the sheet stable to
+//! read and impossible to leave a live key out of.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -28,8 +30,7 @@ impl Chord {
     }
 }
 
-/// The state a row is valid in (`02` §11: "only the keys valid in the current
-/// state").
+/// The state a row is valid in: the state the guard presses it in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum When {
     /// Only while a card is open: the answers the card offers.
@@ -42,32 +43,56 @@ pub(crate) enum When {
     Queued,
     /// Only while a turn runs.
     Busy,
+    /// Only while the input history's search is open.
+    Search,
+    /// Only while the block cursor holds an entry.
+    Cursor,
+    /// Only while the jobs drawer is open.
+    Jobs,
+    /// Only while the drawer's cancel confirm is open.
+    JobsConfirm,
     /// Only once a turn has changed a file: the changes pane has something to
     /// open (UI5).
     Changed,
 }
 
-/// Which of `02` §11's three columns a row is filed under.
+/// Which of the sheet's groups a row is filed under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Group {
-    /// Sending, answering, editing.
+    /// Sending and editing a message.
     Conversation,
-    /// Moving: the mode cycle, the card's body, the held line.
+    /// The input history and its search.
+    History,
+    /// The transcript's steps, the block cursor and the detail key.
+    Steps,
+    /// Answering a call.
+    Approvals,
+    /// The background jobs drawer.
+    Jobs,
+    /// Moving between surfaces.
     Navigation,
-    /// Looking at what the card withholds.
-    CopyView,
 }
 
 impl Group {
-    /// The columns, in the order `02` §11 names them.
-    pub(crate) const ALL: [Self; 3] = [Self::Conversation, Self::Navigation, Self::CopyView];
+    /// The groups, in the order the sheet reads them.
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Conversation,
+        Self::History,
+        Self::Steps,
+        Self::Approvals,
+        Self::Jobs,
+        Self::Navigation,
+    ];
 
-    /// The column's heading, as `02` §11 words it.
+    /// The group's heading.
     pub(crate) const fn heading(self) -> &'static str {
         match self {
             Self::Conversation => "Conversation",
+            Self::History => "History",
+            Self::Steps => "Steps",
+            Self::Approvals => "Approvals",
+            Self::Jobs => "Jobs",
             Self::Navigation => "Navigation",
-            Self::CopyView => "Copy & view",
         }
     }
 }
@@ -83,36 +108,46 @@ pub(crate) struct Shortcut {
     pub(crate) chords: &'static [Chord],
     /// What the presses do, in the surface's own words.
     pub(crate) action: &'static str,
-    /// The column the row is filed under.
+    /// The group the row is filed under.
     pub(crate) group: Group,
     /// The state the row is valid in.
     pub(crate) when: When,
 }
 
 /// The presses the table names, in the one spelling the keymap matches on.
-const ENTER: Chord = bare(KeyCode::Enter);
-const ALT_ENTER: Chord = alt(KeyCode::Enter);
-const ESCAPE: Chord = bare(KeyCode::Esc);
-const BACKSPACE: Chord = bare(KeyCode::Backspace);
-const SHIFT_TAB: Chord = shift(KeyCode::BackTab);
-const CTRL_G: Chord = ctrl('g');
-/// The palette's chord, and the sheet's own opener: both read by the composer.
-const CTRL_K: Chord = ctrl('k');
-/// The changes pane's chord (UI5): the diff of the last turn that wrote.
-const CTRL_D: Chord = ctrl('d');
-/// The detail key: the transcript's steps in full, or one compact line each.
-const CTRL_O: Chord = ctrl('o');
-const QUESTION: Chord = bare(KeyCode::Char('?'));
-const YES: Chord = bare(KeyCode::Char('y'));
-const ALSO_YES: Chord = bare(KeyCode::Char('a'));
-const SESSION: Chord = bare(KeyCode::Char('s'));
-const NO: Chord = bare(KeyCode::Char('n'));
-const ALSO_NO: Chord = bare(KeyCode::Char('d'));
-const VIEW: Chord = bare(KeyCode::Char('v'));
-const UP: Chord = bare(KeyCode::Up);
-const DOWN: Chord = bare(KeyCode::Down);
-const PAGE_UP: Chord = bare(KeyCode::PageUp);
-const PAGE_DOWN: Chord = bare(KeyCode::PageDown);
+pub(super) const ENTER: Chord = bare(KeyCode::Enter);
+pub(super) const ALT_ENTER: Chord = alt(KeyCode::Enter);
+pub(super) const ESCAPE: Chord = bare(KeyCode::Esc);
+pub(super) const BACKSPACE: Chord = bare(KeyCode::Backspace);
+pub(super) const SHIFT_TAB: Chord = shift(KeyCode::BackTab);
+pub(super) const TAB: Chord = bare(KeyCode::Tab);
+pub(super) const CTRL_G: Chord = ctrl('g');
+pub(super) const CTRL_J: Chord = ctrl('j');
+pub(super) const CTRL_K: Chord = ctrl('k');
+pub(super) const CTRL_O: Chord = ctrl('o');
+pub(super) const CTRL_R: Chord = ctrl('r');
+/// The changes pane's chord (UI5): the diff of the last turn that wrote. `d`
+/// alone stays a letter, and a deny alias on a focused panel.
+pub(super) const CTRL_D: Chord = ctrl('d');
+pub(super) const QUESTION: Chord = bare(KeyCode::Char('?'));
+pub(super) const SLASH: Chord = bare(KeyCode::Char('/'));
+pub(super) const YES: Chord = bare(KeyCode::Char('y'));
+pub(super) const ALSO_YES: Chord = bare(KeyCode::Char('a'));
+pub(super) const SESSION: Chord = bare(KeyCode::Char('s'));
+pub(super) const NO: Chord = bare(KeyCode::Char('n'));
+pub(super) const ALSO_NO: Chord = bare(KeyCode::Char('d'));
+pub(super) const X: Chord = bare(KeyCode::Char('x'));
+pub(super) const VIEW: Chord = bare(KeyCode::Char('v'));
+pub(super) const COPY: Chord = bare(KeyCode::Char('c'));
+pub(super) const INSPECT: Chord = bare(KeyCode::Char('i'));
+pub(super) const UP: Chord = bare(KeyCode::Up);
+pub(super) const DOWN: Chord = bare(KeyCode::Down);
+pub(super) const ALT_UP: Chord = alt(KeyCode::Up);
+pub(super) const ALT_DOWN: Chord = alt(KeyCode::Down);
+pub(super) const PAGE_UP: Chord = bare(KeyCode::PageUp);
+pub(super) const PAGE_DOWN: Chord = bare(KeyCode::PageDown);
+pub(super) const RIGHT: Chord = bare(KeyCode::Right);
+pub(super) const LEFT: Chord = bare(KeyCode::Left);
 
 /// A press with nothing else held.
 const fn bare(code: KeyCode) -> Chord {
@@ -140,129 +175,11 @@ const fn shifted(code: KeyCode, modifiers: KeyModifiers) -> Chord {
     Chord { code, modifiers }
 }
 
-/// The sheet's rows, in the order `02` §11's columns are read.
-///
-/// Every row here is a press `keys.rs` or `cards_keys.rs` handles, in the state
-/// that row is valid in — `every_key_the_sheet_shows_is_handled_by_the_keymap`
-/// presses them all. The copy is the sheet's own; the keys are the keymap's.
-pub(crate) const SHORTCUTS: &[Shortcut] = &[
-    Shortcut {
-        label: "Enter",
-        chords: &[ENTER],
-        action: "send the message, or queue it behind the running turn",
-        group: Group::Conversation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "Alt+Enter",
-        chords: &[ALT_ENTER],
-        action: "break the line inside the message",
-        group: Group::Conversation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "Backspace",
-        chords: &[BACKSPACE],
-        action: "delete the last character",
-        group: Group::Conversation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "Esc",
-        chords: &[ESCAPE],
-        action: "stop the running turn",
-        group: Group::Conversation,
-        when: When::Busy,
-    },
-    Shortcut {
-        label: "y, a",
-        chords: &[YES, ALSO_YES],
-        action: "allow this call once",
-        group: Group::Conversation,
-        when: When::Card,
-    },
-    Shortcut {
-        label: "s",
-        chords: &[SESSION],
-        action: "allow calls like it for this session",
-        group: Group::Conversation,
-        when: When::CardGrant,
-    },
-    Shortcut {
-        label: "n, d",
-        chords: &[NO, ALSO_NO],
-        action: "deny this call",
-        group: Group::Conversation,
-        when: When::Card,
-    },
-    Shortcut {
-        label: "Esc",
-        chords: &[ESCAPE],
-        action: "deny this call",
-        group: Group::Conversation,
-        when: When::Card,
-    },
-    Shortcut {
-        label: "Shift+Tab",
-        chords: &[SHIFT_TAB],
-        action: "switch mode — ask, accept-edits, plan, read-only",
-        group: Group::Navigation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "Ctrl+G",
-        chords: &[CTRL_G],
-        action: "drop the line held behind the running turn",
-        group: Group::Navigation,
-        when: When::Queued,
-    },
-    Shortcut {
-        label: "Ctrl+K",
-        chords: &[CTRL_K],
-        action: "open the command palette",
-        group: Group::Navigation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "Ctrl+O",
-        chords: &[CTRL_O],
-        action: "show every step in full, or fold each back to one line",
-        group: Group::Navigation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "Ctrl+D",
-        chords: &[CTRL_D],
-        action: "open the diff of the files the last turn changed",
-        group: Group::CopyView,
-        when: When::Changed,
-    },
-    Shortcut {
-        label: "?",
-        chords: &[QUESTION],
-        action: "open this sheet",
-        group: Group::Navigation,
-        when: When::Composer,
-    },
-    Shortcut {
-        label: "↑, ↓",
-        chords: &[UP, DOWN],
-        action: "point at an answer, then Enter gives it",
-        group: Group::Navigation,
-        when: When::Card,
-    },
-    Shortcut {
-        label: "PgUp, PgDn",
-        chords: &[PAGE_UP, PAGE_DOWN],
-        action: "page the body, a screen at a time",
-        group: Group::Navigation,
-        when: When::Card,
-    },
-    Shortcut {
-        label: "v",
-        chords: &[VIEW],
-        action: "show the whole body, or fold it back",
-        group: Group::CopyView,
-        when: When::Card,
-    },
-];
+/// The sheet's rows, in [`Group::ALL`]'s order: the conversation, history and
+/// steps in [`super::help_rows_a`], the approvals, jobs and navigation in
+/// [`super::help_rows_b`].
+pub(crate) fn shortcuts() -> impl Iterator<Item = &'static Shortcut> {
+    super::help_rows_a::ROWS
+        .iter()
+        .chain(super::help_rows_b::ROWS.iter())
+}

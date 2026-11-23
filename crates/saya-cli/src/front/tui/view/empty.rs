@@ -38,6 +38,9 @@ pub(crate) struct EmptyFacts {
     /// The questions the connected database suggests, as today's
     /// `starter_questions` picked them from the cached schema.
     pub(crate) starter_questions: Vec<String>,
+    /// The suggestions the welcome screen offers, derived from the workspace's
+    /// own top-level names: every one names something that exists.
+    pub(crate) suggestions: Vec<String>,
     /// Which token column paints the rows.
     pub(crate) scheme: Scheme,
     /// Which glyph set the rows draw with.
@@ -51,6 +54,7 @@ impl Default for EmptyFacts {
             database: None,
             workspace: None,
             starter_questions: Vec::new(),
+            suggestions: Vec::new(),
             scheme: Scheme::Dark,
             charset: Charset::Utf8,
         }
