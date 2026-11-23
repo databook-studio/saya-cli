@@ -174,7 +174,7 @@ impl WorkspaceSummaryCell {
     /// Whether the scan has finished and its summary is waiting to be taken:
     /// the fact a test waits on, and nothing a surface reads — a surface never
     /// waits for a scan.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn ready(&self) -> bool {
         self.slot
             .lock()

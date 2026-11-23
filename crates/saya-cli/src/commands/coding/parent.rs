@@ -7,7 +7,7 @@ impl NativeCodingJob {
     /// Whether the launch scan has landed its summary yet: the fact a test
     /// waits on, and nothing a surface reads — no message is ever held for a
     /// scan.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn workspace_summary_ready(&self) -> bool {
         self.root_run
             .session()

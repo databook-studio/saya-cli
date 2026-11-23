@@ -118,7 +118,7 @@ impl RootSession {
 
     /// Whether the launch scan has landed its summary yet: the fact a test
     /// waits on, and nothing a turn reads — a turn never waits for a scan.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn summary_ready(&self) -> bool {
         self.summary.as_ref().is_some_and(|cell| cell.ready())
     }
