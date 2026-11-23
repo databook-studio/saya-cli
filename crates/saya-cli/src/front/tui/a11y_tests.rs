@@ -183,6 +183,8 @@ fn every_ascii_frame_is_seven_bit() {
 
     let mut toasting = conversation();
     toasting.say("a refused key");
+    let mut changes = super::changes_fixture::model_with_edits();
+    changes.open_changes();
 
     let cases: Vec<(&str, Model)> = vec![
         ("empty", Model::default()),
@@ -192,6 +194,7 @@ fn every_ascii_frame_is_seven_bit() {
         ("mode picker", picker),
         ("trust question", trust),
         ("toast", toasting),
+        ("changes pane", changes),
     ];
     for (name, model) in cases {
         let facts = Facts {
