@@ -1,7 +1,8 @@
 //! The row's words: what each segment says, and the token it says it in.
 //!
-//! Every segment is named here once, in the order the row reads them. Which of
-//! them may give way — and in what order, and which never may — is
+//! Every segment is named here once, in the order the row reads them: the mode
+//! chip, the model, the database, and the one caveat that changes what every
+//! answer contains. What gives way — and which segments never do — is
 //! [`super::status_fit`]'s; this module only says what the row would like to
 //! show.
 
@@ -9,14 +10,11 @@ use saya_agent::PermissionMode;
 
 use super::status::StatusFacts;
 use super::status_fit::{Segment, Step};
-use crate::front::tui::theme::{BYPASS_CHIP, Charset, Glyph, Token, bypass_chip, glyph, style};
+use crate::front::tui::theme::{BYPASS_CHIP, Charset, Token, bypass_chip, style};
 use crate::interactive::session::permissions::mode;
 
 /// What the row says when no database is attached.
 pub(super) const NO_DATABASE: &str = "no database";
-
-/// What the row says when nothing is bound to the session.
-pub(super) const NO_WORKSPACE: &str = "no workspace";
 
 /// The caveat mark. The glyph table names the transcript's glyphs; this one is
 /// the row's own copy, so it carries its ASCII fallback beside it.
@@ -31,32 +29,14 @@ const fn caveat(charset: Charset) -> &'static str {
     }
 }
 
-/// The left group, left to right: the chip, what it talks to, where, and every
-/// condition worth a caveat.
+/// The left group, left to right: the chip, the model, the database, and the
+/// one caveat that survives a quiet default.
 pub(super) fn segments(facts: &StatusFacts) -> Vec<Segment> {
-    let mut segments = vec![chip(facts), database(facts)];
-    if !facts.model.is_empty() {
-        segments.push(Segment::new(
-            facts.model.clone(),
-            style(Token::Dim, facts.scheme),
-            Some(Step::Model),
-        ));
+    let mut segments = vec![chip(facts)];
+    if let Some(model) = short_model(&facts.model) {
+        segments.push(Segment::new(model, style(Token::Dim, facts.scheme), None));
     }
-    segments.push(Segment::new(
-        match &facts.workspace {
-            Some(root) => root.clone(),
-            None => NO_WORKSPACE.to_owned(),
-        },
-        style(Token::Dim, facts.scheme),
-        Some(Step::Workspace),
-    ));
-    if facts.host_unsandboxed {
-        segments.push(Segment::new(
-            format!("{} host unsandboxed", caveat(facts.charset)),
-            style(Token::Warn, facts.scheme),
-            None,
-        ));
-    }
+    segments.push(database(facts));
     if facts.sharing {
         let mark = caveat(facts.charset);
         segments.push(
@@ -68,32 +48,15 @@ pub(super) fn segments(facts: &StatusFacts) -> Vec<Segment> {
             .shortening(format!("{mark} sharing")),
         );
     }
-    if !facts.deny.is_empty() {
-        segments.push(Segment::new(
-            format!(
-                "{} deny: {}",
-                glyph(Glyph::Denied, facts.charset),
-                facts.deny.join(",")
-            ),
-            style(Token::Dim, facts.scheme),
-            Some(Step::Deny),
-        ));
-    }
-    if let Some(percent) = facts.context_percent {
-        segments.push(Segment::new(
-            format!("ctx {percent}%"),
-            style(Token::Dim, facts.scheme),
-            Some(Step::Context),
-        ));
-    }
-    if facts.jobs > 0 {
-        segments.push(Segment::new(
-            format!("jobs {}", facts.jobs),
-            style(Token::Dim, facts.scheme),
-            Some(Step::Jobs),
-        ));
-    }
     segments
+}
+
+/// The model's short name: the part after the provider's `/`, because the
+/// provider is the same for every turn and the model is the name the operator
+/// chose. A model with no prefix reads as it is.
+pub(super) fn short_model(model: &str) -> Option<String> {
+    let name = model.rsplit('/').next().unwrap_or(model).trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 /// The mode chip: the mode's own spelling, and `! BYPASS` in inverse `bad` for
@@ -125,7 +88,7 @@ const fn chip_token(mode: PermissionMode) -> Token {
 }
 
 /// The database segment: the primary by name, the rest as a count, or the
-/// absence in words. Of all the left group it is the one that gives way in
+/// absence in words. Of the row's three facts it is the one that gives way in
 /// words — `demo +1` reading `+1` — because the row must always say what it is
 /// talking to.
 fn database(facts: &StatusFacts) -> Segment {

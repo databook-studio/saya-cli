@@ -21,22 +21,17 @@ use crate::front::{
     HelperState, Notice, ResultPreview, Step, StepState, Stop, TurnView, UserMessage,
 };
 
-/// The status line's facts: every segment on, in bypass so the chip's word is
-/// in the sample (`02` §4).
+/// The status line's facts: the mode in bypass so the chip's word is in the
+/// sample, the model, and the database (`02` §4).
 pub(crate) fn status_facts(scheme: Scheme, charset: Charset) -> StatusFacts {
     StatusFacts {
         mode: PermissionMode::Bypass,
         databases: vec![String::from("demo")],
         model: String::from("deepseek-v4.1-flash"),
-        workspace: Some(String::from("~/shop")),
-        host_unsandboxed: true,
         sharing: true,
-        deny: vec![String::from("curl")],
-        context_percent: Some(23),
         activity: ActivityState::Working { seconds: 6 },
         scheme,
         charset,
-        ..StatusFacts::default()
     }
 }
 
@@ -85,14 +80,9 @@ pub(crate) fn palette(charset: Charset) -> Palette {
     }
 }
 
-/// The help sheet with a card open and a grant on offer (`02` §11).
+/// The help sheet, as the whole keyboard, in the sample's glyph set.
 pub(crate) fn help_context(charset: Charset) -> Context {
-    Context {
-        card: true,
-        grant: true,
-        charset,
-        ..Context::default()
-    }
+    Context { charset }
 }
 
 /// The picker over `02` §10's sessions: one of each resume state.
@@ -159,6 +149,7 @@ pub(crate) fn empty_facts(scheme: Scheme, charset: Charset) -> EmptyFacts {
         }),
         workspace: Some(String::from("~/shop")),
         starter_questions: vec![String::from("What are the top channels?")],
+        suggestions: Vec::new(),
         scheme,
         charset,
     }

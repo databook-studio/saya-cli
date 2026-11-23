@@ -71,6 +71,9 @@ pub(crate) struct Model {
     /// the keyboard before the card and the composer, and it is painted over
     /// the transcript (`02` §8).
     pub(crate) overlay: Option<Overlay>,
+    /// How far the key sheet is scrolled: its body is taller than a short
+    /// terminal, so the sheet scrolls rather than hides a group.
+    pub(crate) help_scroll: usize,
     /// The entry the block cursor holds (`02` §6), if it holds one. While it
     /// does, the keyboard is the cursor's: Esc leaves it, Enter expands the
     /// block and `←` folds it, `c` copies it and `i` shows its provenance.

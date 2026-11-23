@@ -16,11 +16,12 @@ use super::view::approval;
 
 /// The rows the card needs: its title, the body rows it shows, the reason it is
 /// asked and the line that says which keys answer it.
-pub(crate) fn rows(model: &Model, screen_rows: u16) -> usize {
+pub(crate) fn rows(model: &Model, screen_rows: u16, host_unsandboxed: bool) -> usize {
     model.card().map_or(0, |question| {
         let card = approval(question, model.mode(), screen_rows);
         1 + card.shown(model.card_full()).len()
             + usize::from(card.because().is_some())
+            + usize::from(host_unsandboxed)
             + usize::from(!card.keys().is_empty())
     })
 }
@@ -53,6 +54,14 @@ pub(crate) fn card(
         lines.push(Line::from(Span::styled(
             because.to_owned(),
             style(Token::Dim, facts.scheme),
+        )));
+    }
+    // The launch's lane is the card's own fact, on its own row: the operator
+    // consenting to a host command is exactly who needs to read it.
+    if facts.host_unsandboxed {
+        lines.push(Line::from(Span::styled(
+            "host commands run unsandboxed".to_owned(),
+            style(Token::Warn, facts.scheme),
         )));
     }
     if !card.keys().is_empty() {

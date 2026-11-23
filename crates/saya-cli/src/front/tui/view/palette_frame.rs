@@ -94,6 +94,25 @@ pub(super) fn content(runs: Vec<Run>, width: usize, charset: Charset) -> Row {
     Row { runs: out }
 }
 
+/// `text` cut to `room` cells at a word boundary, marked with an ellipsis when
+/// it had to be cut.
+pub(super) fn fit_words(text: &str, room: usize) -> String {
+    if cell_width(text) <= room {
+        return text.to_owned();
+    }
+    if room == 0 {
+        return String::new();
+    }
+    let mut cut = truncate_cells(text, room - 1);
+    if let Some(space) = cut.rfind(' ') {
+        let whole = cut[..space].trim_end();
+        if !whole.is_empty() {
+            cut = whole.to_owned();
+        }
+    }
+    format!("{cut}…")
+}
+
 /// `text` cut to `room` cells, marked with an ellipsis when it had to be cut.
 pub(super) fn fit(text: &str, room: usize) -> String {
     if cell_width(text) <= room {

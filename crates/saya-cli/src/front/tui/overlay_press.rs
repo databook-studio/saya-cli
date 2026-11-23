@@ -26,6 +26,10 @@ pub(crate) fn press(model: &mut Model, intent: Intent, cmds: &mut Vec<Cmd>) {
         Intent::PaletteInsert(character) => walk(model, |pane| pane.push(character)),
         Intent::PaletteRun => run(model, cmds),
         Intent::PaletteClose | Intent::HelpClose => model.close_overlay(),
+        Intent::HelpUp => model.scroll_help(-1),
+        Intent::HelpDown => model.scroll_help(1),
+        Intent::HelpPageUp => model.scroll_help(-8),
+        Intent::HelpPageDown => model.scroll_help(8),
         // The panes' own intents are the only ones the update sends here.
         _ => {}
     }

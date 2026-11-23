@@ -1,10 +1,9 @@
 //! The surface's own last words, and how long they live (`02` §4).
 //!
 //! A toast is the one thing the surface says without being asked: a refused
-//! key, a worker's word. `02` §4 gives it four seconds and the status line's
-//! right side while it lives, and it is *ticks* that spend it — the runtime's
-//! tick is the only clock the model has, so the value counts the ticks it has
-//! left rather than reading a time.
+//! key, a worker's word. `02` §4 gives it four seconds, and it gets a one-line
+//! row of its own directly above the composer — never the status row, which
+//! names the mode, the model and the database whatever the surface is saying.
 //!
 //! T3 defines the tick and its period: `Msg::Tick` is "the 250 ms tick that
 //! drives the spinner and expires a toast". That period is named here, once, so
@@ -12,6 +11,29 @@
 
 use std::time::Duration;
 
+use super::composer::{Row, Run};
+use super::palette_frame::fit;
+use crate::front::tui::theme::{Charset, Token};
+
+/// A toast's own row: one line, above the composer, cut at the pane's edge if
+/// it has more to say than the width holds. Its lines read as one run of words,
+/// so a message that carries lines of its own can never paint down the
+/// transcript or wrap over the row under it.
+pub(crate) fn row(text: &str, width: usize, charset: Charset) -> Row {
+    let _ = charset;
+    let joined = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Row {
+        runs: vec![Run {
+            text: fit(&format!(" {joined}"), width.max(1)),
+            token: Token::Info,
+        }],
+    }
+}
 /// The tick the runtime sends: `Msg::Tick`'s 250 ms, as T3's own doc words it.
 pub(crate) const TICK: Duration = Duration::from_millis(250);
 

@@ -52,9 +52,9 @@ fn typing_narrows_the_palette_to_the_commands_it_matches() {
 
     typed(&mut model, "sta");
 
-    // `sta` nests inside `/start`, `/status` and `/investigation` — the three
-    // names carrying s, t and a in that order — and equal scores keep the
-    // catalogue's order, so `/start` is the row the list opens on.
+    // `sta` nests inside `/start`, `/status` and `/investigation` — the two
+    // prefixes rank above the fuzzy match, and between them the everyday
+    // command leads, so `/status` is the row the list opens on.
     assert_eq!(
         model
             .palette()
@@ -63,10 +63,10 @@ fn typing_narrows_the_palette_to_the_commands_it_matches() {
             .iter()
             .map(|entry| entry.name)
             .collect::<Vec<_>>(),
-        ["start", "status", "investigation"],
+        ["status", "start", "investigation"],
         "typing narrows the list to the commands the letters reach"
     );
-    assert_eq!(selected(&model), Some("start"), "the best row is selected");
+    assert_eq!(selected(&model), Some("status"), "the best row is selected");
     assert_eq!(
         model.composer(),
         "",

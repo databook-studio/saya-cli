@@ -68,7 +68,7 @@ fn setup_handoff_full_wizard_writes_config_and_returns() {
     // The proof that input works again is the sheet bare `/help` opens: the
     // new surface answers `/help` with its key sheet (`view::help_keys`), not
     // with the catalogue listing, so the row this pins is the sheet's own.
-    tui.wait_for("open the command palette", INTERACTIVE)
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("input works again after the handoff");
     assert!(
         tui.still_running(),

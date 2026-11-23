@@ -12,32 +12,36 @@ use crate::interactive::tui::wrap::cell_width;
 use crate::slash::catalog::{self, Surface};
 
 /// The empty query is the whole palette: every row the `/help` listing carries,
-/// is not hidden, and the TUI can run, in catalogue order.
+/// is not hidden, and the TUI can run — the everyday commands first and the job
+/// verbs last.
 #[test]
-fn an_empty_query_lists_the_listed_tui_rows_in_catalogue_order() {
+fn an_empty_query_lists_every_listed_tui_row_everyday_first() {
     let palette = Palette::default();
-    let expected: Vec<&str> = catalog::all()
+    let mut expected: Vec<&str> = catalog::all()
         .filter(|spec| spec.listed.is_some() && !spec.hidden)
         .filter(|spec| spec.surfaces.covers(Surface::Tui))
         .map(|spec| spec.name)
         .collect();
+    expected.sort_unstable();
 
+    let mut offered: Vec<&str> = palette.entries().iter().map(|entry| entry.name).collect();
+    offered.sort_unstable();
     assert_eq!(
-        palette
-            .entries()
-            .iter()
-            .map(|entry| entry.name)
-            .collect::<Vec<_>>(),
-        expected,
-        "the palette is the catalogue, listed, visible and on the TUI"
-    );
-    assert!(
-        palette.entries().iter().all(|entry| catalog::all()
-            .find(|spec| spec.name == entry.name)
-            .is_some_and(|spec| spec.listed.is_some() && !spec.hidden)),
-        "no row the listing folds away or hides is offered"
+        offered, expected,
+        "every listed, visible, TUI row is offered exactly once"
     );
 
+    let first: Vec<&str> = palette
+        .entries()
+        .iter()
+        .take(4)
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(
+        first,
+        ["status", "model", "clear", "compact"],
+        "the everyday commands open the palette"
+    );
     let rows = pane(&palette, 100, 60);
     let listed: Vec<&String> = rows[1..rows.len() - 2]
         .iter()

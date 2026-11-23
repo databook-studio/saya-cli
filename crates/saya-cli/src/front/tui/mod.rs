@@ -55,6 +55,7 @@ pub(crate) mod run_cmd_ops;
 pub(crate) mod run_cmd_port;
 pub(crate) mod run_draw;
 pub(crate) mod run_draw_card;
+pub(crate) mod run_draw_layout;
 pub(crate) mod run_draw_overlay;
 pub(crate) mod run_front;
 pub(crate) mod run_handoff;
@@ -109,7 +110,9 @@ pub(crate) use run_cmd::{CmdPort, perform};
 #[allow(unused_imports)]
 pub(crate) use run_cmd_port::{PortParts, SessionPort};
 #[allow(unused_imports)]
-pub(crate) use run_draw::{Facts, Regions};
+pub(crate) use run_draw::Facts;
+#[allow(unused_imports)]
+pub(crate) use run_draw_layout::Regions;
 #[allow(unused_imports)]
 pub(crate) use run_front::Forward;
 #[allow(unused_imports)]
@@ -226,6 +229,10 @@ mod run_tests;
 #[cfg(test)]
 #[path = "run_mode_tests.rs"]
 mod run_mode_tests;
+
+#[cfg(test)]
+#[path = "run_draw_calm_tests.rs"]
+mod run_draw_calm_tests;
 
 #[cfg(test)]
 #[path = "run_draw_tests.rs"]

@@ -45,7 +45,11 @@ fn question_mark_paints_the_help_sheet() {
     tui.dismiss_trust();
     tui.send("?").expect("press ?");
     tui.wait_for("Conversation", INTERACTIVE)
-        .expect("the sheet's first column paints");
+        .expect("the sheet's first group paints");
+    // The sheet is taller than 24 rows, so its last group is a page down.
+    for _ in 0..6 {
+        tui.send("\x1b[6~").expect("press PageDown");
+    }
     tui.wait_for("open this sheet", INTERACTIVE)
         .expect("the sheet names the key that opened it");
     tui.send("\x1b").expect("press Esc");

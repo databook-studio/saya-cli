@@ -113,7 +113,11 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             | Intent::PaletteBackspace
             | Intent::PaletteRun
             | Intent::PaletteClose
-            | Intent::HelpClose),
+            | Intent::HelpClose
+            | Intent::HelpUp
+            | Intent::HelpDown
+            | Intent::HelpPageUp
+            | Intent::HelpPageDown),
         ) => overlay_press::press(model, intent, cmds),
         Some(Intent::FocusUp) => model.move_focus(false),
         Some(Intent::FocusDown) => model.move_focus(true),

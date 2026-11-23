@@ -20,12 +20,20 @@ pub(super) const EXAMPLES_SHOWN: usize = 3;
 const EXAMPLE_INDENT: usize = 4;
 
 /// `02` §9.2's examples: with no database there is no cached schema to ask
-/// about, so the spec draws the workspace's own questions.
-const WORKSPACE_EXAMPLES: [&str; 3] = [
-    "why does tests/test_pricing.py fail?",
-    "add a --dry-run flag to scripts/export.py",
-    "explain how orders are priced",
-];
+/// about, so the spec draws questions about the project the session is in.
+/// Every one names a real top-level entry; a session with no workspace (or an
+/// empty one) is offered the neutral examples instead.
+fn workspace_examples(facts: &EmptyFacts) -> Vec<String> {
+    match facts.suggestions.is_empty() {
+        true => super::empty_suggestions::neutral(),
+        false => facts
+            .suggestions
+            .iter()
+            .take(EXAMPLES_SHOWN)
+            .cloned()
+            .collect(),
+    }
+}
 
 /// `02` §9.2's footer: the way in to a database, and the keys beside it.
 const CONNECT_FOOTER: &str = "/connect to add a database · ? keys · Ctrl+K commands";
@@ -42,8 +50,8 @@ pub(super) fn no_database_rows(facts: &EmptyFacts, width: usize) -> Vec<Line<'st
         facts,
         width,
     ));
-    for question in WORKSPACE_EXAMPLES {
-        rows.extend(example(question, facts, width));
+    for question in workspace_examples(facts) {
+        rows.extend(example(&question, facts, width));
     }
     rows.push(Line::default());
     rows.extend(sentence(CONNECT_FOOTER, Token::Dim, facts, width));

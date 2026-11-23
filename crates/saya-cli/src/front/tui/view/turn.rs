@@ -19,7 +19,7 @@ use super::transcript::TranscriptFacts;
 use super::turn_rows::{GUTTER, indented, wrapped};
 use super::{blocks, blocks_question, blocks_stop, inspector, result, turn_activity, turn_focus};
 use crate::front::tui::focus::EntryPath;
-use crate::front::tui::theme::{Glyph, Token, glyph, style};
+use crate::front::tui::theme::{Charset, Glyph, Token, glyph, style};
 use crate::front::view::{Entry, TurnView};
 use crate::interactive::tui::markdown_spans_fenced;
 use crate::interactive::tui::wrap::cell_width;
@@ -36,11 +36,34 @@ pub(super) fn rows(
     let content = width.saturating_sub(2 * GUTTER).max(1);
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut above: Option<&Entry> = None;
-    for (index, entry) in turn.entries().iter().enumerate() {
+    let entries = turn.entries();
+    let mut index = 0;
+    while index < entries.len() {
+        let entry = &entries[index];
+        // Repeated identical notices are one sentence said once (with its
+        // count), never the same row over and over.
+        let mut count = 1;
+        if let Entry::Notice(notice) = entry {
+            while let Some(Entry::Notice(next)) = entries.get(index + count) {
+                if next.message != notice.message {
+                    break;
+                }
+                count += 1;
+            }
+        }
         let focused = facts.focus == Some(EntryPath::new(place, index));
         let mut painted = block(entry, elapsed, facts, focused, content);
         if painted.is_empty() {
+            index += count;
             continue;
+        }
+        if count > 1
+            && let Some(last) = painted.last_mut()
+        {
+            last.spans.push(Span::styled(
+                count_suffix(count, facts),
+                style(Token::Dim, facts.scheme),
+            ));
         }
         turn_focus::mark(&mut painted, focused, facts);
         if focused
@@ -59,8 +82,17 @@ pub(super) fn rows(
         }
         out.extend(painted);
         above = Some(entry);
+        index += count;
     }
     out
+}
+
+/// The count a repeated notice carries: `×3`, or `x3` in the seven-bit set.
+fn count_suffix(count: usize, facts: &TranscriptFacts) -> String {
+    match facts.charset {
+        Charset::Utf8 => format!(" ×{count}"),
+        Charset::Ascii => format!(" x{count}"),
+    }
 }
 
 /// Whether `below` sits directly under `above`, with no blank row between: a
@@ -98,9 +130,13 @@ fn block(
     }
 }
 
-/// The operator's own words: `❯` and the message, with no label above them.
+/// The operator's own words: a left bar, then `❯` and the message, with no
+/// label above them. The bar is the block's distinct shape — a quote the answer
+/// under it never carries — and it is drawn from the glyph set, so `--ascii`
+/// gets `|` and `>` rather than a glyph the terminal cannot draw.
 fn quoted(text: &str, facts: &TranscriptFacts, content: usize) -> Vec<Line<'static>> {
-    let mark = format!("{} ", glyph(Glyph::Prompt, facts.charset));
+    let bar = glyph(Glyph::Edge, facts.charset);
+    let mark = format!("{bar} {} ", glyph(Glyph::Prompt, facts.charset));
     let room = content.saturating_sub(cell_width(&mark)).max(1);
     wrapped(text, room)
         .into_iter()
