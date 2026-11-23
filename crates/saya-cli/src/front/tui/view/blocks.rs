@@ -15,7 +15,7 @@ use super::transcript::TranscriptFacts;
 use super::turn_rows::{GUTTER, STEP_INDENT, plain, truncate_to};
 use crate::front::tui::theme::{Glyph, Token, glyph, style};
 use crate::front::view::{
-    Command, CommandState, DiffKind, DiffLine, Edit, Helper, HelperState, Notice, command_words,
+    Command, CommandState, DiffKind, DiffLine, Edit, Helper, HelperState, command_words,
 };
 use crate::interactive::tui::wrap::{cell_width, truncate_cells};
 
@@ -168,24 +168,6 @@ pub(super) fn helper_rows(
         facts,
         content,
     )]
-}
-
-/// Something the session itself has to say: dim lines (`02` §3.10).
-///
-/// One line is the shape nearly every notice takes. A notice that carries
-/// lines of its own — `/help`'s listing, which the chat layer's read answers
-/// with — keeps them: every line is a row of its own, so the transcript shows
-/// the listing as it was written rather than as one run-on sentence.
-pub(super) fn system_line(
-    notice: &Notice,
-    facts: &TranscriptFacts,
-    content: usize,
-) -> Vec<Line<'static>> {
-    notice
-        .message
-        .lines()
-        .map(|line| plain(GUTTER, line, Token::Dim, facts, content))
-        .collect()
 }
 
 /// A block's header: its mark, the run of words beside it, each with its own

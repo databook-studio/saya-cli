@@ -53,6 +53,9 @@ pub(super) struct SurfaceLaunch {
     pub(super) state: Arc<Mutex<SessionState>>,
     /// What opening a job needs from the launch (`/start`, `02` §8).
     pub(super) jobs: Arc<JobDeps>,
+    /// What the surface's command table reads besides the run: the session's
+    /// own stores, policy, journal, universe and recovery handle.
+    pub(super) ops: crate::front::tui::ops::OpsParts,
 }
 
 /// Runs the surface over the launch's parts, and nothing on the terminal once it
@@ -71,6 +74,7 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
         options,
         runtime: live,
         state,
+        ops,
     } = launch;
     let Composed { parts, record } = composed;
     let (msgs, queue) = channel();
@@ -101,11 +105,13 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
             model.database = None;
         }
         let allow_bypass = model.allow_bypass;
-        let deps = Arc::new(OpsDeps {
-            chat: crate::chat::ChatOps::new(opened.run_port(), opened.context(allow_bypass)),
-            commands: commands.clone(),
-            runtime: Arc::clone(&live),
-        });
+        let deps = Arc::new(OpsDeps::new(
+            crate::chat::ChatOps::new(opened.run_port(), opened.context(allow_bypass)),
+            commands.clone(),
+            Arc::clone(&live),
+            Arc::clone(&state),
+            ops,
+        ));
         run_loop(Surface {
             model,
             msgs,

@@ -42,8 +42,8 @@ pub(crate) mod session;
 #[cfg(test)]
 #[path = "session/permissions/launch_posture_tests.rs"]
 mod session_launch_posture_tests;
-mod session_schema;
-mod session_sql;
+pub(crate) mod session_schema;
+pub(crate) mod session_sql;
 #[cfg(test)]
 #[path = "session/permissions/trust_tests.rs"]
 mod session_trust_tests;

@@ -85,7 +85,7 @@ fn block(
         Entry::Activity(activity) => turn_activity::rows(activity, elapsed, facts, content),
         Entry::Answer(answer) => answer_rows(&answer.text, content),
         Entry::ResultPreview(preview) => result::rows(preview, facts, content),
-        Entry::Notice(notice) => blocks::system_line(notice, facts, content),
+        Entry::Notice(notice) => super::blocks_notice::system_line(notice, facts, content),
         Entry::Edit(edit) => blocks::edit_rows(edit, facts, content),
         Entry::Command(command) => blocks::command_rows(command, facts, content),
         Entry::Helper(helper) => blocks::helper_rows(helper, facts, content),

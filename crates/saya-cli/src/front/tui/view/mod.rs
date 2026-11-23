@@ -50,6 +50,7 @@
 //! the session's, and where `x` asks before it cancels.
 
 mod blocks;
+mod blocks_notice;
 mod blocks_question;
 mod blocks_stop;
 pub(crate) mod cards;
@@ -150,6 +151,10 @@ mod blocks_fixture;
 #[cfg(test)]
 #[path = "blocks_stop_tests.rs"]
 mod blocks_stop_tests;
+
+#[cfg(test)]
+#[path = "blocks_wrap_tests.rs"]
+mod blocks_wrap_tests;
 
 #[cfg(test)]
 #[path = "blocks_tests.rs"]

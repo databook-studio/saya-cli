@@ -93,6 +93,20 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         &state.id,
         session.policy().mode(),
     ));
+    // What the surface's command table reads: the session's own stores, its
+    // policy and journal, its universe and its recovery handle, and the folder
+    // it bound. Taken before the session is handed to the trust store, because
+    // the table outlives that hand-over and never holds the session itself.
+    let ops = crate::front::tui::ops::OpsParts {
+        store: store.clone(),
+        state_db: state_db.clone(),
+        format,
+        root: session.root().map(std::path::Path::to_path_buf),
+        policy: session.policy(),
+        journal: session.journal(),
+        universe: session.universe(),
+        recovery: session.recovery().clone(),
+    };
     let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(
         session,
         std::sync::Arc::clone(&runtime),
@@ -118,6 +132,7 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         options: cli.options.clone(),
         runtime: live,
         state: std::sync::Arc::clone(&state),
+        ops,
     });
     // The surface is done with the state: a reload's re-seed is already in it,
     // and what the launch saves below reads that.
