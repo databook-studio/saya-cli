@@ -49,6 +49,7 @@ fn the_frame_stacks_the_transcript_the_status_line_the_card_and_the_composer() {
         caller: String::from("the shell tool"),
         facts: String::from("cargo test"),
         grant: None,
+        ..Default::default()
     });
     let rows = painted(&model, &Facts::default(), 100, 30);
     let question = row_of(&rows, "how many orders did we get?");

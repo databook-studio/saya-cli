@@ -96,6 +96,7 @@ fn a_piped_front_denies_a_question_without_asking() {
         caller: "root".into(),
         facts: "in: .\n$ cargo test".into(),
         grant: None,
+        ..Default::default()
     };
     let answer = crate::interactive::session::lifecycle::resume::block_on(async {
         front.ask(&question).await

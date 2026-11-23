@@ -26,6 +26,7 @@ fn question(id: u64) -> Question {
         caller: String::from("fix-flaky: the shell tool"),
         facts: String::from("$ cargo test"),
         grant: None,
+        ..Default::default()
     }
 }
 

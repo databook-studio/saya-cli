@@ -180,6 +180,7 @@ async fn a_card_is_answered_through_the_port_and_the_answer_carries_its_id() {
         caller: String::from("the shell tool"),
         facts: String::from("rm -rf build"),
         grant: None,
+        ..Default::default()
     });
     let (mut runtime, sender, handle) = loop_over(model);
     sender.push(key(KeyCode::Char('y')));

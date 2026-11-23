@@ -3,6 +3,7 @@ mod answering_receipts;
 mod app;
 mod approval_facts;
 mod budget_wording;
+mod change_diff;
 mod chart;
 #[allow(dead_code)] // contract types only: the session, turn and front consume them
 mod chat;

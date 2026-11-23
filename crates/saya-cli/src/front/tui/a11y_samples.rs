@@ -72,7 +72,11 @@ pub(crate) fn card_rows() -> Vec<String> {
     if let Some(place) = card.place() {
         rows.push(place.to_owned());
     }
-    rows.extend(card.shown_rows(false, 96));
+    rows.extend(
+        card.shown_rows(false, 96)
+            .iter()
+            .map(|row| row.text().to_owned()),
+    );
     for choice in card.choices() {
         rows.push(format!("[{}] {}", choice.key, choice.label));
     }

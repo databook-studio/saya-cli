@@ -9,10 +9,16 @@
 //! [`super::cards_panel_tests`]'s; this file is the body and the cap.
 
 use super::cards::{BODY_ROWS, Kind, approval, clarification};
+use super::cards_diff::Row;
 use super::cards_fixture::{
     FOLDER, SCREEN_ROWS, helper_question, long_question, plan_question, shell_question,
     sql_question,
 };
+
+/// The rows' own text, for a test that compares them to the call's bytes.
+fn texts(rows: Vec<Row>) -> Vec<String> {
+    rows.into_iter().map(|row| row.text).collect()
+}
 
 #[test]
 fn a_sql_call_shows_the_operators_facts_byte_for_byte() {
@@ -27,7 +33,7 @@ fn a_sql_call_shows_the_operators_facts_byte_for_byte() {
     );
     assert_eq!(card.kind(), Kind::Approval);
     assert_eq!(
-        card.shown_rows(true, 96).join("\n"),
+        texts(card.shown_rows(true, 96)).join("\n"),
         card.target().join("\n"),
         "what is shown joins back into the bytes that were said"
     );
@@ -83,14 +89,20 @@ fn eighty_by_twenty_four_caps_the_body_at_six_rows_and_offers_view_all() {
         "80x24 shows six body rows: {:?}",
         card.shown_rows(false, 96)
     );
+    let folded = texts(card.shown_rows(false, 96));
     assert_eq!(
-        card.shown_rows(false, 96),
-        card.target()[..6],
+        folded[..BODY_ROWS - 1],
+        card.target()[..BODY_ROWS - 1],
         "the visible rows are the body's first rows, verbatim"
     );
-    assert_eq!(card.withheld(96), 6, "and the cap withholds the other six");
     assert_eq!(
-        card.shown_rows(true, 96),
+        folded[BODY_ROWS - 1],
+        "+7 more lines",
+        "and the cap says how many it is not showing: {folded:?}"
+    );
+    assert_eq!(card.withheld(96), 7, "`v` opens the seven the cap left out");
+    assert_eq!(
+        texts(card.shown_rows(true, 96)),
         card.target(),
         "`v` shows the whole body, still verbatim"
     );

@@ -56,6 +56,7 @@ mod blocks_stop;
 pub(crate) mod cards;
 mod cards_body;
 mod cards_choices;
+mod cards_diff;
 mod cards_family;
 mod composer;
 mod composer_frame;
@@ -98,6 +99,8 @@ mod turn_rows;
 pub(crate) use cards::{
     BODY_ROWS, Card, Choice, Family, Kind, approval, approval_waiting, cells, clarification,
 };
+#[allow(unused_imports)]
+pub(crate) use cards_diff::{Ink, Row as CardRow};
 #[allow(unused_imports)]
 pub(crate) use composer::{
     COMPACT_IDLE_HINT, COMPACT_WIDTH, IDLE_HINT, QUEUED_HINT, Row, Run, State, hint, placeholder,
@@ -172,6 +175,10 @@ mod cards_tests;
 #[cfg(test)]
 #[path = "cards_panel_tests.rs"]
 mod cards_panel_tests;
+
+#[cfg(test)]
+#[path = "cards_diff_tests.rs"]
+mod cards_diff_tests;
 
 #[cfg(test)]
 #[path = "composer_tests.rs"]

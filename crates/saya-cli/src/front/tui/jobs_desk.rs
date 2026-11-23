@@ -123,7 +123,9 @@ impl JobDesk {
 
     /// The question one call becomes on the card: the caller's line, the call's
     /// own facts, and no grant of the surface's — the job's operator records the
-    /// token its own call names.
+    /// token its own call names. A job's report carries the call's target line,
+    /// never its arguments, so the card states no change of it: the diff a
+    /// session's own file tools get is built where the arguments still are.
     fn question(&mut self, caller: &str, facts: String) -> Question {
         self.next_id += 1;
         Question {
@@ -131,6 +133,7 @@ impl JobDesk {
             caller: caller.to_owned(),
             facts,
             grant: None,
+            change: Vec::new(),
         }
     }
 

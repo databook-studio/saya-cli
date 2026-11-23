@@ -8,9 +8,10 @@ pub(crate) const DIFF_MAX_OUTPUT_LINES: usize = 200;
 
 use super::line_diff::Op;
 
-/// Renders the ops as unified-style hunks. Change ops keep two context
-/// lines on each side, and runs whose context windows touch merge into
-/// one hunk. Returns the text and whether any body line was cut.
+/// Renders the ops as unified-style hunks under the preview's three header
+/// lines. Change ops keep two context lines on each side, and runs whose
+/// context windows touch merge into one hunk. Returns the text and whether
+/// any body line was cut.
 pub(crate) fn emit(
     path: &str,
     before: &[&str],
@@ -19,6 +20,26 @@ pub(crate) fn emit(
     before_trailing: bool,
     current_trailing: bool,
 ) -> (String, bool) {
+    let (body, truncated) = lines_of(before, current, ops, before_trailing, current_trailing);
+    let mut lines = vec![
+        format!("diff preview: {path}"),
+        "--- before (recorded)".to_owned(),
+        "+++ current".to_owned(),
+    ];
+    lines.extend(body);
+    (lines.join("\n"), truncated)
+}
+
+/// The hunks themselves: the `@@` headers, the context, `-` and `+` rows, and
+/// the truncation note — no file header, for a surface that states the path
+/// itself (the approval panel and a turn's changes pane).
+pub(crate) fn lines_of(
+    before: &[&str],
+    current: &[&str],
+    ops: &[Op],
+    before_trailing: bool,
+    current_trailing: bool,
+) -> (Vec<String>, bool) {
     let mut marked = vec![false; ops.len()];
     for (index, op) in ops.iter().enumerate() {
         if matches!(op, Op::Same(_)) {
@@ -30,11 +51,7 @@ pub(crate) fn emit(
             *slot = true;
         }
     }
-    let mut lines = vec![
-        format!("diff preview: {path}"),
-        "--- before (recorded)".to_owned(),
-        "+++ current".to_owned(),
-    ];
+    let mut lines = Vec::new();
     let mut body = 0usize;
     let mut truncated = false;
     let mut more = 0usize;
@@ -107,7 +124,7 @@ pub(crate) fn emit(
     if truncated {
         lines.push(format!("… diff truncated ({more} more lines)"));
     }
-    (lines.join("\n"), truncated)
+    (lines, truncated)
 }
 
 /// Steps one out-of-hunk op past the side positions it consumed.

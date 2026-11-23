@@ -47,7 +47,7 @@ pub(crate) enum ChatEvent {
 
 /// One call put to the user: the id it is answered under, who asks, what the
 /// call does, and the grant a session-wide yes records.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Question {
     /// The session's own number for this question. One is pending at a time;
     /// a later asker waits its turn rather than being refused.
@@ -60,6 +60,11 @@ pub(crate) struct Question {
     /// The grammar token a session-wide yes records, when the call suggests
     /// one.
     pub(crate) grant: Option<String>,
+    /// The change the call makes to a file, as the bounded diff rows the panel
+    /// shows under the path — built from the call's own bytes before it runs, so
+    /// the operator answers for what the panel paints. Empty for a call that
+    /// changes no file text. Presentation only: no answer reads it.
+    pub(crate) change: Vec<String>,
 }
 
 /// How one turn ended.
