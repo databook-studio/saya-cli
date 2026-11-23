@@ -65,6 +65,7 @@ mod guarded_write;
 pub mod manifest;
 pub mod patch;
 pub mod pattern;
+mod private;
 pub mod search;
 mod search_controlled;
 mod search_directory;
@@ -77,6 +78,7 @@ pub use contain::{
 };
 pub use contain::{MAX_IO_BYTES, MAX_LIST_ENTRIES};
 pub use guarded_remove::{ControlledRemoveError, PreparedRemoval, RemovalRefusal};
+pub use private::private_path;
 pub use search::{GlobMatch, GlobOutcome, GrepMatch, GrepOutcome};
 
 pub use search_controlled::{

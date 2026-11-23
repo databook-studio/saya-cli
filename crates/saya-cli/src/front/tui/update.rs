@@ -36,6 +36,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     match msg {
         Msg::Key(key) => press(model, key, &mut cmds),
+        // The `@` list's paths, from the walk the surface asked for: they fill
+        // the list it asked on, and a list the operator has closed drops them.
+        Msg::Mentions(paths) => model.fill_mentions(paths),
         // A paste lands as text and nothing else: a `\r` inside a pasted block
         // must never send it. While a search owns the line, the text narrows the
         // query, exactly as the same characters typed would.
@@ -84,15 +87,33 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::Insert(character)) => {
             model.clear_choice();
             model.push(character);
+            // Typing `@`, or the path after it, keeps the list in step: it opens
+            // on the mention's first character, narrows as the path is typed,
+            // and goes away when a space ends the mention.
+            if model.open_mention() {
+                cmds.push(Cmd::Mentions);
+            }
+            if crate::chat::mentions::query(model.composer()).is_none() {
+                model.close_mention();
+            }
         }
         Some(Intent::Newline) => {
             model.clear_choice();
             model.push('\n');
+            model.close_mention();
         }
         Some(Intent::Backspace) => {
             model.clear_choice();
             model.backspace();
+            if crate::chat::mentions::query(model.composer()).is_none() {
+                model.close_mention();
+            }
         }
+        Some(Intent::MentionAccept) => {
+            model.accept_mention();
+        }
+        Some(Intent::MentionClose) => model.close_mention(),
+        Some(Intent::MentionMove(steps)) => model.move_mention(steps),
         Some(Intent::Submit) => submit(model, cmds),
         // The queue is one deep, and Ctrl+G is how the operator takes the held
         // line back: it is dropped, never sent (`02` §7).

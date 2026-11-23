@@ -46,9 +46,7 @@ impl Scan<'_> {
         }
     }
     pub(super) fn private(&self, path: &str) -> bool {
-        crate::coding::snapshot::sensitive_path(path)
-            || saya_store::screen_private_content(path, None).is_err()
-            || saya_types::redact(path) != path
+        crate::workspace::private_path(path)
             || self.query.private_prefixes.iter().any(|prefix| {
                 prefix.is_empty()
                     || prefix == "."

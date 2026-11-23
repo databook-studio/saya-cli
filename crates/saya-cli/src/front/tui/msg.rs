@@ -48,6 +48,10 @@ pub(crate) enum Msg {
     Resize { width: u16, height: u16 },
     /// One session event, passed on unchanged.
     Chat(ChatEvent),
+    /// The paths the run's workspace offers, as the walk behind the `@` list
+    /// returned them (`Cmd::Mentions`). They arrive on the queue like every
+    /// other answer the surface waits for, so a slow walk never holds a frame.
+    Mentions(Vec<String>),
     /// One background worker's answer. The panes that ask a worker — the
     /// result table, an export, a chart, a compaction, the clipboard — land in
     /// their own units; what this queue needs from the start is that a
@@ -101,6 +105,10 @@ pub(crate) enum Cmd {
     /// One line the surface does not answer itself: a session operation, which
     /// the chat layer's own table names ([`super::ops`]).
     Op(crate::slash::SlashCommand),
+    /// Gather the paths the `@` list offers: the run's workspace, walked the
+    /// way the file tools walk it, off the loop's thread. The answer comes back
+    /// as [`Msg::Mentions`].
+    Mentions,
     /// Ring the terminal's bell once: a call took the card, and the operator
     /// may be looking elsewhere.
     Bell,

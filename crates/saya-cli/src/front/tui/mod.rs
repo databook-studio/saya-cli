@@ -38,6 +38,7 @@ pub(crate) mod live;
 pub(crate) mod model;
 pub(crate) mod model_card;
 pub(crate) mod model_history;
+pub(crate) mod model_mention;
 pub(crate) mod model_overlay;
 pub(crate) mod model_turn;
 pub(crate) mod msg;
@@ -147,6 +148,11 @@ mod update_fixture;
 #[cfg(test)]
 #[path = "update_tests.rs"]
 mod update_tests;
+
+// The `@` list: what typing a mention offers, and the keys that choose from it.
+#[cfg(test)]
+#[path = "mention_keys_tests.rs"]
+mod mention_keys_tests;
 
 #[cfg(test)]
 #[path = "focus_fixture.rs"]

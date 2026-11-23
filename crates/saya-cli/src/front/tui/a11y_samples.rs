@@ -60,6 +60,23 @@ pub(crate) fn draft() -> Model {
     model
 }
 
+/// A model whose composer is offering the `@` list, for its pane: the paths a
+/// workspace walk returned, with the second row chosen.
+pub(crate) fn mentioning() -> Model {
+    let mut model = draft();
+    model.insert(" @");
+    model.mention = Some(super::model_mention::Mention {
+        paths: vec![
+            String::from("docs/README.md"),
+            String::from("src/main.rs"),
+            String::from("src/orders.rs"),
+        ],
+        waiting: false,
+        selected: 1,
+    });
+    model
+}
+
 /// The docked card's words: the shell call of `02` §5, where it runs and the
 /// answers it offers.
 pub(crate) fn card_rows() -> Vec<String> {

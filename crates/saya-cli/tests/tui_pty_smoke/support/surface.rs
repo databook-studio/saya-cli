@@ -66,6 +66,24 @@ impl SurfaceTui {
         matches!(self.child.child.try_wait(), Ok(None))
     }
 
+    /// Boundedly waits until `needle` has left the screen: the proof that a
+    /// pane closed rather than that its successor painted over it.
+    fn wait_gone(&mut self, needle: &str, within: Duration) -> Result<(), String> {
+        let start = Instant::now();
+        loop {
+            if !self.screen().contains(needle) {
+                return Ok(());
+            }
+            if start.elapsed() >= within {
+                return Err(format!(
+                    "'{needle}' never left within {within:?}; screen:\n{}",
+                    self.screen()
+                ));
+            }
+            self.pump()?;
+        }
+    }
+
     /// Whether the terminal the child was given is back in canonical mode: the
     /// raw mode it drew in is gone, so an operator's shell reads normally.
     fn canonical(&self) -> bool {
