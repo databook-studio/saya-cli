@@ -129,7 +129,11 @@ fn transcript() -> Transcript {
 
 /// The one notice the front was handed, drained.
 async fn notice(rx: &mut mpsc::UnboundedReceiver<Msg>) -> String {
-    match rx.recv().await.expect("the front said something") {
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("the front says something within the test's bound")
+        .expect("the front said something");
+    match msg {
         Msg::Worker(worker) => match worker.direct {
             Some(DirectOutcome::Notice(line)) => line,
             other => panic!("expected a notice, got {other:?}"),
