@@ -151,6 +151,29 @@ fn a_run_without_a_database_is_asked_for_no_section() {
     }
 }
 
+/// Test 3 — the section rides every request of a run that has latched the
+/// family, so its bytes are capped: `perf_guard::DB_SECTION_CAP` is today's
+/// section with one connection and memory on, plus a 5 % headroom. A paragraph
+/// added here is paid on every turn of every database session.
+#[test]
+fn the_section_fits_its_byte_cap() {
+    let registry = sqlite_registry("local");
+    for memory in [MemoryMode::Off, MemoryMode::Assisted] {
+        let text = section(&registry, memory);
+        println!(
+            "database section: {} bytes with memory {memory:?}",
+            text.len()
+        );
+        assert!(
+            text.len() <= crate::perf_guard::DB_SECTION_CAP,
+            "the database section is {} bytes with memory {memory:?}, over the {}-byte cap in \
+             `perf_guard.rs`: shorten the section, or raise that cap in review with the reason",
+            text.len(),
+            crate::perf_guard::DB_SECTION_CAP
+        );
+    }
+}
+
 /// The context hook carries the adapt-this-query hint the old turn carried, in
 /// the same block the turn built — and states none for a turn that ran no SQL.
 #[tokio::test]

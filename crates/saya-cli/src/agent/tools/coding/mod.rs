@@ -39,6 +39,10 @@ mod direct_allow_tests;
 mod direct_ask_tests;
 
 #[cfg(test)]
+#[path = "default_advertisement_tests.rs"]
+mod default_advertisement_tests;
+
+#[cfg(test)]
 #[path = "direct_db_lane_tests.rs"]
 mod direct_db_lane_tests;
 
@@ -57,6 +61,10 @@ mod direct_web_tests;
 #[cfg(test)]
 #[path = "direct_write_ask_tests.rs"]
 mod direct_write_ask_tests;
+
+#[cfg(test)]
+#[path = "evidence_append_tests.rs"]
+mod evidence_append_tests;
 
 #[cfg(test)]
 #[path = "helpers_concurrency_tests.rs"]

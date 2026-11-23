@@ -136,10 +136,6 @@ impl DirectCodingTools {
         let mut workspace = workspace;
         workspace.apply_evidence(evidence.clone());
         let mut defs: Vec<ToolDefinition> = super::definitions(coordinator.databases.as_ref());
-        // The direct-only `helpers` tool. Advertised; its description says
-        // to use it only when the user asked for a helper, and it advertises
-        // exactly the helper types this job's registry holds.
-        defs.push(super::task_tool::definition(agents));
         // Same `checklist` the interactive session already owns. Job-local
         // only: a coding job has no session record to sync. Advertised.
         defs.push(crate::interactive::session::tasks::render::checklist_definition());
@@ -184,6 +180,14 @@ impl DirectCodingTools {
         if plan.is_some() {
             defs.push(plan_gate::PlanGate::definition());
         }
+        // The direct-only `helpers` tool, appended after every lane that
+        // existed before it: a tool the request's own evidence gates on or off
+        // belongs at the END of the list, so turning it on cannot move a name
+        // that was already advertised and the prefix a provider caches holds
+        // (`evidence_append_tests`). Its description says to use it only when
+        // the user asked for a helper, and it advertises exactly the helper
+        // types this job's registry holds.
+        defs.push(super::task_tool::definition(agents));
         // The notebook edit — the one workspace tool added after this list's
         // order was fixed — goes last, after the shell, web, MCP and plan
         // lanes above: every tool that existed before it keeps the position it
