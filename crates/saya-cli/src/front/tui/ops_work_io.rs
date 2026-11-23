@@ -38,8 +38,15 @@ pub(super) fn section_answer(deps: &OpsDeps, section: Section) -> String {
             deps.root.as_deref(),
         );
     }
-    let text = StatusPanel::build(&crate::chat::ops_status::StatusFacts::of_session(&state))
-        .render_section(section);
+    let text = StatusPanel::build(
+        &crate::chat::ops_status::StatusFacts::of_session(&state).with_runtime(
+            &state,
+            &runtime,
+            &deps.store,
+            deps.root.as_deref(),
+        ),
+    )
+    .render_section(section);
     match section {
         Section::Model => crate::chat::ops_status::with_note(&mut state, Note::Usage, text),
         Section::Workspace => crate::chat::ops_status::with_note(&mut state, Note::Workspace, text),

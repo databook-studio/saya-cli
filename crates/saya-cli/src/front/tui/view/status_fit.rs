@@ -1,11 +1,11 @@
 //! Fitting the status line into the columns a terminal gives it.
 //!
-//! The row's drop order, first dropped first: the extra database count, the
-//! right side's hint, and the sharing caveat's detail. The mode chip, the model
-//! and the database have no step at all — a narrow terminal is not a reason to
-//! forget which model is answering or what it is talking to, and the chip is
-//! the row's reason to exist. A row too narrow for even those overflows rather
-//! than hides one.
+//! The row's drop order, first dropped first: the meter, the extra database
+//! count, the right side's hint, and the sharing caveat's detail. The mode chip,
+//! the model and the database have no step at all — a narrow terminal is not a
+//! reason to forget which model is answering or what it is talking to, and the
+//! chip is the row's reason to exist. A row too narrow for even those overflows
+//! rather than hides one.
 
 use ratatui::style::Style;
 
@@ -21,6 +21,9 @@ pub(crate) const GAP: usize = 2;
 /// One step of the drop order, cheapest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
+    /// The context and cost meter: the row's newest and least urgent fact, so
+    /// the first one a narrow row gives up.
+    Meters,
     /// The extra database count — the database keeps its name, never leaves.
     Database,
     /// The right side's hint, before its state word.
@@ -33,7 +36,13 @@ pub(crate) enum Step {
 }
 
 /// The order the row gives way in.
-pub(crate) const ORDER: [Step; 4] = [Step::Database, Step::Hint, Step::Sharing, Step::State];
+pub(crate) const ORDER: [Step; 5] = [
+    Step::Meters,
+    Step::Database,
+    Step::Hint,
+    Step::Sharing,
+    Step::State,
+];
 
 /// One segment of the row's left group: its words, the style it paints, and
 /// the step that takes it away (`None`: no step does).
@@ -119,7 +128,7 @@ pub(crate) fn row_width(segments: &[Segment], right: &Right) -> usize {
 /// A row that still does not fit once every step has been taken overflows: the
 /// chip, the model and the database are the row's reason to exist, so it would
 /// rather be too wide than quiet about them.
-pub(crate) fn fit(segments: &mut [Segment], right: &mut Right, width: usize) {
+pub(crate) fn fit(segments: &mut Vec<Segment>, right: &mut Right, width: usize) {
     for step in ORDER {
         if row_width(segments, right) <= width {
             return;
@@ -130,8 +139,11 @@ pub(crate) fn fit(segments: &mut [Segment], right: &mut Right, width: usize) {
 
 /// Takes one step's worth of row: a whole segment, or the shorter form a
 /// segment owes instead of leaving.
-fn apply(step: Step, segments: &mut [Segment], right: &mut Right) {
+fn apply(step: Step, segments: &mut Vec<Segment>, right: &mut Right) {
     match step {
+        // The meter is one fact too many on a short row, so it leaves whole:
+        // there is no shorter way to say "40% of the window".
+        Step::Meters => segments.retain(|segment| segment.step != Some(Step::Meters)),
         Step::Hint => {
             if let Right::State { hint, .. } = right {
                 *hint = None;

@@ -67,9 +67,13 @@ mod help;
 mod help_keys;
 mod help_rows_a;
 mod help_rows_b;
+mod highlight;
+mod highlight_keywords;
+mod highlight_langs;
 mod inspector;
 pub(crate) mod jobs;
 pub(crate) mod jobs_rows;
+mod meters;
 pub(crate) mod mode_picker;
 pub(crate) mod mode_words;
 mod palette;
@@ -121,6 +125,8 @@ pub(crate) use jobs_rows::{
     Placement as JobsPlacement, SHEET_ROWS, SIDE_FROM, SIDE_WIDTH, placement as jobs_placement,
     rows as jobs_rows, side_width,
 };
+#[allow(unused_imports)]
+pub(crate) use meters::{Meters, cost_text};
 #[allow(unused_imports)]
 pub(crate) use mode_picker::{ModePicker, ROWS as MODE_PICKER_ROWS, rows as mode_picker_rows};
 #[allow(unused_imports)]
@@ -278,6 +284,10 @@ mod status_fixture;
 #[cfg(test)]
 #[path = "status_fit_tests.rs"]
 mod status_fit_tests;
+
+#[cfg(test)]
+#[path = "status_meter_tests.rs"]
+mod status_meter_tests;
 
 #[cfg(test)]
 #[path = "status_tests.rs"]

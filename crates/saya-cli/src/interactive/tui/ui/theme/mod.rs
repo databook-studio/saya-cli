@@ -15,4 +15,4 @@ mod tests;
 
 pub(crate) use detect::{probe_terminal_theme, resolve_startup_theme};
 pub(crate) use palette::{Theme, decide_public, set_color_enabled, set_theme};
-pub(in crate::interactive::tui) use palette::{accent, code_color, foreground, secondary};
+pub(in crate::interactive::tui) use palette::{accent, code_color, foreground};

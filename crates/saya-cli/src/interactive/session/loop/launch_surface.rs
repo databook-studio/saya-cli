@@ -79,6 +79,11 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
     let Composed { parts, record } = composed;
     let (msgs, queue) = channel();
     let front = Arc::new(crate::front::tui::run_front::Forward::new(msgs.clone()));
+    // The session's books and the window its model is known to have: a settled
+    // turn folds into the first, and the status row's meter divides by the
+    // second — an unknown window shows no meter at all.
+    let window = crate::front::tui::live::context_window(&live.current(), &live.current().resolved.ai.model);
+    front.watch(Arc::clone(&state), window);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

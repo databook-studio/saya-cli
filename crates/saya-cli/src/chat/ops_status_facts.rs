@@ -6,6 +6,7 @@ use std::path::Path;
 use saya_store::{FsSessionStore, StoreError};
 
 use crate::config::runtime::RuntimeConfig;
+use crate::interactive::SessionUsage;
 use crate::interactive::session::state::SessionState;
 
 use super::ops_status::{Note, Section, StatusPanel, with_note};
@@ -33,6 +34,9 @@ pub(crate) struct StatusFacts {
     pub(crate) context_use: Option<String>,
     /// This session's token totals, as `/usage` rendered them.
     pub(crate) tokens: String,
+    /// What the provider reported this session has cost so far, as money;
+    /// `None` when no call reported a cost.
+    pub(crate) cost: Option<String>,
     /// The pinned workspace root.
     pub(crate) workspace_root: Option<String>,
     /// Whether the host-command lane composed for this session.
@@ -80,6 +84,13 @@ impl StatusFacts {
             self.workspace_root = workspace_root.map(|path| path.display().to_string());
         }
         self.instructions = Some(instructions(state, runtime, workspace_root));
+        let window = runtime
+            .resolved
+            .ai
+            .context_window_tokens
+            .or_else(|| saya_config::context_window_tokens(&runtime.resolved.ai.model));
+        self.context_use = context_use(&state.usage, window);
+        self.cost = cost_fact(&state.usage);
         self.limits = crate::config::limits_report::job_guards(runtime);
         // The database budget is the plugin's, and the plugin only arms it on a
         // session that bound a database: with no profile there is no budget to
@@ -142,6 +153,22 @@ fn instructions(
 /// condition for arming `[limits.database]`.
 fn database_bound(state: &SessionState) -> bool {
     state.profile.is_some() || !state.included_profiles.is_empty()
+}
+
+/// The Model section's context-use fact: the share of the model's window the
+/// last answering request used, or `None` when the window is unknown or no
+/// request has reported one. An unknown window is stated as unknown, never
+/// inferred from a token count.
+pub(crate) fn context_use(usage: &SessionUsage, window: Option<u64>) -> Option<String> {
+    let window = window?;
+    let percent = saya_agent::context_utilisation_percent(usage.last_input_tokens(), Some(window))?;
+    Some(format!("{percent}% of a {window}-token window"))
+}
+
+/// The Model section's cost fact: what the provider reported this session has
+/// cost, or `None` when no call reported a cost.
+pub(crate) fn cost_fact(usage: &SessionUsage) -> Option<String> {
+    usage.cost_micros().map(crate::interactive::cost_text)
 }
 
 /// How full the session's saved record is. A store that cannot answer says so

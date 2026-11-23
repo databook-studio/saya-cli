@@ -15,6 +15,12 @@ pub(crate) struct UsageTotals {
     pub(crate) cached_input_tokens: u64,
     pub(crate) cache_creation_input_tokens: u64,
     pub(crate) turns: u32,
+    /// Input tokens the last call folded here reported: the size of the prompt
+    /// that request sent, not the sum of the session's prompts.
+    pub(crate) last_input_tokens: Option<u64>,
+    /// What the provider reported these calls cost, in micro-USD. `None` until
+    /// a call reports one; every reported cost is added to it.
+    pub(crate) cost_micros: Option<u64>,
     pub(crate) reported_cached: bool,
     pub(crate) reported_cache_creation: bool,
     pub(crate) reported_reasoning: bool,
