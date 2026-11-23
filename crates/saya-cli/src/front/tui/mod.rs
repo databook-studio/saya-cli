@@ -41,12 +41,17 @@ pub(crate) mod model_overlay;
 pub(crate) mod model_turn;
 pub(crate) mod msg;
 pub(crate) mod ops;
+pub(crate) mod ops_deps;
+pub(crate) mod ops_group;
+pub(crate) mod ops_work;
+pub(crate) mod ops_work_io;
 pub(crate) mod overlay_keys;
 pub(crate) mod overlay_press;
 pub(crate) mod reload;
 pub(crate) mod run;
 pub(crate) mod run_clock;
 pub(crate) mod run_cmd;
+pub(crate) mod run_cmd_ops;
 pub(crate) mod run_cmd_port;
 pub(crate) mod run_draw;
 pub(crate) mod run_draw_card;
@@ -259,3 +264,17 @@ mod direct_export_tests;
 #[cfg(test)]
 #[path = "setup_tests.rs"]
 mod setup_tests;
+
+// The surface's command table, and the catalogue guard that says every command
+// the palette offers is answered here.
+#[cfg(test)]
+#[path = "ops_fixture.rs"]
+pub(crate) mod ops_fixture;
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod ops_tests;
+
+#[cfg(test)]
+#[path = "ops_catalog_tests.rs"]
+mod ops_catalog_tests;

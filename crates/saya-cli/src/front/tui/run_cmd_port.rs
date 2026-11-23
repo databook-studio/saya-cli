@@ -52,11 +52,11 @@ pub(crate) struct PortParts {
 
 /// The real port.
 pub(crate) struct SessionPort {
-    session: Arc<ChatSession>,
+    pub(super) session: Arc<ChatSession>,
     pub(super) front: Arc<Forward>,
     ops: OpsContext,
     direct: Arc<DirectDeps>,
-    deps: Arc<OpsDeps>,
+    pub(super) deps: Arc<OpsDeps>,
     /// The launch's own options: what `/reload` re-reads and what the guided
     /// setup's flow is built from, exactly as the old surface built it.
     options: GlobalOptions,
@@ -123,6 +123,22 @@ impl SessionPort {
             // The reload's own answer is its report, so saying it is doing it —
             // and `reload` answers with words only, never with this arm.
             Asked::Reload => self.reload(),
+            // `/setup` is the loop's: it intercepts the command and hands the
+            // terminal over before this table is reached. The arm keeps the
+            // match total, and says nothing rather than saying something twice.
+            Asked::Setup => {}
+            // `/continue` is the one session op that states a turn: the chat
+            // session sends the paused turn's message through its own path.
+            Asked::Continue => self.continue_turn(),
+            Asked::Job(request) => self.perform_job(request),
+            // A rollover: the conversation's own two are the chat layer's
+            // compaction and clear, which the session performs; the change
+            // waits for a turn in flight, exactly as the line front's rule says.
+            Asked::Roll { request, said } => self.roll(request, said),
+            // One shared operation the surface reads or writes: it takes as long
+            // as it takes, so it runs off the loop's thread and comes back as an
+            // entry in the transcript.
+            Asked::Work(work) => self.work(work),
         }
     }
 
