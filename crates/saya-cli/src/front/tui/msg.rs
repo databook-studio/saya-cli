@@ -48,6 +48,10 @@ pub(crate) enum Msg {
     Resize { width: u16, height: u16 },
     /// One session event, passed on unchanged.
     Chat(ChatEvent),
+    /// Whether the terminal window has the operator's focus. `true` when it
+    /// gained it, `false` when it lost it: a turn's end is only news while
+    /// the operator is looking elsewhere, when the terminal says so at all.
+    Focus(bool),
     /// One background worker's answer. The panes that ask a worker — the
     /// result table, an export, a chart, a compaction, the clipboard — land in
     /// their own units; what this queue needs from the start is that a
@@ -69,6 +73,10 @@ pub(crate) enum Msg {
 pub(crate) enum Cmd {
     /// Run one message as a turn.
     Send(String),
+    /// Replace the last turn: the previous turn's file changes are rewound
+    /// through the run's own checkpoints, then this message runs. The
+    /// confirmation line says what the rewind changed.
+    ReplaceLastTurn(String),
     /// Cancel the turn in flight; the run stays open.
     CancelTurn,
     /// Answer the call asked under this id.

@@ -44,6 +44,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         // new size changes nothing the model holds.
         Msg::Resize { .. } => {}
         Msg::Chat(event) => session(model, event, &mut cmds),
+        // Whether the window has the operator's focus is the runtime's own
+        // fact, read where a long turn ends; it changes nothing in the model.
+        Msg::Focus(_) => {}
         Msg::Worker(worker) => {
             // A direct command's answer is filed where it belongs — the rows as
             // a result entry, a command's sentence as a notice or an error — and
@@ -57,7 +60,7 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
                 // A call that takes the card rings the terminal, once: the
                 // operator may be looking at another window.
                 if model.note_jobs(report) {
-                    cmds.push(Cmd::Bell);
+                    ring(model, &mut cmds);
                 }
             }
             if !worker.message.is_empty() {
@@ -80,7 +83,13 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
     // The press is stamped before it is read: a call that opens next keeps the
     // keyboard in the composer when the operator's hands are still on it.
     model.typed_now();
-    match intent(model, key) {
+    let read = intent(model, key);
+    // The first Esc arms an edit; any other key — including a second key that
+    // is not the second Esc — puts the arm down again.
+    if !matches!(read, Some(Intent::EditLast)) {
+        model.disarm_edit();
+    }
+    match read {
         Some(Intent::Insert(character)) => {
             model.clear_choice();
             model.push(character);
@@ -101,6 +110,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         // ring — neither sends anything (`02` §7).
         Some(Intent::History(action)) => history_keys::press(model, action),
         Some(Intent::CancelTurn) => cmds.push(Cmd::CancelTurn),
+        // Esc on an empty composer, with no turn running: the first arms the
+        // edit, the second brings the last message back.
+        Some(Intent::EditLast) => edit_last(model),
         Some(Intent::AnswerCard(given)) => answer_card(model, given, cmds),
         Some(Intent::ViewCard) => model.toggle_card_full(),
         Some(Intent::ScrollCard(rows)) => model.scroll_card(rows),
@@ -173,6 +185,25 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
     }
 }
 
+/// Puts the terminal's bell on the command list, unless the operator turned
+/// notifications off. Every path that takes the card rings through here, so
+/// the switch cannot be bypassed by one of them.
+fn ring(model: &Model, cmds: &mut Vec<Cmd>) {
+    if model.notifications_enabled() {
+        cmds.push(Cmd::Bell);
+    }
+}
+
+/// The first Esc on an empty, settled composer arms an edit; the second puts
+/// the last turn's message back on the line, to be sent again.
+fn edit_last(model: &mut Model) {
+    if model.take_armed() {
+        model.restore_last();
+    } else {
+        model.arm_edit();
+    }
+}
+
 /// `c`: copy the focused entry's source text, and say what was copied (`02`
 /// §4). An entry with no text of its own — the activity group, whose words are
 /// its steps' — copies nothing and claims nothing.
@@ -197,7 +228,7 @@ fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
         // the ask behind it takes the slot it left (`02` §5, T9/A5) — and rings
         // the terminal, exactly as it did when it arrived.
         if model.answered(card.id) {
-            cmds.push(Cmd::Bell);
+            ring(model, cmds);
         }
     }
 }
@@ -245,7 +276,7 @@ fn session(model: &mut Model, event: ChatEvent, cmds: &mut Vec<Cmd>) {
         // rule: on the card when it is free, behind it otherwise — and a call
         // that takes the card rings the terminal, once.
         if model.ask(question.clone()) {
-            cmds.push(Cmd::Bell);
+            ring(model, cmds);
         }
     }
     apply(&mut model.transcript, &event);

@@ -52,6 +52,8 @@ pub(crate) const USER_FACING: &[&str] = &[
     "output.format",
     "output.color",
     "ui.theme",
+    "ui.notifications",
+    "ui.notify_after_seconds",
     "memory.mode",
     "memory.max_contracts",
     "memory.max_claims_per_contract",

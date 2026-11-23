@@ -259,11 +259,13 @@ exact program name named in the ask, never content or resolved identity:
 deny = ["curl", "ssh"]
 ```
 
-The `[ui]` table sets the interactive TUI's colour palette:
+The `[ui]` table sets the interactive TUI's colour palette and its notifications:
 
 ```toml
 [ui]
-theme = "auto"   # dark | light | auto
+theme = "auto"            # dark | light | auto
+notifications = true      # default: on
+notify_after_seconds = 30 # default: 30
 ```
 
 `theme` selects the palette the full-screen TUI paints with. `auto` (the
@@ -276,6 +278,15 @@ invocation, and the usual CLI-over-config precedence holds exactly: with no
 `--theme` flag the configured `theme` applies; an explicit
 `--theme auto|dark|light` wins over it, `auto` included; with neither, the
 default `auto` applies.
+
+`notifications` is the switch for the terminal bell and the OSC 9 desktop
+notification the TUI writes when an approval starts waiting and when a turn
+longer than `notify_after_seconds` finishes. Both are written between frames,
+never inside a paint; a terminal that does not know OSC 9 ignores that one
+sequence. A long turn's end notifies only while the terminal window is
+unfocused, when the terminal reports focus changes at all — otherwise it is
+always news. Set `notifications = false` to turn the bell and the desktop
+notification off entirely.
 
 The `[ai]` table tunes the provider request the agent loop assembles.
 `context_byte_budget` is the ceiling on the approximate byte size of the whole

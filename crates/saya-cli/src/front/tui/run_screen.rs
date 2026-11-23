@@ -15,6 +15,17 @@ use super::model::Model;
 use super::run_draw::{self, Facts};
 use crate::interactive::tui::{TerminalGuard, TerminalModes, restore_terminal};
 
+/// What a notification writes: the terminal's bell, then the desktop notification
+/// sequence terminals that support it read (and others ignore). One write, so a
+/// terminal never rings twice for one event.
+pub(crate) const ATTENTION: &[u8] = b"\x07\x1b]9;Saya needs attention\x07";
+
+/// Writes [`ATTENTION`] to `out`, outside any frame paint.
+pub(crate) fn write_attention(out: &mut impl Write) -> io::Result<()> {
+    out.write_all(ATTENTION)?;
+    out.flush()
+}
+
 /// The terminal the runtime is drawn on.
 pub(crate) trait Screen: Send {
     /// Enters the state the surface is drawn in: raw mode, the alternate
@@ -31,6 +42,12 @@ pub(crate) trait Screen: Send {
     /// Rings the terminal's bell once. A screen with no terminal of its own —
     /// a test's — records it and nothing else.
     fn bell(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Tells the operator the surface needs them: the terminal's bell and the
+    /// desktop notification sequence, written outside any frame.
+    fn notify(&mut self) -> io::Result<()> {
         Ok(())
     }
 
@@ -108,6 +125,15 @@ impl Screen for TtyScreen {
         let mut stdout = io::stdout();
         stdout.write_all(b"\x07")?;
         stdout.flush()
+    }
+
+    /// The bell and the desktop notification, written after the frame rather
+    /// than into it: a terminal that does not know OSC 9 ignores the sequence.
+    fn notify(&mut self) -> io::Result<()> {
+        if self.guard.is_none() {
+            return Ok(());
+        }
+        write_attention(&mut io::stdout())
     }
 
     fn restorer(&self) -> Option<Arc<dyn Fn() + Send + Sync>> {

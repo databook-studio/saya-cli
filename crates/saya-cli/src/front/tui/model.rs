@@ -12,8 +12,10 @@ use saya_agent::PermissionMode;
 
 use super::focus::EntryPath;
 use super::model_card::Seat;
+use super::model_edit::Edit;
 use super::model_history::Search;
 use super::model_overlay::Overlay;
+use super::notify::Notify;
 use super::view::jobs::Drawer;
 use crate::chat::Question;
 use crate::front::tui::view::Toast;
@@ -101,6 +103,12 @@ pub(crate) struct Model {
     /// The frame a running step's spinner is drawn from: one step per tick, so
     /// a step in flight reads as working rather than as a settled dot.
     pub(crate) spinner: usize,
+    /// What the composer remembers of the last turn: the message Esc-Esc puts
+    /// back, and the resend that replaces that turn (`model_edit`).
+    pub(crate) edit: Edit,
+    /// Whether the surface notifies the operator, and after how long: the
+    /// configuration's answer, or the default when the launch stated none.
+    pub(crate) notify: Option<Notify>,
 }
 
 impl Model {

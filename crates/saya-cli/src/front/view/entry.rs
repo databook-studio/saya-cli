@@ -45,9 +45,15 @@ impl TranscriptView {
         &mut self.turns[last]
     }
 
-    /// Appends one empty turn.
+    /// Append one empty turn.
     fn push_turn(&mut self) {
         self.turns.push(TurnView::default());
+    }
+
+    /// Drops the newest turn: an edited message takes the place of the turn it
+    /// replaces rather than following it.
+    pub(crate) fn drop_last_turn(&mut self) {
+        self.turns.pop();
     }
 
     /// The turn at `index`, to be changed. This is the one write that reaches

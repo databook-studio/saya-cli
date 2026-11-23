@@ -36,6 +36,8 @@ pub(crate) enum When {
     Card,
     /// Only while the open card offered a token a session grant could record.
     CardGrant,
+    /// Only while no card is open and no turn runs: the composer's idle keys.
+    Idle,
     /// Only while no card is open: the composer's own keys.
     Composer,
     /// Only while a line is held behind a running turn.
@@ -161,6 +163,13 @@ pub(crate) const SHORTCUTS: &[Shortcut] = &[
         action: "delete the last character",
         group: Group::Conversation,
         when: When::Composer,
+    },
+    Shortcut {
+        label: "Esc, Esc",
+        chords: &[ESCAPE, ESCAPE],
+        action: "edit the last message",
+        group: Group::Conversation,
+        when: When::Idle,
     },
     Shortcut {
         label: "Esc",

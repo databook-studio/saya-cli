@@ -207,6 +207,8 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         output_format: file.output.format.unwrap_or(OutputFormat::Text),
         output_color: file.output.color.unwrap_or(ColorChoice::Auto),
         ui_theme: file.ui.theme.unwrap_or(ThemeChoice::Auto),
+        ui_notifications: file.ui.notifications.unwrap_or(true),
+        ui_notify_after_seconds: file.ui.notify_after_seconds.unwrap_or(30),
         memory,
         instructions,
         ignored_project_overrides,

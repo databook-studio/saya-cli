@@ -139,7 +139,7 @@ pub(super) fn model_in(when: super::help_keys::When) -> Model {
     let mut model = Model::default();
     match when {
         When::Card | When::CardGrant => model.show_card(shell_question()),
-        When::Composer => {}
+        When::Idle | When::Composer => {}
         When::Queued => {
             model.start_turn();
             model.queue("and then the second one".to_owned());

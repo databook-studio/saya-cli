@@ -50,6 +50,10 @@ pub(crate) struct Runtime<S: Screen, C: Clock, P: CmdPort> {
     painted: Option<Instant>,
     /// When the turn in flight started, for the status line's clock.
     working: Option<Instant>,
+    /// Whether the terminal window has the operator's focus, when the terminal
+    /// reports a focus change at all: a long turn's end is only news while
+    /// they look elsewhere.
+    focused: Option<bool>,
     /// Whether something on the surface moves; the ticker reads it.
     animating: Arc<AtomicBool>,
     /// The session's metrics collector, until the first frame is painted: the
@@ -85,6 +89,7 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
             dirty: false,
             painted: None,
             working: None,
+            focused: None,
             animating: Arc::new(AtomicBool::new(false)),
             metrics: None,
             input: None,
@@ -191,6 +196,23 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
         Ok(())
     }
 
+    /// A turn ended: if it ran longer than the configured threshold and the
+    /// operator is not looking at this window — or the terminal never says
+    /// whether they are — tell them. The write happens here, between frames,
+    /// never inside the paint.
+    fn notify_long_turn(&mut self, started: Instant) -> io::Result<()> {
+        if !self.model.notifications_enabled() {
+            return Ok(());
+        }
+        if self.clock.now().saturating_duration_since(started) < self.model.notify_after() {
+            return Ok(());
+        }
+        if self.focused == Some(true) {
+            return Ok(());
+        }
+        self.screen.notify()
+    }
+
     /// One message: the pure update, its commands performed, and the surface
     /// marked as changed.
     fn fold(&mut self, msg: Msg) -> io::Result<()> {
@@ -198,6 +220,11 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
         // model is exactly as the session left it) and the loop ends after it.
         if matches!(msg, Msg::Quit) {
             self.leaving = true;
+        }
+        // The window's focus is the runtime's own fact: it changes nothing the
+        // model holds, and the long-turn notification reads it when a turn ends.
+        if let Msg::Focus(has_focus) = &msg {
+            self.focused = Some(*has_focus);
         }
         let busy = self.model.is_busy();
         // The reading the message is stamped with: the model turns no clock of
@@ -213,9 +240,10 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
                 continue;
             }
             // The bell is the terminal's, exactly as the handoff is: it rings on
-            // the screen the loop owns, never through the session's port.
+            // the screen the loop owns, never through the session's port. The
+            // same write carries the desktop sequence when the terminal knows it.
             if matches!(cmd, super::msg::Cmd::Bell) {
-                self.screen.bell()?;
+                self.screen.notify()?;
                 continue;
             }
             perform(self.port.as_ref(), cmd);
@@ -223,7 +251,12 @@ impl<S: Screen, C: Clock, P: CmdPort> Runtime<S, C, P> {
         self.dirty = true;
         match (busy, self.model.is_busy()) {
             (false, true) => self.working = Some(self.clock.now()),
-            (true, false) => self.working = None,
+            (true, false) => {
+                let started = self.working.take();
+                if let Some(started) = started {
+                    self.notify_long_turn(started)?;
+                }
+            }
             _ => {}
         }
         self.animating

@@ -31,12 +31,14 @@ fn a_sheet_without_a_card_lists_no_approval_key() {
         "the card does answer presses, so the sheet has something to withhold"
     );
     for probe in probes() {
-        if card_intent(&question, probe.event()).is_some() {
+        if card_intent(&question, probe.event()).is_some()
+            && let Some(row) = row(&context, probe)
+        {
             assert!(
-                !chords(&context).contains(&probe),
+                !row.action.contains("deny") && !row.action.contains("allow"),
                 "`{:?}` answers a card, and no card is open: {:?}",
                 probe.code,
-                chords(&context)
+                row.action
             );
         }
     }
@@ -127,10 +129,13 @@ fn the_turn_stop_key_appears_only_while_busy() {
         "the busy row says what Esc stops: {}",
         stop.action
     );
+    let edit = row(&idle(), escape).expect("an idle empty composer edits the last message");
     assert!(
-        row(&idle(), escape).is_none(),
-        "with nothing running Esc asks for nothing"
+        edit.action.contains("edit"),
+        "with nothing running Esc starts an edit: {}",
+        edit.action
     );
+    assert_ne!(stop.action, edit.action, "one key, two states, two words");
 
     let deny = row(&with_card(), escape).expect("an open card is denied with Esc");
     assert!(

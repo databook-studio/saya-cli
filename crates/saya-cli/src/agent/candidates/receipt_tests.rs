@@ -203,6 +203,8 @@ async fn runtime_with_sqlite(root: &Path, base_url: String) -> RuntimeConfig {
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Never,
             ui_theme: ThemeChoice::Auto,
+            ui_notifications: true,
+            ui_notify_after_seconds: 30,
             memory: ResolvedMemory {
                 mode: saya_config::MemoryMode::Off,
                 max_contracts: 5,

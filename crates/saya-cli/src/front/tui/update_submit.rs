@@ -58,14 +58,17 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     // job's consent by name (`02` §8).
     if model.card().is_none() {
         if line == SLASH_MODE {
+            model.forget_turn();
             model.open_mode_picker();
             return;
         }
         if line == SLASH_JOB {
+            model.forget_turn();
             model.open_jobs();
             return;
         }
         if line == SLASH_HELP {
+            model.forget_turn();
             model.open_help();
             return;
         }
@@ -78,6 +81,7 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
             // The line opens the turn its answer lands in: a command's own
             // words are echoed where its rows will be, never only in the
             // composer that has just been cleared.
+            model.forget_turn();
             model.begin_turn(shown);
             cmds.push(cmd);
             return;
@@ -85,6 +89,7 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
         direct::Read::Said(words) => {
             // A line the surface answers with words instead of running — a
             // refusal, a pointer — is echoed the same way, redacted.
+            model.forget_turn();
             model.begin_turn(shown);
             model.say(words);
             return;
@@ -100,19 +105,35 @@ pub(super) fn submit(model: &mut Model, cmds: &mut Vec<Cmd>) {
     // over.
     match parse_slash_command(line) {
         Ok(Some(SlashCommand::Coding(request))) => {
+            model.forget_turn();
             jobs::line(model, request, cmds);
             return;
         }
         Ok(Some(command)) if !matches!(command, SlashCommand::Mode(_)) => {
+            model.forget_turn();
             cmds.push(Cmd::Op(command));
             return;
         }
         _ => {}
     }
     if model.is_busy() {
+        // The edit was armed before a turn started: a queued line is the next
+        // turn's message, not a replacement of the one in flight.
+        model.take_replacing();
         if model.queue(text).is_some() {
             model.say(QUEUED_REPLACED);
         }
+        return;
+    }
+    // A message put back by Esc-Esc is an edit of the last turn: the turn it
+    // replaces is dropped from the conversation, and the line's own rewind
+    // undoes its file changes before this message runs.
+    if model.take_replacing() {
+        model.drop_last_turn();
+        model.begin_turn(redact_param_values(&text));
+        model.start_turn();
+        model.remember_turn(text.clone());
+        cmds.push(Cmd::ReplaceLastTurn(text));
         return;
     }
     send(model, text, cmds);
@@ -126,5 +147,6 @@ pub(super) fn send(model: &mut Model, text: String, cmds: &mut Vec<Cmd>) {
     // same line only when there is nothing to redact.
     model.begin_turn(redact_param_values(&text));
     model.start_turn();
+    model.remember_turn(text.clone());
     cmds.push(Cmd::Send(text));
 }

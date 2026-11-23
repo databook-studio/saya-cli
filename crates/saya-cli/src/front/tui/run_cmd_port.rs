@@ -164,6 +164,12 @@ impl CmdPort for SessionPort {
         self.line.send(message);
     }
 
+    fn replace_last(&self, message: String) {
+        // The line's own operation: the rewind runs before the turn, on the
+        // line's thread, and its words are said where a notice lands.
+        self.line.replace_last(message);
+    }
+
     fn cancel(&self) {
         self.line.cancel();
     }

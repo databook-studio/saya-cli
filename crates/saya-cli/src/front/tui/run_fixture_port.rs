@@ -46,6 +46,7 @@ impl Clock for FakeClock {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Call {
     Send(String),
+    Replace(String),
     Cancel,
     Answer(u64, Answer),
     SwitchMode(PermissionMode),
@@ -109,6 +110,10 @@ impl FakePort {
 impl CmdPort for FakePort {
     fn send(&self, message: String) {
         self.record(Call::Send(message));
+    }
+
+    fn replace_last(&self, message: String) {
+        self.record(Call::Replace(message));
     }
 
     fn cancel(&self) {

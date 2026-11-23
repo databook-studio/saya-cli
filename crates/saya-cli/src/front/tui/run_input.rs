@@ -34,6 +34,10 @@ pub(crate) fn msg_of(event: Event) -> Option<Msg> {
         Event::Key(key) => Some(Msg::Key(key)),
         Event::Paste(text) => Some(Msg::Paste(text)),
         Event::Resize(width, height) => Some(Msg::Resize { width, height }),
+        // Whether the window has the operator's focus, when the terminal
+        // reports it: a long turn's end is only news while they look elsewhere.
+        Event::FocusGained => Some(Msg::Focus(true)),
+        Event::FocusLost => Some(Msg::Focus(false)),
         _ => None,
     }
 }

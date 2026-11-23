@@ -26,7 +26,7 @@ const MIN_WIDTH: usize = 12;
 
 /// The rows the sheet asks the frame for: its two borders, the columns' three
 /// headings, and a row for each key an idle surface answers.
-pub(crate) const ROWS: usize = 17;
+pub(crate) const ROWS: usize = 18;
 
 /// The facts the sheet reads: which state the surface is in, and the glyph set
 /// it draws with.
@@ -140,6 +140,7 @@ fn shows(when: When, context: &Context) -> bool {
     match when {
         When::Card => context.card,
         When::CardGrant => context.card && context.grant,
+        When::Idle => !context.card && !context.busy,
         When::Composer => !context.card,
         When::Queued => !context.card && context.queued,
         When::Busy => !context.card && context.busy,

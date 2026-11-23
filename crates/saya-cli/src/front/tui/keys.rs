@@ -44,6 +44,9 @@ pub(crate) enum Intent {
     DropQueued,
     /// Stop the turn in flight; the run stays open.
     CancelTurn,
+    /// The first Esc puts it up; the second brings the last message back to
+    /// the composer, for editing.
+    EditLast,
     /// Answer the call the open card asks about with this.
     AnswerCard(Answer),
     /// Show the open card's whole body, or fold it back to its rows.
@@ -276,6 +279,7 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
             Some(Intent::OpenHelp)
         }
         KeyCode::Esc if model.is_busy() => Some(Intent::CancelTurn),
+        KeyCode::Esc if model.composer().is_empty() => Some(Intent::EditLast),
         KeyCode::Backspace => Some(Intent::Backspace),
         KeyCode::Char(character) if !ctrl && !alt => Some(Intent::Insert(character)),
         _ => None,

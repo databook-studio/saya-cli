@@ -94,6 +94,8 @@ pub(crate) fn merge(
     apply!(output.format);
     apply!(output.color);
     apply!(ui.theme);
+    apply!(ui.notifications);
+    apply!(ui.notify_after_seconds);
     apply!(memory.mode);
     apply!(memory.max_contracts);
     apply!(memory.max_claims_per_contract);
