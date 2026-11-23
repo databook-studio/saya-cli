@@ -20,6 +20,11 @@ pub(crate) struct RunRecord {
     /// The steady turns measured, and the provider delay subtracted from each.
     pub(crate) turns: usize,
     pub(crate) provider_delay_ms: f64,
+    /// The spelling this arm's binary documents for the run's read-only
+    /// posture, and whether it documents the line front's `--plain` flag: the
+    /// arms may name the same setting differently.
+    pub(crate) posture_flag: String,
+    pub(crate) plain_flag: bool,
     /// (a) send → the first streamed event of the first message.
     pub(crate) first_event_ms: f64,
     /// (b) steady turn overhead beyond the scripted provider, p50/p95.
@@ -100,6 +105,10 @@ pub(crate) fn print_run(label: &str, record: &RunRecord) {
         record.run + 1,
         record.k,
         record.bin
+    );
+    println!(
+        "  {:<24} {} read-only (--plain: {})",
+        "launch posture", record.posture_flag, record.plain_flag
     );
     for (name, value) in record.summary_lines() {
         println!("  {name:24} {value}");

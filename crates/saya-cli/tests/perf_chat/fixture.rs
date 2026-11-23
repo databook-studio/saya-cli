@@ -11,6 +11,8 @@ mod sqlite_fixture;
 
 use std::path::{Path, PathBuf};
 
+use crate::dialect::Dialect;
+
 /// The config every perf run states: sharing is the operator's consent (the
 /// scripted mock is not a local endpoint), memory is off so no extraction adds
 /// a request to a turn, and the run's own row ceiling is small.
@@ -45,7 +47,13 @@ pub(crate) fn sqlite_profile(config_root: &Path) -> PathBuf {
 /// workspace (so the session never binds this repository — the run's roots live
 /// under `target/`, inside it), and read-only approval — a perf turn asks no
 /// database question, so nothing can prompt.
-pub(crate) fn args(connections: &Path, workspace: &Path) -> Vec<String> {
+///
+/// The posture is the one setting whose spelling differs between the arms: the
+/// control states it as `--approval-mode read-only`, the candidate as
+/// `--mode read-only`. `dialect` is the binary's own answer, read from its
+/// `--help`, so every arm gets the same setting under the name it knows.
+pub(crate) fn args(dialect: &Dialect, connections: &Path, workspace: &Path) -> Vec<String> {
+    let posture = dialect.posture.args();
     vec![
         "--connections".to_owned(),
         connections.to_str().unwrap().to_owned(),
@@ -53,7 +61,7 @@ pub(crate) fn args(connections: &Path, workspace: &Path) -> Vec<String> {
         "local".to_owned(),
         "--workspace".to_owned(),
         workspace.to_str().unwrap().to_owned(),
-        "--mode".to_owned(),
-        "read-only".to_owned(),
+        posture[0].to_owned(),
+        posture[1].to_owned(),
     ]
 }
