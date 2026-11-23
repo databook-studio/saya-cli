@@ -17,7 +17,6 @@ use ratatui::crossterm::event::KeyEvent;
 
 use super::changes_press;
 use super::direct;
-use super::focus_text;
 use super::history_keys;
 use super::jobs;
 use super::keys::{Intent, intent};
@@ -25,11 +24,10 @@ use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::overlay_press;
 use super::update_answer::{answer_at, answer_card};
+use super::update_keys;
 use super::update_submit::{send, submit};
-use super::view::ModePicker;
 use crate::chat::ChatEvent;
 use crate::front::apply;
-use crate::interactive::session::permissions::mode::next_in_cycle;
 
 /// Folds one message into the model, and answers what the runtime must do.
 pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -143,7 +141,7 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
                 }
             }
         }
-        Some(Intent::CycleMode) => cycle(model, cmds),
+        Some(Intent::CycleMode) => update_keys::cycle(model, cmds),
         Some(Intent::ModeUp) => {
             if let Some(picker) = model.mode_picker_mut() {
                 picker.up();
@@ -154,7 +152,7 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
                 picker.down();
             }
         }
-        Some(Intent::ModeSet) => choose(model, cmds),
+        Some(Intent::ModeSet) => update_keys::choose(model, cmds),
         Some(Intent::ModeCancel) => model.close_overlay(),
         // The panes that own the screen (`02` §11): opening one, walking it, and
         // running the command the palette chooses.
@@ -173,21 +171,14 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             | Intent::HelpPageUp
             | Intent::HelpPageDown),
         ) => overlay_press::press(model, intent, cmds),
-        // The changes pane (UI5): opening it on the last turn that wrote, walking
-        // it a row or a screen at a time, and closing it.
-        Some(
-            intent @ (Intent::OpenChanges
-            | Intent::ChangesUp
-            | Intent::ChangesDown
-            | Intent::ChangesPageUp
-            | Intent::ChangesPageDown
-            | Intent::ChangesClose),
-        ) => changes_press::press(model, intent),
+        // The changes pane (UI5): its keys are `changes_press`'s list, and this
+        // hands it every press that list names.
+        Some(intent) if changes_press::handles(intent) => changes_press::press(model, intent),
         Some(Intent::FocusUp) => model.move_focus(false),
         Some(Intent::FocusDown) => model.move_focus(true),
         Some(Intent::FocusExpand) => model.fold_focus(None),
         Some(Intent::FocusFold) => model.fold_focus(Some(true)),
-        Some(Intent::FocusCopy) => copy(model, cmds),
+        Some(Intent::FocusCopy) => update_keys::copy(model, cmds),
         Some(Intent::FocusInspector) => model.toggle_inspector(),
         Some(Intent::ToggleDetail) => model.toggle_detail(),
         Some(Intent::FocusLeave) => model.clear_focus(),
@@ -210,47 +201,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             | Intent::JobsClose),
         ) => jobs::press(model, intent, cmds),
         Some(Intent::Refused(reason)) => model.say(reason),
-        None => {}
+        // No press, or one no pane above answers: the surface holds it.
+        _ => {}
     }
-}
-
-/// `c`: copy the focused entry's source text, and say what was copied (`02`
-/// §4). An entry with no text of its own — the activity group, whose words are
-/// its steps' — copies nothing and claims nothing.
-fn copy(model: &mut Model, cmds: &mut Vec<Cmd>) {
-    let Some((word, text)) = model.focused_entry().and_then(focus_text::plain) else {
-        return;
-    };
-    if text.is_empty() {
-        return;
-    }
-    model.say(focus_text::toast(word, &text));
-    cmds.push(Cmd::Copy(text));
-}
-
-/// Shift+Tab: the mode cycle's next member, skipping a withheld `bypass`. The
-/// cycle is `02` §8's four interactive modes — `read-only` and `never` are
-/// reachable only by naming them — and only a change is said (J6).
-fn cycle(model: &mut Model, cmds: &mut Vec<Cmd>) {
-    let next = next_in_cycle(model.mode(), model.allow_bypass);
-    model.set_mode(next);
-    model.note_mode(next);
-    cmds.push(Cmd::SwitchMode(next));
-}
-
-/// Enter on the mode picker: the selected row's mode is stated, once, and
-/// exactly a change is said where it happened (J6).
-fn choose(model: &mut Model, cmds: &mut Vec<Cmd>) {
-    let Some(chosen) = model.mode_picker().map(ModePicker::chosen) else {
-        return;
-    };
-    model.close_overlay();
-    if chosen == model.mode() {
-        return;
-    }
-    model.set_mode(chosen);
-    model.note_mode(chosen);
-    cmds.push(Cmd::SetMode(chosen));
 }
 
 /// One session event: folded into the transcript and, when it ends a turn,

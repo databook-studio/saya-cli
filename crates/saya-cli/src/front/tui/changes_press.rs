@@ -13,6 +13,20 @@ use super::model::Model;
 /// borders and its hint row.
 pub(crate) const PAGE: isize = 9;
 
+/// Whether `intent` is one the changes pane answers: `update.rs` asks this and
+/// hands the press over, so the list of the pane's keys is one list.
+pub(crate) fn handles(intent: Intent) -> bool {
+    matches!(
+        intent,
+        Intent::OpenChanges
+            | Intent::ChangesUp
+            | Intent::ChangesDown
+            | Intent::ChangesPageUp
+            | Intent::ChangesPageDown
+            | Intent::ChangesClose
+    )
+}
+
 /// Carries out one press the changes pane owns.
 pub(crate) fn press(model: &mut Model, intent: Intent) {
     match intent {
