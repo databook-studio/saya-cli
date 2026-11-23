@@ -37,6 +37,7 @@ pub(crate) fn skipped_primary(&self) -> Option<&str> {
 /// boundary that follows it: the turn's own report is what the surface's front
 /// read from it, never a second read of the engine.
 pub(crate) async fn turn(&mut self, message: String, front: &crate::front::tui::run_front::Forward) -> Said {
+    let message = self.composed(message);
     let Some(session) = self.chat() else {
         return Said::Error(ENDED.to_owned());
     };
@@ -126,6 +127,7 @@ pub(crate) async fn restate(&mut self, overrides: PromptOverrides) -> Said {
 /// with the turn's own report: the compaction reads the output the engine
 /// stated for this turn, never an earlier one.
 pub(super) async fn send(&mut self, message: String) -> Result<Option<Sent>, String> {
+    let message = self.composed(message);
     let Some(run) = self.run.as_ref() else {
         return Err(ENDED.to_owned());
     };
@@ -194,6 +196,32 @@ pub(super) async fn send(&mut self, message: String) -> Result<Option<Sent>, Str
         output,
         said,
     }))
+}
+
+/// The operator's message as the run receives it: `@path` mentions carry the
+/// files they name, read the way the file tools read them.
+///
+/// One implementation for both fronts, because both send through this line: the
+/// full-screen surface drives [`Line::turn`] and the line loop drives
+/// [`Line::send`], and neither composes a message of its own. A run with no
+/// workspace attaches nothing — it has no file a run is allowed to read — and a
+/// message with no mention is returned exactly as it was typed, so a request
+/// that points at nothing costs what it always did.
+fn composed(&self, message: String) -> String {
+    if crate::chat::mentions::mentioned(&message).is_empty()
+        || self.shape.workspace() == crate::chat::Workspace::None
+    {
+        return message;
+    }
+    let Some(folder) = self.parts.folder.as_deref() else {
+        return message;
+    };
+    // The run's own contained workspace, opened the one way the file tools open
+    // it, so the mention's read is the read tool's read.
+    match saya_harness::workspace::Workspace::open(folder) {
+        Ok(workspace) => crate::chat::mentions::attach(&message, Some(&workspace)),
+        Err(_) => message,
+    }
 }
 
 /// `/compact`: one compaction now, whether or not a turn crossed the

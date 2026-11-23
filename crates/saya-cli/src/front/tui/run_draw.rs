@@ -26,8 +26,8 @@ use super::run_draw_layout::{regions, status_facts};
 use super::run_draw_overlay;
 use super::theme::{Charset, Scheme, ascii_line, style};
 use super::view::{
-    Database, EmptyFacts, Row, TranscriptFacts, empty_rows, rows as composer_rows, status_line,
-    toast_row, transcript_rows,
+    Database, EmptyFacts, Row, TranscriptFacts, empty_rows, mention_height, mention_rows,
+    rows as composer_rows, status_line, toast_row, transcript_rows,
 };
 
 /// What a frame is painted with, besides the model: the token column and glyph
@@ -83,7 +83,29 @@ impl Default for Facts {
 
 /// Paints one whole frame.
 pub(crate) fn frame(model: &Model, facts: &Facts, frame: &mut Frame) {
-    let regions = regions(model, facts, frame.area());
+    let mut regions = regions(model, facts, frame.area());
+    // The `@` list is painted over the rows just above the composer: it belongs
+    // to the line being typed, and nothing else on the frame gives way for it.
+    let mentioning = mention_height(model).min(regions.transcript.height as usize);
+    if mentioning > 0 {
+        let top = regions.transcript.bottom() - mentioning as u16;
+        let list = Rect {
+            x: regions.transcript.x,
+            y: top,
+            width: regions.transcript.width,
+            height: mentioning as u16,
+        };
+        regions.transcript.height = regions.transcript.height.saturating_sub(mentioning as u16);
+        paint(
+            frame,
+            list,
+            lines(
+                mention_rows(model, list.width as usize, facts.charset),
+                facts.scheme,
+            ),
+            facts.charset,
+        );
+    }
     let transcript = transcript(model, facts, regions.transcript);
     paint(frame, regions.transcript, transcript, facts.charset);
     // A pane that is open takes the transcript's rows: nothing else on the

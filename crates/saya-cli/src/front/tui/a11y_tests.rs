@@ -12,6 +12,7 @@ use ratatui::backend::TestBackend;
 use saya_agent::PermissionMode;
 
 use super::a11y_fixture::{self, Pane};
+use super::a11y_samples;
 use super::jobs::JobReport;
 use super::model::Model;
 use super::run_draw::{Facts, frame};
@@ -194,6 +195,7 @@ fn every_ascii_frame_is_seven_bit() {
         ("empty", Model::default()),
         ("conversation", conversation()),
         ("card", questioning()),
+        ("@ list", a11y_samples::mentioning()),
         ("jobs drawer", jobs),
         ("mode picker", picker),
         ("trust question", trust),

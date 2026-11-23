@@ -12,7 +12,7 @@ use ratatui::text::Line;
 use super::a11y_samples;
 use super::theme::{Charset, Scheme};
 use super::view::{
-    empty_rows, help_rows, jobs_rows, mode_picker_rows, palette_rows, result_rows,
+    empty_rows, help_rows, jobs_rows, mention_rows, mode_picker_rows, palette_rows, result_rows,
     rows as composer_rows, sessions_rows, status_line, transcript_rows,
 };
 
@@ -31,10 +31,11 @@ pub(crate) enum Pane {
     Result,
     Empty,
     Blocks,
+    Mention,
 }
 
 /// Every pane of `02` §2-§11 the crate paints.
-pub(crate) const ALL: [Pane; 12] = [
+pub(crate) const ALL: [Pane; 13] = [
     Pane::Status,
     Pane::Transcript,
     Pane::Composer,
@@ -47,6 +48,7 @@ pub(crate) const ALL: [Pane; 12] = [
     Pane::Result,
     Pane::Empty,
     Pane::Blocks,
+    Pane::Mention,
 ];
 
 impl Pane {
@@ -65,6 +67,7 @@ impl Pane {
             Self::Result => "result table",
             Self::Empty => "empty state",
             Self::Blocks => "transcript blocks",
+            Self::Mention => "@ list",
         }
     }
 }
@@ -102,6 +105,7 @@ pub(crate) fn render(pane: Pane, scheme: Scheme, charset: Charset) -> Vec<String
             20,
         )),
         Pane::Blocks => lines(&transcript_rows(&[a11y_samples::blocks()], &facts, 100, 40)),
+        Pane::Mention => row_texts(&mention_rows(&a11y_samples::mentioning(), 100, charset)),
     }
 }
 

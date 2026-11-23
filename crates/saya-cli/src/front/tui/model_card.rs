@@ -37,6 +37,10 @@ impl Model {
     /// ([`Model::opening_seat`]).
     pub(crate) fn show_card(&mut self, card: Question) {
         self.card = Some(card);
+        // A card owns the surface: the `@` list is the composer's, and `Tab`
+        // answers the card now, so a list that was open goes away rather than
+        // taking the one key the operator needs (UI3).
+        self.mention = None;
         self.card_full = false;
         self.card_scroll = 0;
         self.card_choice = None;

@@ -13,6 +13,7 @@ use saya_agent::PermissionMode;
 use super::focus::EntryPath;
 use super::model_card::Seat;
 use super::model_history::Search;
+use super::model_mention::Mention;
 use super::model_overlay::Overlay;
 use super::view::jobs::Drawer;
 use crate::chat::Question;
@@ -77,6 +78,10 @@ pub(crate) struct Model {
     pub(crate) history: History,
     /// The reverse search `Ctrl+R` opens over the ring, while it is open.
     pub(crate) search: Option<Search>,
+    /// The `@` list the composer is offering, while it is open: the workspace
+    /// paths the file tools list, narrowed by what is being typed after the
+    /// `@` (`model_mention`).
+    pub(crate) mention: Option<Mention>,
     /// The last thing the surface said on its own — a refused key, a worker's
     /// word — until it expires or the next one replaces it. It lives on the
     /// tick ([`Toast`]): `02` §4 gives it four seconds, and a tick is the only

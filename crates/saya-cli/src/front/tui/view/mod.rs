@@ -70,6 +70,7 @@ mod help_rows_b;
 mod inspector;
 pub(crate) mod jobs;
 pub(crate) mod jobs_rows;
+mod mention;
 pub(crate) mod mode_picker;
 pub(crate) mod mode_words;
 mod palette;
@@ -120,6 +121,11 @@ pub(crate) use jobs::{CARD_FIRST, DETAIL_UNIT, Drawer, Job, NO_JOBS, State as Jo
 pub(crate) use jobs_rows::{
     Placement as JobsPlacement, SHEET_ROWS, SIDE_FROM, SIDE_WIDTH, placement as jobs_placement,
     rows as jobs_rows, side_width,
+};
+#[allow(unused_imports)]
+pub(crate) use mention::{
+    HINT as MENTION_HINT, MAX_VISIBLE as MENTION_ROWS, TITLE as MENTION_TITLE,
+    height as mention_height, rows as mention_rows,
 };
 #[allow(unused_imports)]
 pub(crate) use mode_picker::{ModePicker, ROWS as MODE_PICKER_ROWS, rows as mode_picker_rows};
@@ -209,6 +215,11 @@ mod help_tests;
 #[cfg(test)]
 #[path = "mode_picker_tests.rs"]
 mod mode_picker_tests;
+
+// The `@` list's pane: the rows it paints, their width and their ASCII form.
+#[cfg(test)]
+#[path = "mention_tests.rs"]
+mod mention_tests;
 
 #[cfg(test)]
 #[path = "jobs_empty_tests.rs"]
