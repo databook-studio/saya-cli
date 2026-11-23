@@ -284,6 +284,7 @@ where editing is the reader's `Up`/`Down` recall and no key below applies.
 | `↑`, `↓` | Recall the previous or next line from the input history; `↓` past the newest brings the draft back |
 | `Ctrl+R` | Search the input history: type to narrow, `Ctrl+R` again steps one match older, `Enter` takes it, `Esc` closes the search |
 | `Ctrl+K`, or `/` on an empty line | Open the command palette over the catalogue below: `↑`/`↓` choose, `Enter` runs or fills the selected command, `Esc` closes. A non-empty line keeps its `/` |
+| `Ctrl+O` | Show every step of every turn in full — its whole command and the outcome it reported — or fold the transcript back to one line per step. A turn's steps are visible either way: a settled turn no longer hides what it ran |
 | `?` on an empty line | Open the key sheet; `Esc` closes it |
 | `Shift+Tab` | Walk the mode cycle: `ask → accept-edits → plan → bypass`, skipping `bypass` when it is withheld. `read-only` and `never` are reachable only by naming them. Refused with a note while an approval card is open |
 | `Esc` while a turn runs | Stop that turn: the run stays open, and a helper the turn launched is stopped with it |
