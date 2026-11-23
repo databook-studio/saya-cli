@@ -79,6 +79,11 @@ pub(super) struct RootSession {
     /// the compaction narrative and the continuation record its loop holds.
     /// `None` is a job surface, which carries neither.
     pub(super) facts: Option<Arc<crate::chat::SessionFacts>>,
+    /// The workspace summary gathered at the run's open, on its own thread: the
+    /// first turn's request carries it when the scan has finished, and no later
+    /// turn carries it at all. `None` is a run that states no summary — a job
+    /// surface, or a folder that cannot root a workspace.
+    pub(super) summary: Option<crate::chat::WorkspaceSummaryCell>,
 }
 
 impl RootSession {
@@ -101,6 +106,21 @@ impl RootSession {
             prompt.push_str(facts);
         }
         Some(prompt)
+    }
+
+    /// The workspace summary this turn carries, when it is the run's first turn
+    /// and the launch scan has finished: `None` for every later turn, and for a
+    /// first turn whose scan is still running — the message is never held for
+    /// it.
+    pub(super) fn summary_block(&self, turn: u64) -> Option<saya_agent::ContextBlock> {
+        self.summary.as_ref()?.block_for_turn(turn)
+    }
+
+    /// Whether the launch scan has landed its summary yet: the fact a test
+    /// waits on, and nothing a turn reads — a turn never waits for a scan.
+    #[cfg(all(test, unix))]
+    pub(super) fn summary_ready(&self) -> bool {
+        self.summary.as_ref().is_some_and(|cell| cell.ready())
     }
 
     /// The active plugins' sections, as the run holds them now: composed once,

@@ -79,6 +79,18 @@ impl SurfaceTui {
         termios.c_lflag & libc::ICANON != 0
     }
 
+    /// Answers the startup trust question by binding this folder as the
+    /// session workspace (`y`): the run then opens over it, and the launch scan
+    /// this job adds starts there. The surface says so in the transcript, which
+    /// is what this waits for.
+    fn bind_trust(&mut self) {
+        self.wait_for("trust this folder?", INTERACTIVE)
+            .expect("the startup trust question is up");
+        self.send("y").expect("the trust answer");
+        self.wait_for("workspace trusted", INTERACTIVE)
+            .expect("the launch bound the folder it was answered with");
+    }
+
     fn pump(&mut self) -> Result<(), String> {
         match self.rx.recv_timeout(READ_TIMEOUT) {
             Ok(Ok(bytes)) if bytes.is_empty() => {
@@ -154,6 +166,26 @@ fn surface_over(
         database_present,
         COLS,
         ROWS,
+        READ_ONLY,
+        &[],
+    )
+}
+
+/// The same launch at a stated terminal size: the review sizes a screen is
+/// captured at, and the harness's own default everywhere else.
+fn surface_over_at(
+    home: &Path,
+    provider: Option<&MockProvider>,
+    database_present: bool,
+    (cols, rows): (u16, u16),
+) -> Result<SurfaceTui, String> {
+    let base_url = provider.map(MockProvider::base_url);
+    open_surface(
+        home,
+        base_url.as_deref(),
+        database_present,
+        cols,
+        rows,
         READ_ONLY,
         &[],
     )

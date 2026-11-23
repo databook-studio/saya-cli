@@ -170,6 +170,11 @@ impl NativeCodingJob {
             false => None,
         };
         let system_prompt = Some(system_prompt);
+        // The workspace summary is gathered now, on its own thread: the run is
+        // open and the surface is painting its first frame, so the scan costs
+        // neither the frame nor the message its cost. Its Git facts come from
+        // the same service every other read of the repository uses.
+        let summary = self.workspace_summary(project_context);
         self.record_observation_boundary("started", false).await?;
         Ok(RootSession {
             provider,
@@ -193,6 +198,7 @@ impl NativeCodingJob {
             // states them: the compaction narrative and the continuation
             // record its loop holds.
             facts: inputs.facts.clone(),
+            summary,
         })
     }
 }

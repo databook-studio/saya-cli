@@ -23,7 +23,7 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21362,
+      "body_bytes": 21497,
       "messages": 2
     },
     {
@@ -48,7 +48,7 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21759,
+      "body_bytes": 21894,
       "messages": 4
     },
     {

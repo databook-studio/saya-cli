@@ -104,6 +104,16 @@ impl NativeCodingJob {
             )
             .await;
         }
+        // The workspace summary the launch gathered in the background rides the
+        // request's untrusted lane, after the sources every turn repeats: the
+        // instructions and the worktree's preferences are the request's stable
+        // prefix, and a fact the model needs once belongs behind them rather
+        // than ahead of them. It is carried by the run's first turn only, and
+        // never waited for: a scan still running when the message was sent adds
+        // nothing.
+        if let Some(block) = session.summary_block(turn) {
+            context_blocks.push(block);
+        }
         // The session's own facts join it: the task list the run holds, the
         // compaction narrative and the continuation record its loop holds now,
         // each through the builder the interactive turn already renders them

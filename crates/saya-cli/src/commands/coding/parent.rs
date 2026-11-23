@@ -4,6 +4,16 @@ use saya_types::CodingRunFailure;
 use std::sync::Arc;
 
 impl NativeCodingJob {
+    /// Whether the launch scan has landed its summary yet: the fact a test
+    /// waits on, and nothing a surface reads — no message is ever held for a
+    /// scan.
+    #[cfg(all(test, unix))]
+    pub(crate) fn workspace_summary_ready(&self) -> bool {
+        self.root_run
+            .session()
+            .is_some_and(|session| session.summary_ready())
+    }
+
     /// Runs the existing native loop with shared root/child budgets. Always
     /// settles scheduled work before returning, even if the parent fails.
     ///

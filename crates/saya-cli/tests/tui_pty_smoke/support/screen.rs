@@ -258,8 +258,15 @@ fn screen_text(screen: &vt100::Screen) -> String {
 
 /// Resolves the real `saya` binary cargo builds for integration tests. Never
 /// hardcodes a path — `CARGO_BIN_EXE_saya` is provided by cargo at build time.
+///
+/// `SAYA_PTY_BINARY` is the one seam: a capture run may name a binary built
+/// from another commit, which is how REPORT.md's before/after screens of one
+/// launch are taken; every other run gets the binary this suite was built
+/// beside.
 fn saya_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_saya"))
+    std::env::var_os("SAYA_PTY_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_saya")))
 }
 
 /// A throwaway HOME under the test's temp dir, removed first in case a prior
