@@ -2856,6 +2856,7 @@ dependencies = [
  "regex",
  "reqwest",
  "saya-agent",
+ "saya-config",
  "saya-connectors",
  "saya-store",
  "saya-types",

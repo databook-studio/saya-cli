@@ -14,7 +14,8 @@ use super::{
     manifest::{SnapshotError, SnapshotManifest, SnapshotManifestBody, digest, manifest_bytes},
     policy::SnapshotOmissionPolicy,
     select_source::classify_working_tree,
-    select_support::{check_control, file_mode, path_string, sensitive_path, snapshot_status_path},
+    select_support::{check_control, file_mode, path_string, snapshot_status_path},
+    sensitive_path,
     symlink::{SymlinkSet, validate_symlink_target},
     types::*,
 };

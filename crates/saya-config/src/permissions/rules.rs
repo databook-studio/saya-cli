@@ -189,7 +189,9 @@ pub fn decide<'a>(
     workspace: Option<&Path>,
 ) -> CommandDecision<'a> {
     let mut scan = scan(command);
-    strip_leading_cd(&mut scan.segments, workspace);
+    // The directory a leading `cd` states is part of where the command reads:
+    // a vetted `git` is decided over the repository it would reach.
+    let cd = strip_leading_cd(&mut scan.segments, workspace);
     // The two sides read the segment differently. Deny resolves the program a
     // command really runs (wrappers, options, assignments, a shell's script);
     // allow reads the tokens as written, because an assignment or a wrapper can
@@ -233,7 +235,9 @@ pub fn decide<'a>(
     }
     // A command whose every part only reads is the built-in answer, after the
     // operator's own: it skips a question, and never widens a mode.
-    if rules.read_only_set.permits() && read_only::qualifies(&scan) {
+    if rules.read_only_set.permits()
+        && read_only::qualifies(&scan, read_only::WorkingDir::new(workspace, cd.as_deref()))
+    {
         return CommandDecision::ReadOnly;
     }
     CommandDecision::Unmatched
@@ -242,6 +246,14 @@ pub fn decide<'a>(
 #[cfg(test)]
 #[path = "read_only_cases.rs"]
 mod read_only_cases;
+
+#[cfg(test)]
+#[path = "read_only_fixture.rs"]
+mod read_only_fixture;
+
+#[cfg(test)]
+#[path = "read_only_repository_tests.rs"]
+mod read_only_repository_tests;
 
 #[cfg(test)]
 #[path = "read_only_tests.rs"]

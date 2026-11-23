@@ -64,7 +64,12 @@ fn deny(programs: &[&str]) -> CommandRules {
 /// runs with no question at all — the operator is there and is not reached.
 #[tokio::test]
 async fn a_vetted_read_only_command_runs_on_the_host_without_a_question() {
-    for command in ["ls -la", "cat README.md", "git status", "grep -rn foo src"] {
+    for command in [
+        "ls -la",
+        "cat README.md",
+        "grep -n foo src/main.rs",
+        "ls -la | wc -l",
+    ] {
         let (shell, asked) = reviewing(ApprovalPolicy::Ask, CommandRules::default());
         let call = call(command);
         assert_eq!(
@@ -98,7 +103,20 @@ async fn accept_edits_skips_the_same_questions() {
 /// Everything outside the set asks as it always did.
 #[tokio::test]
 async fn a_command_outside_the_set_still_asks() {
-    for command in ["npm install", "ls > out.txt", "git push", "rm -rf build"] {
+    for command in [
+        "npm install",
+        "ls > out.txt",
+        "git push",
+        "rm -rf build",
+        // The finding this pass answers: a vetted spelling of a program is not
+        // a licence to read what the workspace tools refuse, to expand, or to
+        // read a tree of hidden files.
+        "cat .env",
+        "cat ~/.ssh/id_rsa",
+        "head ../other-repo/.env",
+        "echo $OPENAI_API_KEY",
+        "grep -r KEY .",
+    ] {
         let (shell, asked) = reviewing(ApprovalPolicy::Ask, CommandRules::default());
         let call = call(command);
         assert_eq!(
@@ -163,7 +181,7 @@ fn with_no_operator_the_fallback_stands() {
         None,
     );
     assert_eq!(
-        sandboxed.lane(&call("git status")),
+        sandboxed.lane(&call("ls -la")),
         Lane::Sandbox(Some(SANDBOX_DOWNGRADE_NOTICE)),
         "nobody could be asked, so the proven sandbox takes the call"
     );
@@ -175,7 +193,7 @@ fn with_no_operator_the_fallback_stands() {
         None,
     );
     assert_eq!(
-        hostless.lane(&call("git status")),
+        hostless.lane(&call("ls -la")),
         Lane::Refused(HOST_APPROVAL_UNAVAILABLE.to_owned()),
         "and with no sandbox either, today's refusal stands"
     );

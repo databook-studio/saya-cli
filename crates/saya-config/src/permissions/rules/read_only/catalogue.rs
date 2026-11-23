@@ -79,6 +79,25 @@ pub(super) fn git_qualifies(arguments: &[String]) -> bool {
     }
 }
 
+/// The directory the last `-C <dir>` points at: `git` reads the repository it
+/// finds there, so the configuration read is that one's.
+pub(super) fn git_dir(arguments: &[String]) -> Option<String> {
+    let mut dir = None;
+    let mut index = 0;
+    while let Some(token) = arguments.get(index) {
+        if token == "-C" {
+            dir = arguments.get(index + 1).cloned();
+            index += 2;
+            continue;
+        }
+        if !token.starts_with('-') {
+            break;
+        }
+        index += 1;
+    }
+    dir
+}
+
 /// `git branch` reads only as a listing: no arguments, a listing flag, or a
 /// pattern after `--list`. A bare word names a branch to create or delete.
 fn branch_qualifies(arguments: &[String]) -> bool {
@@ -104,7 +123,19 @@ pub(super) const SET: &[Vetted] = &[
     Vetted::plain("diff"),
     Vetted::plain("du"),
     Vetted::plain("echo"),
-    Vetted::plain("grep"),
+    // `grep -r` reads every file under a directory, hidden files included — the
+    // `.env` a path rule would refuse — so a recursive grep keeps asking.
+    Vetted::new(
+        "grep",
+        &[
+            "--recursive",
+            "--dereference-recursive",
+            "--directories=recurse",
+        ],
+        &['r', 'R'],
+        usize::MAX,
+    )
+    .refusing_values(&[("-d", "recurse")]),
     Vetted::plain("head"),
     Vetted::plain("ls"),
     Vetted::plain("pwd"),
@@ -143,6 +174,24 @@ pub(super) const SET: &[Vetted] = &[
         &[],
         usize::MAX,
     ),
-    // `rg --pre` runs a program over every file it reads.
-    Vetted::new("rg", &["--pre", "--pre-glob", "--pager"], &[], usize::MAX),
+    // `rg --pre` runs a program over every file it reads; `--hidden`,
+    // `-u`/`--unrestricted`, `--no-ignore*`, `-L`/`--follow`, and `-z`
+    // each widen the walk to files a path rule refuses (hidden ones, ignored
+    // ones, symlinked ones) or run a decompressor.
+    Vetted::new(
+        "rg",
+        &[
+            "--pre",
+            "--pre-glob",
+            "--pager",
+            "--hidden",
+            "--unrestricted",
+            "--no-ignore",
+            "--follow",
+            "--search-zip",
+            "-.",
+        ],
+        &['u', 'L', 'z'],
+        usize::MAX,
+    ),
 ];

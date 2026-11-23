@@ -95,6 +95,10 @@ mod policy_grant_tests;
 mod policy_tests;
 
 #[cfg(test)]
+#[path = "read_only_repository_tests.rs"]
+mod read_only_repository_tests;
+
+#[cfg(test)]
 #[path = "read_only_tests.rs"]
 mod read_only_tests;
 

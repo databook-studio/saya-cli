@@ -26,15 +26,26 @@
 //! configuration makes it do: a repository's `git` configuration can name a
 //! filter, exactly as a `make` target names its own commands — which is why
 //! only `git` spellings that cannot page, exec, or write are vetted
-//! ([`catalogue`]), and why a pager, which needs a terminal this capture never
-//! is, is refused outright.
+//! ([`catalogue`]), why a pager, which needs a terminal this capture never is,
+//! is refused outright, and why a `git` spelling is read against the
+//! repository's own configuration ([`repository`]).
+//!
+//! A command is a statement about what a program *does*; the set is a claim
+//! about what it *reads*. The two meet on the command line: a vetted command
+//! names only paths inside the workspace that the workspace tools would also
+//! read ([`paths`]), carries no expansion the shell would perform, and reads
+//! no tree of hidden files.
+
+use std::path::{Path, PathBuf};
 
 use super::resolve::resolve;
 use super::scan::{Scan, tokens};
 
 mod catalogue;
+mod paths;
+mod repository;
 
-use catalogue::{GIT, SET, git_qualifies};
+use catalogue::{GIT, SET, git_dir, git_qualifies};
 
 /// The switch that offers the set: `[permissions] read_only_commands`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -54,20 +65,59 @@ impl ReadOnlySet {
     }
 }
 
-/// Whether every part of the command only reads.
-pub(super) fn qualifies(scan: &Scan) -> bool {
-    // The shapes that make the written command not the command that runs.
-    if scan.substitution || scan.unbalanced || scan.unsafe_redirect {
+/// Where a command's own `git` would run, as far as the command line states
+/// it: the workspace root, and the leading `cd` the scanner stripped. Both are
+/// the command's own words, so a vetted `git` is read against the repository
+/// those words point at rather than against an assumed one.
+#[derive(Clone, Copy)]
+pub(super) struct WorkingDir<'a> {
+    root: Option<&'a Path>,
+    cd: Option<&'a str>,
+}
+
+impl<'a> WorkingDir<'a> {
+    pub(super) fn new(root: Option<&'a Path>, cd: Option<&'a str>) -> Self {
+        Self { root, cd }
+    }
+
+    pub(super) fn root(self) -> Option<&'a Path> {
+        self.root
+    }
+
+    /// The directory a `git` segment given `-C <git_dir>` starts in, or `None`
+    /// where the command line does not place it inside the workspace.
+    pub(super) fn starts_in(self, git_dir: Option<&str>) -> Option<PathBuf> {
+        let mut path = self.root?.to_path_buf();
+        for part in self.cd.into_iter().chain(git_dir) {
+            // A rooted or traversal-carrying directory is not placed here: the
+            // path rule already asks for one, and this refuses to guess.
+            if part.starts_with('/') || part.split('/').any(|component| component == "..") {
+                return None;
+            }
+            path = path.join(part);
+        }
+        Some(path)
+    }
+}
+
+/// Whether every part of the command only reads, over the workspace `dir`
+/// states.
+pub(super) fn qualifies(scan: &Scan, dir: WorkingDir<'_>) -> bool {
+    // The shapes that make the written command not the command that runs: a
+    // substitution, an expansion, an unbalanced quote, an unsafe redirect.
+    if scan.substitution || scan.unbalanced || scan.unsafe_redirect || scan.expansion {
         return false;
     }
     scan.segments
         .iter()
-        .all(|segment| segment_qualifies(segment))
+        .all(|segment| segment_qualifies(segment, dir))
 }
 
 /// Whether one segment only reads: the program it really runs is the program
-/// written, and that program is vetted with these arguments.
-fn segment_qualifies(segment: &str) -> bool {
+/// written, that program is vetted with these arguments, every path the
+/// arguments name is one the workspace tools would also read, and — for `git`
+/// — the repository's own configuration runs nothing.
+fn segment_qualifies(segment: &str, dir: WorkingDir<'_>) -> bool {
     let raw = tokens(segment);
     if raw.is_empty() {
         return false;
@@ -80,8 +130,12 @@ fn segment_qualifies(segment: &str) -> bool {
     let Some((program, arguments)) = raw.split_first() else {
         return false;
     };
+    if !paths::vetted(arguments) {
+        return false;
+    }
     if program == GIT {
-        return git_qualifies(arguments);
+        return git_qualifies(arguments)
+            && !repository::runs_programs(dir, git_dir(arguments).as_deref());
     }
     SET.iter()
         .find(|vetted| vetted.program == program)
@@ -99,6 +153,9 @@ struct Vetted {
     /// Positional arguments beyond this many write a file of their own
     /// (`uniq in out`).
     positionals: usize,
+    /// Option-and-value pairs refused together, for a value that changes what
+    /// the program reads rather than what it prints (`grep -d recurse`).
+    values: &'static [(&'static str, &'static str)],
 }
 
 impl Vetted {
@@ -113,7 +170,15 @@ impl Vetted {
             refuses,
             letters,
             positionals,
+            values: &[],
         }
+    }
+
+    /// Refuses the pairs given: an option and the one value of it that puts
+    /// the program back in the question.
+    const fn refusing_values(mut self, values: &'static [(&'static str, &'static str)]) -> Self {
+        self.values = values;
+        self
     }
 
     /// A program whose every argument only describes what to print.
@@ -123,7 +188,14 @@ impl Vetted {
 
     fn qualifies(&self, arguments: &[String]) -> bool {
         let mut positionals = 0;
-        for argument in arguments {
+        for (index, argument) in arguments.iter().enumerate() {
+            if self
+                .values
+                .iter()
+                .any(|(option, value)| argument == option && follows(arguments, index, value))
+            {
+                return false;
+            }
             if argument.len() > 1 && argument.starts_with('-') {
                 if self
                     .refuses
@@ -147,4 +219,9 @@ impl Vetted {
         }
         true
     }
+}
+
+/// Whether the argument after `index` is `value`.
+fn follows(arguments: &[String], index: usize, value: &str) -> bool {
+    arguments.get(index + 1).is_some_and(|next| next == value)
 }

@@ -660,19 +660,27 @@ read-only set. With it on, a `shell` call whose every part only reads runs under
 `ask` and `accept-edits` with no question: `ls`, `cat`, `head`, `tail` (not
 `-f`), `wc`, `file` (not `-C`), `stat`, `du`, `df`, `pwd`, `echo`, `which`,
 `type`, `tree` (not `-o`), `find` (never `-exec`, `-execdir`, `-ok`, `-okdir`,
-`-delete`, `-fprint*`), `grep`, `rg` (not `--pre`), `sort` (not `-o`), `uniq`
-(one file), `cut`, `diff`, and `git` with `status`, `log`, `diff`, `show`,
-`branch` (no argument, `-a`, `-r`, `--list`), `rev-parse`, `ls-files`, `blame`,
-or `remote -v`. A pipeline of such commands qualifies, and so does a chain of
-`&&`, `||`, `;` — but only when every part of it qualifies. One output redirect
-to a file, a substitution, a heredoc, a leading `NAME=value`, a wrapper
-(`env`, `xargs`, `timeout`, `sudo`, …), an interpreter's inline code, a path, or
-any program outside the list keeps the question, and so does any `git` spelling
-that pages, execs, or writes (`-c`, `--exec-path`, `--ext-diff`, `--output`).
-The deny list is unchanged by it — a denied program in the set is still
-refused — and `bypass`, `read-only` and `never` read exactly as before. Set it
-to `false` to answer every call yourself; the key can withhold the set, never
-state one.
+`-delete`, `-fprint*`), `grep` (not recursive), `rg` (not `--pre`, `--hidden`,
+`-u`, `--no-ignore*`, `-L`, `-z`), `sort` (not `-o`), `uniq` (one file), `cut`,
+`diff`, and `git` with `status`, `log`, `diff`, `show`, `branch` (no argument,
+`-a`, `-r`, `--list`), `rev-parse`, `ls-files`, `blame`, or `remote -v`. Every
+path such a command names must be relative, stay inside the workspace after
+lexical normalisation, and be one the workspace tools also read — never a
+`.env`, a key or certificate, or a credential directory — the rule the `read`
+tool applies to its own arguments. A pipeline of such commands qualifies, and
+so does a chain of `&&`, `||`, `;` — but only when every part of it qualifies.
+One output redirect to a file, a substitution, a `$`/`~` expansion, a heredoc, a
+leading `NAME=value`, a wrapper (`env`, `xargs`, `timeout`, `sudo`, …), an
+interpreter's inline code, a path outside the workspace or on the private list,
+a recursive content read (`grep -r`), or any program outside the list keeps the
+question, and so does any `git` spelling that pages, execs, or writes (`-c`,
+`--exec-path`, `--ext-diff`, `--output`) or whose repository configuration
+names a program of its own (`core.fsmonitor`, `core.pager`, `diff.external`,
+`*.textconv`, `filter.*.process`, `core.sshCommand`, an `include`), since the
+model's own tools can write `.git/config`. The deny list is unchanged by it — a
+denied program in the set is still refused — and `bypass`, `read-only` and
+`never` read exactly as before. Set it to `false` to answer every call
+yourself; the key can withhold the set, never state one.
 
 `[permissions]` is protected whole, like `[tools]`: a project's
 `.saya/config.toml` cannot set it, and an attempt is reverted and reported as

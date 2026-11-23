@@ -12,6 +12,9 @@ workspace = true
 
 [dependencies]
 saya-agent = { path = "../saya-agent", version = "0.5.1" }
+# The credential-shape table and the vetted read-only command set are config's
+# trusted policy; the harness reads them rather than keeping a second copy.
+saya-config = { path = "../saya-config", version = "0.5.1" }
 saya-store = { path = "../saya-store", version = "0.5.1" }
 saya-types = { path = "../saya-types", version = "0.5.1" }
 async-trait.workspace = true

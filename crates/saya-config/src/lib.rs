@@ -23,6 +23,7 @@ mod profile_env;
 mod provenance;
 mod resolve;
 mod secret;
+mod sensitive;
 mod tools;
 mod values;
 mod web_search;
@@ -69,6 +70,7 @@ pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facin
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::{CodingBudgetMode, SecretRef};
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};
+pub use sensitive::sensitive_path;
 pub use tools::{
     DATABASE_TOOLS, DEPRECATED_TOOL_ALIASES, GOVERNED_TOOLS, MAX_MCP_TOOL_NAME_CHARS,
     MCP_TOOL_PREFIX, ResolvedTools, ToolsAllow, ToolsAllowError, allow_list_name,
