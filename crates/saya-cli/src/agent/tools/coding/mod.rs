@@ -103,6 +103,10 @@ mod root_shell_mode_tests;
 mod plan_gate_tests;
 
 #[cfg(test)]
+#[path = "plan_gate_twin_tests.rs"]
+mod plan_gate_twin_tests;
+
+#[cfg(test)]
 #[path = "notebook_advertisement_tests.rs"]
 mod notebook_advertisement_tests;
 

@@ -33,7 +33,7 @@ const HIDDEN: &[&str] = &[
 
 /// The tools a closed plan posture still offers: the read family and the gate
 /// itself. The lean default already withholds `list` and `helpers`.
-const READ_SURFACE: &[&str] = &["read", "glob", "grep", "checklist", SUBMIT_PLAN];
+pub(super) const READ_SURFACE: &[&str] = &["read", "glob", "grep", "checklist", SUBMIT_PLAN];
 
 /// An operator that answers with a fixed verdict and counts how often it was
 /// asked, so a test can prove a second submission did not ask again.
