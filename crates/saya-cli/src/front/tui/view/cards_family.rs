@@ -75,7 +75,7 @@ pub(crate) fn place(
 ) -> Option<String> {
     match family {
         Family::Command => {
-            let where_ = in_facts.or_else(|| folder.map(|folder| format!("in {folder}")))?;
+            let where_ = command_place(in_facts.as_deref(), folder)?;
             Some(format!("{where_} · on your machine, not sandboxed"))
         }
         Family::FileChange => Some(match folder {
@@ -87,4 +87,32 @@ pub(crate) fn place(
         Family::Scope => folder.map(|folder| format!("in {folder}")),
         Family::Plan | Family::Other => None,
     }
+}
+
+/// Where a command runs, as the place line names it: the directory the call's
+/// own facts state, or — when it states the default one (`.`) or none — the
+/// launch's folder. The line names the folder, never the spelling the call used,
+/// and `.` names nothing at all.
+fn command_place(in_facts: Option<&str>, folder: Option<&str>) -> Option<String> {
+    match in_facts {
+        Some(statement) if !is_bare(statement) => Some(statement.to_owned()),
+        _ => folder.map(|folder| format!("in {}", folder_name(folder))),
+    }
+}
+
+/// Whether a place statement names no directory of its own: the default `.`,
+/// or nothing after the `in `.
+fn is_bare(statement: &str) -> bool {
+    let directory = statement.strip_prefix("in ").unwrap_or(statement).trim();
+    directory.is_empty() || directory == "."
+}
+
+/// The folder's own name: its last path component, so `/home/me/demo` reads as
+/// `demo`. A path with no component of its own (`/`) stays as it is spelled,
+/// because there is no shorter name for it that says more.
+fn folder_name(folder: &str) -> String {
+    std::path::Path::new(folder).file_name().map_or_else(
+        || folder.to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
