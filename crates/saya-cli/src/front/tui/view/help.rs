@@ -1,20 +1,18 @@
-//! The contextual help sheet (`02` §11): the keys that do something in the
-//! state the operator is in, and only those.
+//! The help sheet (`02` §11): every key the surface answers, filed under one of
+//! six groups, and scrolled when the screen cannot hold them all.
 //!
-//! One pure function — a context, a width, a height — and the rows a pane
-//! paints, the shape the panes beside this one keep. Nothing here reads the
-//! terminal, the clock or the model: [`Context::of`] is the one place that
-//! turns the model into the three facts the sheet needs, so a test can draw any
-//! state the surface can be in without a key press.
+//! One pure function — a context, a width, a height and a scroll offset — and
+//! the rows a pane paints, the shape the panes beside this one keep. Nothing
+//! here reads the terminal, the clock or the model: the context carries only
+//! the glyph set.
 //!
 //! The rows are [`super::help_keys`]'s table, never a list of their own. A
 //! sheet that re-typed the key list would drift the first time a key moved, and
 //! the operator would read a keyboard the surface no longer has.
 
 use super::composer::{Row, Run};
-use super::help_keys::{Group, SHORTCUTS, Shortcut, When};
+use super::help_keys::{Group, Shortcut, shortcuts};
 use super::palette_frame::{content, fit};
-use crate::front::tui::model::Model;
 use crate::front::tui::theme::{Charset, Glyph, Token, glyph};
 use crate::interactive::tui::wrap::cell_width;
 
@@ -24,77 +22,68 @@ pub(crate) const TITLE: &str = "Help";
 /// The narrowest sheet drawn: below this not even its border fits.
 const MIN_WIDTH: usize = 12;
 
-/// The rows the sheet asks the frame for: its two borders, the columns' three
-/// headings, and a row for each key an idle surface answers.
-pub(crate) const ROWS: usize = 18;
+/// The rows the sheet asks the frame for by default. A frame gives it whatever
+/// the transcript has, and the sheet scrolls its body when that is fewer.
+pub(crate) const ROWS: usize = 24;
 
-/// The facts the sheet reads: which state the surface is in, and the glyph set
-/// it draws with.
+/// The facts the sheet reads: the glyph set it draws with. The groups are
+/// always all listed, so no state ever hides a key the surface answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Context {
-    /// Whether a card is open and waiting to be answered.
-    pub(crate) card: bool,
-    /// Whether that card offered a token a session grant could record.
-    pub(crate) grant: bool,
-    /// Whether a line is held behind the running turn.
-    pub(crate) queued: bool,
-    /// Whether a turn is running.
-    pub(crate) busy: bool,
     /// Which glyph set the sheet draws with.
     pub(crate) charset: Charset,
-}
-
-impl Context {
-    /// The context `model` is in.
-    pub(crate) fn of(model: &Model) -> Self {
-        Self {
-            card: model.card().is_some(),
-            grant: model.card().is_some_and(|card| card.grant.is_some()),
-            queued: model.queued().is_some(),
-            busy: model.is_busy(),
-            charset: Charset::Utf8,
-        }
-    }
 }
 
 impl Default for Context {
     fn default() -> Self {
         Self {
-            card: false,
-            grant: false,
-            queued: false,
-            busy: false,
             charset: Charset::Utf8,
         }
     }
 }
 
 /// The rows the sheet of `context` paints at `width` columns and `height` rows,
-/// top border first.
-///
-/// Exactly `height` rows come back: a sheet with fewer keys than the screen has
-/// rows is padded rather than short, and a sheet with more is cut at the second
-/// border, because the border is where the sheet ends.
-pub(crate) fn rows(context: Context, width: usize, height: usize) -> Vec<Row> {
+/// top border first, starting `scroll` rows into its body.
+pub(crate) fn rows_scrolled(
+    context: Context,
+    width: usize,
+    height: usize,
+    scroll: usize,
+) -> Vec<Row> {
     if height == 0 {
         return Vec::new();
     }
     let width = width.max(MIN_WIDTH);
     let charset = context.charset;
-    let shortcuts = listed(&context);
-    let column = column(&shortcuts);
+    let body = body(charset, width);
+    let visible = height.saturating_sub(2);
+    // The far end is clamped to the body: the sheet scrolls over its rows and
+    // never past them.
+    let start = scroll.min(body.len().saturating_sub(visible));
+    let mut out = vec![top(charset, width)];
+    out.extend(body.into_iter().skip(start).take(visible));
+    while out.len() < height.saturating_sub(1) {
+        out.push(content(Vec::new(), width, charset));
+    }
+    if height >= 2 {
+        out.push(bottom(charset, width));
+    }
+    out.truncate(height);
+    out
+}
+
+/// The rows the sheet of `context` paints at `width` columns and `height` rows,
+/// top border first, from its first body row.
+pub(crate) fn rows(context: Context, width: usize, height: usize) -> Vec<Row> {
+    rows_scrolled(context, width, height, 0)
+}
+
+/// The sheet's body: every group's heading and its key rows, in
+/// [`Group::ALL`]'s order.
+fn body(charset: Charset, width: usize) -> Vec<Row> {
+    let column = column();
     let mut body: Vec<Row> = Vec::new();
     for group in Group::ALL {
-        let members: Vec<&Shortcut> = shortcuts
-            .iter()
-            .copied()
-            .filter(|shortcut| shortcut.group == group)
-            .collect();
-        if members.is_empty() {
-            continue;
-        }
-        // A blank row between columns keeps the three headings apart when the
-        // sheet is drawn as one column.
         if !body.is_empty() {
             body.push(content(Vec::new(), width, charset));
         }
@@ -106,45 +95,16 @@ pub(crate) fn rows(context: Context, width: usize, height: usize) -> Vec<Row> {
             width,
             charset,
         ));
-        for shortcut in members {
+        for shortcut in listed().into_iter().filter(|row| row.group == group) {
             body.push(content(shortcut_row(shortcut, column), width, charset));
         }
     }
-    let mut out = vec![top(charset, width)];
-    out.extend(body.into_iter().take(height.saturating_sub(2)));
-    while out.len() < height - 1 {
-        out.push(content(Vec::new(), width, charset));
-    }
-    out.push(bottom(charset, width));
-    // A one-row sheet is its top border: there is no room for the second one,
-    // and a pane that answered more rows than it was given would spill.
-    out.truncate(height);
-    out
+    body
 }
 
-/// The rows the sheet lists in `context`: the table, filtered by the state each
-/// row is valid in (`02` §11).
-pub(crate) fn listed(context: &Context) -> Vec<&'static Shortcut> {
-    SHORTCUTS
-        .iter()
-        .filter(|shortcut| shows(shortcut.when, context))
-        .collect()
-}
-
-/// Whether a row valid in `when` belongs in `context`.
-///
-/// An open card owns the keyboard — `keys.rs` says so — so the composer's keys
-/// are not listed while one waits, and Esc is listed once: as the card's
-/// denial, never as the turn's stop.
-fn shows(when: When, context: &Context) -> bool {
-    match when {
-        When::Card => context.card,
-        When::CardGrant => context.card && context.grant,
-        When::Idle => !context.card && !context.busy,
-        When::Composer => !context.card,
-        When::Queued => !context.card && context.queued,
-        When::Busy => !context.card && context.busy,
-    }
+/// The rows the sheet lists: the whole table.
+pub(crate) fn listed() -> Vec<&'static Shortcut> {
+    shortcuts().collect()
 }
 
 /// One row of the sheet: the presses, lined up in one column, and what they do.
@@ -162,11 +122,10 @@ fn shortcut_row(shortcut: &Shortcut, column: usize) -> Vec<Run> {
     ]
 }
 
-/// The key column's width: the widest label the listed rows carry, so every
-/// action starts at the same cell.
-fn column(shortcuts: &[&Shortcut]) -> usize {
-    shortcuts
-        .iter()
+/// The key column's width: the widest label the table carries, so every action
+/// starts at the same cell.
+fn column() -> usize {
+    shortcuts()
         .map(|shortcut| cell_width(shortcut.label) + 2)
         .max()
         .unwrap_or(0)

@@ -141,6 +141,10 @@ mod tools_allow_drift_tests;
 mod workspace_read_tests;
 
 #[cfg(test)]
+#[path = "tools/workspace_read_private_tests.rs"]
+mod workspace_read_private_tests;
+
+#[cfg(test)]
 #[path = "tools/workspace_search_tests.rs"]
 mod workspace_search_tests;
 

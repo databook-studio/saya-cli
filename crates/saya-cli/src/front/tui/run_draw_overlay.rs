@@ -15,8 +15,8 @@ use super::model_overlay::Overlay;
 use super::run_draw::{Facts, lines};
 use super::view::jobs_rows::{Placement, SHEET_ROWS, placement, side_width};
 use super::view::{
-    Context, HELP_ROWS, MODE_PICKER_ROWS, PALETTE_ROWS, TRUST_ROWS, help_rows, jobs_rows,
-    mode_picker, palette_rows, trust,
+    Context, MODE_PICKER_ROWS, PALETTE_ROWS, TRUST_ROWS, help_scrolled, jobs_rows, mode_picker,
+    palette_rows, trust,
 };
 
 /// The overlay the model has open, as the rows it covers and the lines it
@@ -60,12 +60,24 @@ pub(crate) fn overlay(
             )
         }
         Overlay::Help => {
-            let height = (HELP_ROWS as u16).min(area.height);
-            let mut context = Context::of(model);
-            context.charset = facts.charset;
+            // The sheet takes the transcript's rows, however many there are: a
+            // body taller than the screen scrolls rather than hides a group.
+            let height = area.height;
+            let context = Context {
+                charset: facts.charset,
+            };
+            (
+                area,
+                help_scrolled(context, width, height as usize, model.help_scroll()),
+            )
+        }
+        // A drawer with nothing in it is one line, not a panel: the surface is
+        // calm about having no jobs.
+        Overlay::Jobs if model.jobs().rows.is_empty() => {
+            let height = 1.min(area.height);
             (
                 anchored(area, height),
-                help_rows(context, width, height as usize),
+                vec![jobs_rows::notice(width, facts.charset)],
             )
         }
         // The drawer takes the transcript's right-hand side from 100 columns up

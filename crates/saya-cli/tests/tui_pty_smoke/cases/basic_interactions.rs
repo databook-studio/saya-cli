@@ -140,7 +140,7 @@ fn tui_reload_applies_edits_and_survives_a_broken_file() {
     // The proof that input works again is the sheet bare `/help` opens: the
     // new surface answers `/help` with its key sheet (`view::help_keys`), not
     // with the catalogue listing, so the row this pins is the sheet's own.
-    tui.wait_for("open the command palette", INTERACTIVE)
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("the TUI is still responsive after the failure");
     assert!(
         tui.still_running(),

@@ -18,6 +18,9 @@ use crate::front::tui::view::mode_words;
 #[test]
 fn the_cycle_walks_ask_accept_edits_plan_and_back() {
     let mut model = Model::default();
+    // A mode change is written where a conversation exists; the welcome screen
+    // a Shift+Tab arrives on is left alone.
+    model.begin_turn(String::from("hello"));
 
     let first = update(&mut model, shift_tab());
     let second = update(&mut model, shift_tab());
@@ -74,6 +77,7 @@ fn the_cycle_includes_bypass_when_the_configuration_allows_it() {
         allow_bypass: true,
         ..Model::default()
     };
+    model.begin_turn(String::from("hello"));
     let mut walked = Vec::new();
     for _ in 0..4 {
         update(&mut model, shift_tab());

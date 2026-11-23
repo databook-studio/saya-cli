@@ -68,6 +68,7 @@ pub(crate) const USER_FACING: &[&str] = &[
     "session_commands.deny",
     "tools.allow",
     "permissions.allow_bypass",
+    "permissions.read_only_commands",
 ];
 
 /// Job defaults use the same value-free provenance fill as other resolved

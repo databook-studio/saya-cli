@@ -52,6 +52,10 @@ pub(crate) enum Msg {
     /// gained it, `false` when it lost it: a turn's end is only news while
     /// the operator is looking elsewhere, when the terminal says so at all.
     Focus(bool),
+    /// The paths the run's workspace offers, as the walk behind the `@` list
+    /// returned them (`Cmd::Mentions`). They arrive on the queue like every
+    /// other answer the surface waits for, so a slow walk never holds a frame.
+    Mentions(Vec<String>),
     /// One background worker's answer. The panes that ask a worker — the
     /// result table, an export, a chart, a compaction, the clipboard — land in
     /// their own units; what this queue needs from the start is that a
@@ -63,6 +67,15 @@ pub(crate) enum Msg {
     /// The surface is leaving: the run is closed and the terminal restored
     /// (`/exit`, `/quit`). The loop ends on it, after painting nothing more.
     Quit,
+    /// The session's own facts, restated by a command that changed them
+    /// (`/model`, `/provider`, `/connect`): the status row names what the
+    /// session is on now, never the model and database the launch resolved.
+    Restated {
+        /// The model the session states, as the launch states its own.
+        model: String,
+        /// The database the session is connected to, if it is.
+        database: Option<String>,
+    },
 }
 
 /// One side effect the runtime performs after an [`update`](super::update).
@@ -109,6 +122,10 @@ pub(crate) enum Cmd {
     /// One line the surface does not answer itself: a session operation, which
     /// the chat layer's own table names ([`super::ops`]).
     Op(crate::slash::SlashCommand),
+    /// Gather the paths the `@` list offers: the run's workspace, walked the
+    /// way the file tools walk it, off the loop's thread. The answer comes back
+    /// as [`Msg::Mentions`].
+    Mentions,
     /// Ring the terminal's bell once: a call took the card, and the operator
     /// may be looking elsewhere.
     Bell,

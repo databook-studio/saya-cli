@@ -8,7 +8,7 @@
 
 use super::composer::{Row, Run};
 use super::palette::{NO_MATCH, Palette, USAGE};
-use super::palette_frame::{MIN_WIDTH, bottom, content, fit, sep, top};
+use super::palette_frame::{MIN_WIDTH, bottom, content, fit, fit_words, sep, top};
 use super::palette_match::Entry;
 use crate::front::tui::theme::{Charset, Glyph, Token, glyph};
 use crate::interactive::tui::wrap::cell_width;
@@ -74,7 +74,7 @@ fn entry_row(
     // the right are fixed; the summary gets what they leave.
     let fixed = 2 + column + 2;
     let tail = cell_width(heading) + 2;
-    let summary = fit(
+    let summary = fit_words(
         &described(entry, charset),
         room.saturating_sub(fixed + tail),
     );

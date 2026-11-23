@@ -139,7 +139,7 @@ fn the_run_rows_are_above_the_status_line_at_100x30() {
     assert_eq!(
         rows[..5],
         [
-            format!("   ❯ {line}"),
+            format!("   │ ❯ {line}"),
             String::new(),
             String::from("   match_id"),
             String::from("   2"),
@@ -154,9 +154,7 @@ fn the_run_rows_are_above_the_status_line_at_100x30() {
     assert_eq!(
         rows[26..],
         [
-            String::from(
-                " ask │ local │ no workspace                                                                  ? help"
-            ),
+            format!(" ask │ local{}? help", " ".repeat(100 - 13 - 6)),
             String::from(
                 " ╭ Message ───────────────────────────────────────────────────────────────────────────────────────╮"
             ),
@@ -179,7 +177,7 @@ fn the_run_rows_are_above_the_status_line_at_80x24() {
     assert_eq!(
         rows[..5],
         [
-            format!("   ❯ {line}"),
+            format!("   │ ❯ {line}"),
             String::new(),
             String::from("   match_id"),
             String::from("   2"),
@@ -194,9 +192,7 @@ fn the_run_rows_are_above_the_status_line_at_80x24() {
     assert_eq!(
         rows[20..],
         [
-            String::from(
-                " ask │ local │ no workspace                                              ? help"
-            ),
+            format!(" ask │ local{}? help", " ".repeat(80 - 13 - 6)),
             String::from(
                 " ╭ Message ───────────────────────────────────────────────────────────────────╮"
             ),

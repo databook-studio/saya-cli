@@ -47,9 +47,9 @@ fn a_ready_run_without_a_database_reads_as_02_9_2() {
         "  Saya · ~/shop · no database",
         "",
         "  Describe a change or ask about this code. For example:",
-        "    › why does tests/test_pricing.py fail?",
-        "    › add a --dry-run flag to scripts/export.py",
-        "    › explain how orders are priced",
+        "    › explain how this project is organised",
+        "    › describe what changed recently",
+        "    › walk me through the main entry point",
         "",
         "  /connect to add a database · ? keys · Ctrl+K commands",
     ];

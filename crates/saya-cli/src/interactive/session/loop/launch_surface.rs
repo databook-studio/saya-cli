@@ -242,7 +242,9 @@ pub(super) fn surface_facts(
         model: view.model,
         host_unsandboxed: view.host_composed,
         sharing: view.sharing_on,
-        deny: view.denied_programs,
+        entries: crate::front::tui::view::empty_suggestions::top_level(
+            state.workspace_root.as_deref(),
+        ),
         scheme,
         ..Facts::default()
     }

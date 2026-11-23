@@ -46,7 +46,7 @@ fn settle_line_repl(tui: &mut InteractiveTui, label: &str) -> String {
     );
     assert_not_in(
         &text,
-        "read-only │ demo │ smoke",
+        "read-only │ smoke │ demo",
         &format!("{label}: the full-screen status row painted under a plain launch"),
         &text,
     );
@@ -104,7 +104,7 @@ fn no_plain_request_still_opens_the_full_screen_tui_on_a_pty() {
     let text = tui.screen();
     assert_in(
         &text,
-        "read-only │ demo │ smoke",
+        "read-only │ smoke │ demo",
         "the full-screen status row paints when no plain request is stated",
         &text,
     );

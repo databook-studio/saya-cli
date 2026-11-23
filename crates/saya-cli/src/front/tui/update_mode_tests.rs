@@ -69,6 +69,8 @@ fn the_picker_walks_its_rows_and_stops_at_both_ends() {
 #[test]
 fn enter_on_read_only_states_one_set_mode() {
     let mut model = picker_open();
+    // A mode change is written where a conversation exists.
+    model.begin_turn(String::from("hello"));
     for _ in 0..4 {
         update(&mut model, press(KeyCode::Down));
     }

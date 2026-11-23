@@ -12,6 +12,7 @@
 //! allow_bypass = true
 //! allow = ["cargo test", "git diff"]
 //! deny = ["rm"]
+//! read_only_commands = false     # default: true
 //! ```
 //!
 //! `allow` and `deny` are command *prefixes*, matched token by token by
@@ -20,6 +21,12 @@
 //! host lane without asking under `ask`. Neither widens `read-only` or
 //! `never`, and neither auto-allows a command that contains a substitution or
 //! heredoc.
+//!
+//! `read_only_commands` is the switch over the built-in vetted read-only set:
+//! with it on (the default) a command whose every part only reads runs under
+//! `ask` and `accept-edits` without a question, and with it off every command
+//! is put to the operator as it was before the set existed. It can withhold
+//! that set; it cannot state one.
 //!
 //! The table is protected whole (see [`crate::layers`]): a repository's
 //! `.saya/config.toml` is untrusted input, and a model-writable file must
@@ -33,7 +40,8 @@ pub mod rules;
 
 pub(crate) use merge::merge;
 pub use rules::{
-    CommandDecision, CommandRule, CommandRules, MAX_COMMAND_RULE_BYTES, MAX_COMMAND_RULES, decide,
+    CommandDecision, CommandRule, CommandRules, MAX_COMMAND_RULE_BYTES, MAX_COMMAND_RULES,
+    ReadOnlySet, decide,
 };
 
 use serde::Deserialize;
@@ -53,6 +61,10 @@ pub struct PermissionsFile {
     pub allow: Option<Vec<String>>,
     /// Command prefixes that are refused in every mode, `bypass` included.
     pub deny: Option<Vec<String>>,
+    /// Whether the built-in vetted read-only set may skip the question under
+    /// `ask` and `accept-edits`. `None` — the default — offers it; `false` puts
+    /// every command to the operator.
+    pub read_only_commands: Option<bool>,
 }
 
 /// The resolved `[permissions]` table. `allow_bypass: false` — the default —
@@ -76,7 +88,18 @@ pub(crate) fn resolve(file: &PermissionsFile) -> ResolvedPermissions {
             allow,
             deny,
             diagnostics,
+            read_only_set: resolve_read_only_set(file.read_only_commands),
         },
+    }
+}
+
+/// The vetted read-only set is offered unless the operator withheld it: an
+/// unset key is the default, and only `false` turns it off.
+fn resolve_read_only_set(declared: Option<bool>) -> ReadOnlySet {
+    if declared == Some(false) {
+        ReadOnlySet::Off
+    } else {
+        ReadOnlySet::On
     }
 }
 

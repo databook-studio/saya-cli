@@ -73,7 +73,7 @@ fn first_run_setup_applies_immediately_without_a_restart() {
     // The proof that input works again is the sheet bare `/help` opens: the
     // new surface answers `/help` with its key sheet (`view::help_keys`), not
     // with the catalogue listing, so the row this pins is the sheet's own.
-    tui.wait_for("open the command palette", INTERACTIVE)
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("the TUI is still responsive after the applied setup");
     assert!(
         tui.still_running(),
@@ -118,7 +118,7 @@ fn first_run_setup_cancel_changes_nothing() {
     // The proof that input works again is the sheet bare `/help` opens: the
     // new surface answers `/help` with its key sheet (`view::help_keys`), not
     // with the catalogue listing, so the row this pins is the sheet's own.
-    tui.wait_for("open the command palette", INTERACTIVE)
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("input works again after the cancelled setup");
     assert!(
         tui.still_running(),
@@ -187,7 +187,7 @@ fn setup_handoff_failure_returns_to_the_tui() {
     // The proof that input works again is the sheet bare `/help` opens: the
     // new surface answers `/help` with its key sheet (`view::help_keys`), not
     // with the catalogue listing, so the row this pins is the sheet's own.
-    tui.wait_for("open the command palette", INTERACTIVE)
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("input works again after the failed handoff");
     assert!(
         tui.still_running(),

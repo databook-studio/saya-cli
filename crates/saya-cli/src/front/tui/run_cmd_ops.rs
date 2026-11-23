@@ -62,8 +62,21 @@ impl SessionPort {
             | ContextChange::Exclude
             | ContextChange::Provider
             | ContextChange::Model
-            | ContextChange::Privacy => self.line.restate(self.state().prompt_overrides()),
+            | ContextChange::Privacy => {
+                self.line.restate(self.state().prompt_overrides());
+                self.restated_row();
+            }
         }
+    }
+
+    /// The session restated what it is on: the status row names the model and
+    /// the database the session states from now on, not the ones the launch
+    /// resolved. The facts are the session's own (`status_segments`, the view the
+    /// launch paints its facts from), never a second reading of the command.
+    fn restated_row(&self) {
+        let state = self.state();
+        let view = crate::interactive::session_prompt::status_segments(&state);
+        self.front.restated(view.model, state.profile.clone());
     }
 
     /// One shared operation: it takes as long as it takes, so it runs on a

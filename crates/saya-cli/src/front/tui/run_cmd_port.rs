@@ -178,6 +178,20 @@ impl CmdPort for SessionPort {
         self.front.answer(id, answer);
     }
 
+    /// The `@` list's paths: the run's workspace, walked off the loop's thread
+    /// by the file tools' own bounded search, and handed back as a message — a
+    /// walk never holds a frame, and a surface with no workspace offers nothing.
+    fn mentions(&self) {
+        let Some(workspace) = self.deps.universe.workspace() else {
+            return;
+        };
+        let msgs = self.front.msgs.clone();
+        std::thread::spawn(move || {
+            let paths = crate::chat::mentions::candidates(&workspace);
+            let _ = msgs.send(super::msg::Msg::Mentions(paths));
+        });
+    }
+
     fn switch_mode(&self, mode: PermissionMode) {
         // A refusal is the operator's business, and the front is how this port
         // says anything: it lands as the surface's own words, never dropped. The

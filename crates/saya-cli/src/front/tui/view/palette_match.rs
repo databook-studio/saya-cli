@@ -38,32 +38,64 @@ pub(crate) fn entries(query: &str) -> Vec<Entry> {
     entries_in(catalog::CATALOGUE, query)
 }
 
-/// The rows `query` matches in `table`, best first. The order is the score's,
-/// and equal scores keep the catalogue's order, so the palette's listing does
-/// not shuffle between two keystrokes.
+/// The everyday commands, in the order the palette opens on them: the ones an
+/// operator reaches for between turns, before the long-running job verbs.
+const EVERYDAY: [&str; 10] = [
+    "status", "model", "clear", "compact", "undo", "rewind", "export", "mode", "help", "sessions",
+];
+
+/// The rank of a command in the palette: a prefix match before a fuzzy one, the
+/// everyday commands before the rest, and the job verbs last.
+fn rank(entry: &Entry, query: &str) -> (u8, u8) {
+    let asked = query.to_ascii_lowercase();
+    let name = entry.name.to_ascii_lowercase();
+    let prefix = if asked.is_empty() || name == asked {
+        0
+    } else if name.starts_with(&asked) {
+        1
+    } else {
+        2
+    };
+    let bucket = match EVERYDAY.iter().position(|name| *name == entry.name) {
+        Some(index) => index as u8,
+        None if entry.category == Category::Jobs => EVERYDAY.len() as u8 + 1,
+        None => EVERYDAY.len() as u8,
+    };
+    (prefix, bucket)
+}
+
+/// The rows `query` matches in `table`, best first.
+///
+/// A prefix match ranks above a fuzzy one, because the operator who typed the
+/// start of a name means that name. Between matches of the same kind the
+/// everyday commands lead in a fixed order and the job verbs close the list;
+/// equal ranks keep the catalogue's order, so the listing does not shuffle
+/// between two keystrokes.
 pub(crate) fn entries_in(table: &[CommandSpec], query: &str) -> Vec<Entry> {
-    let mut scored: Vec<(i32, Entry)> = table
+    let mut scored: Vec<((u8, u8), i32, usize, Entry)> = table
         .iter()
-        .filter_map(|spec| {
+        .enumerate()
+        .filter_map(|(order, spec)| {
             let (usage, _rank) = spec.listed?;
             if spec.hidden || !spec.surfaces.covers(Surface::Tui) {
                 return None;
             }
             let (score, alias) = best(spec, query)?;
-            Some((
-                score,
-                Entry {
-                    name: spec.name,
-                    usage,
-                    summary: spec.description,
-                    category: spec.category,
-                    alias,
-                },
-            ))
+            let entry = Entry {
+                name: spec.name,
+                usage,
+                summary: spec.description,
+                category: spec.category,
+                alias,
+            };
+            let rank = rank(&entry, query);
+            Some((rank, score, order, entry))
         })
         .collect();
-    scored.sort_by_key(|(score, _)| Reverse(*score));
-    scored.into_iter().map(|(_, entry)| entry).collect()
+    scored.sort_by_key(|((prefix, bucket), score, order, _)| {
+        (*prefix, *bucket, Reverse(*score), *order)
+    });
+    scored.into_iter().map(|(_, _, _, entry)| entry).collect()
 }
 
 impl Entry {

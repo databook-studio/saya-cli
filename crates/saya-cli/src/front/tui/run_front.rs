@@ -131,6 +131,14 @@ impl Forward {
         let _ = self.msgs.send(Msg::Worker(worker));
     }
 
+    /// The session's own facts, restated by the command that changed them: the
+    /// surface's status row names the model and the database the session is on
+    /// now. One message the update owns, so the row is a pure function of what
+    /// the session stated rather than a second read of the configuration.
+    pub(crate) fn restated(&self, model: String, database: Option<String>) {
+        let _ = self.msgs.send(Msg::Restated { model, database });
+    }
+
     /// Asks the loop to leave: the one message that ends it (`/exit`). A job of
     /// this run is not orphaned by a quit: the surface says what the old one
     /// said (`interactive::tui::JOB_RUNNING`) and leaves the job to settle, so a

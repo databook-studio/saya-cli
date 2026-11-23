@@ -15,7 +15,6 @@
 
 use ratatui::crossterm::event::KeyEvent;
 
-use super::cards_keys;
 use super::direct;
 use super::focus_text;
 use super::history_keys;
@@ -24,9 +23,9 @@ use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::overlay_press;
+use super::update_answer::{answer_at, answer_card};
 use super::update_submit::{send, submit};
 use super::view::ModePicker;
-use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 use crate::front::apply;
 use crate::interactive::session::permissions::mode::next_in_cycle;
@@ -36,6 +35,9 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
     let mut cmds = Vec::new();
     match msg {
         Msg::Key(key) => press(model, key, &mut cmds),
+        // The `@` list's paths, from the walk the surface asked for: they fill
+        // the list it asked on, and a list the operator has closed drops them.
+        Msg::Mentions(paths) => model.fill_mentions(paths),
         // A paste lands as text and nothing else: a `\r` inside a pasted block
         // must never send it. While a search owns the line, the text narrows the
         // query, exactly as the same characters typed would.
@@ -74,6 +76,12 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         // Leaving is the loop's decision, not the model's: the runtime ends on
         // this message and the model state it leaves behind is never painted.
         Msg::Quit => {}
+        // The session restated the model and the database it is on: the status
+        // row names those from now on, not the launch's.
+        Msg::Restated {
+            model: name,
+            database,
+        } => model.restated(name, database),
     }
     cmds
 }
@@ -93,15 +101,33 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         Some(Intent::Insert(character)) => {
             model.clear_choice();
             model.push(character);
+            // Typing `@`, or the path after it, keeps the list in step: it opens
+            // on the mention's first character, narrows as the path is typed,
+            // and goes away when a space ends the mention.
+            if model.open_mention() {
+                cmds.push(Cmd::Mentions);
+            }
+            if crate::chat::mentions::query(model.composer()).is_none() {
+                model.close_mention();
+            }
         }
         Some(Intent::Newline) => {
             model.clear_choice();
             model.push('\n');
+            model.close_mention();
         }
         Some(Intent::Backspace) => {
             model.clear_choice();
             model.backspace();
+            if crate::chat::mentions::query(model.composer()).is_none() {
+                model.close_mention();
+            }
         }
+        Some(Intent::MentionAccept) => {
+            model.accept_mention();
+        }
+        Some(Intent::MentionClose) => model.close_mention(),
+        Some(Intent::MentionMove(steps)) => model.move_mention(steps),
         Some(Intent::Submit) => submit(model, cmds),
         // The queue is one deep, and Ctrl+G is how the operator takes the held
         // line back: it is dropped, never sent (`02` §7).
@@ -152,7 +178,11 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
             | Intent::PaletteBackspace
             | Intent::PaletteRun
             | Intent::PaletteClose
-            | Intent::HelpClose),
+            | Intent::HelpClose
+            | Intent::HelpUp
+            | Intent::HelpDown
+            | Intent::HelpPageUp
+            | Intent::HelpPageDown),
         ) => overlay_press::press(model, intent, cmds),
         Some(Intent::FocusUp) => model.move_focus(false),
         Some(Intent::FocusDown) => model.move_focus(true),
@@ -216,30 +246,6 @@ fn copy(model: &mut Model, cmds: &mut Vec<Cmd>) {
     }
     model.say(focus_text::toast(word, &text));
     cmds.push(Cmd::Copy(text));
-}
-
-/// One answer to the open card: the call is answered, and the turn that asked
-/// keeps going. An approval is the operator's consent, so the answer is
-/// carried out exactly as it was given — once, for the session, or never.
-fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
-    if let Some(card) = model.take_card() {
-        cmds.push(Cmd::Answer(card.id, given));
-        // One card at a time: the job that owed this call no longer waits, and
-        // the ask behind it takes the slot it left (`02` §5, T9/A5) — and rings
-        // the terminal, exactly as it did when it arrived.
-        if model.answered(card.id) {
-            ring(model, cmds);
-        }
-    }
-}
-
-/// The answer the card offers at `index`, as the keys that answer it would give
-/// it: `y` once, `s` the session grant it named, `n` and Esc the refusal.
-fn answer_at(model: &Model, index: usize) -> Option<Answer> {
-    let question = model.card()?;
-    let answers = cards_keys::answers(question);
-    let choice = answers.get(index)?;
-    cards_keys::answer_of(choice.key)
 }
 
 /// Shift+Tab: the mode cycle's next member, skipping a withheld `bypass`. The

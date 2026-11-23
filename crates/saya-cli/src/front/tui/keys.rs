@@ -90,9 +90,24 @@ pub(crate) enum Intent {
     PaletteClose,
     /// Close the key sheet.
     HelpClose,
+    /// Scroll the key sheet's body up one row.
+    HelpUp,
+    /// Scroll it down one row.
+    HelpDown,
+    /// Scroll it up a screen's worth.
+    HelpPageUp,
+    /// Scroll it down a screen's worth.
+    HelpPageDown,
     /// Walk, search or leave the composer's input history (`02` §7): `Up`,
     /// `Down`, `Ctrl+R` and the keys the open search reads.
     History(history_keys::HistoryIntent),
+    /// Put the path the `@` list points at in the composer, and close it: `Tab`
+    /// and `Enter` while the list is open, never while a card has the seat.
+    MentionAccept,
+    /// Close the `@` list and keep the draft (`Esc`).
+    MentionClose,
+    /// Walk the `@` list one row, a negative count moving up.
+    MentionMove(isize),
     /// Walk the block cursor one entry older (`02` §6).
     FocusUp,
     /// Walk the block cursor one entry newer.
@@ -244,6 +259,19 @@ fn composer_key(model: &Model, key: KeyEvent) -> Option<Intent> {
     let modifiers = key.modifiers;
     let alt = modifiers.contains(KeyModifiers::ALT);
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    // The open `@` list reads the keys that choose from it, and nothing else:
+    // every other press is the composer's own, so typing narrows the list and
+    // `Tab` inserts only while the list is open. A card is read before this
+    // ([`card_key`]), so `Tab` is the seat toggle whenever one is open.
+    if model.mention().is_some() {
+        match key.code {
+            KeyCode::Esc => return Some(Intent::MentionClose),
+            KeyCode::Tab | KeyCode::Enter if !alt && !ctrl => return Some(Intent::MentionAccept),
+            KeyCode::Up if !alt => return Some(Intent::MentionMove(-1)),
+            KeyCode::Down if !alt => return Some(Intent::MentionMove(1)),
+            _ => {}
+        }
+    }
     match key.code {
         // The cursor is how a block is reached without a mouse: Alt+↑/↓ from the
         // composer takes it, and from no seat it lands on the newest entry.

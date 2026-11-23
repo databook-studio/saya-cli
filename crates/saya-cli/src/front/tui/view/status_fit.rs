@@ -1,15 +1,15 @@
 //! Fitting the status line into the columns a terminal gives it.
 //!
-//! The row's drop order, first dropped first: the workspace binding, the
-//! context meter, the model id, the deny list, the extra database count, the
-//! job count, the right side's hint, the sharing caveat's detail, and last the
-//! right side's state word. The mode chip and the two caveats have no step at
-//! all — nothing here can take them away, which is the point: a narrow
-//! terminal stops being a reason to hide what the session can touch.
+//! The row's drop order, first dropped first: the extra database count, the
+//! right side's hint, and the sharing caveat's detail. The mode chip, the model
+//! and the database have no step at all — a narrow terminal is not a reason to
+//! forget which model is answering or what it is talking to, and the chip is
+//! the row's reason to exist. A row too narrow for even those overflows rather
+//! than hides one.
 
 use ratatui::style::Style;
 
-use crate::interactive::tui::wrap::{cell_width, truncate_cells};
+use crate::interactive::tui::wrap::cell_width;
 
 /// The join between the row's left segments.
 pub(crate) const SEP: &str = " │ ";
@@ -21,19 +21,8 @@ pub(crate) const GAP: usize = 2;
 /// One step of the drop order, cheapest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
-    /// The workspace binding: the session's own directory, which the operator
-    /// already knows.
-    Workspace,
-    /// The context meter.
-    Context,
-    /// The model id.
-    Model,
-    /// The deny list.
-    Deny,
-    /// The extra database count — the database keeps a form, never leaves.
+    /// The extra database count — the database keeps its name, never leaves.
     Database,
-    /// The background-job count.
-    Jobs,
     /// The right side's hint, before its state word.
     Hint,
     /// `⚠ data sharing on` reading `⚠ sharing`: the caveat stays, its detail
@@ -44,17 +33,7 @@ pub(crate) enum Step {
 }
 
 /// The order the row gives way in.
-pub(crate) const ORDER: [Step; 9] = [
-    Step::Workspace,
-    Step::Context,
-    Step::Model,
-    Step::Deny,
-    Step::Database,
-    Step::Jobs,
-    Step::Hint,
-    Step::Sharing,
-    Step::State,
-];
+pub(crate) const ORDER: [Step; 4] = [Step::Database, Step::Hint, Step::Sharing, Step::State];
 
 /// One segment of the row's left group: its words, the style it paints, and
 /// the step that takes it away (`None`: no step does).
@@ -87,8 +66,7 @@ impl Segment {
     }
 }
 
-/// The row's right side: what the surface is doing, or the one thing it is
-/// saying.
+/// The row's right side: what the surface is doing.
 pub(crate) enum Right {
     /// A state's word and the hint beside it, which drops before the word.
     State {
@@ -96,8 +74,6 @@ pub(crate) enum Right {
         hint: Option<String>,
         paint: Style,
     },
-    /// A toast: the surface's own words, kept whole while they live.
-    Toast { text: String, paint: Style },
     /// Nothing to say.
     Empty,
 }
@@ -110,7 +86,6 @@ impl Right {
                 Some(hint) => format!("{word} · {hint}"),
                 None => word.clone(),
             },
-            Self::Toast { text, .. } => text.clone(),
             Self::Empty => String::new(),
         }
     }
@@ -142,29 +117,27 @@ pub(crate) fn row_width(segments: &[Segment], right: &Right) -> usize {
 /// Fits the row into `width` cells by the drop order above.
 ///
 /// A row that still does not fit once every step has been taken overflows: the
-/// chip and the caveats are the row's reason to exist, so it would rather be
-/// too wide than quiet about them.
-pub(crate) fn fit(segments: &mut Vec<Segment>, right: &mut Right, width: usize) {
+/// chip, the model and the database are the row's reason to exist, so it would
+/// rather be too wide than quiet about them.
+pub(crate) fn fit(segments: &mut [Segment], right: &mut Right, width: usize) {
     for step in ORDER {
         if row_width(segments, right) <= width {
             return;
         }
         apply(step, segments, right);
     }
-    cut_right_side(segments, right, width);
 }
 
 /// Takes one step's worth of row: a whole segment, or the shorter form a
 /// segment owes instead of leaving.
-fn apply(step: Step, segments: &mut Vec<Segment>, right: &mut Right) {
+fn apply(step: Step, segments: &mut [Segment], right: &mut Right) {
     match step {
         Step::Hint => {
             if let Right::State { hint, .. } = right {
                 *hint = None;
             }
         }
-        // The state word is the row's own to drop; a toast is the surface's
-        // answer to the operator and is cut, not dropped.
+        // The state word is the row's own to drop.
         Step::State => {
             if matches!(right, Right::State { .. }) {
                 *right = Right::Empty;
@@ -173,7 +146,6 @@ fn apply(step: Step, segments: &mut Vec<Segment>, right: &mut Right) {
         // The sharing caveat and the database keep a form of their own: they
         // give way in words, never in presence.
         Step::Sharing | Step::Database => shorten(segments, step),
-        _ => remove(segments, step),
     }
 }
 
@@ -187,33 +159,4 @@ fn shorten(segments: &mut [Segment], step: Step) {
     {
         segment.text = short;
     }
-}
-
-/// Drops the segment `step` takes away.
-fn remove(segments: &mut Vec<Segment>, step: Step) {
-    if let Some(index) = segments
-        .iter()
-        .position(|segment| segment.step == Some(step))
-    {
-        segments.remove(index);
-    }
-}
-
-/// The last resort: the surface's own toast, cut to the cells left over. A
-/// caveat is never cut — half a caveat is worse than a row that overflows.
-fn cut_right_side(segments: &[Segment], right: &mut Right, width: usize) {
-    let (text, paint) = match right {
-        Right::Toast { text, paint } => (text.clone(), *paint),
-        _ => return,
-    };
-    let room = width.saturating_sub(left_width(segments) + GAP);
-    if cell_width(&text) <= room {
-        return;
-    }
-    let cut = truncate_cells(&text, room);
-    *right = if cut.is_empty() {
-        Right::Empty
-    } else {
-        Right::Toast { text: cut, paint }
-    };
 }
