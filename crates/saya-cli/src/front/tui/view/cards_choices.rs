@@ -24,26 +24,29 @@ const COVERS: &str = "Allow for this session";
 pub(crate) fn choices(question: &Question, family: Family) -> Vec<Choice> {
     if family == Family::Plan {
         return vec![
-            choice("y", APPROVE_PLAN),
-            choice("n", KEEP_PLANNING),
+            choice("y", APPROVE_PLAN, "approve plan"),
+            choice("n", KEEP_PLANNING, "keep planning"),
             // Esc is the refusal of every card, and a plan's refusal is the
             // decision to keep planning: no answer of this card's is Deny.
-            choice("Esc", KEEP_PLANNING),
+            choice("Esc", KEEP_PLANNING, "keep planning"),
         ];
     }
-    let mut list = vec![choice("y", ALLOW_ONCE)];
+    let mut list = vec![choice("y", ALLOW_ONCE, "allow once")];
     if let Some(token) = question.grant.as_deref() {
-        list.push(choice("s", &format!("{COVERS} · {token}")));
+        list.push(choice("s", &format!("{COVERS} · {token}"), "this session"));
     }
-    list.push(choice("n", DENY));
-    list.push(choice("Esc", DENY));
+    list.push(choice("n", DENY, "deny"));
+    list.push(choice("Esc", DENY, "deny"));
     list
 }
 
-/// One answer: its key and its words.
-fn choice(key: &'static str, label: &str) -> Choice {
+/// One answer: its key, its words, and the shorter words a one-row hint gives
+/// it — the same answer, said where a whole line has no room for the offer's
+/// own sentence (`allow once`, `this session`, `deny`).
+fn choice(key: &'static str, label: &str, short: &'static str) -> Choice {
     Choice {
         key,
         label: label.to_owned(),
+        short,
     }
 }

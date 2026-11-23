@@ -50,16 +50,17 @@ pub(crate) fn rows(model: &Model, width: usize, charset: Charset) -> Vec<Row> {
             }],
         });
     }
+    // The state's hint names keys a search does not read, so a search says
+    // its own row instead.
+    let hint_row = if model.search().is_some() {
+        SEARCH_HINT.to_owned()
+    } else {
+        hint(model, width)
+    };
     out.push(border(
         Glyph::BottomLeft,
         Glyph::BottomRight,
-        // The state's hint names keys a search does not read, so a search says
-        // its own row instead.
-        if model.search().is_some() {
-            SEARCH_HINT
-        } else {
-            hint(state, width)
-        },
+        &hint_row,
         Token::Dim,
         width,
         charset,

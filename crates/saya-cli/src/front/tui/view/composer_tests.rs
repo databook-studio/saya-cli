@@ -55,12 +55,12 @@ fn idle_with_a_database_states_the_table_row() {
         "`02` §7: the placeholder names the connected database"
     );
     assert_eq!(
-        hint(state(&model), 100),
+        hint(&model, 100),
         "Enter send · Alt+Enter newline · Ctrl+O detail · Ctrl+K commands",
         "`02` §7: idle, db, full layout"
     );
     assert_eq!(
-        hint(state(&model), 80),
+        hint(&model, 80),
         "Enter send · Ctrl+O detail · Ctrl+K commands",
         "80x24 keeps the hint row to the keys an operator needs"
     );
@@ -91,12 +91,12 @@ fn idle_without_a_database_states_the_table_row() {
         "Describe a change or ask about this code"
     );
     assert_eq!(
-        hint(state(&model), 100),
+        hint(&model, 100),
         "Enter send · Alt+Enter newline · Ctrl+O detail · Ctrl+K commands",
         "`02` §7 gives the idle, no db row the same hint"
     );
     assert_eq!(
-        hint(state(&model), 80),
+        hint(&model, 80),
         "Enter send · Ctrl+O detail · Ctrl+K commands"
     );
 }
@@ -114,11 +114,11 @@ fn a_running_turn_states_the_table_row() {
         "Type a follow-up — it is sent when this turn ends"
     );
     assert_eq!(
-        hint(state(&model), 100),
+        hint(&model, 100),
         "Enter queue · Ctrl+O detail · Esc stop turn"
     );
     assert_eq!(
-        hint(state(&model), 80),
+        hint(&model, 80),
         "Enter queue · Ctrl+O detail · Esc stop turn",
         "the running hint names the steps' key and is short enough for 80 columns"
     );
@@ -131,7 +131,7 @@ fn one_queued_line_states_the_table_row_and_is_drawn_dim() {
     assert_eq!(state(&model), State::OneQueued);
     assert_eq!(title(state(&model)), "Queued");
     assert_eq!(placeholder(&model), "second", "the queued text is the body");
-    assert_eq!(hint(state(&model), 80), "↑ edit queued · Ctrl+G drop");
+    assert_eq!(hint(&model, 80), "↑ edit queued · Ctrl+G drop");
 
     let rendered = rows(&model, 80, Charset::Utf8);
     let body = rendered.get(1).expect("the queued line is a body row");
@@ -164,7 +164,7 @@ fn a_paused_run_states_the_table_row() {
         placeholder(&model),
         "Enter to continue, or type to redirect"
     );
-    assert_eq!(hint(state(&model), 100), "Enter continue · /status");
+    assert_eq!(hint(&model, 100), "Enter continue · /status");
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn a_read_only_record_states_the_table_row() {
         placeholder(&model),
         "This is a 0.5.0 session — your next message starts a new run"
     );
-    assert_eq!(hint(state(&model), 100), "Enter send");
+    assert_eq!(hint(&model, 100), "Enter send");
 }
 
 #[test]
@@ -281,8 +281,29 @@ fn a_waiting_call_disables_the_composer_and_names_the_keys_that_answer_it() {
         "and says what it is waiting for"
     );
     assert!(
-        hint(state(&model), 100).contains("y allow"),
+        hint(&model, 100).contains("y allow"),
         "the hint row names the keys that answer: {}",
-        hint(state(&model), 100)
+        hint(&model, 100)
+    );
+}
+
+#[test]
+fn a_waiting_call_names_only_the_answers_it_offers() {
+    let mut model = Model {
+        database: Some("demo".to_owned()),
+        ..Default::default()
+    };
+    // A call with no token to grant: nothing could pre-answer it, so the card
+    // offers no session answer — and the hint row must not offer one either.
+    model.ask(crate::front::tui::view::cards_fixture::ungranted_question());
+
+    let hint = hint(&model, 100);
+    assert!(
+        !hint.contains("s this session"),
+        "a card with no grant offers no session answer, so the hint names none: {hint}"
+    );
+    assert_eq!(
+        hint, "y allow once · n deny · Esc deny",
+        "the hint row is the handful of answers the panel actually offers"
     );
 }

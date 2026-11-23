@@ -65,13 +65,16 @@ pub(crate) enum Family {
     Other,
 }
 
-/// One answer the panel offers: its key, and the words beside it.
+/// One answer the panel offers: its key, the words beside it, and the shorter
+/// words the composer's hint row gives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Choice {
     /// The one press that answers this, as the panel writes it (`y`, `Esc`).
     pub(crate) key: &'static str,
     /// What the press does, and — for a session grant — what it covers.
     pub(crate) label: String,
+    /// The same answer in the few words a one-row hint has room for.
+    pub(crate) short: &'static str,
 }
 
 /// The cells `text` occupies on a terminal, as the panes measure.

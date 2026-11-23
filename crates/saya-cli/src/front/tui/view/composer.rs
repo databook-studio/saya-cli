@@ -16,6 +16,8 @@ use crate::front::tui::model::Model;
 use crate::front::tui::theme::Token;
 use crate::interactive::tui::{Candidate, slash_candidates};
 
+use super::cards::{choices_of, family_of};
+
 /// The six states of `02` §7's table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
@@ -146,23 +148,40 @@ pub(crate) fn placeholder(model: &Model) -> String {
     }
 }
 
-/// The hint row `02` §7 gives this state at `width` columns.
-pub(crate) fn hint(state: State, width: usize) -> &'static str {
-    match state {
-        State::IdleWithDatabase | State::IdleWithoutDatabase => {
-            if width < COMPACT_WIDTH {
-                COMPACT_IDLE_HINT
-            } else {
-                IDLE_HINT
-            }
+/// The hint row (`02` §7) for this model at `width` columns.
+///
+/// The two states an open call decides name the answers that call offers, and
+/// only those: a card with no token to grant offers no session answer, so the
+/// row names none either.
+pub(crate) fn hint(model: &Model, width: usize) -> String {
+    match state(model) {
+        State::IdleWithDatabase | State::IdleWithoutDatabase => if width < COMPACT_WIDTH {
+            COMPACT_IDLE_HINT
+        } else {
+            IDLE_HINT
         }
-        State::TurnRunning => "Enter queue · Ctrl+O detail · Esc stop turn",
-        State::OneQueued => QUEUED_HINT,
-        State::Paused => "Enter continue · /status",
-        State::ReadOnlyRecord => "Enter send",
-        State::Disabled => "y allow once · s this session · n deny · Esc deny",
-        State::ApprovalTyping => APPROVAL_HINT,
+        .to_owned(),
+        State::TurnRunning => "Enter queue · Ctrl+O detail · Esc stop turn".to_owned(),
+        State::OneQueued => QUEUED_HINT.to_owned(),
+        State::Paused => "Enter continue · /status".to_owned(),
+        State::ReadOnlyRecord => "Enter send".to_owned(),
+        State::Disabled => answers(model),
+        State::ApprovalTyping => APPROVAL_HINT.to_owned(),
     }
+}
+
+/// The open call's answers, key and short words, as one row: the keys a
+/// [`State::Disabled`] composer is waiting on, read from the card itself so the
+/// row and the panel cannot offer different ones.
+fn answers(model: &Model) -> String {
+    let Some(question) = model.card() else {
+        return String::new();
+    };
+    choices_of(question, family_of(question))
+        .iter()
+        .map(|choice| format!("{} {}", choice.key, choice.short))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The `/` popup's candidates for what is on the composer: today's completion,
