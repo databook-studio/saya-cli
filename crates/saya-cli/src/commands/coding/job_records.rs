@@ -184,8 +184,9 @@ pub(crate) fn root() -> PathBuf {
 }
 
 /// The path walk a host without unix descriptors keeps: bounded, and unlinks a
-/// link instead of following it.
-#[cfg(not(unix))]
+/// link instead of following it. Test builds compile it on every host, so the
+/// pass's progress is asserted where the suite runs.
+#[cfg(any(not(unix), test))]
 fn remove_tree(path: &Path, depth: usize) -> Result<(), CodingError> {
     let metadata = fs::symlink_metadata(path).map_err(CodingError::owner)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -195,14 +196,23 @@ fn remove_tree(path: &Path, depth: usize) -> Result<(), CodingError> {
         return Err(CodingError::StateDirectory);
     }
     let mut names = Vec::new();
+    let mut cut = false;
     for entry in fs::read_dir(path).map_err(CodingError::owner)? {
         if names.len() == MAX_ENTRIES {
-            return Err(CodingError::StateDirectory);
+            cut = true;
+            break;
         }
         names.push(entry.map_err(CodingError::owner)?.file_name());
     }
     for name in names {
         remove_tree(&path.join(name), depth - 1)?;
+    }
+    // More names than one pass may take: the ones read are removed and the
+    // bound is reported, exactly as the unix descriptor walk does, so the next
+    // pass — or the next delete — converges rather than meeting the same
+    // bound with nothing taken.
+    if cut {
+        return Err(CodingError::StateDirectory);
     }
     fs::remove_dir(path).map_err(CodingError::owner)
 }

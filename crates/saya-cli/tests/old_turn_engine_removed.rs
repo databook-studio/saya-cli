@@ -49,6 +49,13 @@ fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The crate-relative spelling of a path: `/` separators, and no `src/`
+/// prefix, so a module and its file agree on one name on every host.
+fn crate_relative(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    path.strip_prefix("src/").unwrap_or(&path).to_owned()
+}
+
 /// Every first-party source under this crate, tests included: a call site is a
 /// statement about the layout too. Yields the crate-relative path and its text.
 fn sources() -> Vec<(String, String)> {
@@ -78,14 +85,23 @@ fn sources() -> Vec<(String, String)> {
                 .ok()?
                 .to_string_lossy()
                 .into_owned();
-            let relative = relative
-                .strip_prefix("src/")
-                .unwrap_or(&relative)
-                .to_owned();
+            let relative = crate_relative(&relative);
             let text = std::fs::read_to_string(&path).ok()?;
             Some((relative, text))
         })
         .collect()
+}
+
+/// A path this crate reads is spelled with `src/` and `/` separators wherever
+/// the checkout was made: a Windows separator names the same file, so the
+/// `agent/` spelling of the old engine's module is read on every host.
+#[test]
+fn a_windows_path_is_read_as_its_unix_spelling() {
+    assert_eq!(
+        crate_relative("src\\agent\\runtime.rs"),
+        "agent/runtime.rs",
+        "a Windows path names the file the guard reports on"
+    );
 }
 
 /// The body is gone, and so is every name that pointed at it. A file restored

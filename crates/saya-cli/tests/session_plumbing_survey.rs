@@ -84,6 +84,13 @@ fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The crate-relative spelling of a path: `/` separators, and no `src/`
+/// prefix, so a module and its file agree on one name on every host.
+fn crate_relative(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    path.strip_prefix("src/").unwrap_or(&path).to_owned()
+}
+
 /// Every first-party source under this crate, tests included: a caller is a
 /// statement about the layout too. Yields the crate-relative path and its text.
 fn sources() -> Vec<(String, String)> {
@@ -113,14 +120,22 @@ fn sources() -> Vec<(String, String)> {
                 .ok()?
                 .to_string_lossy()
                 .into_owned();
-            let relative = relative
-                .strip_prefix("src/")
-                .unwrap_or(&relative)
-                .to_owned();
+            let relative = crate_relative(&relative);
             let text = std::fs::read_to_string(&path).ok()?;
             Some((relative, text))
         })
         .collect()
+}
+
+/// A path this crate reads is spelled with `src/` and `/` separators wherever
+/// the checkout was made: a Windows separator names the same file.
+#[test]
+fn a_windows_path_is_read_as_its_unix_spelling() {
+    assert_eq!(
+        crate_relative("src\\agent\\turn_inputs.rs"),
+        "agent/turn_inputs.rs",
+        "a Windows path names the module a live reader's file is"
+    );
 }
 
 /// The kept session plumbing is still there: deleting one of these takes the
