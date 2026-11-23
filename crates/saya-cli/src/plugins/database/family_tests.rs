@@ -267,7 +267,9 @@ fn no_profile_advertises_nothing_database_shaped() {
 }
 
 /// Test 8 — the bound profile's cached schema is evidence too: a request that
-/// names one of its tables is database work without saying "database".
+/// names one of its tables is database work without saying "database". The two
+/// requests here name no word and no phrase of [`super::evidence`], so only the
+/// cached name can answer for them.
 #[test]
 fn a_name_from_the_cached_schema_is_database_work() {
     let bound = Bound::new(
@@ -278,7 +280,7 @@ fn a_name_from_the_cached_schema_is_database_work() {
     let plugin = chat(Arc::clone(&family));
 
     assert!(
-        family.note("how many widgets are in orders"),
+        family.note("compare the widgets against orders"),
         "a table the profile's schema holds is database work"
     );
     assert!(
@@ -288,7 +290,7 @@ fn a_name_from_the_cached_schema_is_database_work() {
 
     let fresh = Arc::new(Family::of(local(), false));
     assert!(
-        !fresh.note("how many widgets are in gnomes"),
+        !fresh.note("compare the widgets against gnomes"),
         "a word no cached schema names is not evidence"
     );
 }
@@ -327,5 +329,30 @@ fn a_verb_form_or_the_engines_name_is_database_work() {
     assert!(
         plural.note("inspect both databases"),
         "the plural of a word is the word"
+    );
+}
+
+/// Test 11 — the question a session actually asks: "how many orders are there"
+/// is database work on its own, with an empty schema cache and nothing cached
+/// to name `orders`. A request that asks for neither counts nothing.
+#[test]
+fn the_common_counting_question_latches_on_its_first_turn() {
+    let family = Arc::new(Family::of(local(), false));
+    let plugin = chat(Arc::clone(&family));
+
+    assert!(
+        family.note("how many orders are there"),
+        "the counting question is database work with no cached schema"
+    );
+    let advertised = names(&plugin);
+    assert!(
+        advertised.contains(&String::from("schema_discovery")),
+        "so the family rides the turn that asked: {advertised:?}"
+    );
+
+    let typo = Arc::new(Family::of(local(), false));
+    assert!(
+        !typo.note("fix the typo in README"),
+        "a request about neither is still not evidence"
     );
 }

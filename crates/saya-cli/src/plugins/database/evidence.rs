@@ -9,11 +9,18 @@
 use super::family::Bound;
 
 /// The words a request may state, in the singular: a plural or a verb form
-/// reaches them through [`states_word`].
+/// reaches them through [`states_word`]. `total` and `data` are here because
+/// they are how a request asks for the database's own figures without naming
+/// it — "what was our total last month", "pull the data behind that".
 const WORK_WORDS: &[&str] = &[
     "database", "db", "sql", "schema", "table", "column", "query", "row", "count", "sum",
-    "average", "revenue",
+    "average", "revenue", "total", "data",
 ];
+
+/// The phrases a request may state, side by side in this order: `how many` is
+/// the question a person writes when they want a number out of a database, and
+/// it names nothing the words above could catch — "how many orders are there".
+const WORK_PHRASES: &[&[&str]] = &[&["how", "many"]];
 
 /// The whole words of `text`, lowercased: punctuation is a boundary, so `table`
 /// is not read out of `comfortable` and a qualified `public.orders` states
@@ -50,16 +57,31 @@ fn states_word(token: &str) -> bool {
     forms.iter().any(|form| WORK_WORDS.contains(&form.as_str()))
 }
 
-/// Whether a request shows database work: one of its words, the two a SQL
-/// statement always uses together, or a name this run's own schema holds — the
-/// connections' names, the engines they speak, and the object names cached from
-/// their schema.
+/// Whether `tokens` states one of the phrases above, its words side by side.
+fn states_phrase(tokens: &[String]) -> bool {
+    WORK_PHRASES.iter().any(|phrase| {
+        tokens.windows(phrase.len()).any(|window| {
+            window
+                .iter()
+                .zip(*phrase)
+                .all(|(token, word)| token == word)
+        })
+    })
+}
+
+/// Whether a request shows database work: one of its words, one of its
+/// phrases, the two a SQL statement always uses together, or a name this run's
+/// own schema holds — the connections' names, the engines they speak, and the
+/// object names cached from their schema.
 pub(super) fn shows_work(text: &str, bound: &Bound) -> bool {
     if bound.is_empty() {
         return false;
     }
     let tokens = tokens(text);
     if tokens.iter().any(|token| states_word(token)) {
+        return true;
+    }
+    if states_phrase(&tokens) {
         return true;
     }
     // Prose does not use `select` and `from` together; a statement does.

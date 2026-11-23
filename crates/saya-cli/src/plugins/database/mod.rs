@@ -19,6 +19,8 @@ mod capture_fixture;
 #[cfg(test)]
 mod capture_tests;
 pub(crate) mod evidence;
+#[cfg(test)]
+mod evidence_tests;
 pub(crate) mod family;
 mod family_executor;
 #[cfg(test)]
