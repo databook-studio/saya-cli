@@ -15,7 +15,6 @@
 
 use ratatui::crossterm::event::KeyEvent;
 
-use super::cards_keys;
 use super::direct;
 use super::focus_text;
 use super::history_keys;
@@ -24,9 +23,9 @@ use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::overlay_press;
+use super::update_answer::{answer_at, answer_card};
 use super::update_submit::{send, submit};
 use super::view::ModePicker;
-use crate::agent::tools::consent::Answer;
 use crate::chat::ChatEvent;
 use crate::front::apply;
 use crate::interactive::session::permissions::mode::next_in_cycle;
@@ -195,30 +194,6 @@ fn copy(model: &mut Model, cmds: &mut Vec<Cmd>) {
     }
     model.say(focus_text::toast(word, &text));
     cmds.push(Cmd::Copy(text));
-}
-
-/// One answer to the open card: the call is answered, and the turn that asked
-/// keeps going. An approval is the operator's consent, so the answer is
-/// carried out exactly as it was given — once, for the session, or never.
-fn answer_card(model: &mut Model, given: Answer, cmds: &mut Vec<Cmd>) {
-    if let Some(card) = model.take_card() {
-        cmds.push(Cmd::Answer(card.id, given));
-        // One card at a time: the job that owed this call no longer waits, and
-        // the ask behind it takes the slot it left (`02` §5, T9/A5) — and rings
-        // the terminal, exactly as it did when it arrived.
-        if model.answered(card.id) {
-            cmds.push(Cmd::Bell);
-        }
-    }
-}
-
-/// The answer the card offers at `index`, as the keys that answer it would give
-/// it: `y` once, `s` the session grant it named, `n` and Esc the refusal.
-fn answer_at(model: &Model, index: usize) -> Option<Answer> {
-    let question = model.card()?;
-    let answers = cards_keys::answers(question);
-    let choice = answers.get(index)?;
-    cards_keys::answer_of(choice.key)
 }
 
 /// Shift+Tab: the mode cycle's next member, skipping a withheld `bypass`. The

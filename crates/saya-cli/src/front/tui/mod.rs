@@ -67,6 +67,7 @@ pub(crate) mod run_screen;
 pub(crate) mod setup;
 pub(crate) mod theme;
 pub(crate) mod update;
+pub(crate) mod update_answer;
 pub(crate) mod update_submit;
 pub(crate) mod view;
 
