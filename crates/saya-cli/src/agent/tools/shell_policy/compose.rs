@@ -7,9 +7,7 @@ use std::sync::Arc;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_config::CommandRules;
 use saya_harness::runner::sandbox::{RunSandbox, RunnerSpawn, SandboxProvision};
-use saya_harness::runner::{
-    BackgroundRuns, HostPolicy, SHELL_PATH, SHELL_SPOOL_CAPTURE_CAP_BYTES, WorkspaceShell,
-};
+use saya_harness::runner::{HostPolicy, SHELL_PATH, SHELL_SPOOL_CAPTURE_CAP_BYTES, WorkspaceShell};
 
 use super::model_output::OutputSpool;
 use super::placement::ShellPlacement;
@@ -28,13 +26,6 @@ pub(crate) enum Background {
     /// The shell lives as long as the surface that composed it (a job's root,
     /// a helper): its registry and its cancellation token end with it.
     Owned,
-    /// The shell is composed per turn, but its runs belong to a longer-lived
-    /// owner (a session): every turn's shell reaches the same registry, and
-    /// the owner's token ends the runs.
-    Shared {
-        runs: Arc<BackgroundRuns>,
-        cancellation: CancellationToken,
-    },
 }
 
 impl Background {
@@ -48,7 +39,6 @@ impl Background {
     fn attach(self, shell: WorkspaceShell) -> WorkspaceShell {
         match self {
             Self::Off | Self::Owned => shell,
-            Self::Shared { runs, cancellation } => shell.with_shared_background(runs, cancellation),
         }
     }
 }

@@ -133,12 +133,6 @@ async fn claim_text_lives_only_in_block_body_not_describe_context() {
     )
     .await;
 
-    // The system-prompt source for a single-connection registry is `None`.
-    let system_prompt = registry.describe_context();
-    assert!(
-        system_prompt.is_none(),
-        "single-connection describe_context is None — no claim text can ride there"
-    );
     assert_eq!(blocks.len(), 1);
     assert!(blocks[0].body.contains("created_at"));
     let _ = fs::remove_dir_all(root);

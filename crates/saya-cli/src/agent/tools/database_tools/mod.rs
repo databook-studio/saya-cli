@@ -1,10 +1,9 @@
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use saya_harness::workspace::Workspace;
-use saya_store::{FsSessionStore, SqliteStateStore};
+use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
@@ -86,9 +85,6 @@ pub(crate) struct DatabaseTools {
     /// — leaves behaviour identical: the operation owner records no phase
     /// samples. An `Arc` so the question scope and the tools share one cell.
     pub(super) metrics: Option<Arc<LocalMetrics>>,
-    /// Qualified `catalog.schema.object` names of objects whose claims were
-    /// supplied to the model this turn via recall.
-    pub(super) supplied_objects: Vec<String>,
     /// The turn's recall receipt, shared with the override detector. `None` in
     /// tests that drive the executor without a receipt; an absent receipt means
     /// no detection — never a guess. A cell because the plugin holds its chat

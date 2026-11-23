@@ -88,15 +88,6 @@ impl ShellTool {
         self
     }
 
-    /// Hands this shell the surface's own "yes for this run" store: the
-    /// grants its lane consults beside whatever an operator remembers. A
-    /// session's store outlives its prompts, so it reaches the policy directly
-    /// rather than through a prompt a headless turn never builds.
-    pub(crate) fn with_grants(mut self, grants: Option<saya_agent::SessionGrants>) -> Self {
-        self.policy = self.policy.with_grants(grants);
-        self
-    }
-
     /// The test seam for the silent-read backoff: a table of short waits so a
     /// battery does not spend a real 30 s on every read.
     #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

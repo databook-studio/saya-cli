@@ -1,3 +1,11 @@
+//! **Test fixtures now.** The interactive session's write-shaped tool
+//! definitions served the deleted turn body's surface; the approval, deny and
+//! prompt-facts tests still need a definition of each old door's exact shape
+//! (`run_command`'s argv, `http_fetch`'s URL, `write`'s digest precondition),
+//! and those facts code paths are live (the `run_command` alias, the write
+//! family). So the module is compiled for tests alone rather than deleted a
+//! second time.
+//!
 //! The interactive session's write-shaped tool definitions: the same
 //! members the run's toolset builder advertises, reworded for the session
 //! surface and each gated through the approval engine per call.
@@ -19,12 +27,12 @@ use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
 // run surface's own definitions so their parameter schemas cannot drift from
 // the executor's; the re-export keeps the crate-reachable path
 // (`session_definitions::workspace_write`) the approval tests use.
-pub(crate) use super::session_file_definitions::{workspace_edit, workspace_write};
+pub(crate) use super::session_file_definitions::workspace_write;
 
 /// The session's write shape: every definition this module pushes declares
 /// approval honestly — the engine resolves the per-call ask, and no static
 /// permit answers for the user.
-pub(super) fn write_shape(external_side_effect: bool) -> ToolEffect {
+pub(crate) fn write_shape(external_side_effect: bool) -> ToolEffect {
     ToolEffect {
         database_data: false,
         external_side_effect,
@@ -144,7 +152,3 @@ pub(crate) fn run_command() -> ToolDefinition {
         completion: Some("host command ran".into()),
     }
 }
-
-#[cfg(test)]
-#[path = "session_definitions_tests.rs"]
-mod tests;

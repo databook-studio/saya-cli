@@ -80,8 +80,6 @@ pub(crate) enum HookCaller {
     /// with no acquisition behind it has none, and a hook then reads no id
     /// rather than a made-up one.
     Session(Option<String>),
-    /// The one-shot `ask` path, which owns no session record.
-    Ask,
 }
 
 /// The hooks one surface runs, over the workspace they run in.

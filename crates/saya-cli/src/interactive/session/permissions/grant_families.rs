@@ -86,22 +86,6 @@ pub(crate) fn command_available(
     family_available(agent_mode, mode, can_obtain_approval, grants, "command")
 }
 
-/// The job shell's own lane: a held `shell:<prefix>` token opens `shell`
-/// where the host route composed. It is deliberately not the `command:`
-/// family: one program grant must never admit a shell command, nor the
-/// other way round, so the two words answer for different doors. The
-/// session's advertisement reads it beside its own lane facts
-/// (`SessionUniverse::shell_available`), and the shell's lane reads the same
-/// store before it refuses a call for want of an operator.
-pub(crate) fn shell_available(
-    agent_mode: AgentMode,
-    mode: ApprovalPolicy,
-    can_obtain_approval: bool,
-    grants: Option<&SessionGrants>,
-) -> bool {
-    family_available(agent_mode, mode, can_obtain_approval, grants, "shell")
-}
-
 #[cfg(test)]
 #[path = "grant_families_tests.rs"]
 mod tests;

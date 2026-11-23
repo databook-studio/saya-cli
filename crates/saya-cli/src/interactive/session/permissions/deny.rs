@@ -119,6 +119,11 @@ pub(crate) fn denied_call_program(
 /// (`saya_config::decide`) decides it — no second parser. A name the rule
 /// parser refuses is an error rather than a rule that quietly binds nothing,
 /// so the launch refuses instead of promising a bound it does not hold.
+///
+/// The deleted session executor was its production caller; the live twins and
+/// the shell's own deny tests convert a list here, so the conversion keeps a
+/// proven reader.
+#[cfg(test)]
 pub(crate) fn shell_rules(
     rules: &saya_config::CommandRules,
     deny: &SessionDeny,

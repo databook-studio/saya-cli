@@ -1,15 +1,10 @@
 //! Tests for the one place a surface applies `[tools] allow` / `--tools`:
-//! the advertisement filter and the dispatch gate that mirrors it.
+//! the advertisement filter.
 
-use std::sync::Arc;
-
-use async_trait::async_trait;
-use saya_agent::{
-    LocalStateEffect, ToolDefinition, ToolEffect, ToolError, ToolExecutionContext, ToolExecutor,
-};
+use saya_agent::{LocalStateEffect, ToolDefinition, ToolEffect};
 use saya_config::{ResolvedTools, ToolsAllow};
 
-use super::{NarrowedExecutor, narrow};
+use super::narrow;
 
 fn definition(name: &str) -> ToolDefinition {
     ToolDefinition {
@@ -32,21 +27,6 @@ fn stated(names: &[&str]) -> ResolvedTools {
     ResolvedTools {
         allow: Some(ToolsAllow::parse(names).unwrap()),
         ..ResolvedTools::default()
-    }
-}
-
-/// An executor that answers every name with its own name, so a test can tell a
-/// routed call from a refused one.
-struct Echo;
-
-#[async_trait]
-impl ToolExecutor for Echo {
-    async fn execute(
-        &self,
-        name: &str,
-        _arguments: serde_json::Value,
-    ) -> Result<serde_json::Value, ToolError> {
-        Ok(serde_json::json!(name))
     }
 }
 
@@ -100,45 +80,4 @@ fn a_database_tool_cannot_be_named_at_all() {
     // The connection-tied tools follow the selected connection, so the list
     // refuses the name rather than silently doing nothing.
     assert!(ToolsAllow::parse(["schema_discovery"]).is_err());
-}
-
-#[tokio::test]
-async fn the_gate_refuses_a_name_the_list_removed() {
-    let gate = NarrowedExecutor::new(stated(&["read"]), Arc::new(Echo));
-    let allowed = gate
-        .execute("read", serde_json::json!({}))
-        .await
-        .expect("an admitted name routes");
-    assert_eq!(allowed, serde_json::json!("read"));
-    assert!(matches!(
-        gate.execute("write", serde_json::json!({})).await,
-        Err(ToolError::UnsupportedTool)
-    ));
-    assert!(matches!(
-        gate.execute_with_result_cap("write", serde_json::json!({}), 64)
-            .await,
-        Err(ToolError::UnsupportedTool)
-    ));
-    assert!(matches!(
-        gate.execute_with_context("write", serde_json::json!({}), context())
-            .await,
-        Err(ToolError::UnsupportedTool)
-    ));
-}
-
-#[tokio::test]
-async fn an_unstated_list_routes_everything_through_the_gate() {
-    let gate = NarrowedExecutor::new(ResolvedTools::default(), Arc::new(Echo));
-    let routed = gate
-        .execute_with_context("write", serde_json::json!({}), context())
-        .await
-        .expect("the default gate admits");
-    assert_eq!(routed, serde_json::json!("write"));
-}
-
-fn context() -> ToolExecutionContext {
-    ToolExecutionContext {
-        result_cap: 64,
-        cancellation: saya_agent::CancellationToken::new(),
-    }
 }

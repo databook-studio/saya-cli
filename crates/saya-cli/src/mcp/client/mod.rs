@@ -38,7 +38,7 @@ mod protocol;
 mod server;
 mod tools;
 
-pub(crate) use tools::{Consent, McpTools, advertised};
+pub(crate) use tools::McpTools;
 
 #[cfg(test)]
 pub(crate) mod fixture;

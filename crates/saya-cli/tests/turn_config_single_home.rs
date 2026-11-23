@@ -1,23 +1,13 @@
-//! The prompt-config types have one home, and no live front reaches into the
-//! old turn engine.
+//! The prompt-config types have one home, and the old turn engine is gone.
 //!
-//! X2 puts the one definition of `AgentRuntimeError`, `PromptOverrides` and
-//! `query_data_allowed_for_endpoint` (with its `query_data_allowed` helper and
-//! `effective_ai`) in `agent/turn_config.rs`, and moves the leaves a live
-//! front still reads — `with_next_step`, the provider advice,
-//! `project_untrusted_context` — next to the callers that read them. Three
-//! things must not drift afterwards:
-//!
-//! - a second home, or a re-export alias, for the moved items: the old
-//!   engine's module path must stop being a way to reach them;
-//! - a live front naming the old engine's module at all: the job engine, the
-//!   chat layer and `saya ask` read the leaves from where they now live;
-//! - the old turn body being deleted while the users it is kept for still
-//!   drive it.
-//!
-//! The guard reads the tree the way `tui_trunk_removed` does — paths and
-//! source text — because each statement is about the layout the brief asked
-//! for. Needles are spelled in halves so this file never matches itself.
+//! X2 put the one definition of `AgentRuntimeError`, `PromptOverrides` and
+//! `query_data_allowed_for_endpoint` in `agent/turn_config.rs` and moved the
+//! leaves a live front reads next to their callers; PT4 deleted the old body,
+//! its request entry, its suite and every old pin that had a live twin. The
+//! statements that must not drift afterwards: one home and no re-export alias
+//! for the moved items, no line naming the old engine's module, and the body
+//! staying gone and unnamed. Paths and source text, like `tui_trunk_removed`;
+//! needles are spelled in halves so this file never matches itself.
 
 use std::path::{Path, PathBuf};
 
@@ -46,25 +36,6 @@ const MOVED_NAMES: &[&str] = &[
     concat!("query_data_allowed", "("),
     concat!("effective", "_ai"),
 ];
-
-/// The files that may still name the old turn body: the old per-turn request
-/// body X3 deletes, the old-session tests that drive the body as their
-/// harness, and the context tests that do the same. Every entry is list (b) in
-/// `REPORT.md`; deleting the body needs each re-pointed at the chat path first.
-const OLD_ENGINE_FILES: &[&str] = &[
-    "interactive/session_request.rs",
-    "interactive/session/universe/tests/shell_background.rs",
-    "interactive/session/universe/tests/shell_turn.rs",
-    "interactive/session/universe/tests/workspace_write_effects.rs",
-    "interactive/session/universe/tests/grant_recompute_and_host_refusal.rs",
-    "interactive/session/continuation/record_block_tests.rs",
-    "agent/context/preferences_tests.rs",
-    "agent/context/sources_tests.rs",
-];
-
-/// The body's own module and its test modules and fixtures, by prefix: the
-/// body is what these exist to drive.
-const OLD_ENGINE_PREFIXES: &[&str] = &["agent/runtime/", "agent/runtime_"];
 
 fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -107,13 +78,6 @@ fn sources() -> Vec<(String, String)> {
             Some((relative, text))
         })
         .collect()
-}
-
-fn is_old_engine_user(relative: &str) -> bool {
-    OLD_ENGINE_FILES.contains(&relative)
-        || OLD_ENGINE_PREFIXES
-            .iter()
-            .any(|prefix| relative.starts_with(prefix))
 }
 
 /// Every definition of a moved item, with the file that carries it.
@@ -187,19 +151,15 @@ fn no_caller_reaches_the_moved_items_through_the_old_engine() {
     );
 }
 
-/// No file outside the old engine's kept users names it — not the job engine,
-/// not the chat layer, not `saya ask`. The full path is checked everywhere; the
-/// crate-relative spelling only under `agent/`, where it can only mean the old
-/// turn engine (every other `super::runtime` is another module's own).
+/// No file names the old engine at all — not the job engine, not the chat
+/// layer, not `saya ask`, and not a comment explaining what used to be there.
+/// With the body deleted there is no kept user left, so there is no exclusion.
 #[test]
 fn no_live_front_names_the_old_engine() {
     let full = concat!("agent::", "runtime::");
     let relative = concat!("super::", "runtime::");
     let mut offenders = Vec::new();
     for (path, text) in sources() {
-        if is_old_engine_user(&path) {
-            continue;
-        }
         for (index, line) in text.lines().enumerate() {
             let names_it =
                 line.contains(full) || (path.starts_with("agent/") && line.contains(relative));
@@ -210,35 +170,9 @@ fn no_live_front_names_the_old_engine() {
     }
     assert!(
         offenders.is_empty(),
-        "these lines name the old turn engine from a live path; the leaves it \
-         still provided are moved next to their callers ({} offender(s)):\n{}",
+        "these lines name the old turn engine, which is deleted; the leaves it \
+         still provided live next to their callers ({} offender(s)):\n{}",
         offenders.len(),
         offenders.join("\n")
-    );
-}
-
-/// The body is kept, so its kept users must still be there: deleting one of
-/// them (rather than re-pointing it) would drop the behaviour it pins.
-#[test]
-fn the_kept_users_still_exist() {
-    let root = crate_root();
-    let mut missing: Vec<&str> = OLD_ENGINE_FILES
-        .iter()
-        .copied()
-        .filter(|path| !root.join("src").join(path).exists())
-        .collect();
-    let paths: Vec<String> = sources().into_iter().map(|(path, _)| path).collect();
-    missing.extend(
-        OLD_ENGINE_PREFIXES
-            .iter()
-            .copied()
-            .filter(|prefix| !paths.iter().any(|path| path.starts_with(prefix))),
-    );
-    assert!(
-        missing.is_empty(),
-        "the old turn body is kept for these users, but they are gone ({} \
-         path(s)):\n{}",
-        missing.len(),
-        missing.join("\n")
     );
 }

@@ -1,5 +1,4 @@
 use crate::SessionState;
-use saya_agent::PermissionMode;
 
 /// Builds a compact one-line status header shown with the interactive prompt:
 /// the active profile, any included databases, the provider/model, the
@@ -62,18 +61,16 @@ pub(crate) fn status_line(state: &SessionState) -> String {
 }
 
 /// Structured status for the TUI status bar, so each segment can be coloured.
+/// The new front paints five of the header's segments from this view
+/// (`workspace_root`, `model`, `host_composed`, `sharing_on`,
+/// `denied_programs`); the profile and approval words are the rendered
+/// header's own, so they are not carried twice.
 pub(crate) struct StatusView {
-    pub(crate) profile: String,
-    pub(crate) included: Vec<String>,
     pub(crate) model: String,
-    pub(crate) approval_mode: String,
     /// The session's task posture — mirrors `status_line`'s `mode:` segment,
-    /// so the TUI bar and the headless header cannot drift.
+    /// read by the mirrored-header tests so the two cannot drift.
+    #[allow(dead_code)]
     pub(crate) agent_mode: String,
-    /// The session's permission mode — the `(approval, agent)` pair
-    /// projected, the one word Shift+Tab moves — or `None` where the pair is
-    /// a consent posture with no mode of its own (`read-only`, `never`).
-    pub(crate) permission_mode: Option<PermissionMode>,
     /// The pinned workspace root, when one binds — mirrors `status_line`'s
     /// segment; `None` renders the no-root shape.
     pub(crate) workspace_root: Option<String>,
@@ -84,23 +81,18 @@ pub(crate) struct StatusView {
     pub(crate) host_composed: bool,
     /// The session's deny list — mirrors `status_line`'s `deny:` listing.
     pub(crate) denied_programs: Vec<String>,
-    /// The session task list's done count — mirrors `status_line`'s
-    /// `tasks:` segment; `None` renders no segment, the empty-list shape.
+    /// The session task list's done count — mirrors `status_line`'s `tasks:`
+    /// segment; `None` renders no segment, the empty-list shape. Read by the
+    /// mirrored-header test so the two surfaces cannot drift.
+    #[allow(dead_code)]
     pub(crate) task_summary: Option<String>,
 }
 
 /// Returns structured status bar segments for the active session state.
 pub(crate) fn status_segments(state: &SessionState) -> StatusView {
     StatusView {
-        profile: state
-            .profile
-            .clone()
-            .unwrap_or_else(|| "(no profile)".to_string()),
-        included: state.included_profiles.clone(),
         model: state.model.clone(),
-        approval_mode: state.approval_mode.clone(),
         agent_mode: state.agent_mode.clone(),
-        permission_mode: crate::interactive::session::permissions::mode::current(state),
         workspace_root: state.workspace_root.clone(),
         sharing_on: state.allow_data_sharing,
         host_composed: state.host_composed,

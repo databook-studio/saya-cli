@@ -15,8 +15,6 @@ use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDial
 
 use super::prompt::ChatPrompt;
 use super::{ChatDatabaseFlags, DatabasePlugin};
-use crate::agent::session_facts::SessionFacts;
-use crate::agent::system_prompt::assemble_system_prompt_with_session;
 use crate::agent::tools::DatabaseTools;
 use crate::agent::turn_context::last_sql_hint_block;
 use crate::connection::{ConnectionEntry, ConnectionRegistry};
@@ -150,35 +148,6 @@ fn a_run_without_a_database_is_asked_for_no_section() {
             "an active plugin's section states `{word}`: {}",
             sections[0]
         );
-    }
-}
-
-/// Test 3 — one copy of each text: the plugin's section is composed of the same
-/// bytes, in the same order, the old chat prompt carries, so the goldens cannot
-/// drift when the chat switches to the plugin's section.
-#[test]
-fn the_section_is_the_old_chat_prompts_database_text() {
-    let registry = sqlite_registry("local");
-    let session = SessionFacts {
-        registry: &registry,
-        workspace_root: None,
-    };
-    let old = assemble_system_prompt_with_session(&registry, MemoryMode::Assisted, true, &session)
-        .expect("the chat prompt");
-    let section = section(&registry, MemoryMode::Assisted);
-
-    let pieces: Vec<&str> = section.split("\n\n").collect();
-    assert_eq!(
-        pieces.len(),
-        5,
-        "memory, the database fact line, the guidance, the contract, the dialect: {pieces:?}"
-    );
-    let mut cursor = 0;
-    for piece in pieces {
-        let found = old[cursor..].find(piece).unwrap_or_else(|| {
-            panic!("the old chat prompt must carry this section verbatim: {piece}\n\nin: {old}")
-        });
-        cursor += found + piece.len();
     }
 }
 

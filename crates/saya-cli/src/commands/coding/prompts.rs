@@ -137,3 +137,7 @@ mod prompts_routing_tests;
 #[cfg(all(test, unix))]
 #[path = "prompts_file_sources_tests.rs"]
 mod prompts_file_sources_tests;
+
+#[cfg(all(test, unix))]
+#[path = "prompts_plan_twin_tests.rs"]
+mod prompts_plan_twin_tests;

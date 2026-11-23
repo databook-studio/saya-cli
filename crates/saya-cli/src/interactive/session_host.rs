@@ -123,9 +123,6 @@ fn effective_path(path: Option<String>) -> Option<String> {
 /// prompts and `/allow` consult — or nothing, when no workspace root bound
 /// or no PATH is set (the no-PATH seam above composes the lane away).
 pub(crate) struct SessionHost {
-    /// The executor configuration: the child's PATH, ceiling, and passed
-    /// variables — built once, shared across calls.
-    pub(crate) config: saya_harness::host::HostConfig,
     /// The facts `/allow command:<x>` consults and the prompt states.
     pub(crate) facts: crate::approval_facts::HostFacts,
 }
@@ -144,9 +141,8 @@ pub(crate) fn compose_host(
         return Ok(None);
     };
     let timeout = std::time::Duration::from_secs(launch.config.timeout_seconds);
-    let mut config =
-        saya_harness::host::HostConfig::new(path_value, root.to_path_buf(), timeout)
-            .map_err(|error| format!("the host-command lane could not be composed: {error}"))?;
+    let config = saya_harness::host::HostConfig::new(path_value, root.to_path_buf(), timeout)
+        .map_err(|error| format!("the host-command lane could not be composed: {error}"))?;
     let mut pass_env = Vec::new();
     for name in &launch.config.pass_env {
         let value = std::env::var(name).map_err(|_| {
@@ -154,11 +150,15 @@ pub(crate) fn compose_host(
         })?;
         pass_env.push((name.clone(), value));
     }
-    config = config
+    // The composed config is validated here and dropped: the executor that
+    // spawned through it went with the deleted turn body, so only the facts
+    // (what `/allow command:<x>` consults, and what the prompt states) are
+    // kept — while a PATH, ceiling or unset `pass_env` still refuses the lane
+    // at composition, never at the first call.
+    let _ = config
         .with_extra_env(pass_env)
         .map_err(|error| format!("the host-command lane could not be composed: {error}"))?;
     Ok(Some(SessionHost {
-        config,
         facts: crate::approval_facts::HostFacts {
             workspace_root: root.to_path_buf(),
             timeout_seconds: launch.config.timeout_seconds,

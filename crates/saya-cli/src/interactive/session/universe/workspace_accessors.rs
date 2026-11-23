@@ -12,27 +12,6 @@ impl SessionUniverse {
         self.mcp.clone()
     }
 
-    /// This session's MCP servers under one turn's consent: the mode, the
-    /// decider that is here now, and this turn's cancellation. `None` where
-    /// no lane was composed or no server started; a lane whose servers all
-    /// failed still reports why in the startup notice.
-    pub(crate) fn mcp_for_turn(
-        &self,
-        policy: ApprovalPolicy,
-        consent: crate::mcp::client::Consent,
-        cancellation: &CancellationToken,
-    ) -> Option<Arc<McpTools>> {
-        let lane = self.mcp.as_ref()?;
-        (!lane.is_empty()).then(|| {
-            lane.with_consent(
-                policy,
-                consent,
-                crate::agent::tools::consent::Caller::Session,
-                cancellation.clone(),
-            )
-        })
-    }
-
     /// Whether the host lane composed: the bypass activation line's lane
     /// fact and the status header's `host:` segment read this.
     pub(crate) fn host_composed(&self) -> bool {
@@ -43,15 +22,6 @@ impl SessionUniverse {
     /// and the session record's fact.
     pub(crate) fn root(&self) -> Option<&Path> {
         self.workspace.as_ref().map(|bound| bound.root.as_path())
-    }
-
-    /// The checkout's data-file route, detected once at composition, gated
-    /// on whether this turn advertises `shell`.
-    pub(crate) fn file_sources(
-        &self,
-        shell_offered: bool,
-    ) -> crate::agent::file_sources::FileSources {
-        crate::agent::file_sources::for_session(shell_offered, self.file_sources)
     }
 
     /// This session's record id, when a live acquisition composed this
@@ -78,22 +48,6 @@ impl SessionUniverse {
         previous: Arc<crate::agent::hooks::SessionHooks>,
     ) {
         self.session_hooks = previous;
-    }
-
-    /// This session's post-turn extraction circuit breaker — the runtime
-    /// consults it before every turn's extraction attempt and records this
-    /// turn's outcome against it. Not persisted: a resumed session gets a
-    /// fresh one, composed enabled.
-    pub(crate) fn learning_breaker(&self) -> &LearningBreaker {
-        &self.learning_breaker
-    }
-
-    /// Binds the turn's live grant store — what the session surfaces do
-    /// once per turn, from the policy they hold (`session_request::run`,
-    /// the TUI spawn). Mirrors `primary`'s per-turn bind; an unbound view
-    /// is the closed shape.
-    pub(crate) fn bind_grants(&self, grants: &saya_agent::SessionGrants) {
-        self.grants.bind(grants);
     }
 
     /// The approval prompts' facts, read off this universe's composed
@@ -140,17 +94,6 @@ impl SessionUniverse {
         self.workspace
             .as_ref()
             .map(|bound| Arc::clone(&bound.workspace))
-    }
-
-    /// The session's recovery handle — but only where a workspace is
-    /// bound: no workspace, no file tools, no recorder, whatever the flag
-    /// says. The per-turn `DatabaseTools` build attaches its parts.
-    pub(crate) fn recovery_handle(&self) -> Option<RecoveryHandle> {
-        if self.workspace.is_some() {
-            self.recovery.clone()
-        } else {
-            None
-        }
     }
 
     /// The deny list this universe carries — the programs every door

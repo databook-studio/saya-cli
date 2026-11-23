@@ -111,9 +111,9 @@ impl ShellPolicy {
     }
 
     /// Binds the surface's own store: the grants it consults beside whatever
-    /// the operator remembers. A session's store outlives its prompts — a
-    /// headless turn composes no operator at all — so the policy is handed it
-    /// directly rather than reaching it through a prompt nobody built.
+    /// the operator remembers. The session shell the deleted body composed was
+    /// its production caller; the grant tests bind a store here directly.
+    #[cfg(test)]
     pub(crate) fn with_grants(mut self, grants: Option<SessionGrants>) -> Self {
         self.grants = grants;
         self

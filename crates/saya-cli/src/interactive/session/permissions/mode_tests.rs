@@ -28,6 +28,10 @@ mod launch;
 mod running_job;
 
 #[cfg(test)]
+#[path = "mode_tests/plan_rearm.rs"]
+mod plan_rearm;
+
+#[cfg(test)]
 #[path = "mode_tests/bypass_gate.rs"]
 mod bypass_gate;
 

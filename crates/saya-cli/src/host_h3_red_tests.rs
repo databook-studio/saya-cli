@@ -56,7 +56,7 @@ fn bypass_allows_every_host_ask_and_structural_refusals_still_refuse() {
     // and `runs_still_refuse_command_scopes` below.
     use saya_agent::{ApprovalDecision, ApprovalPolicy, SessionPolicy};
     // Bypass allows every host ask: no token, no grant, still Allow.
-    let tool = crate::interactive::session_definitions::run_command();
+    let tool = crate::agent::tools::web::fetch_definition();
     let policy = SessionPolicy::new(ApprovalPolicy::Bypass);
     assert_eq!(
         policy.resolve(&tool.effect, None),

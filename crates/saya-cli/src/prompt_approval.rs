@@ -41,6 +41,9 @@ pub(crate) struct TerminalApproval {
 }
 
 impl TerminalApproval {
+    /// Test seam: the plain cancel-aware decider. The deleted request body was
+    /// its production caller; the approval tests drive the same engine here.
+    #[cfg(test)]
     pub(crate) fn with_cancellation(
         policy: ApprovalPolicy,
         can_prompt: bool,
@@ -98,9 +101,9 @@ impl TerminalApproval {
     /// The session turn's decider. The plain REPL asks through the line
     /// front's `ask` now (`front/line/ask.rs`, over the same
     /// `terminal_choice` and answers line); the one-shot `ask` path's decider
-    /// is `frozen`. Its callers are the old request body
-    /// (`interactive::session_request`, kept for 0.5.1), the universe's
-    /// write-effect pins and the grant-lifecycle tests.
+    /// is `frozen`. The deleted request body was its production caller; the
+    /// grant-lifecycle tests drive the same engine here.
+    #[cfg(test)]
     pub(crate) fn from_session_with_cancellation(
         policy: SessionPolicy,
         can_prompt: bool,
@@ -128,6 +131,9 @@ impl TerminalApproval {
         }
     }
 
+    /// Test seam: attaches the question scope's metrics collector, which the
+    /// deleted body bound and the metrics tests bind themselves.
+    #[cfg(test)]
     pub(crate) fn with_metrics(
         mut self,
         metrics: Option<Arc<crate::local_metrics::LocalMetrics>>,

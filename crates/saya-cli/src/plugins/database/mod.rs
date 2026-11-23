@@ -23,6 +23,12 @@ mod learning_fixture;
 #[cfg(test)]
 mod learning_tests;
 #[cfg(test)]
+mod prompt_order_twin_tests;
+#[cfg(test)]
+mod prompt_twin_fixture;
+#[cfg(test)]
+mod prompt_twin_tests;
+#[cfg(test)]
 mod recall_fixture;
 #[cfg(test)]
 mod recall_tests;
