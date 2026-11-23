@@ -63,7 +63,7 @@ pub use model::{
 };
 pub use permissions::{
     CommandDecision, CommandRule, CommandRules, MAX_COMMAND_RULE_BYTES, MAX_COMMAND_RULES,
-    PermissionsFile, ResolvedPermissions, decide,
+    PermissionsFile, ReadOnlySet, ResolvedPermissions, decide,
 };
 pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};

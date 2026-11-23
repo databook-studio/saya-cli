@@ -177,7 +177,11 @@ impl ShellPolicy {
     /// the second. A deny rule refuses in every mode, `bypass` included. An
     /// allow rule that covers every segment of a substitution-free command
     /// pre-answers the host lane under the asking modes; it never widens
-    /// `read-only` or `never`. A `shell:` grant the job's operator remembered
+    /// `read-only` or `never`. A command the vetted read-only set answers
+    /// ([`CommandDecision::ReadOnly`]) skips the same question — but only where
+    /// an operator is there to answer it: the set skips a question, and with
+    /// nobody to ask the lane falls back exactly as before. A `shell:` grant
+    /// the job's operator remembered
     /// pre-answers the same way, and only here — after the rule and after the
     /// mode, for a call the mode would otherwise put to the operator. Every
     /// other call is decided as before: a call that named the sandbox on a host
@@ -203,8 +207,12 @@ impl ShellPolicy {
             ApprovalPolicy::Bypass => Lane::Host(rule_allowed),
             ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => {
                 let pre_answered = rule_allowed || self.remembered(arguments);
+                // The vetted read-only set skips a question, not the consent
+                // path: with no operator to skip, today's fallback stands.
+                let read_only =
+                    self.prompt.is_some() && self.decision(arguments) == CommandDecision::ReadOnly;
                 if pre_answered || self.prompt.is_some() {
-                    Lane::Host(pre_answered)
+                    Lane::Host(pre_answered || read_only)
                 } else if self.has_sandbox {
                     Lane::Sandbox(Some(SANDBOX_DOWNGRADE_NOTICE))
                 } else {

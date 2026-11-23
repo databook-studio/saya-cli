@@ -22,4 +22,11 @@ pub(crate) fn merge(
         base.deny = layer.deny.clone();
         recorder.record("permissions.deny", source("deny"));
     }
+    if layer.read_only_commands.is_some() {
+        base.read_only_commands = layer.read_only_commands;
+        recorder.record(
+            "permissions.read_only_commands",
+            source("read_only_commands"),
+        );
+    }
 }

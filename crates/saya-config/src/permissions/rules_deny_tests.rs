@@ -14,6 +14,7 @@ fn rules(deny: &[&str]) -> CommandRules {
             .map(|rule| CommandRule::parse(rule).expect("a valid test rule"))
             .collect(),
         diagnostics: Vec::new(),
+        ..Default::default()
     }
 }
 

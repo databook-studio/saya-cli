@@ -597,6 +597,7 @@ it, and a reverted attempt is reported as `tools`.
 allow_bypass = true               # default: false
 allow = ["cargo test", "git diff"]
 deny = ["rm"]
+read_only_commands = false        # default: true
 ```
 
 `allow_bypass` decides whether a session may *enter* the `bypass` permission
@@ -653,6 +654,25 @@ entry is a configuration diagnostic, not a startup failure.
 `--allow-command <prefix>` and `--deny-command <prefix>` state the same rules
 at launch, repeatably, on `saya start`, `saya run` and the interactive
 session; the flags add to the configuration lists rather than replacing them.
+
+`read_only_commands` — default `true` — is the switch over the built-in
+read-only set. With it on, a `shell` call whose every part only reads runs under
+`ask` and `accept-edits` with no question: `ls`, `cat`, `head`, `tail` (not
+`-f`), `wc`, `file` (not `-C`), `stat`, `du`, `df`, `pwd`, `echo`, `which`,
+`type`, `tree` (not `-o`), `find` (never `-exec`, `-execdir`, `-ok`, `-okdir`,
+`-delete`, `-fprint*`), `grep`, `rg` (not `--pre`), `sort` (not `-o`), `uniq`
+(one file), `cut`, `diff`, and `git` with `status`, `log`, `diff`, `show`,
+`branch` (no argument, `-a`, `-r`, `--list`), `rev-parse`, `ls-files`, `blame`,
+or `remote -v`. A pipeline of such commands qualifies, and so does a chain of
+`&&`, `||`, `;` — but only when every part of it qualifies. One output redirect
+to a file, a substitution, a heredoc, a leading `NAME=value`, a wrapper
+(`env`, `xargs`, `timeout`, `sudo`, …), an interpreter's inline code, a path, or
+any program outside the list keeps the question, and so does any `git` spelling
+that pages, execs, or writes (`-c`, `--exec-path`, `--ext-diff`, `--output`).
+The deny list is unchanged by it — a denied program in the set is still
+refused — and `bypass`, `read-only` and `never` read exactly as before. Set it
+to `false` to answer every call yourself; the key can withhold the set, never
+state one.
 
 `[permissions]` is protected whole, like `[tools]`: a project's
 `.saya/config.toml` cannot set it, and an attempt is reverted and reported as
