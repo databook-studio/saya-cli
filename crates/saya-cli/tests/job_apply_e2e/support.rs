@@ -44,36 +44,8 @@ pub(super) fn child_path(git: &Path) -> std::ffi::OsString {
     .expect("PATH components are valid")
 }
 
-/// The Windows variables a child needs to load and to start ordinary programs.
-/// Without `SystemRoot` a process cannot initialise Winsock, so its first HTTP
-/// request fails before anything reaches the network. Unix has no equivalent.
-#[cfg(windows)]
-const WINDOWS_SYSTEM_ENV: &[&str] = &[
-    "SystemRoot",
-    "WINDIR",
-    "SystemDrive",
-    "TEMP",
-    "TMP",
-    "ComSpec",
-    "PATHEXT",
-    "LOCALAPPDATA",
-    "APPDATA",
-    "ProgramData",
-];
-
-/// Re-adds the Windows system variables from the test process to a command
-/// whose environment was cleared. A no-op on unix, which needs none of them.
-#[cfg(windows)]
-pub(super) fn inherit_windows_system_env(command: &mut Command) {
-    for name in WINDOWS_SYSTEM_ENV {
-        if let Some(value) = std::env::var_os(name) {
-            command.env(name, value);
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub(super) fn inherit_windows_system_env(_command: &mut Command) {}
+// The Windows system variables both cleared-environment harnesses keep.
+include!("../support/windows_system_env.rs");
 
 pub(super) fn git(repo: &Path, args: &[&str]) {
     let output = Command::new(git_executable())

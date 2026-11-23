@@ -1,3 +1,9 @@
+// The scripted-provider child: the shared Windows system variables, the output
+// pumps, and the guard that reaps it. Included by the harness module, so its
+// context is stated as plain comments rather than an inner `//!` header.
+
+include!("../windows_system_env.rs");
+
 /// Waits until `needle` has appeared at least `count` times in `buffer`.
 pub(crate) fn wait_for_stream_count(
     buffer: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -165,7 +171,12 @@ pub(crate) fn spawn_child_with_config_extra(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .env_clear()
+        .env_clear();
+    // Windows cannot open a socket without its system variables back, so the
+    // first request would fail before it reached the mock provider. Nothing
+    // else is inherited: Unix keeps exactly the environment it had.
+    inherit_windows_system_env(&mut command);
+    command
         .env("PATH", path)
         .env("SAYA_CONFIG_HOME", &config_root)
         .env("SAYA_SESSION_DIR", &session_root)
