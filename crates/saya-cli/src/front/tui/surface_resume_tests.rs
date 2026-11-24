@@ -48,6 +48,15 @@ async fn bare_sessions_offers_the_saved_records_to_the_picker() {
         rows.iter().all(|row| !row.age.is_empty()),
         "every row states its age: {rows:#?}"
     );
+
+    // Bare `/resume` opens the same pane: one listing, two ways to ask for it.
+    fixture.op("/resume").await;
+    let resumed_rows = fixture.picked().await;
+    assert_eq!(
+        resumed_rows.len(),
+        2,
+        "bare `/resume` offers the same records: {resumed_rows:#?}"
+    );
 }
 
 /// `↵` on a row is the resume: the record's conversation is the one the next
