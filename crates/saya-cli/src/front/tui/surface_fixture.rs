@@ -53,6 +53,8 @@ pub(crate) struct Fixture {
     /// The line the surface drives: the run it is on now, its transcript and
     /// its rollover.
     pub(crate) line: Arc<SurfaceLine>,
+    /// The front the session talks to: a command's words are said through it.
+    front: Arc<Forward>,
     /// The folder this fixture's session worked in: the folder a record it saves
     /// pins.
     folder: PathBuf,
@@ -69,10 +71,41 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     /// The words the surface has said so far, drained: what a test asserts the
-    /// transcript names.
-    pub(crate) fn said(&self) -> Vec<String> {
+    /// transcript names. The read is synchronised first, so a sentence the queue
+    /// still holds is never read as a sentence never said.
+    pub(crate) async fn said(&self) -> Vec<String> {
+        self.sync().await;
         let mut said = self.words.lock().unwrap_or_else(PoisonError::into_inner);
         std::mem::take(&mut *said)
+    }
+
+    /// Waits until the surface's own queue has been read up to this instant: a
+    /// sentinel is handed to the same queue the drain reads, so everything said
+    /// before it has landed when it comes back.
+    async fn sync(&self) {
+        const SENTINEL: &str = "\u{0}saya-fixture-sync";
+        self.front.note(SENTINEL.to_owned());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let landed = self
+                .words
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .last()
+                .is_some_and(|word| word == SENTINEL);
+            if landed {
+                self.words
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .pop();
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the surface's own queue was never read"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     fn drain(&self, mut queue: mpsc::UnboundedReceiver<Msg>) {
@@ -364,6 +397,7 @@ pub(crate) async fn surface(label: &str) -> Fixture {
         words: Arc::new(Mutex::new(Vec::new())),
         picked: Arc::new(Mutex::new(None)),
         folder,
+        front: Arc::clone(&front),
         port,
         provider,
         state,

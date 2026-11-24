@@ -63,7 +63,7 @@ async fn choosing_a_row_resumes_it_and_the_next_turn_carries_its_turns() {
     let chosen = rows.first().expect("the record is offered").id.clone();
     fixture.resume(&chosen).await;
 
-    let said = fixture.said();
+    let said = fixture.said().await;
     assert!(
         said.iter().any(|line| line.starts_with("resumed earlie")),
         "the surface says what it resumed: {said:?}"
@@ -94,7 +94,7 @@ async fn resuming_with_an_id_mid_session_carries_that_sessions_turns() {
     fixture.settle(1).await;
 
     fixture.op("/resume s-earlier").await;
-    let said = fixture.said();
+    let said = fixture.said().await;
     assert!(
         !said
             .iter()
@@ -133,7 +133,7 @@ async fn a_folder_another_session_holds_refuses_the_resume() {
     fixture.settle(1).await;
 
     fixture.op("/resume s-elsewhere").await;
-    let said = fixture.said();
+    let said = fixture.said().await;
     assert!(
         said.iter()
             .any(|line| line == "cannot resume s-elsewhere: another session owns this folder"),
