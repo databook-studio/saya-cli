@@ -1,3 +1,7 @@
+// Unix-only: the pty harness behind `tui_pty_smoke.rs` is macOS/Linux, and
+// the same ConPTY unknown applies here.
+#![cfg(not(windows))]
+
 //! The saved-session picker, on a pty, over the real binary.
 //!
 //! What the earlier cases cannot prove: that `/sessions` paints its pane on a

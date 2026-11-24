@@ -7,7 +7,7 @@
       "system_bytes": 5150,
       "tools_bytes": 15056,
       "tool_count": 20,
-      "reason": "measured 20769 / 4904 / 14339 and 19 tools at 0.5.1 with the database family latched, plus the stated headroom; UI1 raises the byte ceiling to 21942 for the bounded workspace summary the launch now carries on the first request — measured 20897, 128 bytes more than the row above, plus the same 5 % headroom"
+      "reason": "measured 20769 / 4904 / 14339 and 19 tools at 0.5.1 with the database family latched, plus the stated headroom; UI1 raises the byte ceiling to 21942 for the bounded workspace summary the launch may carry on the first request — 128 bytes on top of the 20897 a run whose scan won the race sends, plus the same 5 % headroom. The golden and this check measure the request with the summary's block normalised out, because whether the background scan beats the first message is a race and not a behaviour; this ceiling is what a run that does carry it must stay under"
     },
     {
       "surface": "chat_no_database",

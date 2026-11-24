@@ -2,11 +2,12 @@
   "surfaces": [
     {
       "surface": "chat",
-      "first_request_bytes": 20897,
+      "first_request_bytes": 20769,
       "tool_count": 19,
       "tools_bytes": 14339,
       "system_bytes": 4904,
-      "prefix_stable": true
+      "prefix_stable": true,
+      "first_request_launch_summary_count": 1
     },
     {
       "surface": "helper",
@@ -14,7 +15,8 @@
       "tool_count": 10,
       "tools_bytes": 6743,
       "system_bytes": 629,
-      "prefix_stable": true
+      "prefix_stable": true,
+      "first_request_launch_summary_count": 0
     },
     {
       "surface": "job",
@@ -22,7 +24,8 @@
       "tool_count": 12,
       "tools_bytes": 9099,
       "system_bytes": 2743,
-      "prefix_stable": true
+      "prefix_stable": true,
+      "first_request_launch_summary_count": 0
     }
   ]
 }

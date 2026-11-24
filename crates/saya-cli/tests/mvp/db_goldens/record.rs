@@ -16,7 +16,10 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::classify::{classify_result, record_tool_result};
 use super::harness::ServedCall;
+use super::launch_presence;
+use super::launch_summary;
 use super::normalise::Normaliser;
 use super::record_b::{is_extraction_request, recall_block};
 
@@ -42,13 +45,21 @@ pub(crate) struct Golden {
 pub(crate) struct RequestRecord {
     /// The advertised tool names, in wire order.
     pub(crate) tools: Vec<String>,
-    /// The body's byte length after normalisation.
+    /// The body's byte length after normalisation, with the launch summary's
+    /// block taken out: whether the background scan landed before the turn's
+    /// first request is a race (`launch_presence`), so the bytes that race
+    /// decides must not be in the number.
     pub(crate) body_bytes: usize,
     pub(crate) messages: usize,
     /// The recall block this request carried, if any. Absent from the part-A
     /// goldens (memory is off there), so their bytes do not move.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) recall: Option<RecallRecord>,
+    /// How many times this request carries the launch summary's block: `0` or
+    /// `1`, the run's one launch fact. Recorded, and set aside before two
+    /// records are compared, because whether it is there at all is the race.
+    #[serde(default)]
+    pub(crate) launch_summary_count: usize,
 }
 
 /// The prompt-recall context block a request carried, measured after
@@ -135,9 +146,10 @@ impl Golden {
             }
             requests.push(RequestRecord {
                 tools: advertised_tools(&value),
-                body_bytes: normalised.len(),
+                body_bytes: launch_summary::bytes_without_launch_summary(&normalised, &value),
                 messages: messages.len(),
                 recall: recall_block(&value),
+                launch_summary_count: launch_summary::recorded_count(&normalised, &value, scenario),
             });
             for message in messages {
                 record_tool_result(message, &mut results);
@@ -190,38 +202,6 @@ fn advertised_tools(value: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn record_tool_result(message: &serde_json::Value, results: &mut HashMap<String, String>) {
-    if message["role"] != "tool" {
-        return;
-    }
-    if let (Some(id), Some(content)) = (
-        message["tool_call_id"].as_str(),
-        message["content"].as_str(),
-    ) {
-        results.insert(id.to_owned(), content.to_owned());
-    }
-}
-
-/// Classifies a tool result the model received. A safety refusal is named by
-/// the one policy phrase the safety layer emits; any other error is `error`.
-pub(crate) fn classify_result(content: &str) -> &'static str {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
-        if let Some(error) = value.get("error").and_then(serde_json::Value::as_str) {
-            return classify_error(error);
-        }
-        return "ok";
-    }
-    classify_error(content)
-}
-
-fn classify_error(text: &str) -> &'static str {
-    if text.contains("query rejected by read-only safety policy") {
-        "refused-by-safety"
-    } else {
-        "error"
-    }
-}
-
 /// The committed golden's path. `name` is the scenario file stem.
 pub(crate) fn golden_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -251,9 +231,11 @@ pub(crate) fn assert_golden(name: &str, golden: &Golden) {
     });
     let committed: Golden = serde_json::from_str(&committed)
         .unwrap_or_else(|error| panic!("golden {} is valid JSON: {error}", path.display()));
+    launch_presence::assert_rule(name, &golden.requests);
+    launch_presence::assert_rule(name, &committed.requests);
     assert_eq!(
-        golden,
-        &committed,
+        golden.without_launch_presence(),
+        committed.without_launch_presence(),
         "behaviour changed for {}: review the diff, then regenerate with \
          SAYA_UPDATE_GOLDENS=1 only if the change is intended",
         path.display()

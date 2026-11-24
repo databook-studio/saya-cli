@@ -4,6 +4,8 @@ use saya_agent::CancellationToken;
 use saya_types::JobState;
 #[path = "finalization_tests/first_cause.rs"]
 mod first_cause;
+#[path = "finalization_tests/late_join.rs"]
+mod late_join;
 use std::{
     sync::atomic::Ordering,
     time::{Duration, Instant},
@@ -116,39 +118,29 @@ async fn exercise(case: &str) {
         let lease = resumed.operation.lock().await;
         let finalizing = resumed.finalize_run(Ok(fixture.output.clone()));
         tokio::pin!(finalizing);
-        let early = tokio::time::timeout(Duration::from_millis(300), &mut finalizing).await;
-        let state = fixture
-            .store
-            .get_coding_job(resumed.job_id())
+        // Nothing may return while this lease is held, and the case fails the
+        // moment something does. Finalization is driven beside the read for the
+        // reason `late_join::joins_before_settling` states: its cancel poll owns
+        // the store's one connection while it waits.
+        let state = tokio::select! {
+            biased;
+            done = &mut finalizing => panic!(
+                "finalization overtook the actual operation lease: {done:?}"
+            ),
+            state = late_join::job_state(&fixture.store, resumed.job_id()) => state,
+        };
+        drop(lease);
+        tokio::time::timeout(late_join::SETTLE_CEILING, &mut finalizing)
             .await
             .unwrap()
-            .unwrap()
-            .state;
-        let premature = early.is_ok();
-        drop(lease);
-        if !premature {
-            tokio::time::timeout(Duration::from_secs(10), &mut finalizing)
-                .await
-                .unwrap()
-                .unwrap();
-        }
-        assert!(
-            !premature,
-            "finalization overtook the actual operation lease"
-        );
+            .unwrap();
         assert_eq!(
             state,
             JobState::Running,
             "terminal state must wait for the operation lease"
         );
         assert_eq!(
-            fixture
-                .store
-                .get_coding_job(resumed.job_id())
-                .await
-                .unwrap()
-                .unwrap()
-                .state,
+            late_join::job_state(&fixture.store, resumed.job_id()).await,
             JobState::Completed
         );
         return;
@@ -207,61 +199,7 @@ async fn exercise(case: &str) {
         ));
         return;
     }
-    let finalizing = resumed.finalize_run(Ok(fixture.output.clone()));
-    tokio::pin!(finalizing);
-    let early = tokio::time::timeout(Duration::from_millis(300), &mut finalizing).await;
-    let state = fixture
-        .store
-        .get_coding_job(resumed.job_id())
-        .await
-        .unwrap()
-        .unwrap()
-        .state;
-    let premature = early.is_ok();
-    provider.release.store(true, Ordering::Release);
-    if premature {
-        tokio::time::timeout(Duration::from_secs(10), resumed.join())
-            .await
-            .unwrap()
-            .unwrap();
-    } else {
-        tokio::time::timeout(Duration::from_secs(10), &mut finalizing)
-            .await
-            .unwrap()
-            .unwrap();
-    }
-    assert!(
-        !premature,
-        "accepted late child was unfinished when root finalization returned"
-    );
-    assert_eq!(
-        state,
-        JobState::Running,
-        "accepted unfinished child cannot coexist with root Paused"
-    );
-    assert!(resumed.active.lock().await.is_none());
-    let history = fixture
-        .store
-        .list_coding_completion_history(resumed.job_id(), None, 32)
-        .await
-        .unwrap();
-    assert_eq!(history.items.len(), 2);
-    assert!(
-        history
-            .items
-            .iter()
-            .any(|item| item.result.invocation_id() == &receipt.invocation_id)
-    );
-    assert_eq!(
-        fixture
-            .store
-            .get_coding_job(resumed.job_id())
-            .await
-            .unwrap()
-            .unwrap()
-            .state,
-        JobState::Completed
-    );
+    late_join::joins_before_settling(&resumed, &fixture, &provider, &receipt).await;
 }
 async fn wait_for(mut ready: impl FnMut() -> bool) -> bool {
     let start = Instant::now();
