@@ -27,7 +27,12 @@
 // owns the module, and the other rows reach it through this binding.
 use crate::session_question_budget::harness;
 
+mod classify;
 mod frozen;
+mod launch_presence;
+#[path = "../support/launch_summary.rs"]
+mod launch_summary;
+mod launch_summary_tests;
 mod normalise;
 mod record;
 mod record_b;

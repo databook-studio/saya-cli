@@ -7,6 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Output;
 
+use super::super::classify::classify_result;
 use super::super::normalise::Normaliser;
 use super::super::record::{self, Golden, InvestigationRecord, StatementRecord};
 use super::super::setup::fixture;
@@ -223,7 +224,7 @@ fn a_saved_investigation_replays_read_only_and_refuses_a_tampered_write() {
             },
             StatementRecord {
                 sql: WRITE.into(),
-                outcome: record::classify_result(&refusal).into(),
+                outcome: classify_result(&refusal).into(),
             },
         ],
         results: vec![allowed_kind, result_kind(&refused)],

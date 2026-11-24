@@ -23,8 +23,9 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 20904,
-      "messages": 2
+      "body_bytes": 20769,
+      "messages": 2,
+      "launch_summary_count": 1
     },
     {
       "tools": [
@@ -48,8 +49,9 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21200,
-      "messages": 4
+      "body_bytes": 21065,
+      "messages": 4,
+      "launch_summary_count": 1
     }
   ],
   "tool_calls": [

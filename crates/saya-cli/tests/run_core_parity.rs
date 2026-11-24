@@ -32,6 +32,8 @@ mod script;
 
 #[path = "run_core_parity/baseline.rs"]
 mod baseline;
+#[path = "run_core_parity/body_fields.rs"]
+mod body_fields;
 #[path = "run_core_parity/budget.rs"]
 mod budget;
 #[path = "run_core_parity/capture.rs"]
@@ -42,6 +44,10 @@ mod chat;
 mod job;
 #[path = "run_core_parity/known_gaps.rs"]
 mod known_gaps;
+#[path = "support/launch_summary.rs"]
+mod launch_summary;
+#[path = "run_core_parity/launch_summary_tests.rs"]
+mod launch_summary_tests;
 #[path = "run_core_parity/matrix.rs"]
 mod matrix;
 #[path = "run_core_parity/no_database.rs"]
@@ -49,6 +55,8 @@ mod no_database;
 #[path = "mvp/db_goldens/normalise.rs"]
 #[allow(dead_code)] // shared test harness: this target uses part of it
 mod normalise;
+#[path = "run_core_parity/prefix_posture.rs"]
+mod prefix_posture;
 
 /// The scripted provider's own lifetime; the shared provider module reads it
 /// from the crate root, exactly as the context-efficiency binary does. It
@@ -117,7 +125,8 @@ fn assert_unregenerated_rows_are_unchanged(measured: &baseline::Baseline) {
             .find(|surface| surface.surface == row.surface)
             .unwrap_or_else(|| panic!("the baseline no longer measures {}", row.surface));
         assert_eq!(
-            measured, row,
+            measured.without_launch_presence(),
+            row.without_launch_presence(),
             "{}'s row moved, and this unit regenerates only {REGENERATED:?}: review that \
              surface's own change before regenerating its row",
             row.surface

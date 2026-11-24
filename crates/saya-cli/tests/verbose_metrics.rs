@@ -11,7 +11,7 @@
 
 #[path = "verbose_metrics/harness.rs"]
 mod harness;
-#[path = "verbose_metrics/summary.rs"]
+#[path = "support/launch_summary.rs"]
 mod summary;
 
 use std::time::Duration;

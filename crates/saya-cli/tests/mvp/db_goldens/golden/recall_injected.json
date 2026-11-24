@@ -23,17 +23,19 @@
         "contract_search",
         "contract_read"
       ],
-      "body_bytes": 21817,
+      "body_bytes": 21682,
       "messages": 2,
       "recall": {
         "present": true,
         "body_bytes": 247
-      }
+      },
+      "launch_summary_count": 1
     },
     {
       "tools": [],
       "body_bytes": 5675,
-      "messages": 2
+      "messages": 2,
+      "launch_summary_count": 0
     }
   ],
   "tool_calls": [],

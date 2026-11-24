@@ -25,19 +25,19 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::body_fields::{list, messages, serial, system};
+use super::launch_summary;
 use super::normalise::Normaliser;
-
-/// The surfaces whose second request does NOT repeat the first request's
-/// prefix today, with the reason. Every other surface must stay stable. A row
-/// here that has become stable fails the test, so it is deleted rather than
-/// left to rot.
-pub(super) const KNOWN_UNSTABLE: &[(&str, &str)] = &[];
 
 /// One surface's first request, measured after normalisation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Surface {
     pub(super) surface: String,
-    /// Bytes of the whole normalised first request body.
+    /// Bytes of the whole normalised first request body, with the launch
+    /// summary's block taken out: whether the background scan beat the run's
+    /// first message is a race (`chat::workspace_summary`), so the bytes that
+    /// race decides must not be in the number. `chat` is the one surface that
+    /// can carry it — a job root states its own context.
     pub(super) first_request_bytes: usize,
     /// Tool definitions the first request advertises.
     pub(super) tool_count: usize,
@@ -49,6 +49,11 @@ pub(super) struct Surface {
     /// message(s) byte for byte and its `messages` are request 1's plus
     /// appended entries.
     pub(super) prefix_stable: bool,
+    /// How many times the first request carries the launch summary's block:
+    /// `0` or `1`. Recorded, and set aside before two rows are compared,
+    /// because whether it is there at all is the race the bytes leave out.
+    #[serde(default)]
+    pub(super) first_request_launch_summary_count: usize,
 }
 
 /// The committed baseline, one row per surface in name order.
@@ -69,59 +74,6 @@ impl Baseline {
         let mut surfaces: Vec<Surface> = captures.iter().map(Surface::measure).collect();
         surfaces.sort_by(|a, b| a.surface.cmp(&b.surface));
         Self { surfaces }
-    }
-
-    pub(super) fn print(&self) {
-        println!(
-            "request baseline per surface (bytes after normalisation; prefix = request 2 \
-             repeats request 1)"
-        );
-        println!(
-            "{:<10}{:>20}{:>11}{:>12}{:>13}  prefix_stable",
-            "surface", "first_request_bytes", "tool_count", "tools_bytes", "system_bytes"
-        );
-        for surface in &self.surfaces {
-            println!(
-                "{:<10}{:>20}{:>11}{:>12}{:>13}  {}",
-                surface.surface,
-                surface.first_request_bytes,
-                surface.tool_count,
-                surface.tools_bytes,
-                surface.system_bytes,
-                surface.prefix_stable
-            );
-        }
-        for (surface, reason) in KNOWN_UNSTABLE {
-            println!("known unstable: {surface} — {reason}");
-        }
-    }
-
-    /// A surface stable today must stay stable, and a recorded gap must still
-    /// be a gap: the table is the contract, as in `known_gaps`.
-    pub(super) fn assert_prefix_posture(&self) {
-        for surface in &self.surfaces {
-            let recorded = KNOWN_UNSTABLE
-                .iter()
-                .find(|(name, _)| *name == surface.surface);
-            match (surface.prefix_stable, recorded) {
-                (true, None) | (false, Some(_)) => {}
-                (false, None) => panic!(
-                    "{}'s second request no longer repeats its first request's prefix: record \
-                     it in baseline::KNOWN_UNSTABLE with the reason, or fix the surface",
-                    surface.surface
-                ),
-                (true, Some((name, _))) => {
-                    panic!("{name}'s prefix is stable again: delete its KNOWN_UNSTABLE row")
-                }
-            }
-        }
-        for (surface, reason) in KNOWN_UNSTABLE {
-            assert!(
-                self.surfaces.iter().any(|row| row.surface == *surface),
-                "KNOWN_UNSTABLE names {surface}, which the baseline does not measure"
-            );
-            assert!(!reason.is_empty(), "KNOWN_UNSTABLE needs a reason");
-        }
     }
 
     /// Compares against the committed baseline, or rewrites it when
@@ -147,12 +99,32 @@ impl Baseline {
         let committed: Baseline = serde_json::from_str(&committed)
             .unwrap_or_else(|error| panic!("baseline {} is valid JSON: {error}", path.display()));
         assert_eq!(
-            self,
-            &committed,
+            self.without_launch_presence(),
+            committed.without_launch_presence(),
             "what the model is sent moved for one or more surfaces in {}: review the diff, then \
              regenerate with SAYA_UPDATE_GOLDENS=1 only if the change is intended",
             path.display()
         );
+    }
+
+    /// The same rows with every surface's launch-summary count set aside, which
+    /// is what two baselines are compared on.
+    pub(super) fn without_launch_presence(&self) -> Self {
+        let mut cleared = self.clone();
+        for surface in &mut cleared.surfaces {
+            surface.first_request_launch_summary_count = 0;
+        }
+        cleared
+    }
+}
+
+impl Surface {
+    /// The same row with its launch-summary count set aside: what two rows are
+    /// compared on.
+    pub(super) fn without_launch_presence(&self) -> Self {
+        let mut cleared = self.clone();
+        cleared.first_request_launch_summary_count = 0;
+        cleared
     }
 }
 
@@ -163,7 +135,7 @@ pub(super) fn golden_path() -> PathBuf {
 }
 
 impl Surface {
-    fn measure(captured: &Captured) -> Self {
+    pub(super) fn measure(captured: &Captured) -> Self {
         let mut normaliser = Normaliser::for_run();
         for root in &captured.roots {
             normaliser.add_root(root);
@@ -189,13 +161,20 @@ impl Surface {
         }
         let first = body(0);
         let second = body(1);
+        let context = format!("the {} surface", captured.surface);
+        let first_text = normaliser.normalise(&captured.bodies[0]);
         Self {
             surface: captured.surface.to_owned(),
-            first_request_bytes: normaliser.normalise(&captured.bodies[0]).len(),
+            first_request_bytes: launch_summary::bytes_without_launch_summary(&first_text, &first),
             tool_count: list(&first, "tools").len(),
             tools_bytes: serial(&first["tools"]).len(),
             system_bytes: system(&first).iter().map(Vec::len).sum(),
             prefix_stable: repeats_prefix(&first, &second),
+            first_request_launch_summary_count: launch_summary::recorded_count(
+                &first_text,
+                &first,
+                &context,
+            ),
         }
     }
 }
@@ -224,27 +203,4 @@ fn repeats_prefix(first: &serde_json::Value, second: &serde_json::Value) -> bool
         && after[..before.len()] == before[..]
         && serial(&first["tools"]) == serial(&second["tools"])
         && system(first) == system(second)
-}
-
-fn list<'a>(body: &'a serde_json::Value, key: &str) -> &'a [serde_json::Value] {
-    body[key].as_array().map(Vec::as_slice).unwrap_or_default()
-}
-
-/// The compact serialised form of one value; object keys are sorted, so two
-/// requests that sent the same content compare equal whatever their wire
-/// order.
-fn serial(value: &serde_json::Value) -> Vec<u8> {
-    serde_json::to_vec(value).expect("a request body serialises")
-}
-
-fn messages(body: &serde_json::Value) -> Vec<Vec<u8>> {
-    list(body, "messages").iter().map(serial).collect()
-}
-
-fn system(body: &serde_json::Value) -> Vec<Vec<u8>> {
-    list(body, "messages")
-        .iter()
-        .filter(|message| message["role"] == "system")
-        .map(serial)
-        .collect()
 }
