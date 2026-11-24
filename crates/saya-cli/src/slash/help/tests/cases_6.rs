@@ -59,8 +59,8 @@ Session
   /undo — Undo the last turn's file edits: restore the run's checkpoint taken before that turn
   /rewind [<id>] — List the run's checkpoints, newest first, or restore the one you name
   /compact [--new-session] — Summarise older turns to shrink working memory; --new-session continues in a smaller successor
-  /sessions [list|delete <id>] — Browse saved sessions: list or delete; bare opens a picker in the TUI
-  /resume <id> — Resume a saved session by id
+  /sessions [list|delete <id>] — Browse saved sessions: list or delete; bare opens the picker, and choosing a row resumes it
+  /resume [<id>] — Resume a saved session by id, in a running session too; bare opens the picker (the recent ids on the line REPL)
   /setup — Run the guided setup (full-screen terminal only)
   /reload — Re-read the configuration between turns: applies what is safe now, says what needs a new session. Data sharing and host commands never change in a running session.
   /doctor — Diagnose config: secrets, provider endpoint
