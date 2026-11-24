@@ -8,10 +8,10 @@ use saya_agent::NoopEventSink;
 use serde_json::Value;
 use std::fs;
 
-/// Read batches the child issues. Long enough that the 256 KiB history below
-/// compacts at least twice, so the facts are shown to survive successive
-/// compactions; the compaction-count assertion fails if it ever is not.
-const BATCHES: usize = 48;
+/// Read batches the child issues. Each batch delivers 128 KiB of actual file
+/// reads against a 256 KiB history, so this many batches compacts more than
+/// once; the compaction-count assertion fails if it ever stops doing so.
+const BATCHES: usize = 6;
 
 #[tokio::test]
 async fn native_larger_context_preserves_cumulative_coding_facts() {

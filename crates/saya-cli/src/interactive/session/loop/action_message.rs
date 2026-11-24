@@ -1,0 +1,205 @@
+/// One plain message: a turn of the session's run.
+///
+/// The run is composed and opened on the session's first message and every
+/// later message is a turn of that same run — same epoch, lease and provider.
+/// What the turn prints is the front's: the terminal sink streams the answer and
+/// its tool steps, and the settled turn says its own wording (the budget
+/// sentence, the pause line, `Request cancelled.`). What stays here is the
+/// loop's bookkeeping — the tally a scripted run reports, the record's run link,
+/// the save — and the process's turn outcome.
+fn handle_message(
+    line: &str,
+    ctx: &mut TurnContext,
+) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+    let format = ctx.format;
+    let terminal = ctx.terminal;
+    let store = ctx.store;
+    let state_db = ctx.state_db;
+    let runtime = Arc::clone(&ctx.runtime);
+    let save_refused = &mut ctx.save_refused;
+    let state = &mut *ctx.state;
+    let session = &mut *ctx.session;
+    // The session's live task list: the cell the run's `checklist` writes
+    // through. The record re-seeds it here, so a resumed session's list rides
+    // its next request, and the cell is synced back after the turn however the
+    // turn ended.
+    let tasks = session.universe().tasks();
+    tasks.replace(state.task_list.clone());
+    let said = match ctx.chat.as_ref() {
+        Some(chat) => chat.send(line.to_owned())?,
+        None => {
+            // The session's first message: the run it is a turn of. The loop
+            // composed one while the operator was still at the prompt; when it
+            // did not — a slash command made it stale, or there was none — the
+            // run is composed here, over the same facts.
+            let opened = match ctx.prepared.take() {
+                Some(prepared) => prepared.adopt(),
+                None => {
+                    let parts = first_message_parts(
+                        state, session, runtime, state_db, format, terminal, tasks.clone(),
+                    )?;
+                    // One opener for both surfaces: the loop's first line asks
+                    // the decision the full-screen launch asks, and enters the
+                    // run it opens.
+                    LineChat::begin(parts, surface_record(state))
+                }
+            };
+            let chat = match opened {
+                Ok(Begun::Open { chat, said }) => {
+                    if let Some(said) = said {
+                        session_emit::emit_action(
+                            SessionAction::Message(said),
+                            format,
+                            state,
+                            store,
+                        )?;
+                    }
+                    *chat
+                }
+                // One sentence, and the process leaves: the refusal is the
+                // job's, and this surface takes no further turn on it.
+                Ok(Begun::Refused { sentence }) => return Err(sentence.into()),
+                Err(error) => return Err(error.into()),
+            };
+            // The record names the run the session belongs to: lineage only.
+            state.run = chat.run_link();
+            let said = chat.send(line.to_owned())?;
+            ctx.chat = Some(chat);
+            said
+        }
+    };
+    let tally = ctx
+        .chat
+        .as_ref()
+        .map(LineChat::tally)
+        .unwrap_or_default();
+    // What the turn's own stream reported feeds the session the way the old
+    // turn body's settle did: the usage every attempt spent (a cancelled or
+    // failed turn's consumed calls included) and, for an answered turn, the
+    // words a person read — a turn that stopped, paused, failed or was
+    // cancelled records nothing.
+    if let Some(sent) = &said {
+        let settled = &sent.turn;
+        settled
+            .record
+            .totals
+            .fold_into(&mut state.usage, &settled.outcome);
+        if matches!(settled.outcome, ChatOutcome::Answered) {
+            state.record_turn(line, settled.record.answer.clone(), false, Vec::new());
+            // What the turn's tools observed settles into the session record the
+            // way the interactive turn's own settle did: the continuation a
+            // compaction saves reads its file and check facts from here.
+            if let Some(output) = sent.output.as_ref() {
+                state.observe_agent_output(output);
+            }
+        }
+        // What the turn's boundary then did — a compaction's own line, or the
+        // failure that latched it — is said through the session's one emit
+        // seam: the automatic trigger's wording already names its origin and
+        // the channel it belongs on.
+        if let Some(action) = sent.said.action() {
+            session_emit::emit_action(action, format, state, store)?;
+        }
+    }
+    // The record names the run the session belongs to now: a compaction or
+    // `/clear` moved it to the job that followed. The session's facts follow
+    // the record: the compaction a turn's boundary ran is applied to the
+    // state here, and the cell every later request is rendered from is re-read
+    // from it. The task list the run left behind is the record's, whatever the
+    // turn's outcome.
+    if let Some(chat) = ctx.chat.as_ref() {
+        state.run = chat.run_link();
+        sync_session_facts(
+            ctx.chat.as_ref().and_then(LineChat::session_facts).as_deref(),
+            session,
+            state,
+        );
+    }
+    sync_session_tasks(&tasks, state);
+    // A pause is not a failure: the next message continues from where the guard
+    // stopped the turn. Every other stop keeps today's exit contract — a
+    // cancelled turn and a stop that ended it errored the run.
+    let (status, outcome) = match said.as_ref().map(|sent| &sent.turn.outcome) {
+        Some(ChatOutcome::Stopped(_)) => (
+            prose_status(ProseOutcome::Failed, true),
+            TurnOutcome::Errored,
+        ),
+        Some(ChatOutcome::Failed { .. }) => {
+            (prose_status(ProseOutcome::Failed, false), TurnOutcome::Errored)
+        }
+        Some(ChatOutcome::Cancelled) => (
+            prose_status(ProseOutcome::Cancelled, false),
+            TurnOutcome::Errored,
+        ),
+        Some(ChatOutcome::Paused { .. }) | Some(ChatOutcome::Answered) | None => (
+            prose_status(ProseOutcome::Completed, false),
+            TurnOutcome::Completed,
+        ),
+    };
+    ctx.last_turn = Some(TurnSummary { status, tally });
+    if let Some(outcome) = persist(state, store, format, save_refused)? {
+        return Ok(outcome);
+    }
+    Ok(outcome)
+}
+
+/// The facts the session's first run is composed from: the folder the session
+/// bound (none for a session that bound none), its mode, the launch's seeds, and
+/// the conversation the record keeps behind the compaction boundary.
+///
+/// Stated once, so the run the loop composes while the operator is still at the
+/// prompt and the one a first line composes when that did not happen are the
+/// same run: the same folder, the same mode, the same databases, the same seed.
+fn first_message_parts(
+    state: &SessionState,
+    session: &SessionRuntime,
+    runtime: Arc<RuntimeConfig>,
+    state_db: &SqliteStateStore,
+    format: RenderFormat,
+    terminal: bool,
+    tasks: crate::interactive::session::tasks::SessionTasks,
+) -> Result<LineSession, Box<dyn std::error::Error>> {
+    // The folder the run is composed over: the session's own, and only when it
+    // bound one. A session that bound none composes a run with no workspace at
+    // all (`session_host`), rather than one over the folder the process was
+    // started in — the folder rule stays in the one place both surfaces read.
+    let folder = session.root().map(std::path::Path::to_path_buf);
+    // The session's turns spend `[limits.database]` once they use it.
+    let budget = crate::plugins::database::DatabaseBudget::of(&runtime);
+    Ok(LineSession {
+        session: state.id.clone(),
+        folder,
+        runtime,
+        store: state_db.clone(),
+        mode: state
+            .approval_mode_parsed()
+            .map_err(|error: saya_agent::ApprovalPolicyParseError| error.to_string())?,
+        overrides: state.prompt_overrides(),
+        format,
+        // The plain loop renders its turns on the terminal itself.
+        sink: None,
+        budget,
+        can_prompt: terminal,
+        // The launch statement's seeds, as the session that stated them holds
+        // them: a resumed session restarts unstated, and its store is empty
+        // because nothing was seeded into it.
+        grants: session.policy().grants().clone(),
+        // The plain loop takes the configured root: it works in the folder, so
+        // its records are the folder's.
+        state_root: None,
+        // Its turns are its own: no question token is stated here.
+        cancellation: None,
+        // The session's own task cell, and the facts its requests are rendered
+        // from: the compaction narrative and the continuation record the loop's
+        // state holds now.
+        tasks: Some(tasks),
+        facts: Some(crate::chat::SessionFacts::of(
+            state,
+            session.universe().workspace(),
+        )),
+        // The conversation the record keeps behind the compaction boundary: a
+        // resumed session replays its kept tail exactly as the run before it
+        // did.
+        seed: state.replayed_pairs(),
+    })
+}

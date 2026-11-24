@@ -13,6 +13,7 @@ use crate::limits::{AnsweringLimitsFile, JobLimitsFile};
 pub(super) struct ProtectedLimits {
     session: AnsweringLimitsFile,
     ask: AnsweringLimitsFile,
+    database: Option<AnsweringLimitsFile>,
     job: JobLimitsFile,
 }
 
@@ -20,6 +21,7 @@ pub(super) fn snapshot(file: &ConfigFile) -> ProtectedLimits {
     ProtectedLimits {
         session: file.limits.session.clone(),
         ask: file.limits.ask.clone(),
+        database: file.limits.database.clone(),
         job: file.limits.job.clone(),
     }
 }
@@ -37,6 +39,10 @@ pub(super) fn revert(file: &mut ConfigFile, trusted: &ProtectedLimits) -> Vec<St
     if file.limits.ask != trusted.ask {
         file.limits.ask = trusted.ask.clone();
         ignored.push("limits.ask".into());
+    }
+    if file.limits.database != trusted.database {
+        file.limits.database = trusted.database.clone();
+        ignored.push("limits.database".into());
     }
     if file.limits.job != trusted.job {
         file.limits.job = trusted.job.clone();

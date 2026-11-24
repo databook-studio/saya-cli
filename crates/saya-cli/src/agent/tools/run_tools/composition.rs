@@ -31,8 +31,10 @@ impl RunTools {
     }
 
     /// Composes with the session deny list: refused at the `run_command`
-    /// door before anything else. The session surface is the only caller —
-    /// runs never get the list.
+    /// door before anything else. The deleted session executor was its
+    /// production caller; the `run_command` reach tests bind the list here so
+    /// the deny matcher's branch is exercised rather than assumed.
+    #[cfg(test)]
     pub(crate) fn with_session_deny(
         mut self,
         deny: crate::interactive::session::permissions::deny::SessionDeny,
@@ -41,20 +43,10 @@ impl RunTools {
         self
     }
 
-    /// Composes with the session's live task list: `checklist` writes
-    /// through it. The session surface is the only caller — runs never get
-    /// the cell, and refuse the name as unknown.
-    pub(crate) fn with_tasks(
-        mut self,
-        tasks: crate::interactive::session::tasks::SessionTasks,
-    ) -> Self {
-        self.tasks = Some(tasks);
-        self
-    }
-
     /// Composes with the session journal: a deny firing is written there
     /// before the refusal is relayed. Wired by `SessionUniverse`'s
     /// journal-carrying executor; the deny tests attach it directly.
+    #[cfg(test)]
     pub(crate) fn with_session_journal(
         mut self,
         journal: std::sync::Arc<saya_store::SessionJournal>,
@@ -65,7 +57,9 @@ impl RunTools {
 
     /// Composes with the host lane: the executor config, whose workspace
     /// root the child runs with as its cwd. The session surface is the only
-    /// caller — runs never get the lane.
+    /// caller — runs never get the lane. The `run_command` tests compose it
+    /// here now that the session executor is gone.
+    #[cfg(test)]
     pub(crate) fn with_host(
         mut self,
         config: saya_harness::host::HostConfig,

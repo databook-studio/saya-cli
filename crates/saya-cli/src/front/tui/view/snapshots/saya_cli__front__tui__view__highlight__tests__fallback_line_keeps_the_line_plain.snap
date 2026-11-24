@@ -1,0 +1,7 @@
+---
+source: crates/saya-cli/src/front/tui/view/highlight_tests.rs
+expression: "outline(line, None, Scheme::Dark)"
+---
+[
+    "plain    ;; a form (let ((x 1)) x)",
+]

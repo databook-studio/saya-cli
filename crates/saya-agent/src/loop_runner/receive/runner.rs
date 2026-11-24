@@ -36,6 +36,7 @@ pub(in crate::loop_runner) async fn receive(
         cancellation,
         events,
         admission,
+        deferred_budget,
         effect_admission,
         require_physical_effect_admission,
         call_kind,
@@ -108,6 +109,18 @@ pub(in crate::loop_runner) async fn receive(
     let delays = super::delays::turn_retry_delays(&provider.retry_delays());
     let mut retries = 0_u8;
     if let Err(error) = admission.request(sink, cancellation).await {
+        return Err(attempt::ReceiveFailure {
+            error,
+            usage: recovered_usage,
+        });
+    }
+    // The turn's deferred plugin budget counts the same request the supplied
+    // scope just did. Unarmed it counts nothing, so a turn that has not used a
+    // plugin spends none of its policy; armed, its refusal is the same budget
+    // stop, latched on the turn's own token.
+    if let Some(budget) = deferred_budget
+        && let Err(error) = budget.admit_request(sink).await
+    {
         return Err(attempt::ReceiveFailure {
             error,
             usage: recovered_usage,
@@ -212,6 +225,12 @@ pub(in crate::loop_runner) async fn receive(
                         usage_complete = false;
                     }
                     let settlement = admission.settle(usage, cancellation);
+                    if let Some(budget) = deferred_budget {
+                        // A settled known-token ceiling latches the turn token,
+                        // and the loop's next admission reads it — the same rule
+                        // the supplied scope's settlement keeps below.
+                        let _ = budget.settle_tokens(usage).await;
+                    }
                     if let Err(error) = observation {
                         tool_diagnostics::refused(&message.tool_calls, definitions, sink).await;
                         return Err(attempt::ReceiveFailure {

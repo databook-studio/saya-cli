@@ -3,6 +3,7 @@
 //! parent — with the round trip through the real store and resume.
 
 use super::{RotateRefusal, rotate_state};
+use crate::interactive::SessionUsage;
 use crate::interactive::session::continuation::PriorToolOutcomes;
 use crate::interactive::session::continuation::compaction::manual::{
     apply_with_continuation, plan as compact_plan,
@@ -12,7 +13,6 @@ use crate::interactive::session::lifecycle::resume::{
     SessionDefaults, block_on, state_from_redacted,
 };
 use crate::interactive::session::state::SessionState;
-use crate::interactive::tui::types::SessionUsage;
 use saya_agent::{AgentOutput, TokenUsage, ToolMetadata};
 use saya_store::{FsSessionStore, ParentLink, SessionStore, StoredContinuation};
 use saya_types::{

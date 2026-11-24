@@ -6,7 +6,7 @@
 #[test]
 fn columns_has_help_listing_and_copy_guarantee() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"columns"),
+        crate::slash::catalog::is_command("columns"),
         "columns is registered"
     );
     let listing = help_text();
@@ -29,27 +29,38 @@ fn columns_has_help_listing_and_copy_guarantee() {
     );
 }
 
-/// `/report` is wired at every hand-maintained touchpoint the
-/// cli-application standard names: the registry, the description table
-/// (the popup's single source), the `/help` listing, and the per-command
-/// help. The entry states the report's guarantees: built from the
-/// captured result only, SQL + provenance by default, rows on request,
-/// never queries, never browses or uploads, and data files belong to
-/// `/export`.
+/// `/report` is `/export --format md`'s one-release alias: it stays wired at
+/// every touchpoint the cli-application standard names — the registry, the
+/// description (the popup's single source), the `/help` listing, and the
+/// per-command help — and both helps state what the report is: Markdown with
+/// provenance, built from the captured result only, rows on request, and data
+/// files belong to `/export`.
 #[test]
 fn report_is_registered_listed_and_described() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"report"),
+        crate::slash::catalog::is_command("report"),
         "report is registered"
     );
+    assert_eq!(
+        crate::slash::catalog::resolve("report"),
+        Some("export"),
+        "the alias resolves to the one command"
+    );
+    let description = description_for("report").expect("report has a popup description");
     assert!(
-        description_for("report").is_some(),
-        "report has a popup description"
+        description.contains("/export --format md"),
+        "the alias's description names what replaced it: {description}"
     );
     let listing = help_text();
     assert!(
-        listing.contains("/report [--rows N] [--overwrite] <path>"),
-        "the listing shows the /report usage: {listing}"
+        listing.contains(
+            "/export [--snapshot|--refresh] [--overwrite] [--rows N] [--format csv|json|md] <path>"
+        ),
+        "the listing shows /export's one row, formats included: {listing}"
+    );
+    assert!(
+        !listing.contains("\n  /report "),
+        "the folded alias keeps no listing row of its own: {listing}"
     );
     let help = command_help("report").expect("report has per-command help");
     for stated in ["Markdown", "provenance", "--rows", "--overwrite", "/export"] {
@@ -62,6 +73,13 @@ fn report_is_registered_listed_and_described() {
         help.contains("never"),
         "the /report help states what it never does: {help}"
     );
+    let export = command_help("export").expect("export has per-command help");
+    for stated in ["--format", ".md", "--rows", "provenance"] {
+        assert!(
+            export.contains(stated),
+            "the /export help states {stated:?}: {export}"
+        );
+    }
 }
 
 // --- Output actions name their scope. -------

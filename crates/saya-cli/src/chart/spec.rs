@@ -5,7 +5,6 @@ use saya_types::QueryResult;
 use super::{ChartKind, ChartSpec, is_numeric_column, normalize_row};
 
 /// Heuristic default when the caller doesn't specify how to chart `result`.
-#[allow(dead_code)]
 pub(crate) fn suggest_spec(result: &QueryResult) -> ChartSpec {
     let col_count = result.columns.len();
     if col_count == 0 || result.rows.is_empty() {

@@ -1,6 +1,6 @@
 [package]
 name = "saya-agent"
-version = "0.5.0"
+version = "0.5.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,7 +16,12 @@ bytes.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
-saya-types = { path = "../saya-types", version = "0.5.0" }
+saya-types = { path = "../saya-types", version = "0.5.1" }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+# `start_paused` lets the loop's two-minute content-progress window be
+# asserted without spending two minutes (tests/agent_loop).
+tokio = { workspace = true, features = ["test-util"] }

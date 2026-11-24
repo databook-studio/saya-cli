@@ -18,6 +18,26 @@ fn ui_theme_resolves_from_file_with_auto_default() {
     assert_eq!(defaults.ui_theme, ThemeChoice::Auto);
 }
 
+/// The `[ui] notifications` switch is on by default, and a file can turn it
+/// off; the threshold defaults to thirty seconds and a file can move it.
+#[test]
+fn notification_settings_resolve_with_their_documented_defaults() {
+    let defaults =
+        saya_config::resolve(saya_config::ResolutionInput::new(ConnectionsFile::default()))
+            .unwrap();
+    assert!(defaults.ui_notifications, "notifications are on by default");
+    assert_eq!(defaults.ui_notify_after_seconds, 30);
+
+    let config =
+        ConfigFile::from_toml("[ui]\nnotifications = false\nnotify_after_seconds = 5\n").unwrap();
+    let resolved = saya_config::resolve(
+        saya_config::ResolutionInput::new(ConnectionsFile::default()).with_user(config),
+    )
+    .unwrap();
+    assert!(!resolved.ui_notifications, "the switch turns them off");
+    assert_eq!(resolved.ui_notify_after_seconds, 5);
+}
+
 /// The `--theme` CLI override has the highest precedence, so a flag wins over
 /// a `[ui] theme` value the config file declared.
 #[test]

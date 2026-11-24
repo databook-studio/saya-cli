@@ -232,18 +232,28 @@ pub enum CodingCommand {
         /// Explicitly preauthorize this exact task and the stated write scope.
         #[arg(long)]
         approve: bool,
-        /// Accepted and ignored: a follow-up follows the job's recorded mode.
+        /// Run the job in the folder itself. A follow-up follows the job's own
+        /// recorded mode instead.
         #[arg(long = "in-place")]
         in_place: bool,
-        /// Accepted and ignored: a follow-up follows the job's recorded mode.
-        #[arg(long, conflicts_with = "in_place")]
+        /// Run the job in a managed checkout of the repository — the opt-in
+        /// isolation. `--checkout` is the same mode under the name it ships
+        /// with; with neither flag the configured default decides. A folder Git
+        /// does not root is refused rather than served in place. A follow-up
+        /// follows the job's own recorded mode instead.
+        #[arg(long, alias = "checkout", conflicts_with = "in_place")]
         managed: bool,
     },
-    /// List durable jobs for the selected repository.
+    /// List durable jobs for the selected repository. A job a chat session
+    /// opened is hidden unless `--all` asks for it: a session opens one job per
+    /// session, so the CLI's own jobs stay the default listing.
     List {
         /// Continue after this job id; at most 100 jobs per page.
         #[arg(long)]
         after: Option<String>,
+        /// Include the jobs chat sessions opened as well as the CLI's own.
+        #[arg(long)]
+        all: bool,
     },
     /// Show a job and its bounded child states.
     Show {
@@ -301,14 +311,54 @@ pub enum CodingCommand {
         /// after it are removed.
         #[arg(long)]
         baseline: bool,
-        /// Touch a path the job's own journal does not account for. Without
-        /// it, a concurrent edit is reported and left as it stands.
+        /// Touch a path this run's own checkpoints do not account for — another
+        /// run changed it since. Without it, such a path is reported and left as
+        /// it stands.
         #[arg(long)]
         force: bool,
     },
 }
 
 impl CodingCommand {
+    /// Whether this launch asked for the job's own checkout: `--checkout`
+    /// (whose older spelling is `--managed`). With no flag the configured
+    /// default decides, and a folder without Git may still be served in place.
+    pub fn states_checkout(&self) -> bool {
+        matches!(self, Self::Start { managed: true, .. })
+    }
+
+    /// A session `/start` with no `--write` may edit the whole workspace, the
+    /// way `saya -p` behaves; an explicit `--write` narrows it. The session
+    /// still shows this exact scope for approval. Other verbs, and the
+    /// headless `saya start` (which builds its request in `dispatch`), keep
+    /// the scope they were given.
+    pub(crate) fn with_session_write_scope(self) -> Self {
+        match self {
+            Self::Start {
+                id,
+                task,
+                write_paths,
+                database_profiles,
+                tools,
+                plan,
+                approve,
+                in_place,
+                managed,
+            } if write_paths.is_empty() => Self::Start {
+                id,
+                task,
+                write_paths: vec![".".to_owned()],
+                database_profiles,
+                tools,
+                plan,
+                approve,
+                in_place,
+                managed,
+            },
+            other => other,
+        }
+    }
+
     /// The job id a lifecycle verb names, or `None` for a verb that names
     /// none (a listing, a readiness check).
     pub fn job_id(&self) -> Option<&str> {

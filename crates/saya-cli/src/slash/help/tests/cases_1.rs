@@ -1,20 +1,21 @@
-/// `/history` and `/sessions` are **not** interchangeable, and the help
-/// must not claim they are. They share one `SessionAction` in the headless
-/// REPL, but `tui/dispatch.rs` intercepts the literal line `/sessions`
-/// before the parser and opens the interactive picker, so in the TUI —
-/// the primary surface — `/sessions` is a picker and `/history` is a text
-/// list. Help that called one an alias of the other would be wrong exactly
-/// where most people read it. Both name "saved sessions" so neither implies
-/// the conversation or the input-line history.
+/// `/history` is `/sessions`'s one-release alias: both print the same saved
+/// sessions on disk, and the help says so on the alias's side only — the
+/// canonical `/sessions` row keeps the picker it opens in the TUI. Both name
+/// "saved sessions" so neither implies the conversation or the input-line
+/// history.
 #[test]
-fn history_and_sessions_help_describe_their_real_surfaces() {
+fn history_help_states_the_alias_and_sessions_keeps_its_surfaces() {
     let history = command_help("history").expect("history has help");
     let sessions = command_help("sessions").expect("sessions has help");
 
-    // Neither may claim to be an alias of the other: the TUI behaviours differ
+    // The alias says what it aliases; the canonical row claims no aliasing.
     assert!(
-        !history.contains("alias") && !sessions.contains("alias"),
-        "neither may claim aliasing — the TUI routes them differently: {history} / {sessions}"
+        history.contains("alias of /sessions"),
+        "the alias names its command: {history}"
+    );
+    assert!(
+        !sessions.contains("alias of"),
+        "the canonical row claims no aliasing: {sessions}"
     );
     // `/sessions` must mention the picker, which is what the TUI does.
     assert!(
@@ -101,52 +102,26 @@ fn connect_and_include_read_as_a_contrast() {
     );
 }
 
-/// There is one source of description text. The popup in
-/// `complete.rs` and the `/help` listing here must not be two hand-maintained
-/// copies. The popup reads its descriptions from this module's
-/// [`COMMAND_DESCRIPTIONS`]; this test proves that single source covers
-/// exactly the parser's registry, so a command added to one surface cannot
-/// be missing from the other. (The same agreement is checked from the popup
-/// side in `complete.rs::descriptions_cover_exactly_the_registry`, which
-/// reads the same shared table.)
-#[test]
-fn command_descriptions_cover_exactly_the_registry() {
-    assert_eq!(
-        COMMAND_DESCRIPTIONS.len(),
-        registry::KNOWN_COMMANDS.len(),
-        "the description table and the command registry must list the same commands"
-    );
-    for (name, _) in COMMAND_DESCRIPTIONS {
-        assert!(
-            registry::KNOWN_COMMANDS.contains(name),
-            "{name} is described but not in the registry"
-        );
-    }
-    for name in registry::KNOWN_COMMANDS {
-        assert!(
-            description_for(name).is_some(),
-            "{name} is registered but has no description"
-        );
-    }
-}
-
-/// `/context` is registered, listed, described, and has per-command help
-/// that states its one hard bound: the instruction sources are shown by
-/// name, size, digest, and reason — their text is never shown.
+/// `/context` is `/status`'s one-release alias: the catalogue resolves it, it
+/// keeps its own popup description, the listing shows the canonical `/status`
+/// row, and its per-command help states its one hard bound: the instruction
+/// sources are shown by name, size, digest, and reason — their text is never
+/// shown.
 #[test]
 fn context_has_help_listing_and_description() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"context"),
-        "context is registered"
+        crate::slash::catalog::resolve("context") == Some("status"),
+        "context is /status's alias"
     );
-    assert!(
-        description_for("context").is_some(),
-        "context has a popup description"
+    assert_eq!(
+        description_for("context"),
+        Some("Deprecated alias for /status (opens the Instructions section; removed next release)"),
+        "the alias keeps its own one-line description"
     );
     let listing = help_text();
     assert!(
-        listing.contains("/context"),
-        "the listing shows the /context usage: {listing}"
+        listing.contains("/status"),
+        "the listing shows the canonical /status row: {listing}"
     );
     let help = command_help("context").expect("context has per-command help");
     assert!(

@@ -43,6 +43,9 @@ use super::shell::{SHELL_PATH, WorkspaceShell};
 mod background;
 #[path = "shell_tests/containment.rs"]
 mod containment;
+#[cfg(target_os = "linux")]
+#[path = "shell_tests/dev_null.rs"]
+mod dev_null;
 #[path = "shell_tests/environment.rs"]
 mod environment;
 #[path = "shell_tests/host.rs"]

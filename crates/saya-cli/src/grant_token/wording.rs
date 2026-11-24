@@ -3,10 +3,11 @@
 
 /// The session-history family a granted token belongs to — the prefix group
 /// the grammar's tokens come in (`sql:`, `runner:`/`interpreter:`,
-/// `fetch:`), or the tool's own bare token. A prompt's session-history line
-/// shows the held grants of the call's family, in these tokens' own words;
-/// a token outside every family shows in none. The words are the store's
-/// tokens verbatim — this names families, never re-spells tokens.
+/// `fetch:`, `command:`, `shell:`), or the tool's own bare token. A prompt's
+/// session-history line shows the held grants of the call's family, in these
+/// tokens' own words; a token outside every family shows in none. The words
+/// are the store's tokens verbatim — this names families, never re-spells
+/// tokens.
 pub(crate) fn grant_family(token: &str) -> Option<&'static str> {
     if token.starts_with("sql:") {
         Some("SQL")
@@ -16,6 +17,8 @@ pub(crate) fn grant_family(token: &str) -> Option<&'static str> {
         Some("fetch")
     } else if token.starts_with("command:") {
         Some("command")
+    } else if token.starts_with("shell:") {
+        Some("shell")
     } else if token == "workspace-write" {
         Some("workspace-write")
     } else {

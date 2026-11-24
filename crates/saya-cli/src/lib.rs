@@ -3,7 +3,10 @@ mod answering_receipts;
 mod app;
 mod approval_facts;
 mod budget_wording;
+mod change_diff;
 mod chart;
+#[allow(dead_code)] // contract types only: the session, turn and front consume them
+mod chat;
 mod cli;
 mod commands;
 mod config;
@@ -11,6 +14,8 @@ mod connection;
 #[allow(dead_code)] // contract ops surface, not yet wired into an adapter
 mod contracts;
 mod demo;
+#[allow(dead_code)] // theme + view model land before the screens that read them
+mod front;
 mod grant_token;
 #[cfg(test)]
 mod grant_token_tests;
@@ -30,6 +35,10 @@ mod local_metrics_index;
 mod local_metrics_tests;
 mod mcp;
 mod metrics_sink;
+#[cfg(test)]
+mod perf_guard;
+#[allow(dead_code)] // the contract's first built-in plugin, not yet loaded by a run
+mod plugins;
 mod render;
 pub mod render_run;
 mod render_usage;
@@ -66,7 +75,7 @@ pub use commands::coding::{
 };
 pub use commands::{
     Replay, RunOutcome, capture_output_start, capture_output_take, run_contracts,
-    run_investigation, run_investigation_outcome, run_management,
+    run_contracts_request, run_investigation, run_investigation_outcome, run_management,
 };
 pub use config::runtime::{RuntimeConfig, approval_name, load_with_sources};
 // The `TerminalEvent::DoctorTask` payload types: a public enum may not
@@ -87,7 +96,11 @@ pub use render::{
 // lines with it, and `run_management` is the one dispatcher the slash
 // adapters and the headless `saya run` commands share.
 pub use render_run::render_run_event;
-pub use slash::{SlashCommand, parse_slash_command};
+pub use slash::{SessionsRequest, SlashCommand, parse_slash_command};
+// The documented view of the slash catalogue: `docs/commands.md`'s command
+// table is rendered from it by `tests/docs_claims/command_table.rs`, so the
+// page and `/help` are one table and drift fails the suite.
+pub use slash::catalog::{DocumentedCommand, documented_commands};
 pub use state_path::resolve_state_db_path;
 
 pub fn run_from_env() -> i32 {

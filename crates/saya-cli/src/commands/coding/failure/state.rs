@@ -18,9 +18,22 @@ pub(crate) struct FailureState {
     /// The highest-ranked latched class other than the primary's, if any.
     pub(super) secondary: Option<Class>,
     pub(super) diagnostic_fault: Option<saya_types::CodingDiagnosticFault>,
+    /// A diagnostic write failed and the job continued without diagnostics.
+    /// The run's audit trail is incomplete; its outcome is not.
+    pub(super) diagnostics_incomplete: bool,
 }
 
 impl FailureState {
+    /// Whether a diagnostic write failed and the job continued without it.
+    pub(crate) fn diagnostics_incomplete(&self) -> bool {
+        self.diagnostics_incomplete
+    }
+
+    /// The first diagnostics fault seen, whatever class it was.
+    pub(crate) fn diagnostic_fault(&self) -> Option<saya_types::CodingDiagnosticFault> {
+        self.diagnostic_fault
+    }
+
     /// Latches one failure: the first failure of its class is kept, and the
     /// primary and secondary are re-derived by rank. The order failures are
     /// latched in therefore never decides which class is the primary.

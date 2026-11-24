@@ -2,6 +2,9 @@ impl DatabaseTools {
     /// Attaches the turn's question-scope metrics collector. `None` — the
     /// default in every constructor — records nothing; behavior is otherwise
     /// identical with and without a collector.
+    /// Test seam: the deleted turn body bound the question scope's collector;
+    /// the metrics tests bind it themselves.
+    #[cfg(test)]
     pub(crate) fn with_metrics(mut self, metrics: Option<Arc<LocalMetrics>>) -> Self {
         self.metrics = metrics;
         self
@@ -12,15 +15,15 @@ impl DatabaseTools {
         &self.registry
     }
 
+    /// The same registry as a shared handle: what a run's recall source holds so
+    /// it selects against the connections the tools query.
+    pub(crate) fn registry_handle(&self) -> Arc<ConnectionRegistry> {
+        Arc::clone(&self.registry)
+    }
+
     /// Returns a reference to the optional state database.
     pub(crate) fn state_db(&self) -> Option<&SqliteStateStore> {
         self.state_db.as_ref()
-    }
-
-    /// Attaches the turn's supplied qualified object names (from `RecallReceipt::supplied`).
-    pub(crate) fn with_supplied_objects(mut self, supplied_objects: Vec<String>) -> Self {
-        self.supplied_objects = supplied_objects;
-        self
     }
 
     /// Attaches the run's contained workspace. `None` (every current caller,
@@ -37,23 +40,40 @@ impl DatabaseTools {
     /// byte budget for direct executor calls. The agent loop overrides it with
     /// its exact per-call result share. Only the `bounded_sql_query` arm
     /// consults it, only on success; every headless path passes `None` and
-    /// nothing captures.
+    /// nothing captures. The deleted turn body was its production caller; the
+    /// capture tests construct the hook here.
+    #[cfg(test)]
     pub(crate) fn with_capture(
         mut self,
         capture_hook: Option<CaptureHook>,
         context_byte_budget: usize,
     ) -> Self {
-        self.capture_hook = capture_hook;
+        self.capture_hook = Mutex::new(capture_hook);
         self.context_byte_budget = context_byte_budget;
         self
+    }
+
+    /// Installs the run's capture hook on a toolset that is already shared.
+    /// The plugin owns the chat surface's tools behind an `Arc`, so it cannot
+    /// rebuild them to attach a hook; this cell is that attachment point.
+    /// Nothing else on the tools changes, so a plugin given no hook leaves
+    /// them exactly as built.
+    pub(crate) fn set_capture_hook(&self, capture_hook: CaptureHook) {
+        let mut slot = match self.capture_hook.lock() {
+            Ok(slot) => slot,
+            // A poisoned lock still holds the slot: the hook is a plain value,
+            // so write it rather than lose it to an unrelated panic.
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *slot = Some(capture_hook);
     }
 
     /// Attaches an already-built checkpoint recorder for direct file-tool
     /// edits. `None` — every construction that has not attached one —
     /// leaves behaviour identical: no capture, no cleanup, no `recovery`
-    /// field in any result. The session wiring attaches through
-    /// [`Self::with_recovery`]; the sibling tests build recorders here
-    /// directly.
+    /// field in any result. The session wiring went with the deleted turn
+    /// body; the sibling tests build recorders here directly.
+    #[cfg(test)]
     pub(in crate::agent::tools) fn with_checkpoints(
         mut self,
         checkpoints: Option<super::workspace::checkpoint::CheckpointRecorder>,
@@ -110,20 +130,6 @@ impl DatabaseTools {
         self
     }
 
-    /// Attaches the session's checkpoint recorder from its recovery
-    /// parts — the store, the session id, and the session-scoped enable
-    /// flag. `None` — the one-shot `ask` path, `saya run`, and every
-    /// non-session construction — leaves the field `None`: no capture,
-    /// no `recovery` field in any result.
-    pub(crate) fn with_recovery(
-        self,
-        parts: Option<(Arc<FsSessionStore>, String, Arc<AtomicBool>)>,
-    ) -> Self {
-        self.with_checkpoints(parts.map(|(store, session_id, enabled)| {
-            super::workspace::checkpoint::CheckpointRecorder::new(store, session_id, enabled)
-        }))
-    }
-
     #[cfg(test)]
     pub(super) fn with_registry_and_fan_out_limits(
         registry: ConnectionRegistry,
@@ -135,7 +141,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db: None,
@@ -143,11 +149,10 @@ impl DatabaseTools {
             fan_out_query_timeout,
             observations: None,
             metrics: None,
-            supplied_objects: Vec::new(),
-            recall_receipt: None,
+            recall_receipt: Mutex::new(None),
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]
@@ -168,7 +173,7 @@ impl DatabaseTools {
         Self {
             workspace_tasks: Arc::default(),
             read_witnesses: Arc::default(),
-            registry,
+            registry: Arc::new(registry),
             max_rows,
             allow_query_data,
             state_db,
@@ -176,11 +181,10 @@ impl DatabaseTools {
             fan_out_query_timeout: Self::FAN_OUT_QUERY_TIMEOUT,
             observations: Some(observations),
             metrics: None,
-            supplied_objects: Vec::new(),
-            recall_receipt: None,
+            recall_receipt: Mutex::new(None),
             override_log: None,
             workspace: None,
-            capture_hook: None,
+            capture_hook: Mutex::new(None),
             checkpoints: None,
             spool_dir: None,
             #[cfg(test)]

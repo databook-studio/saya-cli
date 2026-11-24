@@ -53,15 +53,16 @@ fn test_parse_setup_takes_no_argument() {
 fn test_parse_sessions_and_resume() {
     assert_eq!(
         parse_slash_command("/sessions"),
-        Ok(Some(SlashCommand::Sessions))
+        Ok(Some(SlashCommand::Sessions(SessionsRequest::default())))
     );
     assert_eq!(
         parse_slash_command("/resume 12345"),
         Ok(Some(SlashCommand::Resume("12345".into())))
     );
+    // Bare `/resume` opens the saved sessions to choose from, on both surfaces.
     assert_eq!(
         parse_slash_command("/resume"),
-        Err(SlashParseError("command requires an argument".into()))
+        Ok(Some(SlashCommand::Resume(String::new())))
     );
 }
 
@@ -142,5 +143,6 @@ fn export_request(mode: Option<ExportMode>, overwrite: bool, path: &str) -> Expo
         mode,
         overwrite,
         path: path.to_string(),
+        ..ExportRequest::default()
     }
 }

@@ -1,10 +1,19 @@
 //! Native parent tools adapt the same job owner used by terminal controls.
 mod direct;
+/// What the working-checkout root advertises of its composed toolset: the one
+/// predicate the advertisement and the dispatch gate read, and the evidence it
+/// is filtered by (`direct_tools.rs` is the composition itself).
+mod direct_advertise;
+/// The advertisement's mode gate: which of the root's tools the run's mode
+/// reaches, read from the old session's own family rules.
+mod direct_mode;
 mod direct_tools;
 mod owner_denial;
 mod parent;
 pub(crate) mod plan_gate;
 mod readonly;
+mod root_approval;
+mod root_db_lane;
 mod root_mcp;
 pub(crate) use root_mcp::build_for_helper;
 mod root_progress;
@@ -30,12 +39,32 @@ mod direct_allow_tests;
 mod direct_ask_tests;
 
 #[cfg(test)]
+#[path = "default_advertisement_tests.rs"]
+mod default_advertisement_tests;
+
+#[cfg(test)]
+#[path = "direct_db_lane_tests.rs"]
+mod direct_db_lane_tests;
+
+#[cfg(test)]
+#[path = "direct_db_job_tests.rs"]
+mod direct_db_job_tests;
+
+#[cfg(test)]
 #[path = "direct_tests.rs"]
 mod direct_tests;
 
 #[cfg(test)]
 #[path = "direct_web_tests.rs"]
 mod direct_web_tests;
+
+#[cfg(test)]
+#[path = "direct_write_ask_tests.rs"]
+mod direct_write_ask_tests;
+
+#[cfg(test)]
+#[path = "evidence_append_tests.rs"]
+mod evidence_append_tests;
 
 #[cfg(test)]
 #[path = "helpers_concurrency_tests.rs"]
@@ -74,8 +103,18 @@ mod root_shell_exit_tests;
 mod root_shell_silent_read_tests;
 
 #[cfg(test)]
+#[path = "root_shell_mode_tests.rs"]
+mod root_shell_mode_tests;
+
+#[cfg(test)]
 #[path = "plan_gate_tests.rs"]
 mod plan_gate_tests;
+
+// The twins read `plan_gate_tests` and the root-compose fixture, both gated
+// `any(target_os = "macos", target_os = "linux")`, so they carry their gate.
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[path = "plan_gate_twin_tests.rs"]
+mod plan_gate_twin_tests;
 
 #[cfg(test)]
 #[path = "notebook_advertisement_tests.rs"]

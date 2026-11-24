@@ -93,6 +93,8 @@ mod environment;
 
 mod ownership;
 
+mod verify_census;
+
 pub use confinement::{ConfinedCheckout, ConfinementError, confine_checkout};
 pub use create::{CreateCheckoutInput, CreatedCheckout, create_managed_checkout};
 pub use create_error::CreateCheckoutError;
@@ -104,6 +106,7 @@ pub use ownership::{
     CheckoutBase, InPlaceRootInput, OwnershipError, OwnershipInput, VerifiedCheckout,
     verify_admitted_checkout, verify_in_place_root, verify_owned_checkout,
 };
+pub use verify_census::in_place_verifications;
 
 mod cleanup;
 mod reconcile;

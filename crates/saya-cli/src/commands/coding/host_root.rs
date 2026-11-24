@@ -11,13 +11,30 @@ use std::{
 /// Resolves one in-place root: the dangerous-root refusal first, then the
 /// canonical directory identity (which refuses a symlink, a file, a missing
 /// path, and either direction of state overlap).
-pub(super) fn resolve_in_place(
+pub(crate) fn resolve_in_place(
     stated: &Path,
     canonical: &Path,
     state_root: &Path,
 ) -> Result<LocalRoot, CodingError> {
     refuse_dangerous_root(canonical, state_root)?;
     LocalRoot::open(stated, state_root).map_err(|error| CodingError::InPlaceRoot {
+        detail: error.to_string(),
+    })
+}
+
+/// Resolves the root a session over a folder that cannot root an in-place job
+/// opens over: the folder's own canonical identity, taken without the
+/// dangerous-root refusal because nothing here is a job root — no baseline is
+/// inventoried and no file is reached. The state root is not asked of it
+/// either: a run with no workspace composes no file, shell or write tool, so a
+/// state root the configuration keeps inside the folder is reachable by
+/// nothing. What it still refuses is everything about the folder itself that
+/// [`LocalRoot::label`] refuses (a symlink, a file, a missing path).
+pub(crate) fn resolve_session_root(
+    stated: &Path,
+    _state_root: &Path,
+) -> Result<LocalRoot, CodingError> {
+    LocalRoot::label(stated).map_err(|error| CodingError::InPlaceRoot {
         detail: error.to_string(),
     })
 }

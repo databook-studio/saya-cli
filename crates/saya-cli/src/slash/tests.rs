@@ -1,9 +1,16 @@
 use super::*;
+include!("tests/catalog.rs");
+include!("tests/hidden.rs");
 include!("tests/commands.rs");
 include!("tests/coding.rs");
 include!("tests/export.rs");
+include!("tests/export_report.rs");
 include!("tests/report.rs");
 include!("tests/simple_commands.rs");
 include!("tests/mode_tasks.rs");
+include!("tests/mode_axis.rs");
+include!("tests/contracts_verbs.rs");
 include!("tests/preferences.rs");
 include!("tests/notes_recovery.rs");
+include!("tests/rewind.rs");
+include!("tests/continue_cmd.rs");

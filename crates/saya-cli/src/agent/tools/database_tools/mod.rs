@@ -1,9 +1,9 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use saya_harness::workspace::Workspace;
-use saya_store::{FsSessionStore, SqliteStateStore};
+use saya_store::SqliteStateStore;
 
 use crate::connection::ConnectionRegistry;
 use crate::contracts::RecallReceipt;
@@ -66,8 +66,10 @@ pub(crate) struct DatabaseTools {
     pub(super) read_witnesses: Arc<super::workspace::ReadWitnesses>,
     // `pub(super)` so the sibling `knowledge` module (also a child of
     // `agent::tools`) can resolve a connection and read the privacy/store flags
-    // without re-deriving provider policy.
-    pub(super) registry: ConnectionRegistry,
+    // without re-deriving provider policy. Shared (`Arc`) so a run's recall
+    // source reads the same connections the tools query: recall selects against
+    // the profile identities of the registry the run actually runs on.
+    pub(super) registry: Arc<ConnectionRegistry>,
     pub(super) max_rows: usize,
     pub(super) allow_query_data: bool,
     pub(super) state_db: Option<SqliteStateStore>,
@@ -83,14 +85,13 @@ pub(crate) struct DatabaseTools {
     /// — leaves behaviour identical: the operation owner records no phase
     /// samples. An `Arc` so the question scope and the tools share one cell.
     pub(super) metrics: Option<Arc<LocalMetrics>>,
-    /// Qualified `catalog.schema.object` names of objects whose claims were
-    /// supplied to the model this turn via recall.
-    pub(super) supplied_objects: Vec<String>,
     /// The turn's recall receipt, shared with the override detector. `None` in
     /// tests that drive the executor without a receipt; an absent receipt means
-    /// no detection — never a guess. An `Arc` so the runtime and the
-    /// tools share one reference.
-    pub(super) recall_receipt: Option<Arc<RecallReceipt>>,
+    /// no detection — never a guess. A cell because the plugin holds its chat
+    /// toolset behind an `Arc` and installs the turn's receipt on exactly those
+    /// tools once recall has run. An `Arc` so the runtime and the tools share
+    /// one reference.
+    pub(super) recall_receipt: Mutex<Option<Arc<RecallReceipt>>>,
     /// Request-scoped log of override findings, drained by the runtime to emit
     /// one `KnowledgeOverridden` event. `None` in tests; an absent log
     /// means no event, never a side effect. An `Arc` so the runtime can drain
@@ -106,9 +107,11 @@ pub(crate) struct DatabaseTools {
     /// The TUI's capture hook: after one successful single-connection
     /// `bounded_sql_query` it receives the typed result the model saw (or the
     /// over-budget refusal), before the tool's result returns to the loop.
-    /// `None` — every headless path — leaves behaviour identical: no hook, no
-    /// capture, no message.
-    pub(super) capture_hook: Option<CaptureHook>,
+    /// Empty — every headless path — leaves behaviour identical: no hook, no
+    /// capture, no message. A cell rather than a plain field because the
+    /// plugin holds its chat toolset behind an `Arc` and installs the run's
+    /// hook on exactly those tools.
+    pub(super) capture_hook: Mutex<Option<CaptureHook>>,
     /// Default result cap for direct executor calls. Agent-loop calls receive
     /// their exact per-call share through `ToolExecutor::execute_with_result_cap`.
     pub(super) context_byte_budget: usize,

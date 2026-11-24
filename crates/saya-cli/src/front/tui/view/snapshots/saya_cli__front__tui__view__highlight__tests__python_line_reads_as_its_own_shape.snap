@@ -1,0 +1,9 @@
+---
+source: crates/saya-cli/src/front/tui/view/highlight_tests.rs
+expression: "outline(\"def total(items):  # sum them\", Some(super::Language::Python),\nScheme::Dark,)"
+---
+[
+    "keyword  def",
+    "plain     total(items):  ",
+    "comment  # sum them",
+]

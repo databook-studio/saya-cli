@@ -1,7 +1,7 @@
 impl SessionState {
     fn compacted_summary_gate(&self) -> Option<&str> {
         let summary = self.compaction_summary.as_deref()?;
-        let allowed = crate::agent::runtime::query_data_allowed_for_endpoint(
+        let allowed = crate::agent::turn_config::query_data_allowed_for_endpoint(
             saya_config::AiProvider::parse(&self.provider)
                 .unwrap_or(saya_config::AiProvider::Ollama),
             self.provider_endpoint.as_deref(),
@@ -21,6 +21,9 @@ impl SessionState {
     /// The raw stored summary under the same gate: the runtime renderer
     /// adds its own header and cuts the text to its byte budget, so the
     /// request feed must not pre-wrap the summary in a narrative header.
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn compaction_summary_text(&self) -> Option<String> {
         self.compacted_summary_gate().map(str::to_owned)
     }

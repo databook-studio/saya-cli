@@ -2,7 +2,7 @@
 //! Orchestrates geometry (bounds), columns (filter + window), and render
 //! (per-line reconstruction). Returns one line per input line.
 
-use crate::interactive::tui::types::WideTableView;
+use super::WideTableView;
 
 use super::columns::{base_columns, window_columns};
 use super::geometry::{clip_chars, line_head, table_bounds};

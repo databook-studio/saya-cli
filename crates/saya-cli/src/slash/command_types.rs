@@ -1,9 +1,18 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
-    /// The job surface: `/job <verb>`, `/start`, `/follow-up`, and the six
-    /// session-only controls. Every spelling carries the same `CodingCommand`
-    /// the CLI parses, so the two surfaces cannot drift.
-    Coding(crate::cli::CodingCommand),
+    /// The job surface: `/job <verb>`, `/start`, and the seven top-level
+    /// spellings that are `/job`'s verbs for one release (`/approve`, `/deny`,
+    /// `/message`, `/pause`, `/continue <id> <agent>`, `/cancel-child`,
+    /// `/follow-up`). Every spelling carries the same `CodingCommand` the CLI
+    /// parses, so the two surfaces cannot drift; a deprecated spelling also
+    /// carries its alias, for the note it owes once per session.
+    Coding(JobRequest),
+    /// Bare `/continue` — continue the session's last turn when it paused. A
+    /// guard stop is a pause the operator's next message continues, and this is
+    /// that message: the literal `Continue.`, sent through the same path a
+    /// typed line uses, once (approved decision 11). The argument spelling
+    /// `/continue <id> <agent>` is [`JobAlias::Continue`], a job control.
+    ContinueTurn,
     Connect(String),
     Connections,
     Include(String),
@@ -11,25 +20,40 @@ pub enum SlashCommand {
     Provider(Option<String>),
     Model(Option<String>),
     Privacy(Option<bool>),
-    Approvals(Option<ApprovalPolicy>),
-    Mode(Option<PermissionMode>),
+    /// `/mode [<value>]` — one statement of the session's consent axis, and
+    /// the spelling that stated it. `/approvals` is the one-release alias, so
+    /// it produces **this** variant: one operation, two spellings, one state.
+    Mode(ModeRequest),
     Schema(bool),
     Sql(String),
-    /// `/export [--snapshot|--refresh] [--overwrite] <path>` — what to
-    /// write and where, parsed once here so every adapter sees the same
-    /// request. No mode flag is the legacy refresh.
+    /// `/export [--snapshot|--refresh] [--overwrite] [--rows N]
+    /// [--format csv|json|md] <path>` — what to write and where, parsed once
+    /// here so every adapter sees the same request. No mode flag is the
+    /// legacy refresh. The extension or `--format` selects the file: `.md`
+    /// (or `--format md`) writes today's Markdown report, `.csv`/`.json` the
+    /// data file. `/report <args>` is this command's one-release alias, so it
+    /// produces **this** variant with [`ExportRequest::via_report_alias`]
+    /// set: one operation, one writer, two spellings.
     Export(ExportRequest),
-    /// `/report [--rows N] [--overwrite] <path>` — write a shareable
-    /// Markdown report of the captured `/sql` result: SQL + provenance by
-    /// default, rows only on request. Parsed once here like `/export` so
-    /// every adapter sees the same request.
-    Report(ReportRequest),
     Chart(String),
     Explain(String),
     Clear,
-    Compact,
-    History,
-    Sessions,
+    /// `/compact [--new-session]` — shrink working memory through the one
+    /// compaction operation (AC's chat compaction), and with `--new-session`
+    /// continue in a smaller successor afterwards. `/rotate` is this command's
+    /// one-release alias, so it produces **this** variant with
+    /// [`CompactRequest::via_rotate_alias`] set: one operation, one path.
+    Compact(CompactRequest),
+    /// `/sessions` — the saved-session listing, browsing through the adapter's
+    /// own store. `/history` is this command's one-release alias, so it
+    /// produces **this** variant with [`SessionsRequest::via_history_alias`]
+    /// set: one listing, one path.
+    Sessions(SessionsRequest),
+    /// `/status` — the one panel: five sections built from the facts this
+    /// session already holds, and never a probe (`/doctor` is the command that
+    /// checks). `/usage`, `/workspace` and `/context` are its one-release
+    /// aliases, each opening the one section it names.
+    Status,
     /// `/sessions list` — the saved-session listing through the shared
     /// operations the headless `saya sessions list` uses: rows newest
     /// first, pending deletions named separately, the storage root last.
@@ -47,12 +71,6 @@ pub enum SlashCommand {
     /// becomes a model-callable tool.
     Preferences(PreferencesCommand),
     Resume(String),
-    /// `/rotate` — continue the session in a new, smaller successor that
-    /// keeps the saved summary, the notes, and the not-yet-summarised tail;
-    /// grants, approvals and the recovery setting are never inherited. The
-    /// loops own the behaviour (they hold the store and the runtime); the
-    /// form takes no argument.
-    Rotate,
     /// `/setup` — hand the terminal to the guided setup from the full-screen
     /// TUI. Parsed bare; trailing text is a usage error, never an argument.
     /// The TUI owns the handoff; headless surfaces refuse with the pointer
@@ -67,11 +85,13 @@ pub enum SlashCommand {
     /// Choose which columns wide result tables show in the TUI:
     /// `/columns name1,name2` filters; `/columns` or `/columns all` resets.
     Columns(Option<String>),
-    /// A contract slash command (`/contracts`, `/contract`, `/remember`,
-    /// `/forget`), already translated to the same `ContractsCommand` the
-    /// headless `saya contracts` parser produces. The adapter
-    /// hands it to the shared `run_contracts` dispatcher — no second parsing.
-    Contracts(ContractsCommand),
+    /// A contract slash command (`/contracts <verb>`, `/remember`, `/forget`,
+    /// and the one-release spellings `/contract`, `/queue`, `/confirm`,
+    /// `/reject`, `/approve-all`), already translated to the same
+    /// `ContractsCommand` the headless `saya contracts` parser produces, plus
+    /// the deprecation note a deprecated spelling states. The adapter hands it
+    /// to the shared `run_contracts_request` dispatcher — no second parsing.
+    Contracts(ContractsRequest),
     /// A saved-investigation slash command (`/investigation …`, and
     /// `/investigations` as `list`), already translated to the same
     /// `InvestigationCommand` the headless `saya investigation` parser
@@ -104,9 +124,12 @@ pub enum SlashCommand {
     /// keeps its grammar meaning: the empty approval, alone — it seeds
     /// nothing and is not a revoke).
     Allow(Vec<String>),
-    /// `/grants` — the session's grant store listed verbatim: one token per
-    /// line, sorted, under a header stating the lifetime.
-    Grants,
+    /// `/permissions` — one read-only view of what this session may do:
+    /// the mode in force, the grant store, the deny list, the host lane, and
+    /// data sharing. `/grants` is its one-release alias, so it produces
+    /// **this** variant with [`PermissionsRequest::via_grants_alias`] set:
+    /// one view, one rendering, two spellings.
+    Permissions(PermissionsRequest),
     /// `/context` — the instruction sources as they would load for the next
     /// request: per source the origin, file name, whole-file size, bytes
     /// included, short digest, truncation and redaction flags; per skipped
@@ -144,5 +167,49 @@ pub enum SlashCommand {
     /// recorded edit. Translated once to the `RecoveryCommand` the shared
     /// `run_recovery` operation runs on every surface.
     Recovery(RecoveryCommand),
+    /// `/undo` — restore the files the last turn edited, from the run's own
+    /// checkpoint taken before that turn. One operation with
+    /// `/rewind <id>` and `saya job rewind`; the checkpoint store is the
+    /// run's, never the session's per-edit store. Parsed bare: trailing text
+    /// is a usage error.
+    Undo,
+    /// `/rewind [<id>]` — bare lists the run's checkpoints newest first; one
+    /// id restores that checkpoint. The id is carried as stated and resolved
+    /// against the listing, so an id the run never checkpointed is refused by
+    /// name.
+    Rewind(RewindRequest),
     Exit,
+}
+
+/// One statement of the session's consent axis: the value `/mode` states, or
+/// the read-back when none is stated, and which spelling stated it.
+///
+/// `/mode` and its one-release alias `/approvals` both parse to this, so the
+/// operation is stated once — the switch, the bypass gate and the frozen-job
+/// refusal cannot answer two spellings differently — while the surface that
+/// runs it can still say that the alias is the alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ModeRequest {
+    /// The value stated, in the one six-value grammar; `None` reads it back.
+    pub value: Option<PermissionMode>,
+    /// The deprecated `/approvals` spelling stated it (one release only).
+    pub via_approvals_alias: bool,
+}
+
+impl ModeRequest {
+    /// A statement through the canonical `/mode` spelling.
+    pub(crate) const fn mode(value: Option<PermissionMode>) -> Self {
+        Self {
+            value,
+            via_approvals_alias: false,
+        }
+    }
+
+    /// A statement through the deprecated `/approvals` alias.
+    pub(crate) const fn alias(value: Option<PermissionMode>) -> Self {
+        Self {
+            value,
+            via_approvals_alias: true,
+        }
+    }
 }

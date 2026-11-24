@@ -45,7 +45,10 @@ gated by the approval policy before they run.
 
 Provider output is streamed as stable text, JSON, or NDJSON events. A partially
 consumed HTTP response is not retried because replaying it cannot be proved
-action-free.
+action-free. A response that never arrived is: a connection reset or lost
+before any response, an establishment deadline, or a gateway 429/5xx that
+outlived the provider's own schedule is retried on the configured backoff,
+because nothing was delivered and the attempt reports no usage.
 
 A reply cut at the output cap is typed, not silent: every provider maps its own
 limit signal (`max_tokens`, `length`, `MAX_TOKENS`) to

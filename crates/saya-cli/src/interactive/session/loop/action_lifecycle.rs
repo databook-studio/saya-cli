@@ -12,15 +12,38 @@ fn handle_resume(
         ..
     } = action_parts(ctx);
     let runtime: &RuntimeConfig = &runtime;
-    let defaults = crate::interactive::session::lifecycle::resume::SessionDefaults {
-        provider: state.provider.clone(),
-        model: state.model.clone(),
-        allow_data_sharing: state.allow_data_sharing,
-        approval_mode: state.approval_mode.clone(),
-    };
+    // Bare `/resume` names the records to resume from, in the shared listing's
+    // own words: the same listing `/sessions list` prints.
+    if id.trim().is_empty() {
+        let listed = crate::interactive::session::commands::sessions_list_text(
+            store,
+            &crate::interactive::session::lifecycle::paths::default_session_dir(),
+        );
+        let action = match listed {
+            Ok(text) => SessionAction::Message(text),
+            Err(text) => SessionAction::Error(text),
+        };
+        session_emit::emit_action(action, format, state, store)?;
+        return Ok(TurnOutcome::Completed);
+    }
+    // The record, loaded and checked by the one operation both surfaces ask
+    // ([`resume_mid`]): the current session saved first, and a record whose
+    // folder another live session owns — or one that is gone — refused in one
+    // sentence.
+    let state_root = crate::commands::coding::root_mode::session_state_root(runtime)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let loaded = crate::interactive::session::lifecycle::resume_mid::resume_mid_session_blocking(
+        crate::interactive::session::lifecycle::resume_mid::ResumeMid {
+            store,
+            current: state,
+            id: &id,
+            state_root: &state_root,
+        },
+    );
     let mut outcome = TurnOutcome::Errored;
-    match crate::interactive::session::lifecycle::resume::resume_session(store, &id, &defaults) {
-        Ok(Some(loaded)) => {
+    match loaded {
+        crate::interactive::session::lifecycle::resume_mid::MidResume::Loaded(loaded) => {
+            let loaded = *loaded;
             // The resumed session's own state must ride the swap: the new
             // state directory claimed and composed before the old lock
             // releases; a refused swap keeps this session. The resumed
@@ -81,18 +104,9 @@ fn handle_resume(
                 }
             }
         }
-        Ok(None) => session_emit::emit_action(
-            SessionAction::Error(format!("Session not found: {id}")),
-            format,
-            state,
-            store,
-        )?,
-        Err(error) => session_emit::emit_action(
-            SessionAction::Error(error.to_string()),
-            format,
-            state,
-            store,
-        )?,
+        crate::interactive::session::lifecycle::resume_mid::MidResume::Refused(sentence) => {
+            session_emit::emit_action(SessionAction::Error(sentence), format, state, store)?;
+        }
     }
     // The resumed session's save: a near-limit notice fires here for a
     // large record the resume just re-opened — the per-process flag is
@@ -103,7 +117,10 @@ fn handle_resume(
     Ok(outcome)
 }
 
-fn handle_rotate(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+fn handle_rotate(
+    request: crate::slash::CompactRequest,
+    ctx: &mut TurnContext,
+) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
     let ActionParts {
         state,
         runtime,
@@ -114,20 +131,31 @@ fn handle_rotate(ctx: &mut TurnContext) -> Result<TurnOutcome, Box<dyn std::erro
         ..
     } = action_parts(ctx);
     let runtime: &RuntimeConfig = &runtime;
-    // `/rotate` — continue in a small successor. The shared steps run
-    // once, in `session_rotate_run`, for both surfaces: save the
-    // parent, publish the lineage-linked successor, re-acquire the
-    // runtime for it, and swap only on success. A refusal or a failed
-    // swap is an errored turn; the completed rotation's save below
-    // persists the successor (the swapped state).
+    // `/compact --new-session` — compact, then continue in a small successor,
+    // which is the one operation `/rotate` has always run: the alias states the
+    // same request, and its note rides this one answer. The shared steps run
+    // once, in `session_rotate_run`, for both surfaces: save the parent,
+    // publish the lineage-linked successor, re-acquire the runtime for it, and
+    // swap only on success. A refusal or a failed swap is an errored turn; the
+    // completed rotation's save below persists the successor (the swapped
+    // state).
     let outcome = match crate::interactive::session::lifecycle::rotate_run::rotate_session(
         store, runtime, state, session,
     ) {
         crate::interactive::session::lifecycle::rotate_run::RotateResult::Rotated { old, new } => {
+            let message =
+                crate::interactive::session::lifecycle::rotate_run::rotated_message(&old, &new);
+            let message = if request.via_rotate_alias {
+                crate::chat::ops_status::with_note(
+                    state,
+                    crate::chat::ops_status::Note::Rotate,
+                    message,
+                )
+            } else {
+                message
+            };
             session_emit::emit_action(
-                SessionAction::Message(
-                    crate::interactive::session::lifecycle::rotate_run::rotated_message(&old, &new),
-                ),
+                SessionAction::Message(message),
                 format,
                 state,
                 store,

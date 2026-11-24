@@ -1,4 +1,4 @@
-use super::{format_markdown_tables, format_table};
+use super::format_table;
 use saya_types::QueryResult;
 
 #[test]
@@ -134,57 +134,4 @@ fn test_format_table_footer_truncated() {
     };
     let formatted_empty = format_table(&empty_cols);
     assert_eq!(formatted_empty, "(no columns) — 1 row(s) (truncated)");
-}
-
-#[test]
-fn test_format_markdown_tables_basic() {
-    let input = "Here are the films:\n\n| Rank | Title | Count |\n|------|-------|-------|\n| 1 | BUCKET | 34 |\n| 2 | ROCKETEER | 33 |\n\nDone.";
-    let output = format_markdown_tables(input);
-
-    assert!(!output.contains("|------|"));
-    assert!(output.contains('┌'));
-    assert!(output.contains('│'));
-    assert!(output.contains('└'));
-    assert!(output.contains("BUCKET"));
-    assert!(output.contains("34"));
-    assert!(output.starts_with("Here are the films:\n\n┌"));
-    assert!(output.ends_with("\n\nDone."));
-}
-
-#[test]
-fn test_format_markdown_tables_numeric_alignment() {
-    let input = "| Rank | Title | Count |\n|------|-------|-------|\n| 1 | BUCKET | 34 |\n| 2 | ROCKETEER | 33 |";
-    let output = format_markdown_tables(input);
-    let lines: Vec<&str> = output.lines().collect();
-
-    let bucket_line = lines
-        .iter()
-        .find(|l| l.contains("BUCKET"))
-        .expect("data row with BUCKET");
-    let rocketeer_line = lines
-        .iter()
-        .find(|l| l.contains("ROCKETEER"))
-        .expect("data row with ROCKETEER");
-
-    assert_eq!(*bucket_line, "│    1 │ BUCKET    │    34 │");
-    assert_eq!(*rocketeer_line, "│    2 │ ROCKETEER │    33 │");
-}
-
-#[test]
-fn test_format_markdown_tables_bold_and_backticks_stripped() {
-    let input = "| Header |\n|---|\n| **BUCKET** |\n| `id` |";
-    let output = format_markdown_tables(input);
-
-    assert!(output.contains("BUCKET"));
-    assert!(!output.contains("**BUCKET**"));
-    assert!(output.contains("id"));
-    assert!(!output.contains("`id`"));
-}
-
-#[test]
-fn test_format_markdown_tables_no_table() {
-    let input = "This is a line with | a pipe in prose.\nAnother line without pipes.";
-    let output = format_markdown_tables(input);
-
-    assert_eq!(output, input);
 }

@@ -21,6 +21,15 @@ pub(crate) fn merge(
         "limits.session",
     );
     merge_answering(&mut base.ask, &layer.ask, recorder, &source, "limits.ask");
+    if let Some(database) = &layer.database {
+        merge_answering(
+            base.database.get_or_insert_default(),
+            database,
+            recorder,
+            &source,
+            "limits.database",
+        );
+    }
     merge_run(&mut base.run, &layer.run, recorder, &source);
     merge_job(&mut base.job, &layer.job, recorder, &source);
 }

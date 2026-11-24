@@ -3,7 +3,11 @@
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::{
-    event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    cursor::Show,
+    event::{
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -23,6 +27,7 @@ impl TerminalGuard {
             stdout,
             EnterAlternateScreen,
             EnableBracketedPaste,
+            EnableFocusChange,
             EnableMouseCapture
         )?;
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
@@ -30,19 +35,32 @@ impl TerminalGuard {
     }
 
     /// The one restore sequence: raw mode off, mouse capture, bracketed
-    /// paste, and the alternate screen undone, cursor shown. `Drop` and the
-    /// handoff's `release` share it so the two teardown paths cannot drift.
+    /// paste, and the alternate screen undone, cursor shown. `Drop`, the
+    /// handoff's `release` and the runtime's panic hook share
+    /// [`restore_terminal`], so the teardown paths cannot drift.
     pub(crate) fn restore_modes(&mut self) -> io::Result<()> {
-        let raw = disable_raw_mode();
-        let screen = execute!(
-            self.terminal.backend_mut(),
-            DisableMouseCapture,
-            DisableBracketedPaste,
-            LeaveAlternateScreen
-        );
-        let cursor = self.terminal.show_cursor();
-        raw.and(screen).and(cursor)
+        restore_terminal()
     }
+}
+
+/// The restore sequence, for the callers that own no guard: `Drop`, the setup
+/// handoff's `release`, and the runtime's panic hook — which cannot borrow a
+/// terminal at all, because it runs while the loop is unwinding.
+///
+/// Raw mode off, mouse capture and bracketed paste undone, the alternate screen
+/// left, the cursor shown. It says exactly what [`TerminalGuard::new`] set up, in
+/// the order it set it up.
+pub(crate) fn restore_terminal() -> io::Result<()> {
+    let raw = disable_raw_mode();
+    let screen = execute!(
+        io::stdout(),
+        DisableMouseCapture,
+        DisableFocusChange,
+        DisableBracketedPaste,
+        LeaveAlternateScreen,
+        Show
+    );
+    raw.and(screen)
 }
 
 impl Drop for TerminalGuard {

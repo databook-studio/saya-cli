@@ -18,6 +18,8 @@ mod in_place;
 mod in_place_edit_time;
 #[path = "coding_lifecycle/in_place_helpers.rs"]
 mod in_place_helpers;
+#[path = "coding_lifecycle/in_place_lease.rs"]
+mod in_place_lease;
 #[path = "coding_lifecycle/in_place_shell_changes.rs"]
 mod in_place_shell_changes;
 #[path = "coding_lifecycle/in_place_show.rs"]
@@ -32,6 +34,8 @@ mod managed_fallback;
 mod native;
 #[path = "coding_lifecycle/oneshot.rs"]
 mod oneshot;
+#[path = "coding_lifecycle/parked_reads.rs"]
+mod parked_reads;
 #[path = "coding_lifecycle/post_edit_workspace.rs"]
 mod post_edit_workspace;
 #[path = "coding_lifecycle/provider.rs"]
@@ -40,6 +44,8 @@ mod provider;
 mod read_only;
 #[path = "coding_lifecycle/root_cancel.rs"]
 mod root_cancel;
+#[path = "coding_lifecycle/start_checkout.rs"]
+mod start_checkout;
 #[path = "coding_lifecycle/start_consent.rs"]
 mod start_consent;
 #[path = "coding_application/support.rs"]

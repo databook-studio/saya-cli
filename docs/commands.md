@@ -3,9 +3,10 @@
 Running `saya` without a subcommand starts the scrollback-preserving terminal
 session. It accepts the slash commands `/help` lists — grouped under
 connections; provider, model and privacy; query and data; session; memory;
-and runs — from `/connect`, `/sql`, and `/export` through the session
-commands `/sessions`, `/preferences`, `/notes`, `/recovery`, `/rotate`,
-`/reload`, `/setup`, and `/context`, to `/exit`.
+and runs — from `/connect`, `/sql`, and `/export` through the session commands
+`/sessions`, `/preferences`, `/notes`, `/compact`, `/reload`, and `/setup`, to
+`/exit`. [The table below](#slash-commands) is generated from the surface's
+catalogue, so it names every one of them with its arguments and aliases.
 
 `/context` shows which project and personal instruction files are loaded
 into requests: names, sizes, truncation and redaction counts, never their
@@ -22,7 +23,7 @@ saya --profile analytics
 saya --profile prod --include-profile staging ask "compare row counts"
 saya --continue
 saya --resume 1720000000000
-saya --format ndjson --non-interactive --approval-mode read-only ask "top customers"
+saya --format ndjson --non-interactive --mode read-only ask "top customers"
 saya config doctor
 saya config show
 saya connection list --connections examples/connections.toml
@@ -30,7 +31,7 @@ saya query --profile analytics --sql "select 1"
 ```
 
 Global flags include `--config`, `--connections`, `--env-file`, `--profile`,
-`--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--approval-mode ask|read-only|never|bypass`, `--format
+`--include-profile <profile>` (repeatable flag to connect additional read-only databases), `--mode ask|accept-edits|plan|bypass|read-only|never`, `--format
 text|json|ndjson`, `--non-interactive`, `--allow-data-sharing`, `--no-color`,
 `--allow <scopes>`, `--deny <program>` (repeatable), and
 `--verbose`. `--workspace <dir>` (the interactive session only) binds the
@@ -122,7 +123,10 @@ header (active profile, any included databases, provider/model, approval mode,
 workspace root, host lane, and privacy/cloud data-sharing state) followed by the
 `saya> ` input marker,
 with command history recall (Up/Down) and standard line editing. Piped input
-uses a plain line reader so scripts and CI behave predictably. Interactive prompts carry bounded prior user/assistant
+uses a plain line reader so scripts and CI behave predictably. `--plain` (or
+`SAYA_PLAIN=1`) runs that same line REPL on a terminal instead of the
+full-screen TUI, over the same chat session, and `--turn-file` is unchanged by
+it. Interactive prompts carry bounded prior user/assistant
 turns, and `--continue`/`--resume` reconstruct redacted history with saved
 provider settings; a successful resume also retires the old session's SQL
 capture, last query, and agent-capture gap, so a re-run entry binds to the
@@ -185,8 +189,12 @@ not apply here. Under bypass, a hostile workspace file is effectively
 arbitrary code execution as the user. The deny list bounds the direct ask
 only — a denied `curl` does not stop an allowed `make` from invoking curl,
 nor a renamed copy (`mycurl`, a symlink or copy of curl) asked under its own
-spelling: deny matches the exact program name named in the ask, never content
-or resolved identity.
+spelling: deny matches the program the ask runs, reading through
+`command`/`builtin`/`exec`, `env` with options, a path's basename, a shell's
+`-c` script, `eval`'s script, the launchers that run a later program
+(`timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs`, `find`'s `-exec`), and
+an interpreter's inline code it cannot read, never the content or the resolved
+identity of what runs.
 
 `connection schema PROFILE` and interactive `/schema` authenticate and fetch
 live metadata before updating the local schema cache. If a later live attempt
@@ -201,6 +209,109 @@ instead. It is credential-free, refuses to overwrite either file,
 and makes a best-effort rollback after an ordinary creation error; it is not
 crash-atomic. Use `--format text|json|ndjson` for a stable result envelope;
 errors and diagnostics remain on stderr.
+
+## Slash commands
+
+The table below is generated from the surface's one catalogue
+(`crates/saya-cli/src/slash/catalog.rs`), the same rows `/help` prints, the
+completion popup completes and the `Ctrl+K` palette lists: a command's name,
+the arguments its usage line states, its one-line description and the other
+spellings that resolve to it. Add a row there and the table follows; a page
+that stops matching it fails the documentation suite, so the two cannot drift.
+A command hidden from every surface this release — `/run`, `/runs` and
+`/recovery` — still parses and runs when typed, and is offered nowhere, so it
+is not in this table.
+
+<!-- generated: slash commands -->
+
+| Command | Arguments | What it does | Aliases |
+| --- | --- | --- | --- |
+| `/start` | `[--id <id>] <task> [--write path] [--database-profile name] [--tools name,...] [--plan] [--in-place] [--checkout] [--approve]` | Start a job for long or background work; ordinary work is just a message | — |
+| `/job` | `<export\|events\|review\|apply\|resume\|list\|show\|cancel\|doctor\|setup\|reconcile\|worktrees\|rewind\|approve\|deny\|message\|pause\|continue\|cancel-child\|follow-up> …` | Operate a durable job's lifecycle (review, apply, resume, list, show, cancel, and the rest) and its child controls | `/follow-up`, `/approve`, `/deny`, `/message`, `/pause`, `/cancel-child` |
+| `/continue` | `[<id> <agent>]` | Continue the turn that paused: it sends the message Continue. The <id> <agent> spelling is the job control /job continue for this release | — |
+| `/connect` | `<profile>` | Replace the active database profile | — |
+| `/connections` | — | List configured database connections | — |
+| `/include` | `<profile>` | Add a secondary database profile to query scope | — |
+| `/exclude` | `<profile>` | Remove a database profile from query scope | — |
+| `/provider` | `[name]` | Set or view the AI provider | — |
+| `/model` | `[name]` | Set or view the AI model | — |
+| `/privacy` | `[on\|off]` | Enable or disable data sharing privacy | — |
+| `/mode` | `[ask\|accept-edits\|plan\|bypass\|read-only\|never]` | Set the session's consent mode: ask, accept-edits, plan, bypass, read-only, or never | `/approvals` |
+| `/schema` | `[refresh]` | Inspect or refresh database schema | — |
+| `/sql` | `<query>` | Run a raw SQL query against the active profile | — |
+| `/export` | `[--snapshot\|--refresh] [--overwrite] [--rows N] [--format csv\|json\|md] <path>` | Export the last query's fresh result, or the captured /sql result with --snapshot; a .md path writes today's Markdown report | `/report` |
+| `/investigation` | `save\|list\|show\|run\|export\|import\|delete` | Save, list, show, run, export, import, or delete a saved investigation | `/investigations` |
+| `/chart` | `[type] [path]` | Re-run the last query and render the fresh result as an HTML chart | — |
+| `/explain` | `[sql]` | Explain the given or last SQL statement | — |
+| `/clear` | — | Clear current session context | — |
+| `/undo` | — | Undo the last turn's file edits: restore the run's checkpoint taken before that turn | — |
+| `/rewind` | `[<id>]` | List the run's checkpoints, newest first, or restore the one you name | — |
+| `/compact` | `[--new-session]` | Summarise older turns to shrink working memory; --new-session continues in a smaller successor | `/rotate` |
+| `/notes` | `[set <text>\|clear]` | Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember | — |
+| `/sessions` | `[list\|delete <id>]` | Browse saved sessions: list or delete; bare opens the picker, and choosing a row resumes it | `/history` |
+| `/preferences` | `[list\|add <text>\|edit <id> <text>\|forget <id>\|forget-all]` | Explicit per-worktree guidance you confirmed: list, add, edit, forget; never permissions; separate from /remember | — |
+| `/resume` | `[<id>]` | Resume a saved session by id, in a running session too; bare opens the picker (the recent ids on the line REPL) | — |
+| `/setup` | — | Run the guided setup (full-screen terminal only) | — |
+| `/reload` | — | Re-read the configuration between turns: applies what is safe now, says what needs a new session. Data sharing and host commands never change in a running session. | — |
+| `/columns` | `[name,name,… \| all]` | Choose which columns wide result tables show | — |
+| `/contracts` | `<list\|show\|queue\|confirm\|reject\|confirm-all\|export\|import>` | The knowledge store: list every contract, show one object's contract, review and decide the queue, and export or import the context | `/contract`, `/queue`, `/confirm`, `/reject`, `/approve-all` |
+| `/remember` | `<table> <kind> <value…>` | Store a confirmed contract claim | — |
+| `/forget` | `<id>` | Tombstone a contract claim so recall excludes it | — |
+| `/allow` | `<scopes…>` | Seed pre-authorised scopes into this session's grant store | — |
+| `/permissions` | — | One read-only view: the mode, the grant store, the deny list, the host lane and data sharing | `/grants` |
+| `/doctor` | — | Diagnose config: secrets, provider endpoint | — |
+| `/status` | — | One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks | `/usage`, `/workspace`, `/context` |
+| `/thinking` | `[on\|off]` | Toggle display of the model's chain-of-thought | — |
+| `/tasks` | `[clear]` | Show the session's task list, or clear it with /tasks clear | — |
+| `/help` | `[command]` | Show help for slash commands | — |
+| `/exit` | — | Exit the REPL | `/quit` |
+
+<!-- end: slash commands -->
+
+## Keys in the full-screen session
+
+The keymap is one table read by the surface (`crates/saya-cli/src/front/tui/keys.rs`),
+and the `?` key sheet draws the presses valid in the state you are in — the
+approval answers only while a card asks, the mode cycle only while the line is
+yours. `--plain` (or `SAYA_PLAIN=1`) runs the line REPL on a terminal instead,
+where editing is the reader's `Up`/`Down` recall and no key below applies.
+
+| Key | What it does |
+| --- | --- |
+| `Enter` | Send the line; with a turn running, queue it behind that turn |
+| `Alt+Enter` | Break the line inside the message |
+| `Backspace` | Delete the last character |
+| `↑`, `↓` | Recall the previous or next line from the input history; `↓` past the newest brings the draft back |
+| `Ctrl+R` | Search the input history: type to narrow, `Ctrl+R` again steps one match older, `Enter` takes it, `Esc` closes the search |
+| `Ctrl+K`, or `/` on an empty line | Open the command palette over the catalogue below: `↑`/`↓` choose, `Enter` runs or fills the selected command, `Esc` closes. A non-empty line keeps its `/` |
+| `Ctrl+O` | Show every step of every turn in full — its whole command and the outcome it reported — or fold the transcript back to one line per step. A turn's steps are visible either way: a settled turn no longer hides what it ran |
+| `Ctrl+D` | Show the diff of every file the last turn that wrote changed: `↑`/`↓` walk the files, `PgUp`/`PgDn` a screen at a time, `Esc` closes it. With nothing changed the key does nothing |
+| `Tab` | Move the keyboard between the composer and the open approval panel: the panel answers only while it holds it |
+| `Tab`/`Enter`, `↑`/`↓`, `Esc` in the `@` list | Take the path the `@` list points at into the composer, choose among the listed paths, or close the list without taking one |
+| `?` on an empty line | Open the key sheet; `Esc` closes it |
+| `Shift+Tab` | Walk the mode cycle: `ask → accept-edits → plan → bypass`, skipping `bypass` when it is withheld. `read-only` and `never` are reachable only by naming them. Refused with a note while an approval card is open |
+| `Esc` while a turn runs | Stop that turn: the run stays open, and a helper the turn launched is stopped with it |
+| `Esc` twice on an empty line, with no turn running | Put the last message back in the composer, to edit and send again. Sending it replaces that turn: the previous turn's file changes are rewound first (a file another run changed since is skipped and named), and the confirmation line says what was undone |
+| `Esc` on an approval card | Deny the call it asks about |
+| `y` or `a` | Allow the call the card asks about once |
+| `s` | Allow calls like it for this session (only when the card offers a session grant) |
+| `n` or `d` | Deny the call |
+| `v` | Show the card's whole body, or fold it back |
+| `↑`, `↓` on a card, `PgUp`, `PgDn` | Scroll the body the card withholds, a line or a screen at a time |
+| `Ctrl+G` | Drop the line held behind the running turn |
+| `Ctrl+J` | Open the background jobs drawer: `↑`/`↓` choose, `Enter` opens the selected job, `a` opens the card for the call it waits on, `x` asks before cancelling (`y`/`n` answers), `Esc` closes |
+| `Alt+↑`, `Alt+↓` | Move the block cursor to the older or newer transcript entry |
+| `Enter` or `→` in cursor mode | Expand the block the cursor holds (`←` folds it) |
+| `c` in cursor mode | Copy the focused block's source text |
+| `i` in cursor mode | Show the focused block's provenance line, or take it away |
+| `Esc` in cursor mode | Leave cursor mode |
+
+`/mode` with no argument opens a picker over the same six values: `↑`/`↓`
+choose, `Enter` states the mode, `Esc` cancels without stating anything.
+`plan` is the read-only member of the cycle: it advertises the read-shaped
+tools plus `submit_plan`, hides the write family, `shell` and the MCP servers,
+and puts the plan to the session's own approval. Leaving `plan` closes that
+again, so re-entering it asks afresh.
 
 ## Global flags
 
@@ -224,8 +335,16 @@ live here.
 - `--deny <program>` (repeatable) states the session's deny list of bare
   program names: a user-stated refusal evaluated before every grant, every
   approval prompt, and bypass, at every session door that execs a program by
-  name — the `run_command` door. Refusal-only: it composes nothing. Session
-  only; `saya ask` and `saya run` refuse it.
+  name — the `run_command` door, and the `shell` tool, whose copy of the list
+  is a deny rule in the `[permissions]` set it decides first. The rule reads
+  the program a command really runs, so a `command`/`builtin`/`exec` prefix,
+  an `env` with options, a path (`./curl`, `/usr/bin/curl`), a launcher that
+  runs a later program (`timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs`,
+  `find`'s `-exec`), and a shell's or `eval`'s script do not name it
+  differently; a script past the recursion bound, one that cannot be read, and
+  an interpreter's inline code it cannot read (`python3 -c`, `perl -e`,
+  `awk '…'`) are refused rather than allowed. Refusal-only: it composes
+  nothing. Session only; `saya ask` and `saya run` refuse it.
 - `--allow-command <prefix>` (repeatable) allows a command prefix on the host
   without asking: matched word by word, so `cargo test` covers
   `cargo test -p x` and never `cargo testx`. Every segment of a compound
@@ -241,23 +360,27 @@ live here.
   lines, trailing whitespace, code fences — where piped stdin reads line by
   line and folds layout. Session-surface only; `saya ask` and `saya run`
   refuse it. See [Scripted turns](#scripted-turns---turn-file).
-- `--permission-mode <mode>` starts the session (or a `saya -p` one-shot) in
-  `ask`, `accept-edits`, `plan`, or `bypass` — the same four modes `/mode` and
-  Shift+Tab switch between — and overrides whatever the launch or a resumed
-  record carried. `bypass` is refused for a session unless
+- `--mode <mode>` states the session's consent: `ask`, `accept-edits`, `plan`,
+  `bypass`, `read-only`, or `never` — the same six values `/mode` and Shift+Tab
+  switch between — and overrides whatever the launch or a resumed record
+  carried. It is one axis: `read-only` and `never` are modes here, not a second
+  flag's vocabulary. `bypass` is refused for a session unless
   `[permissions] allow_bypass` is true in your user configuration; `saya -p`
-  accepts it ungated. Stating it with `--approval-mode` is refused: they are
-  two spellings of the same consent. `saya ask`, `saya run` and `saya job`
-  refuse it. See [Switching the session's permission
-  mode](#switching-the-sessions-permission-mode-mode-shifttab---permission-mode).
-- `--approval-mode <mode>` states when tool calls need approval: `ask`,
-  `read-only`, `never`, or `bypass`. Read-only auto-approves read-shaped
-  tools only; tools with external side effects are denied. `bypass` runs
-  every call without asking; every structural guard still applies. Headless
-  (`--non-interactive`, or no terminal) defaults to `never`, which advertises
-  no `shell`: `--approval-mode bypass` is how a headless job gets a host
-  shell. `saya -p` also reads it as the one-shot consent. See [The fourth
-  approval mode](#the-fourth-approval-mode-bypass).
+  accepts it ungated. See [Switching the session's permission
+  mode](#switching-the-sessions-consent-mode-mode-shifttab---mode).
+  `plan` is the one value a subcommand cannot run: `saya run --mode plan` and
+  `saya job` refuse it, because nobody is there to answer the plan.
+- `--approval-mode <mode>` and `--permission-mode <mode>` are **deprecated
+  aliases** of `--mode`, accepted for one release and removed in the next; each
+  says so on stderr. `--approval-mode` spells the four consent values (`ask`,
+  `read-only`, `never`, `bypass`); `--permission-mode` is session-surface only
+  and spells the same mode `--mode` does. Stating two of the three is refused —
+  they are spellings of the same consent, and which one won would depend on the
+  order the checks ran in. Under a headless surface (`--non-interactive`, or no
+  terminal) the default is `never`, which advertises no `shell`: `--mode
+  bypass` is how a headless job gets a host shell. `saya -p` also reads it as
+  the one-shot consent. See [The fourth approval
+  mode](#the-fourth-approval-mode-bypass).
 - `--tools <name,...>` narrows the model tools a surface advertises; see
   [Choosing model tools](#choosing-model-tools---tools-and-tools-allow).
 - `--profile <name>`, `--model <name>`, and `--provider <name>` override the
@@ -584,7 +707,7 @@ unreadable turn file, a store error) still ends with a `turn_result` with
 `status: failed` and `exit_code: 2` — the code the process itself exits
 with. A configuration that fails to load exits `2` before any turn starts and
 prints no result. Under json/ndjson the result goes to stdout; diagnostics and
-errors go to stderr. Under `--approval-mode ask`, a launch `--allow` token
+errors go to stderr. Under `--mode ask`, a launch `--allow` token
 can make a tool family usable in a headless run like this one — see
 [Headless grants under ask](#headless-grants-under-ask).
 
@@ -746,6 +869,42 @@ delete — it never prompts, refuses the current session and any live session
 with the same words, and reports pending cleanup the same way. Bare
 `/sessions` keeps its per-surface meaning: the text history list in the
 headless REPL, and the session picker in the TUI.
+
+## The knowledge store: `/contracts <verb>`
+
+In an interactive session the knowledge store is **one command, eight verbs**.
+Each verb runs exactly the operation the headless `saya contracts` subcommand
+of the same name runs — same store call, same output.
+
+| Verb | What it does |
+| --- | --- |
+| `list` | Print every recalled contract for the active profile (bare `/contracts` is `list`) |
+| `show <catalog.schema.object>` | Print one object's contract |
+| `queue [limit]` | List the candidate claims awaiting review |
+| `confirm <claim-id-prefix>` | Confirm one candidate, by the short `ki-…` prefix `/contracts` shows |
+| `reject <claim-id-prefix>` | Reject one candidate |
+| `confirm-all [--yes] [limit]` | Approve the whole review queue. Without `--yes` the queue is printed and nothing is approved; each candidate still gets the per-item validation `confirm` applies, so some may be refused and every decision is reported by id. **Knowledge claims only — never job approvals**, which are `/approve <id>` |
+| `export <path>` | Write the context for another machine |
+| `import <path>` | Read a context written elsewhere |
+
+`/contracts <catalog.schema.object>` — a lone token that is not a verb — is
+still a `show`, so the old one-token form keeps working.
+
+Five older spellings keep working for one release as aliases of the same
+operations, and each prints a one-line deprecation note naming its
+replacement:
+
+| Old spelling | New spelling |
+| --- | --- |
+| `/contract` | `/contracts` |
+| `/queue` | `/contracts queue` |
+| `/confirm` | `/contracts confirm` |
+| `/reject` | `/contracts reject` |
+| `/approve-all` | `/contracts confirm-all` (`/approve-all` was never about job approvals) |
+
+`/remember <table> <kind> <value…>` and `/forget <claim-id>` are unchanged:
+they are the store's own short verbs, not deprecated spellings. See
+[memory.md](memory.md) for what a claim is and how recall uses it.
 
 ## Project preferences: `saya preferences`
 
@@ -1186,8 +1345,8 @@ Flags:
   progress and ends with that object. `--output-format` is an alias, and
   `--format stream-json` is ndjson.
 
-Consent comes from `--permission-mode` or `--approval-mode`, not both. On
-`-p`, `bypass` is ungated.
+Consent comes from `--mode` (or one of its two one-release aliases), and only
+one of the three may be stated. On `-p`, `bypass` is ungated.
 
 | Stated | Approval policy | Write scope | Shell with no operator |
 | --- | --- | --- | --- |
@@ -1226,7 +1385,7 @@ Exit codes:
 
 ```bash
 saya -p "fix the failing test"
-saya --format json --permission-mode accept-edits -p "create hello.txt"
+saya --format json --mode accept-edits -p "create hello.txt"
 ```
 
 `saya start` and the TUI `/start` panel share this rule: under `accept-edits`
@@ -1269,6 +1428,11 @@ still lists, resumes, reviews, and applies.
   lets a rewind touch a path the job's journal does not account for, which is
   otherwise reported and left as it stands.
 
+In the session, `/rewind <id>` restores one of the run's checkpoints and leaves
+what it must not touch: a file another run changed since that checkpoint is
+named and left where it stands (`changed since by another run: <paths>`), never
+overwritten.
+
 `saya start` and `saya resume` end with an `outcome` block — final state, the
 model's bounded and redacted final answer, the commits made in the working
 checkout since its base, the changed paths, the checkout path, and readiness as
@@ -1285,7 +1449,23 @@ and arm64 Linux; everywhere else, Windows and x86-64 hosts included, it refuses
 with a clear error.
 
 Inside a session the same grammar is spelled `/start`, `/follow-up`, and
-`/job <verb>`. The session-only controls have one bare spelling each:
+`/job <verb>`. Ordinary work is just a message. `/start [--id <id>] <task>`
+is the opt-in for long or background work: the task is the whole remaining
+text, recognised flags are removed wherever they appear, and the id is
+generated unless `--id` states one (the session names the id it chose). With
+no `--write`, a session start may edit the whole workspace (`.`), exactly like
+`saya -p`; an explicit `--write` narrows it. A job shares the session's own
+folder by default: it runs there, alongside the session, and no checkout is
+made. `--checkout` (the older spelling is `--managed`) asks for a separate
+checkout of the repository instead — it needs a Git working tree — and what the
+job changes there reaches this folder only when you apply it: `/job review
+<id>` prints the candidate, and `/job apply <id> <candidate>` writes it, the
+same grammar `saya job apply` takes. `--in-place` forces the shared folder even
+where `[job] root_mode = "managed"` makes a checkout the default. The old
+positional `/start <id> "<task>"` form is gone — an unquoted first word is
+ambiguous with a task, so it is read as task text, never as an id. Put `--`
+before task text that itself begins with `--`. The session-only controls have
+one bare spelling each:
 `/approve <id>`, `/deny <id>`, `/message <id> <agent> <text>`,
 `/pause <id> <agent>`, `/continue <id> <agent>`, and
 `/cancel-child <id> <agent>`. A top-level `saya coding …` still parses, but
@@ -1309,7 +1489,7 @@ home.
 `saya run` never prompts per tool call, whatever the approval mode: a run has
 no per-call question. Scopes must be declared up front with `--allow <scopes>`;
 a run without `--allow` refuses to start with exit `2` and creates nothing,
-and `--approval-mode bypass` refuses at start too — a run's approval is its
+and `--mode bypass` refuses at start too — a run's approval is its
 `--allow` scopes; bypass is a session mode.
 `--allow none` states the empty scope set — a deliberately read-only run: no
 capability is approved, and the episode's per-tool-call approval stays at its
@@ -1390,7 +1570,7 @@ reach.
 The grammar also parses `sql:<connection>`, and it is wired on both surfaces
 now that headless runs sit on the same approval engine as interactive
 sessions. On a run, the stated token seeds the run's decider — the frozen
-session policy built from `--allow` — so under `--approval-mode ask` the
+session policy built from `--allow` — so under `--mode ask` the
 read-shaped SQL tools' calls that name that connection run without asking,
 and every other ask the seeds do not cover denies with the engine's own
 reason ("cannot prompt: a headless run's approval is its `--allow` scopes").
@@ -1421,7 +1601,7 @@ empty approval and seeds nothing — it is not a revoke.
 
 A session with no prompt surface — `--turn-file`, piped input, or
 `--non-interactive` — cannot answer an approval question. Under
-`--approval-mode ask`, its launch `--allow` token now makes the matching
+`--mode ask`, its launch `--allow` token now makes the matching
 tool family usable instead of leaving the tools hidden:
 
 - `workspace-write` — `write` + `edit`
@@ -1435,7 +1615,7 @@ grant names one program, and a call no grant covers is refused without
 prompting and without hanging. The cross-connection fan-out SQL tool has no
 grant token and is never made available by a grant. `read-only`, `never` and Plan mode widen nothing. Grants last for the process that launched them: a
 resumed session (`--resume`) does not restore them. Where a headless
-session needs effects no scope covers, `--approval-mode bypass` is still
+session needs effects no scope covers, `--mode bypass` is still
 the way.
 
 ## Choosing model tools: `--tools` and `[tools] allow`
@@ -1458,7 +1638,7 @@ lists them. With no flag the job gets the session's list unchanged.
 The list only ever narrows. Each surface assembles its tools exactly as it
 would without the flag and then keeps only the names in the list, so a name can
 never grant a tool the surface would otherwise hide: `shell` stays hidden under
-`--approval-mode never`, however the list is spelled. A call to a tool that is not advertised is refused as an unknown tool.
+`--mode never`, however the list is spelled. A call to a tool that is not advertised is refused as an unknown tool.
 With no setting, every surface advertises exactly what it does without one.
 Duplicates collapse, `bash` names `shell`, and an empty list, an unknown word,
 a database tool name, or `helpers` with nothing beside it is refused with the
@@ -1518,7 +1698,7 @@ With no operator to answer a host call — a headless run or session under `ask`
 — the call runs in the sandbox when one is proven, and its result says so: a
 `lane_notice` field states that no operator could approve a host call, that the
 command ran in the sandbox with no network, and that a job or session
-reaches the host with `--approval-mode bypass`. The reroute is never silent, so
+reaches the host with `--mode bypass`. The reroute is never silent, so
 a command that fails for want of network is attributable to the lane it ran in.
 With no operator and no proven sandbox the call is refused instead, with a
 reason naming the same way out. Under `read-only` a host call is served from
@@ -1530,10 +1710,10 @@ A command is capped at 65536 bytes (64 KiB). The timeout defaults to 120 s and
 never exceeds 600 s; stdout and stderr are each capped at 64 KiB and redacted; a
 timeout or a cancel kills the command and every process it started.
 
-## Switching the session's permission mode: `/mode`, Shift+Tab, `--permission-mode`
+## Switching the session's consent mode: `/mode`, Shift+Tab, `--mode`
 
-A session runs under one of four **permission modes**. Each one is a
-projection of the two postures the engine already had — the consent posture
+A session runs under one of six **modes**, and they are one axis. Each one is a
+projection of the two postures the engine carries — the consent posture
 (`ApprovalPolicy`) and the task posture (`AgentMode`) — so a switch is never a
 second policy path: every decision still resolves through the session's one
 policy.
@@ -1544,12 +1724,17 @@ policy.
 | `accept-edits` | the workspace file family (`write`, `edit`) runs unasked; everything else still asks |
 | `plan` | write-shaped tools are hidden and refuse; `submit_plan` puts a plan to your approval |
 | `bypass` | every call runs without asking; every structural guard still applies |
+| `read-only` | read-shaped calls run; every call that would need approval is denied instead |
+| `never` | nothing is put to you: every call that would need approval is denied |
 
 `/mode` with no argument reports the mode in force; `/mode ask`,
-`/mode accept-edits`, `/mode plan` and `/mode bypass` switch it. `build` is
-kept as an alias for `ask`. A consent posture with no mode of its own
-(`read-only` or `never`, set by `/approvals`) is reported as the pair it is,
-never rounded to one of the four, and is not a cycle member.
+`/mode accept-edits`, `/mode plan`, `/mode bypass`, `/mode read-only` and
+`/mode never` switch it. `build` is kept as an alias for `ask`. `/approvals
+<value>` is a **deprecated alias** of `/mode`, accepted for one release and
+removed in the next: it parses the same six values, runs the same switch, and
+says on the line that it is an alias. Shift+TAB cycles the four interactive
+modes only, so a session under `read-only` or `never` enters the cycle at
+`ask`.
 
 **Shift+Tab** walks the same switch: `ask → accept-edits → plan → bypass →
 ask`, skipping `bypass` where the configuration withholds it. Where a prompt,
@@ -1557,19 +1742,21 @@ plan approval, trust modal, run panel, search or picker owns the keyboard the
 press changes nothing and says so in the transcript rather than being
 swallowed. `?` lists the binding.
 
-**`--permission-mode <mode>`** starts the session in one of the four, and
-overrides whatever a resumed record carried. It is session-surface only:
-`saya ask`, `saya run`, `saya start`, `saya follow-up` and `saya job` refuse
-it rather than ignoring a stated intent. Stating it together with `--approval-mode` is refused — the two
-are spellings of the same consent, and which one won would depend on the order
-the checks ran in. `--permission-mode bypass` is refused unless
+**`--mode <mode>`** starts the session in one of the six, and overrides
+whatever a resumed record carried. **`--permission-mode <mode>`** is its
+deprecated session-surface alias for one release (and still refuses to run on
+`saya ask`, `saya run`, `saya start`, `saya follow-up` and `saya job` rather
+than being silently ignored); **`--approval-mode <mode>`** is the deprecated
+posture alias. Each says on stderr that it is an alias. Stating two of the
+three is refused — they are spellings of the same consent, and which one won
+would depend on the order the checks ran in. `--mode bypass` is refused unless
 `[permissions] allow_bypass` is true in your user configuration (see
 [configuration.md](configuration.md#permissions)).
 
 `bypass` is the one mode a project's `.saya/config.toml` can never enable: the
 `[permissions]` table is protected, so the attempt is reverted and reported,
-and `/mode bypass`, the Shift+Tab cycle and `--permission-mode bypass` all
-refuse without the key. A **resumed** session whose record says `bypass`
+and `/mode bypass`, the Shift+Tab cycle and `--mode bypass` all refuse
+without the key. A **resumed** session whose record says `bypass`
 degrades to `ask` when this process's configuration no longer allows it — a
 record cannot grant a consent the configuration refuses.
 
@@ -1583,7 +1770,7 @@ every mode answers those the same way.
 
 ## The fourth approval mode: `bypass`
 
-`--approval-mode bypass` (or `/approvals bypass`) runs every tool call
+`--mode bypass` (or `/mode bypass`) runs every tool call
 without asking: one typed, global, informed consent, given once at the flag
 instead of once per call, in the session's own vocabulary — never a euphemism
 and never a softened word. Headless, it is also how a job or session
@@ -1615,7 +1802,7 @@ said plainly: the sandbox lane's bounds (a `sandbox: true` call still writes
 only in the workspace, with no network), the fetch destination list, and
 write SQL.
 
-When bypass takes effect — at launch, at `/approvals bypass`, and again on a
+When bypass takes effect — at launch, at `/mode bypass`, and again on a
 resume — the session prints its activation line: `bypass on: every tool call
 runs without asking; every structural guard still applies.` Nothing stages
 interpreters any more — `[jobs.interpreter]` was retired with the interpreter
@@ -1629,12 +1816,12 @@ refuses under bypass: the lane when not composed, no workspace bound,
 path-shaped and traversal names, names not on the passed PATH, timeout 0 or
 over the ceiling, and programs on the session deny list. The status bar
 and the headless status line render `approval:bypass` in red on every
-surface. `/approvals ask` leaves bypass mid-session, effective for turns
+surface. `/mode ask` (`/approvals ask` for one more release) leaves bypass mid-session, effective for turns
 started after the change; grants made before the toggle ride it and are
 consulted again under `ask` — bypass consults no grant and records none.
 
-A run never takes bypass: `saya run --approval-mode bypass` refuses at start
-(`2`), and `saya run resume <id> --approval-mode bypass` refuses the same way
+A run never takes bypass: `saya run --mode bypass` refuses at start
+(`2`), and `saya run resume <id> --mode bypass` refuses the same way
 at the resume — a run's approval is its `--allow` scopes, and bypass is a
 session mode. A `/run` from a bypass session therefore forwards no mode to
 the child:
@@ -1695,7 +1882,7 @@ conservatively; a clock change between observations may not be detectable.
 The clock measures first-party elapsed wall time, not CPU time, and no
 independent timer settles a stalled operation yet. Per-tool-call approval
 defaults to `read-only` (read-shaped tools run,
-side-effecting tools are denied). `--approval-mode ask` or `never` denies
+side-effecting tools are denied). `--mode ask` or `never` denies
 rather than prompts — a run has no per-call question, so every tool that
 declares it needs approval, the SQL tools included, is refused, while tools
 that declare no approval need (schema discovery, the workspace reads) still

@@ -1,5 +1,6 @@
 fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>> {
     crate::app::refuse_conflicting_consent(
+        cli.options.mode.as_deref(),
         cli.options.permission_mode.as_deref(),
         cli.options.approval_mode.as_deref(),
     )?;
@@ -22,9 +23,12 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
     // pre-empt the alternate screen and leave the terminal broken); the
     // plain REPL renders it as the line prompt, asked here before the loop.
     // Terminal-attached TUI sessions defer the question (no stdin read
-    // here); every other terminal session asks it here, on stderr.
+    // here); every other terminal session asks it here, on stderr. A
+    // `--plain` launch is one of those: it keeps the line front, so its
+    // question is the line prompt, asked before the loop.
+    let plain = plain_requested(&cli.options);
     let terminal_probe = io::stdin().is_terminal();
-    let tui_surface = terminal_probe && cli.options.turn_file.is_none();
+    let tui_surface = terminal_probe && !plain && cli.options.turn_file.is_none();
     let trusted_dir: Option<std::path::PathBuf> = if tui_surface {
         None
     } else {
@@ -64,16 +68,31 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
         // resume continuity keeps the persisted mode.
         state.approval_mode = resume_approval_mode(&cli.options, &state.approval_mode)?;
     }
-    // A stated `--permission-mode` is this process's own mode for the
-    // session, and it overrides whatever the fresh defaults or a resumed
-    // record carried. It moves the same pair `/mode` moves, so the flag, the
-    // command and the key cycle cannot land on different postures. Read here,
-    // before the engine is acquired, so the session's one policy is built
-    // from the mode the launch stated rather than being switched into it
-    // afterwards.
+    // A stated `--mode` (or its `--permission-mode` alias) is this process's
+    // own mode for the session, and it overrides whatever the fresh defaults or
+    // a resumed record carried. It moves the same pair `/mode` moves, so the
+    // flag, the command and the key cycle cannot land on different postures.
+    // Read here, before the engine is acquired, so the session's one policy is
+    // built from the mode the launch stated rather than being switched into it
+    // afterwards. One axis: all six values are states here, and the alias's
+    // note is said on stderr, once.
     let allow_bypass = config::runtime::allow_bypass(&runtime);
-    if let Some(spelling) = cli.options.permission_mode.as_deref() {
+    let launch_mode = match (
+        cli.options.mode.as_deref(),
+        cli.options.permission_mode.as_deref(),
+    ) {
+        (Some(spelling), _) => Some(spelling),
+        (None, Some(spelling)) => Some(spelling),
+        (None, None) => None,
+    };
+    if let Some(spelling) = launch_mode {
+        let flag = if cli.options.mode.is_some() {
+            "--mode"
+        } else {
+            "--permission-mode"
+        };
         let mode = crate::interactive::session::permissions::mode::stated_mode(
+            flag,
             spelling,
             allow_bypass,
         )
@@ -85,6 +104,11 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
         }
         state.agent_mode = agent.as_str().into();
     }
+    // `plan` states no consent posture, so an explicit mode statement is an
+    // explicit consent only when it names one.
+    let explicit_consent = cli.options.approval_mode.is_some()
+        || crate::interactive::session::permissions::mode::parse(launch_mode.unwrap_or(""))
+            .is_some_and(|mode| mode.decompose().0.is_some());
     state.bind_runtime_endpoint(runtime.resolved.ai.base_url.as_deref());
     // Always derived, including on a resumed session: the toggle is a display
     // preference that is never persisted, so a resumed session deserializes it
@@ -189,7 +213,7 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
         crate::interactive::session::permissions::mode::launch_posture(
             &state.approval_mode,
             &state.agent_mode,
-            cli.options.approval_mode.is_some(),
+            explicit_consent,
             state.allow_bypass,
         );
     state.approval_mode = approval;
@@ -249,7 +273,7 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
     // consents to nothing new, so nothing is journalled.
     if crate::interactive::session::permissions::activation::bypass_activated_at_launch(
         fresh,
-        cli.options.approval_mode.is_some(),
+        explicit_consent,
         &state.approval_mode,
     ) {
         session.journal_bypass_activation(saya_store::BypassSource::Launch);
@@ -264,6 +288,7 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
         session,
         fresh,
         terminal_probe,
+        plain,
         trusted_echo,
         tui_trust_pending,
         launch,

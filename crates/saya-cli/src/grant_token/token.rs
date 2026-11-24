@@ -1,6 +1,7 @@
 //! The per-family token builders: what each tool call's grant would record.
 
 use super::SQL_FAMILY;
+use super::shell::shell_token;
 use crate::approval_facts::ApprovalFacts;
 use saya_agent::WORKSPACE_WRITE_TOKEN;
 use saya_types::{Destination, is_bare_name, is_name_shaped};
@@ -16,8 +17,10 @@ use serde_json::Value;
 ///
 /// Failure contract, per family: `workspace-write` only when a workspace
 /// root is bound; `fetch:` only when a fetch member is composed;
-/// `command:` only when the host route is composed; `sql:` only for a
-/// call-named (or primary-bound) connection.
+/// `command:` and `shell:` only when the host route is composed; `sql:` only
+/// for a call-named (or primary-bound) connection. `command:` names a
+/// program and `shell:` a command prefix — two families, never a stand-in
+/// for each other.
 pub(crate) fn grant_token(
     tool: &str,
     arguments: &Value,
@@ -29,12 +32,13 @@ pub(crate) fn grant_token(
             .workspace_root
             .is_some()
             .then(|| WORKSPACE_WRITE_TOKEN.to_owned()),
-        "http_fetch" | "http_download" => facts
+        "http_fetch" | "http_download" | "web_fetch" => facts
             .fetch
             .is_some()
             .then(|| fetch_token(arguments))
             .flatten(),
         "run_command" => command_token(arguments, facts.host.as_ref()),
+        "shell" => shell_token(arguments, facts.host.as_ref()),
         name if SQL_FAMILY.contains(&name) => sql_token(arguments, primary),
         // Every other tool — the fan-out, the never-asked read tools —
         // keeps asking.
@@ -48,7 +52,7 @@ pub(crate) fn grant_token(
 /// name so `/grants` shows the database the user actually approved. The
 /// payload is judged by the same name-shape rule `endpoint:` payloads
 /// are; a name that fails it yields `None` — never a guessed token.
-fn sql_token(arguments: &Value, primary: Option<&str>) -> Option<String> {
+pub(crate) fn sql_token(arguments: &Value, primary: Option<&str>) -> Option<String> {
     let connection = match arguments.get("connection") {
         // Absent or empty — the registry's own "primary" spellings.
         None => primary?,

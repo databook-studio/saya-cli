@@ -136,12 +136,17 @@ fn the_fetch_family_advertises_exactly_where_a_call_can_run() {
 }
 
 /// The command family: the `command:` prefix group opens it; no other
-/// family's token does.
+/// family's token does — the job shell's `shell:` key included.
 #[test]
 fn the_command_family_advertises_exactly_where_a_call_can_run() {
     the_family_table(
         &["command:cargo"],
-        &["fetch:https+docs.example", "workspace-write", "sql:docs"],
+        &[
+            "fetch:https+docs.example",
+            "workspace-write",
+            "sql:docs",
+            "shell:cargo test",
+        ],
         command_available,
     );
 }
@@ -158,6 +163,7 @@ fn the_family_keys_are_the_grammar_classifier_s_own_words() {
     assert_eq!(grant_family("runner:touch"), Some("runner"));
     assert_eq!(grant_family("interpreter:python3"), Some("runner"));
     assert_eq!(grant_family("command:cargo"), Some("command"));
+    assert_eq!(grant_family("shell:cargo test"), Some("shell"));
     assert_eq!(grant_family("workspace-write"), Some("workspace-write"));
     assert_eq!(grant_family("sql:docs"), Some("SQL"));
     assert_eq!(grant_family("unknown-thing"), None);

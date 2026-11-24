@@ -43,12 +43,12 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         compaction_trigger_percent: 50,
         retry_delays_ms: vec![250, 500, 1000],
     };
-    let to_openai = crate::agent::runtime::PromptOverrides {
+    let to_openai = crate::agent::turn_config::PromptOverrides {
         provider: Some(saya_config::AiProvider::OpenaiCompatible),
         ..Default::default()
     };
     assert_eq!(
-        crate::agent::runtime::effective_ai(&ollama, &to_openai).base_url,
+        crate::agent::turn_config::effective_ai(&ollama, &to_openai).base_url,
         None
     );
 
@@ -57,12 +57,12 @@ fn changing_provider_clears_the_previous_provider_endpoint_in_both_directions() 
         base_url: Some("https://cloud.invalid/v1".into()),
         ..ollama
     };
-    let to_ollama = crate::agent::runtime::PromptOverrides {
+    let to_ollama = crate::agent::turn_config::PromptOverrides {
         provider: Some(saya_config::AiProvider::Ollama),
         ..Default::default()
     };
     assert_eq!(
-        crate::agent::runtime::effective_ai(&openai, &to_ollama).base_url,
+        crate::agent::turn_config::effective_ai(&openai, &to_ollama).base_url,
         None
     );
 }

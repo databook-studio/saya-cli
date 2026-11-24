@@ -197,6 +197,7 @@ pub fn load_with_sources(
                 allow_bypass: None,
                 allow: (!options.allow_command.is_empty()).then(|| options.allow_command.clone()),
                 deny: (!options.deny_command.is_empty()).then(|| options.deny_command.clone()),
+                ..Default::default()
             },
             trust_project_config: options.trust_project_config,
         });
@@ -228,21 +229,68 @@ impl std::fmt::Debug for RuntimeConfig {
     }
 }
 
-pub fn approval_mode(options: &GlobalOptions) -> Result<saya_agent::ApprovalPolicy, RuntimeError> {
-    let value = match options.approval_mode.as_deref() {
-        Some(value) => value,
-        None if options.non_interactive => "never",
-        None => "ask",
-    };
-    value
-        .parse()
-        .map_err(|error: saya_agent::ApprovalPolicyParseError| {
-            RuntimeError::Approval(error.to_string())
-        })
+/// The consent posture this invocation states, and the flag that stated it:
+/// `--mode` is the one axis, `--approval-mode` its one-release alias. `None`
+/// where neither is stated, so the caller's default (or `--non-interactive`)
+/// answers instead.
+///
+/// `--permission-mode` is not read here: it states the *session's* mode, which
+/// moves the task posture too, and the launch applies it as a mode statement
+/// (`mode::stated_mode`) rather than as a posture.
+pub fn stated_posture(options: &GlobalOptions) -> Option<(&'static str, &str)> {
+    if let Some(value) = options.mode.as_deref() {
+        return Some(("--mode", value));
+    }
+    options
+        .approval_mode
+        .as_deref()
+        .map(|value| ("--approval-mode", value))
 }
 
+pub fn approval_mode(options: &GlobalOptions) -> Result<saya_agent::ApprovalPolicy, RuntimeError> {
+    let (flag, spelling) = match stated_posture(options) {
+        Some((flag, value)) => (flag, value),
+        None if options.non_interactive => ("--non-interactive", "never"),
+        None => ("--mode", "ask"),
+    };
+    let mode =
+        crate::interactive::session::permissions::mode::parse(spelling).ok_or_else(|| {
+            RuntimeError::Approval(format!(
+                "invalid {flag} `{spelling}`: expected ask, accept-edits, plan, bypass, read-only, \
+             or never"
+            ))
+        })?;
+    match mode.decompose().0 {
+        Some(policy) => Ok(policy),
+        // `plan` names no posture of its own: it needs an operator to answer
+        // the plan it submits, and a headless surface has nobody to ask.
+        // Refused in a sentence rather than read as a default.
+        None => Err(RuntimeError::Approval(format!(
+            "`{flag} plan` needs the interactive session to answer the plan: drop it, or launch \
+             the session with `saya {flag} plan`"
+        ))),
+    }
+}
+
+/// The session-launch default posture, in the one spelling the state carries.
+///
+/// This reads `--approval-mode` only, and deliberately: `--mode` (and its
+/// `--permission-mode` alias) states the *mode*, which moves the task posture
+/// too, so the launch applies it afterwards as a mode statement
+/// ([`mode::stated_mode`]) instead of folding it into the defaults.
+///
+/// [`mode::stated_mode`]: crate::interactive::session::permissions::mode::stated_mode
 pub fn approval_name(options: &GlobalOptions) -> Result<String, RuntimeError> {
-    Ok(match approval_mode(options)? {
+    let policy = match options.approval_mode.as_deref() {
+        Some(value) => value
+            .parse()
+            .map_err(|error: saya_agent::ApprovalPolicyParseError| {
+                RuntimeError::Approval(error.to_string())
+            })?,
+        None if options.non_interactive => saya_agent::ApprovalPolicy::Never,
+        None => saya_agent::ApprovalPolicy::Ask,
+    };
+    Ok(match policy {
         saya_agent::ApprovalPolicy::Ask => "ask",
         saya_agent::ApprovalPolicy::AcceptEdits => "accept-edits",
         saya_agent::ApprovalPolicy::ReadOnly => "read-only",

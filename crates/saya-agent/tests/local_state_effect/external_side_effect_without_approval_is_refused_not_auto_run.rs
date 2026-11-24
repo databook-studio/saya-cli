@@ -56,7 +56,7 @@ async fn external_side_effect_without_approval_is_refused_not_auto_run() {
         .unwrap()
         .iter()
         .find_map(|event| match event {
-            AgentEvent::ToolDenied { name, reason } if name == "open_browser" => {
+            AgentEvent::ToolDenied { name, reason, .. } if name == "open_browser" => {
                 Some(reason.clone())
             }
             _ => None,

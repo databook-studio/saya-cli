@@ -1,0 +1,255 @@
+//! Opening the session's run for the record it was resumed from.
+//!
+//! A `saya --resume <id>` session starts with no run, and the record it loads
+//! names one. [`crate::chat::decide`] says what that link means — attach it,
+//! prepare its next epoch, open read-only, or refuse it — and this module acts
+//! on that one answer: a link this process can take is resumed here and driven
+//! like any other run, a record that opens read-only says why and gets a run of
+//! its own, and a job that cannot be resumed states its one sentence and the
+//! process leaves.
+//!
+//! **One decision, one resume.** The seed the resumed run is prepared with is
+//! the one the same decision states, so a new epoch carries the kept tail and
+//! an attached run carries none — the run it already is.
+//!
+//! **One opener for both surfaces.** [`decided`] is what the line loop's first
+//! message and the full-screen surface both ask: the record's link is read once,
+//! and the run either of them drives — the linked one, or the one a read-only
+//! record prepares — is opened by the same composition ([`super::open`]).
+
+use std::path::Path;
+use std::sync::Arc;
+
+use saya_agent::{CancellationToken, NoopEventSink};
+use saya_store::{RedactedSession, SqliteStateStore};
+use saya_types::{JobId, JobState};
+
+use super::LineChat;
+use super::line::Line;
+use super::open::{self, LineSession, session_run};
+use super::resume::{self, Facts, Opening};
+use super::run::Run;
+use crate::chat::{ChatFront, RunComposition, WorkspaceShape};
+use crate::commands::coding::{
+    CodingApplication, CodingAuthorization, Launch, NativeCodingJob, TurnInputs,
+};
+use crate::local_metrics::LocalMetrics;
+
+/// What the front did with the record's link.
+pub(crate) enum Begun {
+    /// The run is open, and the line is a turn of it. `said` is the one line
+    /// the record itself states first — why it opened read-only.
+    Open {
+        /// The session driving the run.
+        chat: Box<LineChat>,
+        /// The sentence the front says before the line's own output.
+        said: Option<String>,
+    },
+    /// The job cannot be resumed: one sentence, and the process leaves.
+    Refused {
+        /// The sentence, as the core words it.
+        sentence: String,
+    },
+}
+
+/// The run the one opener opened, and the host it composed over: what the line
+/// loop wraps in a [`Line`], and what a surface that drives the run itself takes
+/// the run and the record's sentence out of.
+pub(super) struct OpenRun {
+    /// The run, open and prepared.
+    pub(super) run: Run,
+    /// The application the run composed over: every later run composes on it.
+    pub(super) application: Arc<CodingApplication>,
+    /// The shape of the folder the run opened over.
+    pub(super) shape: WorkspaceShape,
+    /// The one sentence the record itself states first — why it opened
+    /// read-only — when it stated one.
+    pub(super) said: Option<String>,
+}
+
+/// What the one opener made of the record's link.
+pub(super) enum Decided {
+    /// A run is open: the record's own run, or the one a read-only record
+    /// prepares for its next message. Boxed, because a refusal is one sentence.
+    Open(Box<OpenRun>),
+    /// The job cannot be resumed: one sentence, and no run is opened.
+    Refused {
+        /// The sentence, as the core words it.
+        sentence: String,
+    },
+}
+
+impl LineChat {
+    /// Opens the session for the record it resumed, following the link's
+    /// decision: the run it names, a run of the record's own, or the refusal.
+    pub(crate) fn begin(parts: LineSession, record: RedactedSession) -> Result<Begun, String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("the session's runtime could not be built: {error}"))?;
+        let (front, metrics) = open::front_for(&parts);
+        let decided = runtime.block_on(decided(
+            &parts,
+            &record,
+            Arc::clone(&front) as Arc<dyn ChatFront>,
+            metrics.clone(),
+        ))?;
+        match decided {
+            Decided::Refused { sentence } => Ok(Begun::Refused { sentence }),
+            Decided::Open(open) => {
+                let line = Line::new(
+                    open.application,
+                    parts,
+                    front,
+                    open.shape,
+                    metrics,
+                    open.run,
+                );
+                Ok(Begun::Open {
+                    chat: Box::new(LineChat::new(line, runtime)),
+                    said: open.said,
+                })
+            }
+        }
+    }
+}
+
+/// The one opener both surfaces go through: the record's link read once into
+/// the one decision, and the one open it asks for.
+pub(super) async fn decided(
+    parts: &LineSession,
+    record: &RedactedSession,
+    front: Arc<dyn ChatFront>,
+    metrics: Option<Arc<LocalMetrics>>,
+) -> Result<Decided, String> {
+    let root = super::session_host::state_root(parts)?;
+    let opening = resume::opening(record, facts(&root, record, &parts.store).await);
+    match opening {
+        Opening::Refused { sentence } => Ok(Decided::Refused { sentence }),
+        Opening::ReadOnly { reason } => {
+            // A record this process cannot take opens read-only: the transcript
+            // is the loop's, and the run its next message prepares is composed
+            // here, over the same host and front every run is.
+            let hosted = open::host(parts).await?;
+            let (run, application, shape) = open::open_run(parts, hosted, front, metrics).await?;
+            Ok(Decided::Open(Box::new(OpenRun {
+                run,
+                application,
+                shape,
+                said: Some(reason),
+            })))
+        }
+        Opening::Attach { job } => resumed(parts, &job, Vec::new(), front, metrics).await,
+        Opening::NewEpoch { job, .. } => {
+            // The decision states *whether* a run is seeded; the conversation
+            // it is seeded with is the one the session holds — its kept tail
+            // behind the compaction boundary, summary first — the same pairs
+            // a composed run is opened with.
+            let seed = parts.seed.clone();
+            resumed(parts, &job, seed, front, metrics).await
+        }
+    }
+}
+
+/// The session over the job the engine hands back: its next epoch, prepared
+/// with `seed` and driven by the same front every composed run gets.
+async fn resumed(
+    parts: &LineSession,
+    link: &JobId,
+    seed: Vec<(String, String)>,
+    front: Arc<dyn ChatFront>,
+    metrics: Option<Arc<LocalMetrics>>,
+) -> Result<Decided, String> {
+    let (run, application, shape) = resume_run(parts, link, seed, front, metrics).await?;
+    Ok(Decided::Open(Box::new(OpenRun {
+        run,
+        application,
+        shape,
+        said: None,
+    })))
+}
+
+/// Resumes the linked job and opens the session's run over it.
+async fn resume_run(
+    parts: &LineSession,
+    link: &JobId,
+    seed: Vec<(String, String)>,
+    front: Arc<dyn ChatFront>,
+    metrics: Option<Arc<LocalMetrics>>,
+) -> Result<(Run, Arc<CodingApplication>, WorkspaceShape), String> {
+    let (application, shape) = super::session_host::open_host(parts).await?;
+    // The session's mode, stated on the host the resume composes its job over: a
+    // resumed run turns under the posture the session holds now, exactly as a
+    // composed one does.
+    let application = Launch::Attached(parts.mode).compose(application);
+    // The surface's own fact, stated beside the operator the resume attaches:
+    // a front with nobody to ask advertises no write-shaped call, and the
+    // resumed run states exactly what a composed one does.
+    application.with_approval_surface(parts.can_prompt);
+    let job = resume_job(&application, link).await?;
+    // The resumed job's approval re-derives the scopes the run it continues was
+    // opened with. A session's grants die with the process that stated them, so
+    // the session's own statement is made last: a resumed session restarts
+    // unstated, exactly as a composed one does.
+    application.with_launch_grants(parts.grants.clone());
+    let stated = session_run(parts, Arc::clone(&front), parts.session.clone(), &shape).await?;
+    let plugins = RunComposition::resumed_plugins(&application, &job, stated)
+        .await
+        .map_err(|error| error.to_string())?;
+    job.run_prepare(
+        &NoopEventSink,
+        TurnInputs {
+            seed,
+            plugins: Some(plugins),
+            tasks: parts.tasks.clone(),
+            facts: parts.facts.clone(),
+            ..TurnInputs::default()
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let run = Run::resumed(job, front, metrics).await;
+    Ok((run, application, shape))
+}
+
+/// The facts the record's link states, with the engine's own answer about
+/// whether the job finished. Read on the session's own runtime: the store's
+/// answer is a future, and a nested runtime here would be a second one.
+pub(crate) async fn facts(
+    root: &Path,
+    record: &RedactedSession,
+    store: &SqliteStateStore,
+) -> Facts {
+    let Some(link) = record.run.as_ref() else {
+        return Facts::default();
+    };
+    // A job the store keeps no row for has no run to continue: it reads as
+    // finished, and the resume states its own refusal rather than this front
+    // inventing one.
+    let finished = match store.get_coding_job(&link.job).await {
+        Ok(Some(job)) => matches!(
+            job.state,
+            JobState::Completed | JobState::Failed | JobState::Cancelled
+        ),
+        Ok(None) | Err(_) => true,
+    };
+    resume::facts(root, &link.job, finished)
+}
+
+/// The engine's own resume of the linked job: the operation `saya job resume`
+/// runs, under the session's own consent — the session's mode was the consent
+/// to open, and it is the consent to continue.
+async fn resume_job(
+    application: &Arc<CodingApplication>,
+    job: &JobId,
+) -> Result<Arc<NativeCodingJob>, String> {
+    let proposal = application
+        .propose_resume(job)
+        .await
+        .map_err(|error| error.to_string())?;
+    let consent = CodingAuthorization::scoped(&proposal).map_err(|error| error.to_string())?;
+    application
+        .resume(job, &consent, CancellationToken::new())
+        .await
+        .map_err(|error| error.to_string())
+}

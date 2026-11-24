@@ -140,12 +140,18 @@ async fn list_filters_local_jobs() {
         })
         .await
         .unwrap();
-    let listed = dispatch_coding(&fixture.application, CodingCommand::List { after: None })
-        .await
-        .unwrap();
+    let listed = dispatch_coding(
+        &fixture.application,
+        CodingCommand::List {
+            after: None,
+            all: false,
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(
         listed["jobs"],
-        json!([{"job_id": job.job_id().as_str(), "state": "running"}])
+        json!([{"job_id": job.job_id().as_str(), "state": "running", "origin": "cli"}])
     );
 }
 

@@ -70,6 +70,13 @@ pub(crate) fn render_delete(outcome: &DeleteOutcome, id: &str) -> (i32, String) 
             EXIT_SESSIONS_ERROR,
             format!("session {id} is live: its lock is held by pid {pid}; nothing was deleted."),
         ),
+        DeleteOutcome::LiveRun { job } => (
+            EXIT_SESSIONS_ERROR,
+            format!(
+                "session {id} was not deleted and its job {job} was left in place: {}",
+                super::RUN_STILL_OPEN
+            ),
+        ),
         DeleteOutcome::InvalidId => (
             EXIT_SESSIONS_ERROR,
             format!("{id:?} is not a valid session id"),

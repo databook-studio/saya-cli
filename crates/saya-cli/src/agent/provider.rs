@@ -82,6 +82,12 @@ fn effort_for(effort: saya_config::ReasoningEffort) -> Option<saya_agent::Reason
     }
 }
 
+/// The advice a provider that could not be reached is followed by. One
+/// sentence, in one place: the turn body's own provider error says it, and so
+/// does the failure-class table a job surface reads a run's failure through.
+pub(crate) const PROVIDER_UNREACHABLE_ADVICE: &str =
+    "next: start your AI provider, or run `saya config doctor` to check the endpoint and base_url.";
+
 #[cfg(test)]
 mod tests {
     use super::*;

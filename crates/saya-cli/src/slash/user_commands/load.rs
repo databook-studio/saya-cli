@@ -51,7 +51,7 @@ impl UserCommands {
             ));
             return;
         }
-        if registry::KNOWN_COMMANDS.contains(&name) {
+        if catalog::is_command(name) {
             self.notice(format!(
                 "refused {}: /{name} is a built-in command, which a command file \
                  cannot replace",

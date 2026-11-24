@@ -30,8 +30,11 @@ pub use ollama::OllamaProvider;
 pub use openai::OpenAiCompatibleProvider;
 pub use settings::ProviderSettings;
 // The turn-level retry in `loop_runner::receive` shares the default backoff
-// schedule and the per-delay ceiling the HTTP establishment path uses.
-pub(crate) use settings::{DEFAULT_REQUEST_TIMEOUT, MAX_RETRY_DELAY, default_retry_delays};
+// schedule and the per-delay ceiling the HTTP establishment path uses, and the
+// loop's content-progress bound shares the streaming providers' stall window.
+pub(crate) use settings::{
+    DEFAULT_REQUEST_TIMEOUT, DEFAULT_STALL_TIMEOUT, MAX_RETRY_DELAY, default_retry_delays,
+};
 
 #[cfg(test)]
 mod context_block_tests {

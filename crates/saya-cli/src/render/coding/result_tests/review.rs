@@ -66,7 +66,7 @@ fn apply_reports_the_digest_and_leaves_other_commands_as_json() {
     );
     assert!(text.contains(&"b".repeat(12)), "{text}");
 
-    let other = CodingCommand::List { after: None };
+    let other = CodingCommand::Notes { id: "job-1".into() };
     let value = json!({"jobs":[]});
     assert_eq!(render_coding_result(&other, &value), value.to_string());
 }

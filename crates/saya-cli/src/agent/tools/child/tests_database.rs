@@ -19,7 +19,7 @@ use crate::config::runtime::RuntimeConfig;
 
 /// A resolved runtime with no configured profile: the tests insert exactly the
 /// profiles they select, so nothing else can be reached.
-fn runtime() -> RuntimeConfig {
+pub(super) fn runtime() -> RuntimeConfig {
     let root = std::env::temp_dir().join(format!("saya-coding-db-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let mut runtime = crate::load_with_sources(
@@ -35,7 +35,7 @@ fn runtime() -> RuntimeConfig {
     runtime
 }
 
-fn store() -> SqliteStateStore {
+pub(super) fn store() -> SqliteStateStore {
     SqliteStateStore::new(
         std::env::temp_dir().join(format!("saya-coding-db-{}.sqlite3", std::process::id())),
     )
@@ -43,7 +43,7 @@ fn store() -> SqliteStateStore {
 
 /// An absolute, read/write SQLite profile whose file exists: the connection is
 /// writable, so a write statement can only be refused by the safety layer.
-fn sqlite_profile(root: &Path, name: &str) -> (DatabaseProfile, PathBuf) {
+pub(crate) fn sqlite_profile(root: &Path, name: &str) -> (DatabaseProfile, PathBuf) {
     let path = root.join(format!("{name}.sqlite3"));
     std::fs::File::create(&path).unwrap();
     let profile = DatabaseProfile::Sqlite {
@@ -54,7 +54,7 @@ fn sqlite_profile(root: &Path, name: &str) -> (DatabaseProfile, PathBuf) {
 }
 
 /// A runtime that carries exactly `profiles`.
-fn runtime_with(profiles: &[(String, DatabaseProfile)]) -> RuntimeConfig {
+pub(crate) fn runtime_with(profiles: &[(String, DatabaseProfile)]) -> RuntimeConfig {
     let mut runtime = runtime();
     for (name, profile) in profiles {
         runtime
@@ -65,7 +65,7 @@ fn runtime_with(profiles: &[(String, DatabaseProfile)]) -> RuntimeConfig {
     runtime
 }
 
-fn selected(entries: &[(String, ProfileIdentity)]) -> BTreeMap<String, ProfileIdentity> {
+pub(super) fn selected(entries: &[(String, ProfileIdentity)]) -> BTreeMap<String, ProfileIdentity> {
     entries.iter().cloned().collect()
 }
 

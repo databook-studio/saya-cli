@@ -14,13 +14,19 @@ fn tui_sql_then_export_snapshot_survives_and_writes_the_file() {
     };
     dismiss_trust_modal(&mut tui);
 
-    tui.send_line("/sql SELECT 1").expect("send /sql");
-    tui.wait_for("direct sql", INTERACTIVE)
+    // `/` opens `02` §11's palette, so a command is chosen there and its
+    // argument typed into the composer the choice fills.
+    tui.send("/").expect("open the palette");
+    tui.send("sql\r").expect("choose /sql");
+    tui.send_line("SELECT 1").expect("send the query");
+    tui.wait_for("result · demo · 1 row", INTERACTIVE)
         .expect("the query result paints");
 
     let snapshot = home.join("snapshot.csv");
-    tui.send_line(&format!("/export --snapshot {}", snapshot.display()))
-        .expect("send /export");
+    tui.send("/").expect("open the palette");
+    tui.send("export\r").expect("choose /export");
+    tui.send_line(&format!("--snapshot {}", snapshot.display()))
+        .expect("finish the export command");
     tui.wait_for("Exported", INTERACTIVE)
         .expect("the export is said");
     assert!(
@@ -48,14 +54,31 @@ fn tui_sql_then_investigation_save_survives_and_saves() {
     };
     dismiss_trust_modal(&mut tui);
 
-    tui.send_line("/sql SELECT 1").expect("send /sql");
-    tui.wait_for("direct sql", INTERACTIVE)
+    tui.send("/").expect("open the palette");
+    tui.send("sql\r").expect("choose /sql");
+    tui.send_line("SELECT 1").expect("send the query");
+    tui.wait_for("result · demo · 1 row", INTERACTIVE)
         .expect("the query result paints");
 
-    tui.send_line("/investigation save pty-sentinel")
-        .expect("send /investigation save");
-    tui.wait_for("Saved exactly as shown", INTERACTIVE)
-        .expect("the save is said");
+    tui.send("/").expect("open the palette");
+    tui.send("investigation\r").expect("choose /investigation");
+    tui.send_line("save pty-sentinel")
+        .expect("finish the save command");
+    // The save's own sentence is a direct command's outcome, which the new
+    // surface says as a transient word on the status line (a toast) — a settled
+    // frame no longer holds it, so waiting for the words would be a race. What
+    // the surface must be shown to have done is the save itself and to have
+    // survived it: the document lands under the session's investigations root,
+    // beside the state DB.
+    let saved = home.join("investigations");
+    let start = Instant::now();
+    while start.elapsed() < INTERACTIVE && files_under(&saved).is_empty() {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        !files_under(&saved).is_empty(),
+        "the save wrote its document under {saved:?}"
+    );
     assert!(tui.still_running(), "the TUI is still alive after the save");
 }
 
@@ -68,6 +91,11 @@ fn tui_sql_then_investigation_save_survives_and_saves() {
 /// configuration is still in use — and the TUI stays responsive through all
 /// of it. The edited file is the same `home/config.toml` `interactive_tui`
 /// passed as `--config`, written while the child is running.
+/// The swap is the surface's own (`front::tui::reload` over the crate's one
+/// reload core): a changed file moves the configuration in force, a broken one
+/// keeps it and says the pinned sentence. The unchanged line, the plan's key and
+/// the failure sentence are the reload report's own words, so nothing here is a
+/// needle this surface invented.
 #[test]
 fn tui_reload_applies_edits_and_survives_a_broken_file() {
     let home = scratch_home("reload");
@@ -109,7 +137,10 @@ fn tui_reload_applies_edits_and_survives_a_broken_file() {
         .expect("the pinned sentence paints");
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("the TUI is still responsive after the failure");
     assert!(
         tui.still_running(),

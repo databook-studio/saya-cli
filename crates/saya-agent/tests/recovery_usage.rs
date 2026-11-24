@@ -12,6 +12,8 @@ include!("recovery_usage/recording_sink.rs");
 include!("recovery_usage/capture_sink.rs");
 include!("recovery_usage/request.rs");
 include!("recovery_usage/establishment_failure.rs");
+include!("recovery_usage/unavailable_then_success.rs");
+include!("recovery_usage/transient_establishment_failure_is_retried.rs");
 include!("recovery_usage/max_then_success.rs");
 include!("recovery_usage/latest_usage_then_success.rs");
 include!("recovery_usage/optional_usage_retry.rs");

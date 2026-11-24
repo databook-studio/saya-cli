@@ -34,10 +34,13 @@ fn every_agent_event() -> Vec<AgentEvent> {
         AgentEvent::ToolCompleted {
             name: "read".to_owned(),
             summary: "ok".to_owned(),
+            caller: None,
         },
         AgentEvent::ToolDenied {
             name: "read".to_owned(),
+            arguments: serde_json::Value::Null,
             reason: "refused".to_owned(),
+            caller: None,
         },
         AgentEvent::knowledge_supplied(KnowledgeOutcome::Off, Vec::new(), 0),
         AgentEvent::knowledge_proposed(saya_agent::ProposedClaimDto {

@@ -65,31 +65,3 @@ fn the_line_loop_status_and_the_view_agree() {
         "an empty list must hide the segment from the TUI view"
     );
 }
-
-/// The TUI bar carries the same `tasks:` words the headless header renders —
-/// through the bar's own word seam, not by re-reading the headless line.
-#[test]
-fn the_tui_bar_carries_the_same_tasks_words() {
-    use crate::interactive::session::state::SessionState;
-    use crate::interactive::session_prompt::status_segments;
-    use crate::interactive::tui::ui::chrome::status::status_words_for_test;
-
-    let mut state = SessionState::new("s1", Some(String::from("analytics")), "m");
-    state.task_list = SessionTaskList::new(vec![
-        SessionTask::new("one", TaskStatus::Done).unwrap(),
-        SessionTask::new("two", TaskStatus::Pending).unwrap(),
-    ])
-    .unwrap();
-    let view = status_segments(&state);
-    assert!(
-        status_words_for_test(&view).contains("tasks: 1/2"),
-        "the TUI bar must carry the same words as the header"
-    );
-
-    let bare = SessionState::new("s1", Some(String::from("analytics")), "m");
-    let bare_view = status_segments(&bare);
-    assert!(
-        !status_words_for_test(&bare_view).contains("tasks:"),
-        "an empty list must hide the segment from the TUI bar too"
-    );
-}

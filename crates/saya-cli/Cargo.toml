@@ -1,6 +1,6 @@
 [package]
 name = "saya-cli"
-version = "0.5.0"
+version = "0.5.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -33,12 +33,12 @@ async-trait.workspace = true
 clap.workspace = true
 clap_complete = "4"
 futures-util.workspace = true
-saya-agent = { path = "../saya-agent", version = "0.5.0" }
-saya-config = { path = "../saya-config", version = "0.5.0" }
-saya-connectors = { path = "../saya-connectors", version = "0.5.0" }
-saya-harness = { path = "../saya-harness", version = "0.5.0" }
-saya-store = { path = "../saya-store", version = "0.5.0" }
-saya-types = { path = "../saya-types", version = "0.5.0" }
+saya-agent = { path = "../saya-agent", version = "0.5.1" }
+saya-config = { path = "../saya-config", version = "0.5.1" }
+saya-connectors = { path = "../saya-connectors", version = "0.5.1" }
+saya-harness = { path = "../saya-harness", version = "0.5.1" }
+saya-store = { path = "../saya-store", version = "0.5.1" }
+saya-types = { path = "../saya-types", version = "0.5.1" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
@@ -68,6 +68,11 @@ libc = "0.2"
 libc = "0.2"
 insta.workspace = true
 proptest.workspace = true
+# Owning temp directories that clean up on drop: the line front's end-to-end
+# rows (tests/chat_session_line_e2e.rs) hold a SQLite fixture, and a cross-
+# platform test cannot assume the shell's temp paths survive. Already in
+# Cargo.lock (dev-only through saya-connectors); this pin adds no supply chain.
+tempfile = "3"
 # Pty + screen parser for the TUI paint smoke test (tests/tui_pty_smoke.rs).
 # Dev-only: nothing here is a runtime dependency. portable-pty allocates a
 # pseudo-terminal so the real `saya` binary drives its crossterm/ratatui TUI
@@ -75,3 +80,8 @@ proptest.workspace = true
 # byte stream into a grid we can read as text and assert against.
 portable-pty = "0.9"
 vt100 = "0.16"
+# The approval wait's policies are tested on a paused clock
+# (`#[tokio::test(start_paused = true)]` + `tokio::time::advance`), so a test
+# never really waits the panel's 120 s. Dev-only: `test-util` reaches no
+# shipped binary.
+tokio = { workspace = true, features = ["test-util"] }

@@ -2,6 +2,11 @@
 /// ("No files were changed.", exit 0), the TUI takes the terminal back and
 /// says so, input works again, and the raw stream shows the exact
 /// enter → leave → wizard → enter ordering.
+///
+/// The handoff is the kept leaf (`interactive::tui::terminal_handoff`), reused
+/// by the new surface: the ordering asserted below is that boundary's contract,
+/// unchanged, and the cancel is the wizard's own exit 0 — applied by the same
+/// reload `/reload` runs, which finds nothing to change.
 #[test]
 fn setup_handoff_cancel_returns_to_a_responsive_tui() {
     let home = scratch_home("setup-cancel");
@@ -19,8 +24,10 @@ fn setup_handoff_cancel_returns_to_a_responsive_tui() {
     let cpr_before_handoff = count_of(&tui.raw, CURSOR_QUERY);
 
     tui.send_line("/setup").expect("send /setup");
-    // The first Enter is consumed by the completion popup (a bare command's
-    // accept), so a second one submits.
+    // `/` opens the palette, the typed letters narrow it to `/setup`, and the
+    // first Enter runs the choice — which submits the line it filled. The
+    // second Enter is typed-ahead: the handoff drops what was queued before it
+    // released the terminal.
     tui.send("\r").expect("submit /setup");
     tui.wait_for(FIRST_PROMPT, INTERACTIVE)
         .expect("the wizard took the terminal");
@@ -46,7 +53,10 @@ fn setup_handoff_cancel_returns_to_a_responsive_tui() {
     );
     tui.send_line("/help").expect("send /help");
     tui.send("\r").expect("submit /help");
-    tui.wait_for("List runs, or show one run by id", INTERACTIVE)
+    // The proof that input works again is the sheet bare `/help` opens: the
+    // new surface answers `/help` with its key sheet (`view::help_keys`), not
+    // with the catalogue listing, so the row this pins is the sheet's own.
+    tui.wait_for("Conversation", INTERACTIVE)
         .expect("input works again after the handoff");
     assert!(
         tui.still_running(),

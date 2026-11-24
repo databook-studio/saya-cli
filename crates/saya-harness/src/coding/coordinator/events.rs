@@ -8,7 +8,10 @@ use saya_types::{AgentId, InvocationId, JobId};
 use serde::Serialize;
 use std::{
     num::NonZeroU64,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -185,6 +188,12 @@ pub struct ChildEventSender {
     pub(super) job_id: JobId,
     pub(super) agent_id: AgentId,
     pub(super) invocation_id: InvocationId,
+    /// The parent run's own event stream, when the caller states one: this
+    /// child's tool calls are forwarded into it, stamped with this child's id
+    /// (`02` §3.6 groups a helper's work by its caller). `None` is a child
+    /// whose caller keeps its stream to the root's own loop, which is every
+    /// surface that does not draw a helper block.
+    pub(super) forward: Option<Arc<dyn AgentEventSink>>,
 }
 
 pub struct ChildEventReceiver {
@@ -210,9 +219,19 @@ pub fn child_event_channel(spec: &ChildExecutionSpec) -> (ChildEventSender, Chil
             job_id: authority.job_id().clone(),
             agent_id: authority.agent_id().clone(),
             invocation_id: authority.invocation_id().clone(),
+            forward: None,
         },
         ChildEventReceiver { receiver },
     )
+}
+
+impl ChildEventSender {
+    /// The same sender, whose child also forwards its tool calls into `sink` —
+    /// the parent run's stream — with `caller` set to this child's id.
+    pub fn forwarding(mut self, sink: Arc<dyn AgentEventSink>) -> Self {
+        self.forward = Some(sink);
+        self
+    }
 }
 
 /// Why a bounded child event could not be encoded.
@@ -229,6 +248,9 @@ pub(super) struct ChildEventSink {
     pub(super) events: ChildEventSender,
     pub(super) cancellation: CancellationToken,
     pub(super) owner_failure: AtomicBool,
+    /// Where this child's tool calls go besides the progress channel: the
+    /// parent run's own stream, when its caller stated one.
+    pub(super) forward: Option<Arc<dyn AgentEventSink>>,
 }
 
 impl ChildEventSink {
@@ -294,6 +316,18 @@ impl AgentEventSink for ChildEventSink {
     }
 
     async fn emit(&self, event: AgentEvent) {
+        // The parent run's stream: one tool call the helper made, stamped with
+        // the helper's id so the transcript can group the work by its caller.
+        // The forward is awaited inline and holds no queue of its own — the
+        // bound is the parent sink's own backpressure, exactly what the root's
+        // loop meets, so nothing accumulates here while a surface is slow.
+        // Only the three tool events travel: the child's text, reasoning and
+        // metrics stay its own, and a root's events never reach here.
+        if let Some(forward) = &self.forward
+            && let Some(call) = stamped(event.clone(), &self.events.agent_id)
+        {
+            forward.emit(call).await;
+        }
         match super::event_projection::progress(event) {
             Ok(Some(progress)) => {
                 self.publish(ChildEventKind::Progress { progress }).await;
@@ -314,4 +348,46 @@ impl AgentEventSink for ChildEventSink {
             Err(()) => self.cancel_owner_failure(),
         }
     }
+}
+
+/// The tool events a child's loop emits, stamped with the child's own id — the
+/// `caller` `02` §3.6 groups a helper's work by. Every other event is the
+/// child's own and stays out of the parent's stream; a call that already names
+/// a caller keeps it, so a helper of a helper is never relabelled as this one.
+fn stamped(event: AgentEvent, agent_id: &AgentId) -> Option<AgentEvent> {
+    let caller = agent_id.as_str().to_owned();
+    Some(match event {
+        AgentEvent::ToolRequested {
+            name,
+            arguments,
+            effect,
+            caller: None,
+        } => AgentEvent::ToolRequested {
+            name,
+            arguments,
+            effect,
+            caller: Some(caller),
+        },
+        AgentEvent::ToolCompleted {
+            name,
+            summary,
+            caller: None,
+        } => AgentEvent::ToolCompleted {
+            name,
+            summary,
+            caller: Some(caller),
+        },
+        AgentEvent::ToolDenied {
+            name,
+            reason,
+            arguments,
+            caller: None,
+        } => AgentEvent::ToolDenied {
+            name,
+            reason,
+            arguments,
+            caller: Some(caller),
+        },
+        _ => return None,
+    })
 }

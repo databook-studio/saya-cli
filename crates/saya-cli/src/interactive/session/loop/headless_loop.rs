@@ -81,6 +81,10 @@ fn run_plain_loop(ctx: &mut TurnContext) -> Result<(), Box<dyn std::error::Error
         eprintln!("{note}");
     }
     let mut input = String::new();
+    // The run the first plain line is a turn of is composed and opened while
+    // the operator reads the prompt and types: that line starts a turn of an
+    // open run, never the composition that opens it.
+    ctx.prepare_first_run();
     loop {
         if ctx.terminal {
             println!("{}", super::super::session_prompt::status_line(ctx.state));

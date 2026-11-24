@@ -18,7 +18,6 @@ use saya_types::{
 #[derive(Debug)]
 pub(crate) struct ContractClaim {
     pub id: ClaimId,
-    #[allow(dead_code)]
     pub object: DatabaseObjectRef,
     pub value: ClaimPayload,
     pub source: ClaimOrigin,

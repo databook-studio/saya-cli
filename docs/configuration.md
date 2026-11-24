@@ -104,7 +104,10 @@ persist at a one-second cadence; writes are forced at approval, resume,
 provider turns, tool requests, and lifecycle transitions. Forward clock jumps
 may expire early, and
 backward changes are refused when an observation detects them. Changes
-between observations may not be detectable. This is not CPU time; a separate
+between observations may not be detectable. Each step also runs its own
+episode under that ceiling: the step's elapsed budget bounds the episode's
+control, so a provider that never answers cannot spend its whole retry
+schedule inside every attempt. This is not CPU time; a separate
 timer for stalled operations is planned independently. `tokens_per_endpoint` is
 keyed by run-scoped endpoint name (the same shape `[[ai.endpoints]]` uses);
 more than eight keys, or a key outside the name shape, is a rejected config.
@@ -145,10 +148,28 @@ key below.
 
 | Surface | Table | Defaults |
 | --- | --- | --- |
-| Interactive session | `[limits.session]` | 24 requests, 64 tool calls, 300 s, 250,000 known tokens |
-| `saya ask` | `[limits.ask]` | every unset key falls back to `[limits.session]` |
+| A turn's database work | `[limits.database]` | 24 requests, 64 tool calls, 300 s, 250,000 known tokens |
+| `saya ask` | `[limits.ask]` | every unset key falls back to `[limits.database]` |
+| Job | `[limits.job]` | bounded: 2,000 logical requests, 6,000 transport attempts, 10,000 tool calls, a 604,800 s deadline, unlimited per-loop tokens; no job-wide token ceiling |
 | `saya run` | `[limits.run]` | `turns`, `tool_calls` and `wall_clock_seconds` unset (no ceiling); `tokens_per_endpoint` unset |
-| Job | `[limits.job]` | bounded: 80 logical requests, 240 transport attempts, 300 tool calls, 400,000 known tokens per loop, 1,200 s; no job-wide token ceiling |
+
+`[limits.database]` is the budget the database plugin spends: the database
+work one turn may do, counted from its first database call. Its four keys are
+`requests`, `tool_calls`, `elapsed_seconds` and `known_tokens` — each a
+positive integer or the exact string `"unlimited"`. `[limits.ask]` is the
+one-shot `ask` surface's override of the same budget: every key it leaves
+unset keeps the database value.
+
+`[limits.session]` is retired: it now maps onto `[limits.database]` for one
+release, and a config that states it is read with a diagnostic naming the
+rename. When both tables are stated, `[limits.database]` wins and
+`[limits.session]` is reported as ignored. Next release the old table is
+gone, so write `[limits.database]`.
+
+`[limits.job]` is a job's own table — `budget_mode`, `logical_requests`,
+`transport_attempts`, `tool_calls`, `known_tokens`, `job_tokens`,
+`elapsed_seconds`, `no_progress_turns`, `repeat_limit`, `wall_clock_seconds`
+and `max_cost_usd` — documented under [Job limits](#job-limits).
 
 A run pauses when a declared budget trips rather than silently stopping. A zero
 is refused as a typo, not clamped. `[limits.job] budget_mode = "uncapped"`
@@ -238,11 +259,13 @@ exact program name named in the ask, never content or resolved identity:
 deny = ["curl", "ssh"]
 ```
 
-The `[ui]` table sets the interactive TUI's colour palette:
+The `[ui]` table sets the interactive TUI's colour palette and its notifications:
 
 ```toml
 [ui]
-theme = "auto"   # dark | light | auto
+theme = "auto"            # dark | light | auto
+notifications = true      # default: on
+notify_after_seconds = 30 # default: 30
 ```
 
 `theme` selects the palette the full-screen TUI paints with. `auto` (the
@@ -255,6 +278,15 @@ invocation, and the usual CLI-over-config precedence holds exactly: with no
 `--theme` flag the configured `theme` applies; an explicit
 `--theme auto|dark|light` wins over it, `auto` included; with neither, the
 default `auto` applies.
+
+`notifications` is the switch for the terminal bell and the OSC 9 desktop
+notification the TUI writes when an approval starts waiting and when a turn
+longer than `notify_after_seconds` finishes. Both are written between frames,
+never inside a paint; a terminal that does not know OSC 9 ignores that one
+sequence. A long turn's end notifies only while the terminal window is
+unfocused, when the terminal reports focus changes at all — otherwise it is
+always news. Set `notifications = false` to turn the bell and the desktop
+notification off entirely.
 
 The `[ai]` table tunes the provider request the agent loop assembles.
 `context_byte_budget` is the ceiling on the approximate byte size of the whole
@@ -412,11 +444,11 @@ context_window_tokens = 1048576
 
 A declared value of `0` is rejected as a typo. There is no upper bound.
 
-Interactive investigations and the one-shot `ask` surface resolve four budget
-ceilings from `[limits.session]`: `requests` (24), `tool_calls` (64),
+A turn's database work, and the one-shot `ask` surface, resolve four budget
+ceilings from `[limits.database]`: `requests` (24), `tool_calls` (64),
 `elapsed_seconds` (300), and `known_tokens` (250,000). `[limits.ask]` may state
 its own value for any of the four; every key it leaves unset falls back to
-`[limits.session]`. These are conservative starting policy values, not
+`[limits.database]`. These are conservative starting policy values, not
 production percentile measurements. The elapsed ceiling is an active-time
 wallet rather than a wall-clock total: it starts before connector setup, stops
 before post-turn learning, and only active answering segments debit it, so
@@ -425,22 +457,28 @@ serves every answering invocation for the question — candidates and
 clarification replies included. Each accepts a positive integer or the exact
 string `"unlimited"`; zero, negative values, other strings, and non-integer TOML
 values are errors. Integer literals beyond TOML's signed 64-bit range are
-invalid TOML and fail while parsing. `[limits.session]` and `[limits.ask]` are
+invalid TOML and fail while parsing. `[limits.database]` and `[limits.ask]` are
 protected: a repository project config cannot change these trusted budgets
 unless `--trust-project-config` is supplied. No environment aliases are defined
 for them. Enforcement is live: each answering invocation admits against these
 limits, and a crossed ceiling stops the run with a typed budget stop reason
 naming the dimension — requests, tool calls, reported tokens, or elapsed time.
 
+The retired `[limits.session]` table still resolves for one release and maps
+onto `[limits.database]` — its keys are read, never dropped, because ignoring a
+stated ceiling would silently widen a bound — with a diagnostic naming the
+rename. `[limits.ask]` keeps its own row above: it always bounded the one-shot
+surface.
+
 ```toml
-[limits.session]
+[limits.database]
 requests = 24
 tool_calls = 64
 elapsed_seconds = 300
 known_tokens = 250000
 
 [limits.ask]
-tool_calls = 32   # every unset key falls back to [limits.session]
+tool_calls = 32   # every unset key falls back to [limits.database]
 ```
 
 The `[[ai.endpoints]]` array declares the named endpoints a run's roles can
@@ -523,6 +561,14 @@ list, a word that names no tool, or a database tool name is a typed error that
 lists the valid names. So is `helpers` on its own: a helper runs the list minus
 `helpers`, so a list of `helpers` alone would hand every helper nothing.
 
+Two spellings from before the tool catalogue was unified are still accepted, for
+one release: `run_command` names `shell`, and `http_fetch` / `http_download`
+both name `web_fetch` — the core has no download tool, so the fetch a download
+granted is what survives. A list that uses one narrows the surface exactly as
+its successor's name does, and `config doctor` reports the note with the word to
+write instead. A grant token spelled the old way keeps working the same way: a
+`command:<program>` grant still pre-answers the `shell` of that program.
+
 Database tools are **not** governed: `schema_discovery`, the bounded SQL family,
 the query fan-out, and the contract tools follow the selected connection and the
 data-sharing setting, not this list. `schema_discovery` needs only a selected
@@ -531,6 +577,14 @@ connection or profile; the other eight also need data sharing on
 contract tools need a state store as well — so they stay hidden with a connection
 selected when sharing is off. Naming one is refused with that reason rather than
 silently ignored.
+
+A session advertises the database family — the tools and their section of the
+system prompt — only from the turn whose request shows database work, latched for
+the rest of the session; before that it advertises one tiny `use_database` tool,
+and a request that never touches a database never pays the family's bytes. A list
+that does name one — the refusal above is unchanged, so this is a config the
+resolve accepted — turns the family on from the first turn instead of waiting for
+the request to ask (see `docs/querying-databases.md`).
 
 A job persists the set it started with, so a resume runs exactly what the
 operator approved at start, and a narrowed set is shown in the start proposal.
@@ -554,6 +608,7 @@ it, and a reverted attempt is reported as `tools`.
 allow_bypass = true               # default: false
 allow = ["cargo test", "git diff"]
 deny = ["rm"]
+read_only_commands = false        # default: true
 ```
 
 `allow_bypass` decides whether a session may *enter* the `bypass` permission
@@ -575,9 +630,18 @@ entry is a configuration diagnostic, not a startup failure.
 
 - **`deny`** refuses the command in every mode, `bypass` included, and wins
   over any allow rule. The refusal names the rule. Deny is a prefix rule, not
-  a sandbox: it matches the command as written, so `/bin/rm`, `command rm`
-  and `\rm` are different prefixes. The one exception is an absolute program
-  path, whose basename is matched — `/bin/rm -rf x` hits deny `rm`.
+  a sandbox, and it resolves the program a command really runs: it reads
+  through a `command`/`builtin`/`exec` prefix, an `env` with any of its
+  options, a subshell's own parentheses, and a path by its basename
+  (`/bin/rm`, `./rm`); through the launchers that run a later program —
+  `timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs` (with their options
+  and the values those carry), and `find`'s `-exec`/`-execdir`/`-ok` — and into
+  a script: a shell's `-c` (`sh`, `bash`, `zsh`, `dash`) and `eval`'s joined
+  arguments, at most three levels deep. Past that bound, where a script cannot
+  be read, or where an interpreter's inline code cannot be read (`python3 -c`,
+  `perl -e`, `awk '…'`, `ruby -e`, `node -e`), a command that names a denied
+  program anywhere is refused rather than run. `\rm` is still a different
+  prefix, and a renamed copy asked under its own name still runs.
 - **`allow`** lets a command take the host lane without asking under `ask`,
   with or without an operator. It never widens `read-only` or `never`.
 - A compound command (`&&`, `||`, `;`, `|`, `|&`, a single `&` for a
@@ -601,6 +665,33 @@ entry is a configuration diagnostic, not a startup failure.
 `--allow-command <prefix>` and `--deny-command <prefix>` state the same rules
 at launch, repeatably, on `saya start`, `saya run` and the interactive
 session; the flags add to the configuration lists rather than replacing them.
+
+`read_only_commands` — default `true` — is the switch over the built-in
+read-only set. With it on, a `shell` call whose every part only reads runs under
+`ask` and `accept-edits` with no question: `ls`, `cat`, `head`, `tail` (not
+`-f`), `wc`, `file` (not `-C`), `stat`, `du`, `df`, `pwd`, `echo`, `which`,
+`type`, `tree` (not `-o`), `find` (never `-exec`, `-execdir`, `-ok`, `-okdir`,
+`-delete`, `-fprint*`), `grep` (not recursive), `rg` (not `--pre`, `--hidden`,
+`-u`, `--no-ignore*`, `-L`, `-z`), `sort` (not `-o`), `uniq` (one file), `cut`,
+`diff`, and `git` with `status`, `log`, `diff`, `show`, `branch` (no argument,
+`-a`, `-r`, `--list`), `rev-parse`, `ls-files`, `blame`, or `remote -v`. Every
+path such a command names must be relative, stay inside the workspace after
+lexical normalisation, and be one the workspace tools also read — never a
+`.env`, a key or certificate, or a credential directory — the rule the `read`
+tool applies to its own arguments. A pipeline of such commands qualifies, and
+so does a chain of `&&`, `||`, `;` — but only when every part of it qualifies.
+One output redirect to a file, a substitution, a `$`/`~` expansion, an unquoted
+glob, a heredoc, a leading `NAME=value`, a wrapper (`env`, `xargs`, `timeout`,
+`sudo`, …), an interpreter's inline code, a path outside the workspace or on the
+private list, a recursive content read (`grep -r`), or any program outside the
+list keeps the question, and so does any `git` spelling that pages, execs, or
+writes (`-c`, `--exec-path`, `--ext-diff`, `--output`) or whose repository
+configuration names a program of its own (`core.fsmonitor`, `core.pager`,
+`diff.external`, `*.textconv`, `filter.*.process`, `core.sshCommand`, an
+`include`), since the model's own tools can write `.git/config`. The deny list
+is unchanged by it — a denied program in the set is still refused — and
+`bypass`, `read-only` and `never` read exactly as before. Set it to `false` to
+answer every call yourself; the key can withhold the set, never state one.
 
 `[permissions]` is protected whole, like `[tools]`: a project's
 `.saya/config.toml` cannot set it, and an attempt is reverted and reported as
@@ -991,10 +1082,10 @@ the diagnostic quotes the message that names the fix:
 | `[coding] program_dir` | Write `job.program_dir` in the `[job]` table. |
 | `[coding.extensions]` | Write `[job.extensions]`. |
 | `[coding] automatic_lsp_profile` | Write `job.automatic_lsp_profile`. |
-| `[ai] investigation_max_logical_answering_requests` | Write `limits.session.requests` (and `limits.ask.requests` for the one-shot surface). |
-| `[ai] investigation_max_requested_tool_calls` | Write `limits.session.tool_calls` (and `limits.ask.tool_calls`). |
-| `[ai] investigation_max_elapsed_seconds` | Write `limits.session.elapsed_seconds` (and `limits.ask.elapsed_seconds`). |
-| `[ai] investigation_max_known_reported_tokens` | Write `limits.session.known_tokens` (and `limits.ask.known_tokens`). |
+| `[ai] investigation_max_logical_answering_requests` | Write `limits.database.requests` (and `limits.ask.requests` for the one-shot surface). |
+| `[ai] investigation_max_requested_tool_calls` | Write `limits.database.tool_calls` (and `limits.ask.tool_calls`). |
+| `[ai] investigation_max_elapsed_seconds` | Write `limits.database.elapsed_seconds` (and `limits.ask.elapsed_seconds`). |
+| `[ai] investigation_max_known_reported_tokens` | Write `limits.database.known_tokens` (and `limits.ask.known_tokens`). |
 | `[jobs] wall_clock_seconds` | Write `limits.run.wall_clock_seconds`. |
 | `[jobs] tokens_per_endpoint` | Write `limits.run.tokens_per_endpoint`. |
 | `[jobs] turns` | Write `limits.run.turns`. |
@@ -1037,6 +1128,11 @@ The messages, exactly as the parse error renders them:
 [run] max_iterations was removed; `limits.run.turns` is the run's turn ceiling. Delete the key.
 [coding] was renamed: the job host's own settings live in the [job] table, and its ceilings in [limits.job]. Move the section.
 ```
+
+The four `[ai] investigation_*` messages still name `limits.session`; that
+table maps onto `[limits.database]` this release (see
+[Limits at a glance](#limits-at-a-glance)), so the key to write is the one the
+row above names.
 
 The tools and flags that went with them — `run_program`, the `--program` flag
 on `saya start`, checks and check profiles, and every `coding_*` model tool —

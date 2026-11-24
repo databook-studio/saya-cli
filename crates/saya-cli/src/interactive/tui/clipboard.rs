@@ -5,8 +5,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const CLIPBOARD_COMMAND_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_OSC52_BYTES: usize = 100 * 1024;
 
+/// What one copy attempt came to, as the copy tests state it: the OS tool took
+/// it, the terminal's OSC 52 did, or neither. Only the tests name this
+/// vocabulary now — the old surface's status line was its one reader — so it is
+/// compiled with them and the pin survives.
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ClipboardOutcome {
     Native,
@@ -14,6 +18,8 @@ pub(crate) enum ClipboardOutcome {
     Failed,
 }
 
+/// The verdict [`osc52_copy`]/[`copy_to_native_clipboard`]'s two halves map to.
+#[cfg(test)]
 pub(crate) fn clipboard_outcome(native_ok: bool, osc_error: Option<&str>) -> ClipboardOutcome {
     match (native_ok, osc_error) {
         (true, _) => ClipboardOutcome::Native,
@@ -21,6 +27,7 @@ pub(crate) fn clipboard_outcome(native_ok: bool, osc_error: Option<&str>) -> Cli
         (false, Some(_)) => ClipboardOutcome::Failed,
     }
 }
+const MAX_OSC52_BYTES: usize = 100 * 1024;
 
 /// The OS clipboard command(s) to try, best candidate first. Each entry is an
 /// argv whose program reads the clipboard payload from stdin.

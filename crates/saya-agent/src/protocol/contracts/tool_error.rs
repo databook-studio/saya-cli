@@ -61,6 +61,14 @@ pub enum ToolError {
     /// model reads the real reason rather than a guess.
     #[error("workspace read failed: {0}")]
     Workspace(String),
+    /// A workspace read of a path the file tools keep private. The privacy
+    /// rule is one set of shapes shared with the search and delete tools (the
+    /// credential and database-export names, and the names the shared redactor
+    /// rewrites), so the refusal is typed and carries the path alone: a read
+    /// the operator asked for is refused in the same words wherever it is
+    /// asked from, and no bytes of the file are read out to decide it.
+    #[error("workspace read refused: the path is private: {path}")]
+    WorkspacePrivatePath { path: String },
     /// A workspace read of an image whose bytes exceed the image bound.
     /// Refused whole — an image is never truncated to fit, because half an
     /// image is not the file — naming the bound and the file's size so the

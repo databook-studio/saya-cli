@@ -31,14 +31,22 @@ fn start_help_names_the_shipped_flags_and_the_shared_checkout() {
 
 /// `/help` lists the job surface the parser actually accepts: `/job`,
 /// `/start`, `/follow-up`, and the bare controls — never the retired
-/// `/coding`, which is refused with a pointer to these names.
+/// `/job` and `/start` — never the retired `/coding`, which is refused with a
+/// pointer to these names. The child controls are `/job`'s verbs now, so their
+/// own rows fold into `/job`'s line and only the canonical rows are listed.
 #[test]
 fn help_lists_the_job_surface_not_the_retired_coding_name() {
     let listing = help_text();
-    for shown in ["/job ", "/start ", "/follow-up ", "/approve ", "/deny "] {
+    for shown in ["/job ", "/start ", "/continue "] {
         assert!(
             listing.contains(shown),
             "the /help listing shows {shown}: {listing}"
+        );
+    }
+    for folded in ["/follow-up <", "/approve <", "/deny <", "/pause <"] {
+        assert!(
+            !listing.contains(folded),
+            "{folded} is /job's one-release alias, so the listing folds it: {listing}"
         );
     }
     assert!(

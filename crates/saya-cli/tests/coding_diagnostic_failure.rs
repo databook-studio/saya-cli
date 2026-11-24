@@ -1,5 +1,7 @@
 //! A later reporting fault must not replace the first diagnosed storage fault.
 #![cfg(unix)]
+#[path = "coding_diagnostic_failure/degrade.rs"]
+mod degrade;
 #[path = "../../saya-harness/tests/coding_runtime_contracts/budgeted_child_scheduler/openai_server.rs"]
 #[allow(dead_code)] // Shared bounded HTTP transport fixture.
 mod provider;

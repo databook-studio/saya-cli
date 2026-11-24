@@ -69,6 +69,15 @@ fn reason(token: &str, facts: &ApprovalFacts) -> Option<String> {
              nothing — bind one with `--workspace <dir>` or launch inside a worktree"
                 .to_owned(),
         ),
+        // The job shell's own precondition: the session's `shell` is composed
+        // over a bound workspace root (its sandboxes are proven there), so a
+        // session with no root has no shell for a `shell:` token to pre-answer.
+        _ if token.starts_with("shell:") && facts.workspace_root.is_none() => Some(
+            "no workspace root is bound, so this session composes no `shell` tool and no \
+             shell call can occur — bind one with `--workspace <dir>` or launch inside a \
+             worktree"
+                .to_owned(),
+        ),
         _ => None,
     }
 }

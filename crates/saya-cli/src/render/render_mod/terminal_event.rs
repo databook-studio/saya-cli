@@ -24,6 +24,13 @@ pub enum TerminalEvent {
     ToolDenied {
         name: String,
         reason: String,
+        /// What the refused call was going to do, projected by the same seam
+        /// [`Self::ToolRequested`] uses (`tool_call_detail`) and so stripped and
+        /// bounded the same way. Skipped on the wire when the call carries no
+        /// detail, so a denial line for a tool with nothing to name keeps its
+        /// shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     /// What memory **supplied** to the turn, emitted once before the provider
     /// call. Carries the outcome, the supplied contracts (claim DTOs,

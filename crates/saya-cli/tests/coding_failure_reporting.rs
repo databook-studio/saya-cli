@@ -1,7 +1,7 @@
 //! Failure identity survives an already-consumed join and secondary diagnostic I/O.
 #![cfg(unix)]
 #[path = "../../saya-harness/tests/coding_runtime_contracts/budgeted_child_scheduler/openai_server.rs"]
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 // Reuse the bounded scripted HTTP transport without adding a second implementation.
 mod provider;
 #[path = "coding_application/support.rs"]

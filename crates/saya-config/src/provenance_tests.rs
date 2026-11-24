@@ -10,6 +10,7 @@ use super::apply_user_facing_defaults;
 /// the drift guard can prove every `USER_FACING` key is attributed.
 const FULL_USER_TOML: &str = "
 default_profile = 'local'
+permissions = { allow_bypass = true, read_only_commands = false }
 [ai]
 provider = 'openai'
 model = 'test-model'
@@ -71,8 +72,6 @@ max_concurrent_model_requests = 3
 role = 'analyst'
 [tools]
 allow = ['read', 'grep']
-[permissions]
-allow_bypass = true
 [host_commands]
 pass_env = ['PATH']
 timeout_seconds = 120
@@ -94,6 +93,8 @@ personal_max_bytes = 512
 total_max_bytes = 2048
 [ui]
 theme = 'dark'
+notifications = false
+notify_after_seconds = 45
 ";
 
 /// Drift guard: every key in `USER_FACING` is one the merge funnels record.

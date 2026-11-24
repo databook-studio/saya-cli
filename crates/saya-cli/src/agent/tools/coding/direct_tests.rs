@@ -50,10 +50,22 @@ async fn compose_root_with(
 /// hands it to `compose_direct_workspace`: the workspace's own toolset is what
 /// serves the database tools and the ask on this root, so the surface rides the
 /// compose request rather than the coordinator. Shared with the ask tests.
+#[allow(dead_code)] // the ask tests are its caller
 pub(super) async fn compose_root_data(
     fixture: &fixture::Fixture,
     tools: saya_config::ResolvedTools,
     databases: Option<CodingDatabaseTools>,
+) -> RootWorkspace {
+    compose_root_data_with_profiles(fixture, tools, databases, Vec::new()).await
+}
+
+/// The same, over a job that selected the given database profiles: the ask
+/// rides the plugin, and the plugin activates only where the view admits one.
+pub(super) async fn compose_root_data_with_profiles(
+    fixture: &fixture::Fixture,
+    tools: saya_config::ResolvedTools,
+    databases: Option<CodingDatabaseTools>,
+    database_profiles: Vec<saya_types::ProfileIdentity>,
 ) -> RootWorkspace {
     let cancellation = CancellationToken::new();
     let capabilities = write_capabilities();
@@ -67,10 +79,11 @@ pub(super) async fn compose_root_data(
         policy_digest: Sha256Digest::parse(&"a".repeat(64)).unwrap(),
         revocation_epoch: 7,
         capabilities: capabilities.clone(),
-        database_profiles: Vec::new(),
+        database_profiles: database_profiles.clone(),
     };
     let authority =
-        ChildAuthorityRequest::new(ChildRole::Implementer, capabilities, Vec::new()).unwrap();
+        ChildAuthorityRequest::new(ChildRole::Implementer, capabilities, database_profiles)
+            .unwrap();
     let consent = RootConsent;
     let request = RootComposeRequest {
         proof: CheckoutProof::Managed(fixture.ownership()),

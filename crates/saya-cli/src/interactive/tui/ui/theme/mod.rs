@@ -1,29 +1,18 @@
-//! Colour accessors for the TUI: accent, secondary, danger, and friends.
+//! The theme leaves the new surface reuses: the hue constants, the palette
+//! choice, and the terminal's own answer for `auto`.
 //!
-//! The palette choice and colour switch live in [`palette`]; the tests live
-//! in `tests.rs` via the `transcript/view.rs` `#[path]` pattern. [`detect`]
-//! resolves `Auto` against the terminal's real background before falling
-//! back to `palette`'s `COLORFGBG` heuristic.
+//! The old surface's painting — the transcript block styles and the accessors
+//! only its chrome read — went with it in X1. What is left is what the kept
+//! markdown renderer and the launch read: which ground is in force, whether
+//! colour is on, and the hues themselves.
 
 mod detect;
+pub(crate) mod hue;
 mod palette;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
 
 pub(crate) use detect::{probe_terminal_theme, resolve_startup_theme};
-#[cfg(test)]
-pub(crate) use palette::Theme;
-#[cfg(test)]
-pub(in crate::interactive::tui) use palette::user_color;
-pub(in crate::interactive::tui) use palette::{
-    accent, centered, code_color, danger, foreground, kind_style, label_style, on_accent,
-    secondary, status_bg, success, warning,
-};
-pub(crate) use palette::{decide_public, set_color_enabled, set_theme};
-// Test-only shims so `tests.rs` can keep its `super::…` paths: the theme's
-// own tests are the only readers. `detect` is the only production caller of
-// `resolve_theme`, and it reads straight from `palette`, not through this
-// module's namespace.
-#[cfg(test)]
-use palette::{COLOR_ENABLED, decide, resolve_theme};
+pub(crate) use palette::{Theme, decide_public, set_color_enabled, set_theme};
+pub(in crate::interactive::tui) use palette::{accent, code_color, foreground};

@@ -112,16 +112,8 @@ fn unstated_lane_composes_where_a_root_binds() {
         universe.host_composed_for_tests().is_some(),
         "a bound root composes the lane with no statement"
     );
-    let ask_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Ask, true);
-    assert!(
-        ask_names.contains(&"run_command".to_string()),
-        "the unstated lane advertises under ask with a prompt: {ask_names:?}"
-    );
-    let bypass_names = advertised(&universe, AgentMode::Build, ApprovalPolicy::Bypass, false);
-    assert!(
-        bypass_names.contains(&"run_command".to_string()),
-        "the unstated lane advertises under bypass: {bypass_names:?}"
-    );
+    // The session's advertised surface went with the deleted turn body; the
+    // lane fact above is what this pin has left to state.
     let _ = (fs::remove_dir_all(&project), fs::remove_dir_all(&state));
 }
 

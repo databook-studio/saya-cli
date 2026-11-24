@@ -2,6 +2,21 @@ use super::{INTERACTIVE, OUTPUT_LIMIT, PAUSE_ACK, Provider, Session, config};
 use saya_store::SqliteStateStore;
 use saya_types::{DatabaseProfile, JobId, JobState};
 
+/// The coding-job controls end to end: `/start` proposes a job whose consent
+/// card names every database profile it touches, `/approve` admits it, and the
+/// session steers the helpers it spawns.
+///
+/// The consent card itself lands on this surface's card slot (TX5): the run
+/// shows "Approve job pty-job", its task, the paths it may write and one row
+/// per database identity, `y`/`n` and `/approve <id>` answer it, and a consent
+/// queued behind an open card waits its turn (`front::tui::jobs_open_tests`,
+/// `interactive::tui::coding::consent`).
+///
+/// The job runs alongside this surface's own session run (TX6): the session's
+/// run is a coding job over the same folder (`chat::compose::RunComposition`),
+/// the folder's lease names that session, and a job the session opens over its
+/// own folder is admitted as its dependent. So the job's `helpers` calls run
+/// here, and the receipts this suite reads are produced.
 #[test]
 fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     let mut provider = Provider::new();
@@ -9,14 +24,14 @@ fn selected_coding_controls_restore_terminal_and_report_truthful_receipts() {
     let connections = "[profiles.analytics]\ntype = 'sqlite'\npath = 'analytics.sqlite3'\n\
 \n[profiles.warehouse]\ntype = 'sqlite'\npath = 'warehouse.sqlite3'\n";
     let mut session = Session::new("selected", &config, connections, &provider);
-    session.wait_for("? for help", INTERACTIVE);
+    session.wait_for("? help", INTERACTIVE);
     // The TUI must own the terminal in raw mode before input is typed: a line
     // written earlier is still under the canonical tty, whose ICRNL turns the
     // trailing \r into \n, which the raw-mode reader drops instead of
     // treating as Enter — so the command would never submit.
     // "helpers" is the request's own evidence: the lean tool set advertises
     // `helpers` only when the task asks for it, and this run drives two.
-    session.send(b"/start pty-job 'controlled task with helpers' --write a.txt --write b.txt --database-profile analytics --database-profile warehouse\r");
+    session.send(b"/start --id pty-job 'controlled task with helpers' --write a.txt --write b.txt --database-profile analytics --database-profile warehouse\r");
     session.wait_for("Approve job pty-job", INTERACTIVE);
     // The overlay renders a bounded window of the proposal; the second
     // profile name is the last part this window shows, so wait for it before

@@ -83,7 +83,6 @@ impl ApprovalDecider for McpTools {
                     );
                     prompt.ask(arguments).await
                 }
-                Consent::Decider(decider) => decider.approve(&definition(entry), arguments).await,
                 Consent::Absent => false,
             },
             ApprovalPolicy::ReadOnly | ApprovalPolicy::Never => false,

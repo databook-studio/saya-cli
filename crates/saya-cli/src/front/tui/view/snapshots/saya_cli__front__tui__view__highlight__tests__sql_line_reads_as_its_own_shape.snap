@@ -1,0 +1,15 @@
+---
+source: crates/saya-cli/src/front/tui/view/highlight_tests.rs
+expression: "outline(\"SELECT id, name FROM users WHERE id = 42; -- one row\",\nSome(super::Language::Sql), Scheme::Dark,)"
+---
+[
+    "keyword  SELECT",
+    "plain     id, name ",
+    "keyword  FROM",
+    "plain     users ",
+    "keyword  WHERE",
+    "plain     id = ",
+    "number   42",
+    "plain    ; ",
+    "comment  -- one row",
+]

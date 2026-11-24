@@ -15,22 +15,6 @@ fn worktree(label: &str) -> PathBuf {
     project
 }
 
-/// Whether this host can prove the write-denied sandbox the `read-only`
-/// mode's only shell lane needs. macOS's seatbelt expresses the denial;
-/// Linux's Landlock is allow-only and refuses it, so a read-only session has
-/// no shell lane there — the product's own `shell_policy::prove` answer,
-/// not a platform guess.
-fn read_only_sandbox_proves(project: &Path) -> bool {
-    crate::agent::tools::shell_policy::prove(project, ApprovalPolicy::ReadOnly).is_some()
-}
-
-/// Whether this host can prove the sandbox an `ask` session's headless lane
-/// needs when no operator can answer. Same product answer, different policy:
-/// macOS proves it, Linux's allow-only Landlock does not.
-fn ask_sandbox_proves(project: &Path) -> bool {
-    crate::agent::tools::shell_policy::prove(project, ApprovalPolicy::Ask).is_some()
-}
-
 fn session_runtime() -> crate::config::runtime::RuntimeConfig {
     crate::config::runtime::RuntimeConfig {
         resolved: ResolvedConfig {
@@ -73,6 +57,8 @@ fn session_runtime() -> crate::config::runtime::RuntimeConfig {
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
             ui_theme: ThemeChoice::Auto,
+            ui_notifications: true,
+            ui_notify_after_seconds: 30,
             memory: ResolvedMemory {
                 mode: MemoryMode::Off,
                 max_contracts: 5,
@@ -94,50 +80,4 @@ fn session_runtime() -> crate::config::runtime::RuntimeConfig {
     }
 }
 
-fn compose(
-    runtime: &crate::config::runtime::RuntimeConfig,
-    project: &Path,
-    _state_dir: &Path,
-) -> SessionUniverse {
-    compose_result(runtime, project, _state_dir).expect("composition succeeds on a plain worktree")
-}
 
-fn compose_result(
-    runtime: &crate::config::runtime::RuntimeConfig,
-    cwd: &Path,
-    _state_dir: &Path,
-) -> Result<SessionUniverse, String> {
-    SessionUniverse::compose(runtime, None, None, true, cwd)
-}
-
-const SESSION_WRITE_TOOLS: [&str; 4] = [
-    "write",
-    "edit",
-    "http_fetch",
-    "http_download",
-];
-
-/// The names `universe` advertises under `agent_mode` and `mode`, read off the
-/// session's own gate — the same cell the turn's `definitions` call reads, so a
-/// test that approves a plan sees the advertisement the next turn would get.
-fn advertised(
-    universe: &SessionUniverse,
-    agent_mode: AgentMode,
-    mode: ApprovalPolicy,
-    can_obtain_approval: bool,
-) -> Vec<String> {
-    universe
-        .definitions(
-            agent_mode,
-            universe.plan_gate_open(),
-            mode,
-            can_obtain_approval,
-            true,
-            false,
-            false,
-            &Default::default(),
-        )
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect()
-}

@@ -48,7 +48,7 @@ async fn the_default_denies_http_download_and_no_file_appears() {
         .unwrap()
         .iter()
         .find_map(|event| match event {
-            AgentEvent::ToolDenied { name, reason } if name == "http_download" => {
+            AgentEvent::ToolDenied { name, reason, .. } if name == "http_download" => {
                 Some(reason.clone())
             }
             _ => None,
@@ -116,7 +116,7 @@ async fn the_workspace_permit_gate_is_what_refuses_the_download_tool() {
         .unwrap()
         .iter()
         .find_map(|event| match event {
-            AgentEvent::ToolDenied { name, reason } if name == "http_download" => {
+            AgentEvent::ToolDenied { name, reason, .. } if name == "http_download" => {
                 Some(reason.clone())
             }
             _ => None,

@@ -42,7 +42,7 @@ use saya_agent::{
 };
 use saya_harness::HarnessError;
 use saya_harness::engine::{
-    EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeRequest, EpisodeRun,
+    EngineEventSink, EpisodeCollaborators, EpisodeDriver, EpisodeError, EpisodeRequest, EpisodeRun,
     ManifestBounds, ResumeError, ResumeOutcome, ResumeRun, RunState, SinkBudgets, StepToolset,
     TransitionEvent, UsageTotals, resume,
 };

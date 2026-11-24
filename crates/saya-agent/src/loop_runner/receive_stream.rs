@@ -1,10 +1,11 @@
 mod consume;
+mod progress;
 
 use super::{attempt, attempt_metrics::AttemptTiming, emit};
 use crate::{
     AgentEvent, AgentEventSink, AgentMetric, AgentMetricCount, AgentMetricOutcome,
     CancellationToken, ChatProvider, ChatRequest, ControlledProviderError, PhysicalAttemptControl,
-    ProviderError, ProviderStream, TokenUsage,
+    ProviderError, ProviderRecoveryReason, ProviderStream, TokenUsage,
 };
 use std::time::Duration;
 
@@ -187,8 +188,16 @@ async fn stream_attempt_inner(
             None,
         );
     }
-    let outcome =
-        consume::consume_stream(stream, sink, cancellation, events, timing, deadline).await;
+    let outcome = consume::consume_stream(
+        stream,
+        sink,
+        cancellation,
+        events,
+        timing,
+        deadline,
+        provider.stall_timeout(),
+    )
+    .await;
     if let Some(control) = physical_attempts {
         let (outcome, usage) = match &outcome {
             attempt::AttemptOutcome::Success { usage, .. } => {
@@ -236,6 +245,13 @@ fn controlled_failure(error: ControlledProviderError) -> attempt::AttemptError {
 }
 
 fn establishment_failure(error: ProviderError) -> attempt::AttemptError {
+    // A transient transport failure is not a refused request: nothing was
+    // delivered and the identical request may answer on the next attempt, so
+    // the receive loop's own retry policy owns it, exactly as it owns a
+    // mid-stream transport failure.
+    if matches!(&error, ProviderError::Unavailable(_)) {
+        return retryable(error, ProviderRecoveryReason::ProviderFailure);
+    }
     match consume::provider_failure(error) {
         attempt::AttemptError::Retryable { error, reason } => consume::terminal(error, reason),
         error => error,
@@ -251,4 +267,8 @@ enum Establishment {
 
 fn failed(error: attempt::AttemptError, usage: Option<TokenUsage>) -> attempt::AttemptOutcome {
     attempt::AttemptOutcome::Failed { error, usage }
+}
+
+fn retryable(error: ProviderError, reason: ProviderRecoveryReason) -> attempt::AttemptError {
+    attempt::AttemptError::Retryable { error, reason }
 }

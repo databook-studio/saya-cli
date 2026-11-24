@@ -22,23 +22,11 @@ use crate::{cli::Command, config::runtime::RuntimeConfig, render::RenderFormat};
 use saya_agent::ApprovalPolicy;
 use saya_store::SqliteStateStore;
 
-pub use contracts::run_contracts;
+pub use contracts::{run_contracts, run_contracts_request};
 pub use investigation::run_investigation;
-// The replay-outcome seam: the TUI's saved-replay adapter consumes
-// the typed outcome instead of re-parsing rendered output.
-pub(crate) use investigation::run_investigation_outcome_cancellable;
 pub use investigation::{Replay, RunOutcome, run_investigation_outcome};
 pub use output::{capture_output_start, capture_output_take, failure_message, result};
 pub use run::run_management;
-// The TUI's run panel adapter surface: the panel drives the same fresh-run
-// path the headless `saya run` takes (`commands/run/host.rs` holds the
-// injection seam), and answers the plan-approval channel the same way the
-// terminal driver does — no second approval path, no second drive.
-#[cfg(test)]
-pub(crate) use run::test_lock::RUNS_DIR;
-pub(crate) use run::{
-    HostRun, PlanApproval, PlanApprovalRequest, RunRequest, new_run_id, start_for_panel,
-};
 // Re-exported `pub(crate)` so the agent contract tools (2b-3a) reuse the single
 // all-zero "no schema observed" fingerprint rather than inventing a second one.
 pub(crate) use contracts::unobserved_fingerprint;
@@ -80,7 +68,7 @@ pub async fn run(
                 runtime,
                 format,
                 &state,
-                approval,
+                coding::Launch::Detached(approval),
             )
             .await
         }
@@ -93,7 +81,7 @@ pub async fn run(
                 runtime,
                 format,
                 &state,
-                approval,
+                coding::Launch::Detached(approval),
             )
             .await
         }
@@ -106,7 +94,7 @@ pub async fn run(
                 runtime,
                 format,
                 &state,
-                approval,
+                coding::Launch::Detached(approval),
             )
             .await
         }

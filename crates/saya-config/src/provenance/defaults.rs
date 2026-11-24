@@ -52,6 +52,8 @@ pub(crate) const USER_FACING: &[&str] = &[
     "output.format",
     "output.color",
     "ui.theme",
+    "ui.notifications",
+    "ui.notify_after_seconds",
     "memory.mode",
     "memory.max_contracts",
     "memory.max_claims_per_contract",
@@ -66,6 +68,7 @@ pub(crate) const USER_FACING: &[&str] = &[
     "session_commands.deny",
     "tools.allow",
     "permissions.allow_bypass",
+    "permissions.read_only_commands",
 ];
 
 /// Job defaults use the same value-free provenance fill as other resolved

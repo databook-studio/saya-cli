@@ -1,0 +1,70 @@
+{
+  "scenario": "write_refused",
+  "requests": [
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 20769,
+      "messages": 2,
+      "launch_summary_count": 1
+    },
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 21158,
+      "messages": 4,
+      "launch_summary_count": 1
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "bounded_sql_query",
+      "sql": "DELETE FROM revenue",
+      "outcome": "refused-by-safety"
+    }
+  ],
+  "states": [
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
+    }
+  ]
+}

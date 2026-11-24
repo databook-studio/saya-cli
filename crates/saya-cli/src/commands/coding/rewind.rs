@@ -28,6 +28,7 @@ mod apply_baseline;
 mod capture;
 mod model;
 mod operation;
+mod own_writes;
 mod sink;
 mod store;
 
@@ -37,7 +38,7 @@ mod tests;
 
 #[cfg(all(test, unix))]
 #[path = "rewind/in_place_fixture.rs"]
-mod in_place_fixture;
+pub(crate) mod in_place_fixture;
 
 #[cfg(all(test, unix))]
 #[path = "rewind/in_place_tests.rs"]

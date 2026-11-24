@@ -15,6 +15,7 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
             name,
             arguments,
             effect,
+            ..
         } => {
             let detail = crate::agent::tools::tool_call_detail(&name, &arguments);
             TerminalEvent::ToolRequested {
@@ -23,10 +24,23 @@ pub(crate) fn terminal_event(event: AgentEvent) -> Option<TerminalEvent> {
                 effect,
             }
         }
-        AgentEvent::ToolCompleted { name, summary } => {
+        AgentEvent::ToolCompleted { name, summary, .. } => {
             TerminalEvent::ToolCompleted { name, summary }
         }
-        AgentEvent::ToolDenied { name, reason } => TerminalEvent::ToolDenied { name, reason },
+        // A refusal names what was refused the same way the request did: the
+        // one projection both lines read (`tool_call_detail`), so a `shell`
+        // denial carries the stripped, bounded command and a tool with nothing
+        // to name carries no detail at all.
+        AgentEvent::ToolDenied {
+            name,
+            reason,
+            arguments,
+            ..
+        } => TerminalEvent::ToolDenied {
+            detail: crate::agent::tools::tool_call_detail(&name, &arguments),
+            name,
+            reason,
+        },
         AgentEvent::KnowledgeSupplied {
             outcome,
             contracts,

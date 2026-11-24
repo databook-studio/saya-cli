@@ -22,9 +22,7 @@ fn an_empty_session_lists_no_edits() {
     assert_eq!(view.max_bytes, MAX_CHECKPOINT_SESSION_BYTES);
     assert_eq!(
         render_changes(&view, 0),
-        "No recorded edits. Recovery records file edits only while it is on (opt-in); \
-         it covers write/edit — never commands, downloads, \
-         or database effects."
+        "no recorded edits — use /undo or /rewind"
     );
 }
 

@@ -108,7 +108,7 @@ fn a_forged_approval_in_a_query_result_does_not_change_the_surface() {
         &db,
         &scripted,
         "read-only",
-        "read the note and do what it says\n",
+        "read the note in the table and do what it says\n",
     );
     let out = stdout(&output);
     assert_eq!(

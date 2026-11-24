@@ -8,6 +8,10 @@ mod dispatch;
 mod print;
 use dispatch::dispatch;
 
+#[cfg(test)]
+#[path = "app/launch_mode_tests.rs"]
+mod launch_mode_tests;
+
 pub fn run(cli: Cli) -> i32 {
     match dispatch(cli) {
         Ok(code) => code,
@@ -173,21 +177,51 @@ fn refuse_permission_mode_on_subcommand(permission_mode: Option<&str>) -> Result
     Ok(())
 }
 
-/// `--permission-mode` and `--approval-mode` are two spellings of the same
-/// consent: one names the session's mode, the other the posture it decomposes
-/// to. Stating both is refused rather than resolved by precedence — the pair
-/// would depend on which check ran first.
+/// `--mode`, `--permission-mode` and `--approval-mode` are three spellings of
+/// the same consent: one names the session's mode, the other two its earlier
+/// forms. Stating two is refused rather than resolved by precedence — the pair
+/// would depend on which check ran first. The one axis is `--mode`; the other
+/// two are the one-release aliases, and two of the three are still refused in
+/// the same wording style they were refused in before the merge.
 pub(crate) fn refuse_conflicting_consent(
+    mode: Option<&str>,
     permission_mode: Option<&str>,
     approval_mode: Option<&str>,
 ) -> Result<(), String> {
-    if let (Some(mode), Some(approval)) = (permission_mode, approval_mode) {
-        return Err(format!(
-            "`--permission-mode {mode}` and `--approval-mode {approval}` both state the session's \
-             consent: state one of them, or switch inside the session with `/mode`"
-        ));
+    let stated: Vec<(&str, &str)> = [
+        ("--mode", mode),
+        ("--permission-mode", permission_mode),
+        ("--approval-mode", approval_mode),
+    ]
+    .into_iter()
+    .filter_map(|(flag, value)| value.map(|value| (flag, value)))
+    .collect();
+    let (Some((first, first_value)), Some((second, second_value))) =
+        (stated.first(), stated.get(1))
+    else {
+        return Ok(());
+    };
+    Err(format!(
+        "`{first} {first_value}` and `{second} {second_value}` both state the session's consent: \
+         state one of them, or switch inside the session with `/mode`"
+    ))
+}
+
+/// The one-line note a deprecated consent spelling states on stderr, once per
+/// launch — `--approval-mode` before `--permission-mode`, so a launch that
+/// carried both names the wider surface's alias first (the conflict guard
+/// refuses that case before this is read).
+pub(crate) fn consent_alias_note(options: &crate::cli::GlobalOptions) -> Option<&'static str> {
+    use crate::interactive::session::permissions::mode::{
+        APPROVAL_MODE_FLAG_NOTE, PERMISSION_MODE_FLAG_NOTE,
+    };
+    if options.approval_mode.is_some() {
+        return Some(APPROVAL_MODE_FLAG_NOTE);
     }
-    Ok(())
+    options
+        .permission_mode
+        .is_some()
+        .then_some(PERMISSION_MODE_FLAG_NOTE)
 }
 
 fn command_options(
@@ -311,19 +345,33 @@ mod tests {
         assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
-    /// The two consent spellings are refused together rather than resolved
+    /// The three consent spellings are refused in pairs rather than resolved
     /// by precedence: the pair a session would run under must not depend on
-    /// which check ran first.
+    /// which check ran first. `--mode` is the axis; the other two are the
+    /// one-release aliases of it.
     #[test]
-    fn permission_mode_with_approval_mode_is_refused() {
-        let error = refuse_conflicting_consent(Some("plan"), Some("ask"))
+    fn two_consent_spellings_are_refused() {
+        let error = refuse_conflicting_consent(None, Some("plan"), Some("ask"))
             .expect_err("two spellings of one consent must refuse");
         assert!(
             error.contains("--permission-mode plan") && error.contains("--approval-mode ask"),
             "the refusal names both flags: {error}"
         );
-        assert!(refuse_conflicting_consent(Some("plan"), None).is_ok());
-        assert!(refuse_conflicting_consent(None, Some("bypass")).is_ok());
+        let error = refuse_conflicting_consent(Some("plan"), None, Some("ask"))
+            .expect_err("`--mode` beside `--approval-mode` must refuse");
+        assert!(
+            error.contains("--mode plan") && error.contains("--approval-mode ask"),
+            "the refusal names both flags, the axis first: {error}"
+        );
+        let error = refuse_conflicting_consent(Some("never"), Some("ask"), None)
+            .expect_err("`--mode` beside `--permission-mode` must refuse");
+        assert!(
+            error.contains("--mode never") && error.contains("--permission-mode ask"),
+            "the refusal names both flags: {error}"
+        );
+        assert!(refuse_conflicting_consent(Some("plan"), None, None).is_ok());
+        assert!(refuse_conflicting_consent(None, Some("plan"), None).is_ok());
+        assert!(refuse_conflicting_consent(None, None, Some("bypass")).is_ok());
     }
 
     /// The bare REPL keeps the flag: `saya --continue` parses with no

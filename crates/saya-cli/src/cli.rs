@@ -9,7 +9,6 @@ pub use agent::{FollowUpCommand, StartCommand};
 pub use coding::CodingCommand;
 pub use coding_root::RootMode;
 pub(crate) use job::refusal as job_lane_refusal;
-pub(crate) use job::session_spelling as job_session_spelling;
 mod connection;
 mod foundation;
 mod investigation;
@@ -84,7 +83,14 @@ pub struct GlobalOptions {
     /// Read one turn from this file instead of stdin, then exit (session only).
     #[arg(long = "turn-file", value_name = "PATH")]
     pub turn_file: Option<std::path::PathBuf>,
-    /// Start in this permission mode: ask|accept-edits|plan|bypass (session only).
+    /// Start in this consent mode — the one axis `/mode` moves (session) and the
+    /// posture a headless surface runs under: ask|accept-edits|plan|bypass|
+    /// read-only|never.
+    #[arg(long = "mode", value_name = "MODE", global = true)]
+    pub mode: Option<String>,
+    /// Deprecated alias of `--mode`, removed next release; states the consent a
+    /// session launches with, and `plan` is the one value only the interactive
+    /// session can run (session only).
     #[arg(long = "permission-mode", value_name = "MODE")]
     pub permission_mode: Option<String>,
     /// Connection profile to use (overrides `default_profile` in config).
@@ -128,8 +134,9 @@ pub struct GlobalOptions {
     /// Additional profiles to query alongside the active one.
     #[arg(long = "include-profile", global = true)]
     pub include_profiles: Vec<String>,
-    /// When tool calls need approval: ask|read-only|never|bypass (headless default: never, no `shell`).
-    #[arg(long, value_name = "MODE", global = true)]
+    /// Deprecated alias of `--mode`, removed next release: when tool calls need
+    /// approval — ask|read-only|never|bypass (headless default: never, no `shell`).
+    #[arg(long = "approval-mode", value_name = "MODE", global = true)]
     pub approval_mode: Option<String>,
     /// Advertise only these model tools (comma-separated, repeatable).
     #[arg(long, value_name = "NAME,...", value_delimiter = ',', global = true)]
@@ -143,6 +150,10 @@ pub struct GlobalOptions {
         alias = "output-format"
     )]
     pub format: FormatArg,
+    /// Run the plain line REPL on a terminal instead of the full-screen TUI
+    /// (`SAYA_PLAIN=1` asks for the same thing).
+    #[arg(long, global = true)]
+    pub plain: bool,
     /// Run without any terminal interaction (CI-safe; approvals deny).
     #[arg(long, global = true)]
     pub non_interactive: bool,

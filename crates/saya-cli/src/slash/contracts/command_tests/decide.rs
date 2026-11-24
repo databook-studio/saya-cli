@@ -2,11 +2,8 @@ use super::*;
 
 #[test]
 fn parse_confirm_one_prefix() {
-    let cmd = parse_contract_command("confirm", "c-a86a3f")
-        .unwrap()
-        .unwrap();
     assert_eq!(
-        cmd,
+        command_of("/confirm c-a86a3f"),
         ContractsCommand::Decide {
             prefix: "c-a86a3f".into(),
             decision: ReviewDecisionArg::Confirm,
@@ -26,7 +23,7 @@ fn parse_confirm_one_prefix() {
 #[test]
 fn parse_reject_translates_to_decide() {
     assert_eq!(
-        parse_contract_command("reject", "c-1").unwrap().unwrap(),
+        command_of("/reject c-1"),
         ContractsCommand::Decide {
             prefix: "c-1".into(),
             decision: ReviewDecisionArg::Reject,
@@ -37,4 +34,15 @@ fn parse_reject_translates_to_decide() {
     assert!(parse_contract_command("reject", "").is_err());
     // Refuses two tokens.
     assert!(parse_contract_command("reject", "a b").is_err());
+}
+
+/// The usage line names the spelling the user typed: a deprecated `/confirm`
+/// says `/confirm <claim-id-prefix>`, the canonical form says `/contracts
+/// confirm <claim-id-prefix>`. Neither echoes the prefix.
+#[test]
+fn the_usage_line_names_the_spelling_typed() {
+    let alias = parse_contract_command("confirm", "").unwrap_err();
+    assert_eq!(alias.0, "/confirm <claim-id-prefix>");
+    let canonical = parse_contract_command("contracts", "confirm").unwrap_err();
+    assert_eq!(canonical.0, "/contracts confirm <claim-id-prefix>");
 }

@@ -2,12 +2,12 @@ use saya_agent::PermissionMode;
 
 use super::super::{BYPASS_REFUSAL, name, next_in_cycle, parse, stated_mode};
 
-/// `/mode`'s grammar: the four modes, and `build` kept as an alias for
+/// `/mode`'s grammar: the six modes, and `build` kept as an alias for
 /// `ask` — the spelling the task-posture command used before the two axes
 /// became one mode. Case-sensitive like `/approvals`, and an unknown word is
 /// nothing, never a silent default.
 #[test]
-fn the_grammar_names_four_modes_and_keeps_build_as_an_alias() {
+fn the_grammar_names_six_modes_and_keeps_build_as_an_alias() {
     assert_eq!(parse("ask"), Some(PermissionMode::Ask));
     assert_eq!(
         parse("build"),
@@ -17,6 +17,16 @@ fn the_grammar_names_four_modes_and_keeps_build_as_an_alias() {
     assert_eq!(parse("accept-edits"), Some(PermissionMode::AcceptEdits));
     assert_eq!(parse("plan"), Some(PermissionMode::Plan));
     assert_eq!(parse("bypass"), Some(PermissionMode::Bypass));
+    assert_eq!(
+        parse("read-only"),
+        Some(PermissionMode::ReadOnly),
+        "read-only is a mode of the one axis, not a second command's"
+    );
+    assert_eq!(
+        parse("never"),
+        Some(PermissionMode::Never),
+        "never is a mode of the one axis, not a second command's"
+    );
     assert_eq!(parse("Plan"), None, "the parse is case-sensitive");
     assert_eq!(parse("nonsense"), None);
     assert_eq!(parse(""), None);
@@ -61,33 +71,33 @@ fn the_cycle_skips_bypass_when_the_config_withholds_it() {
     );
 }
 
-/// A launch's `--permission-mode` reads through the same grammar the command
+/// A launch's `--mode` reads through the same grammar the command
 /// does, and its refusals are the command's own wording: an unknown word is
 /// named with the four it accepts, and `bypass` answers the switch's refusal
 /// rather than inventing a second sentence for the same request.
 #[test]
 fn a_stated_launch_mode_parses_and_refuses_like_the_command() {
     assert_eq!(
-        stated_mode("accept-edits", false),
+        stated_mode("--mode", "accept-edits", false),
         Ok(PermissionMode::AcceptEdits)
     );
     assert_eq!(
-        stated_mode("build", false),
+        stated_mode("--mode", "build", false),
         Ok(PermissionMode::Ask),
         "the alias the command keeps is the alias the flag keeps"
     );
-    let error = stated_mode("Plan", false).expect_err("the parse is case-sensitive");
+    let error = stated_mode("--mode", "Plan", false).expect_err("the parse is case-sensitive");
     assert!(
         error.contains("accept-edits") && error.contains("bypass"),
         "an unknown word names the modes that parse: {error}"
     );
     assert_eq!(
-        stated_mode("bypass", false),
+        stated_mode("--mode", "bypass", false),
         Err(BYPASS_REFUSAL.to_owned()),
         "a withheld bypass answers with the switch's own refusal"
     );
     assert_eq!(
-        stated_mode("bypass", true),
+        stated_mode("--mode", "bypass", true),
         Ok(PermissionMode::Bypass),
         "the key the switch reads is the key the flag reads"
     );

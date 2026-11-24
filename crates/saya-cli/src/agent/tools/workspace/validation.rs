@@ -4,7 +4,9 @@ use super::grep_types::{self, MAX_CONTEXT};
 use super::names::canonical_name;
 use super::search_lifetime::refusal;
 
-pub(in crate::agent::tools) fn is_tool_name(name: &str) -> bool {
+/// Whether `name` is one of the workspace file tools. Reachable crate-wide so a
+/// plugin outside `agent::tools` can tell its own tools from the core's.
+pub(crate) fn is_tool_name(name: &str) -> bool {
     matches!(
         canonical_name(name),
         "read" | "list" | "write" | "edit" | "notebook_edit" | "delete" | "glob" | "grep"

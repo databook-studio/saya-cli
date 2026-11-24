@@ -1,35 +1,4 @@
 impl SessionUniverse {
-    /// A universe with nothing in it — the struct-literal test support for
-    /// the TUI's idle apps, which never dispatch a tool. Production composes
-    /// through [`SessionUniverse::compose`] only.
-    #[cfg(test)]
-    pub(crate) fn empty() -> Self {
-        let (plan, plan_ask) = plan_gate_pair();
-        Self {
-            workspace: None,
-            fetch: None,
-            host: None,
-            deny: crate::interactive::session::permissions::deny::SessionDeny::default(),
-            tasks: crate::interactive::session::tasks::SessionTasks::default(),
-            primary: crate::grant_token::TurnPrimary::default(),
-            grants: crate::interactive::session::permissions::grant_surface::GrantView::default(),
-            notice: None,
-            recovery: None,
-            mcp: None,
-            learning_breaker: LearningBreaker::new(),
-            shell_sandboxes: None,
-            shell_rules: CommandRules::default(),
-            file_sources: crate::agent::file_sources::FileSources::NoData,
-            shell_host: saya_harness::runner::HostPolicy::default(),
-            shell_background: Arc::new(saya_harness::runner::BackgroundRuns::default()),
-            shell_background_cancellation: CancellationToken::new(),
-            background_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            plan,
-            plan_ask,
-            session_hooks: crate::agent::hooks::SessionHooks::new(),
-        }
-    }
-
     /// Composes the universe once per session process: the workspace binding
     /// (explicit `--workspace`, or the recorded pin on a resume, or the git
     /// worktree top on a fresh start) and the session fetch wiring. The host
@@ -111,13 +80,6 @@ impl SessionUniverse {
         let deny =
             crate::interactive::session::permissions::deny::SessionDeny::from_names(deny_names)?;
         let (workspace, notice) = bind_from_pins(explicit, pinned_root, walk_when_unpinned, cwd)?;
-        // The checkout's data-file route, detected once at session start —
-        // before `path` moves into the host lane. The prompt adds the block
-        // only where the turn also advertises `shell` (`turn.rs`).
-        let file_sources = crate::agent::file_sources::detect(
-            workspace.as_ref().map(|bound| bound.workspace.as_ref()),
-            path.as_deref().map(std::ffi::OsStr::new),
-        );
         // Fetch: the session-wide policy — HTTPS only, refused ranges still
         // refused, every host consented per call by the approval engine.
         let transport = ReqwestTransport::new()
@@ -185,51 +147,21 @@ impl SessionUniverse {
                 notices.push_str(&notice);
                 notices
             });
-        // The shell's two session-stable facts: the root its sandboxes are
-        // proven against (only where a root binds — no root, no shell), and
-        // the host-lane policy a host call runs under. Neither proves a
-        // sandbox: the probe spawns canaries, so it runs lazily, once per
-        // shape, on the first turn that needs one (`shell.rs`).
-        let shell_sandboxes = root.map(|root| ShellSandboxes::new(root.to_path_buf()));
-        let shell_host = crate::agent::tools::shell_policy::host_policy(runtime);
-        let shell_rules = runtime.resolved.permissions.rules.clone();
         // The plan gate, once per session: the mode can enter `plan` at any
         // point, and the gate the operator's approval opens is the one the
         // switch closes.
-        let (plan, plan_ask) = plan_gate_pair();
+        let (plan, _) = plan_gate_pair();
         Ok(Self {
             workspace,
             fetch: Some(fetch),
             host,
             deny,
             tasks: crate::interactive::session::tasks::SessionTasks::default(),
-            primary: crate::grant_token::TurnPrimary::default(),
-            grants: crate::interactive::session::permissions::grant_surface::GrantView::default(),
             notice,
             recovery,
             mcp,
-            learning_breaker: LearningBreaker::new(),
-            shell_sandboxes,
-            shell_rules,
-            file_sources,
-            shell_host,
-            shell_background: Arc::new(saya_harness::runner::BackgroundRuns::default()),
-            shell_background_cancellation: CancellationToken::new(),
-            background_started: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             plan,
-            plan_ask,
             session_hooks: crate::agent::hooks::SessionHooks::new(),
         })
-    }
-}
-
-impl Drop for SessionUniverse {
-    /// The session is ending: every background run it owns is cancelled and
-    /// its whole process group killed, whatever turn composed the shell that
-    /// started it. The registry's own drop does the same when its last owner
-    /// goes; this is the prompt path, and it also covers a shell still held
-    /// elsewhere at session end.
-    fn drop(&mut self) {
-        self.shell_background_cancellation.cancel();
     }
 }

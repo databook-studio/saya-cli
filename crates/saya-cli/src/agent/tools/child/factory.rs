@@ -12,10 +12,10 @@ use saya_harness::coding::child::{
 };
 use saya_harness::coding::policy::ChildAuthorityView;
 
-use super::{ChildTools, TrustedCheckoutPair, child_toolset, decider};
+use super::{ChildTools, TrustedCheckoutPair, child_toolset, decider, plugins};
 use crate::agent::provider;
 use crate::agent::tools::consent::OwnedToolApproval;
-use crate::agent::tools::shell_policy::ShellTool;
+use crate::agent::tools::shell_policy::{self, BackgroundOwner, ShellTool};
 use crate::commands::coding::database::CodingDatabaseTools;
 
 /// Composes one verified, confined child's runtime dependencies from pieces
@@ -64,6 +64,10 @@ pub(crate) struct CliChildFactory {
     /// The in-place job's approved `--write` scope, enforced on every write
     /// door this factory composes. `None` is a managed checkout.
     write_scope: Option<saya_harness::coding::integration::AssignedPaths>,
+    /// The job's write ask, when an operator answers its calls: what a
+    /// write-shaped call the capability admits is then resolved by. `None` is
+    /// a detached composition, which keeps the capability's answer.
+    write_ask: Option<Arc<crate::agent::tools::WriteAsk>>,
     /// The run's read-witness store, shared with the shell composed beside
     /// this toolset.
     read_witnesses: Option<Arc<crate::agent::tools::workspace::ReadWitnesses>>,
@@ -145,6 +149,17 @@ impl CliChildFactory {
         self
     }
 
+    /// Puts the job's write ask behind every write this factory composes, so a
+    /// helper's call is resolved by the job's mode exactly as the root's is.
+    /// `None` — a detached composition — changes nothing.
+    pub(crate) fn with_write_ask(
+        mut self,
+        ask: Option<Arc<crate::agent::tools::WriteAsk>>,
+    ) -> Self {
+        self.write_ask = ask;
+        self
+    }
+
     /// Assembles the factory from pieces prepared by `compose_child` in the
     /// same use-time verification flow.
     pub(crate) fn new(
@@ -164,6 +179,7 @@ impl CliChildFactory {
             tools: saya_config::ResolvedTools::default(),
             hooks: None,
             write_scope: None,
+            write_ask: None,
             read_witnesses: None,
             spool_dir: None,
         }
@@ -201,14 +217,40 @@ impl CliChildFactory {
             super::super::workspace::canonicalize_tool_names(&mut definitions);
             definitions.extend(tools.attach_coding(Arc::clone(coding)));
         }
-        // Attached when it advertises anything at all: a profile this view
-        // admits, or the clarification ask an operator can answer — which
-        // needs no profile and so survives an empty selection.
+        // Attached when it advertises anything at all, which is a profile this
+        // view admits: the ask rides the plugin with every other database name,
+        // so a job that selected no profile attaches no database plugin and is
+        // offered no ask. The registry is the one door: the definitions come
+        // from the active plugin, and the executor routes the same names back to
+        // it.
         if let Some(databases) = &self.databases
-            && (!view.database_profiles().is_empty() || databases.advertises_clarification())
+            && !view.database_profiles().is_empty()
         {
-            definitions.extend(databases.definitions(Some(view)));
-            tools.attach_databases(Arc::clone(databases));
+            // Every other name this surface can advertise, so the registry can
+            // refuse a plugin tool that would take one: the names composed so
+            // far, plus the lanes still to be attached below.
+            let background = self.shell.as_ref().map_or_else(Vec::new, |_| {
+                shell_policy::background_definitions(BackgroundOwner::Helper)
+            });
+            let core_tool_names = plugins::core_tool_names(
+                &definitions,
+                background
+                    .into_iter()
+                    .chain(self.web.iter().flat_map(|web| web.definitions()))
+                    .chain(self.mcp.iter().flat_map(|mcp| mcp.definitions())),
+            );
+            // `build_toolset` serves the direct-mode root and a helper alike,
+            // and only the caller knows which; the plugin activates for
+            // `Headless`, the surface every run a job starts shares. The rule
+            // answers `true` for both, so the choice changes no contribution.
+            let active = plugins::database_plugins(
+                databases,
+                view,
+                saya_agent::RunSurface::Headless,
+                &core_tool_names,
+            )?;
+            definitions.extend(active.definitions());
+            tools.attach_plugins(active);
         }
         // The helper's shell is advertised only when the composition root
         // built one: config off, mode `never`, or no proven sandbox under
@@ -244,7 +286,8 @@ impl CliChildFactory {
         tools.narrow_to(tools_allow);
         tools.hold_definitions(&definitions);
         let approval = decider::ExactWriteChildApproval::new(view, self.pair.checkout_id().clone())
-            .with_write_scope(self.write_scope.clone());
+            .with_write_scope(self.write_scope.clone())
+            .with_ask(self.write_ask.clone());
         Ok((definitions, tools, approval))
     }
 }

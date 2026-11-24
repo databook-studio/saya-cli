@@ -45,21 +45,24 @@ fn sessions_delete_text_reports_success_refusals_and_unknown_ids() {
     std::fs::write(root.join("a.json"), "{}").unwrap();
     std::fs::create_dir_all(root.join("a")).unwrap();
     let store = FsSessionStore::new(&root);
-    let (ok, text) = sessions_delete_text(&store, &root, "a", Some("a"));
+    // The jobs a record could link live beside the session store; this
+    // record links none, so the root is only ever read for its absence.
+    let jobs = root.parent().unwrap().join("coding");
+    let (ok, text) = sessions_delete_text(&store, &root, &jobs, "a", Some("a"));
     assert!(!ok, "the current session is refused: {ok}");
     assert!(
         text.contains("live session") && text.contains("was not deleted"),
         "the refusal is the current-session one: {text}"
     );
     assert!(root.join("a.json").exists(), "the record survived");
-    let (ok, text) = sessions_delete_text(&store, &root, "a", None);
+    let (ok, text) = sessions_delete_text(&store, &root, &jobs, "a", None);
     assert!(ok, "a foreign delete completes: {text}");
     assert!(
         text.contains("Deleted saved session a") && text.contains("were not deleted"),
         "the success carries the retained-data sentence: {text}"
     );
     assert!(!root.join("a.json").exists(), "the record is gone");
-    let (ok, text) = sessions_delete_text(&store, &root, "nosuch-id", None);
+    let (ok, text) = sessions_delete_text(&store, &root, &jobs, "nosuch-id", None);
     assert!(!ok, "an unknown id is refused: {text}");
     assert!(
         text.contains("no saved session nosuch-id"),

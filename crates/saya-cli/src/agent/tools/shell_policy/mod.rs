@@ -30,6 +30,16 @@
 //! under the proven spawn, empty-then-declared environment, bounded and
 //! redacted capture, process-group kill. This module adds no second spawn path.
 //!
+//! # A command that only reads
+//!
+//! The asking modes skip their question for a command the trusted rules read as
+//! vetted read-only ([`CommandDecision::ReadOnly`](saya_config::CommandDecision)):
+//! `ls -la`, `cat`, `git status`, and the rest of the set documented in
+//! `docs/configuration.md`. The lane
+//! still decides where it runs, and a call with no operator to skip the question
+//! for falls back exactly as before — the set skips a question, never the
+//! consent path. `[permissions] read_only_commands = false` withholds it whole.
+//!
 //! # Who is asking
 //!
 //! A helper's shell is built here too: the same policy over the
@@ -42,6 +52,11 @@
 //! [`SerialisedOperator`](crate::agent::tools::consent::SerialisedOperator)
 //! once, so several helpers asking at once queue: one prompt is pending at a
 //! time, and a waiting ask still honours cancellation.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use saya_agent::{ApprovalPolicy, SessionPolicy};
 
 /// The host-lane policy a `sandbox: false` call runs under: the environment
 /// variable names and secret values a host child must not inherit. Built where
@@ -68,8 +83,24 @@ mod view;
 mod concurrency_tests;
 
 #[cfg(test)]
+#[path = "mode_cell_tests.rs"]
+mod mode_cell_tests;
+
+#[cfg(test)]
+#[path = "policy_grant_tests.rs"]
+mod policy_grant_tests;
+
+#[cfg(test)]
 #[path = "policy_tests.rs"]
 mod policy_tests;
+
+#[cfg(test)]
+#[path = "read_only_repository_tests.rs"]
+mod read_only_repository_tests;
+
+#[cfg(test)]
+#[path = "read_only_tests.rs"]
+mod read_only_tests;
 
 #[cfg(test)]
 #[path = "schema_tests.rs"]
@@ -79,9 +110,119 @@ mod schema_tests;
 #[path = "spool_read_tests.rs"]
 mod spool_read_tests;
 
-pub(crate) use compose::{
-    Background, advertised, compose, compose_host_only, compose_sandboxed, prove,
-};
+/// The shared permission-mode cell: one per job, handed by handle to every
+/// policy that decides a call, so the mode one surface states is the mode the
+/// next call resolves — no policy keeps a copy that can go stale. It is the
+/// session's own cell shape, and a frozen one refuses every change: a headless
+/// or background run states its approval before it starts.
+///
+/// A cell can also be **capped** ([`ModeCell::capped_at`]): the same cell read
+/// through the widest mode one caller's capability allows. That is how a helper
+/// follows the job's mode and still cannot exceed its own type — the cap is
+/// applied after the mode, never instead of it.
+#[derive(Debug, Clone)]
+pub(crate) struct ModeCell {
+    mode: SessionPolicy,
+    frozen: Arc<AtomicBool>,
+    /// The widest mode this view may resolve. `None` is a cell that states its
+    /// mode whole, which is every cell a surface composes for itself.
+    ceiling: Option<ApprovalPolicy>,
+}
+
+/// The refusal a frozen cell gives, so a caller reports a change that did not
+/// land rather than assuming it did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("the permission mode is frozen: this run's approval is stated before it starts")]
+pub struct ModeFrozen;
+
+impl ModeCell {
+    /// A cell of its own at `mode`: the mode of a surface that composes it
+    /// once and never states it again.
+    pub(crate) fn new(mode: ApprovalPolicy) -> Self {
+        Self {
+            mode: SessionPolicy::new(mode),
+            frozen: Arc::new(AtomicBool::new(false)),
+            ceiling: None,
+        }
+    }
+
+    /// A view of this cell that never resolves wider than `ceiling`: the
+    /// narrowing a capability applies *after* the mode is read. The view shares
+    /// this cell's mode, so a switch is still read at the next call; a mode the
+    /// cap already covers is resolved as the cell states it, never widened.
+    pub(crate) fn capped_at(&self, ceiling: ApprovalPolicy) -> Self {
+        Self {
+            mode: self.mode.clone(),
+            frozen: Arc::clone(&self.frozen),
+            ceiling: Some(ceiling),
+        }
+    }
+
+    /// The mode the next call resolves: the cell's own, or — where a caller
+    /// capped it — the narrower of that and the cap.
+    pub(crate) fn get(&self) -> ApprovalPolicy {
+        match self.ceiling {
+            Some(ceiling) => narrower(self.mode.mode(), ceiling),
+            None => self.mode.mode(),
+        }
+    }
+
+    /// States the mode, refused on a frozen cell.
+    pub(crate) fn set(&self, mode: ApprovalPolicy) -> Result<(), ModeFrozen> {
+        if self.frozen.load(Ordering::Relaxed) {
+            return Err(ModeFrozen);
+        }
+        self.mode.set_mode(mode);
+        Ok(())
+    }
+
+    /// Whether this cell refuses every change: the composition that opened it
+    /// stated its approval rather than leaving it switchable.
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
+    /// States the mode and freezes it in one step: a composition whose approval
+    /// is stated, not switched.
+    pub(crate) fn freeze_at(&self, mode: ApprovalPolicy) {
+        self.mode.set_mode(mode);
+        self.frozen.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The narrower of two modes: the order a capability and the job's current mode
+/// combine under. `never` holds no tool at all, so it is narrowest;
+/// `read-only` reaches nothing outside the sandbox; the two asking modes put a
+/// host call to the operator, and are one width because the shell lane decides
+/// them alike; and `bypass` allows the host outright, so it is widest.
+fn narrower(mode: ApprovalPolicy, ceiling: ApprovalPolicy) -> ApprovalPolicy {
+    if width(mode) <= width(ceiling) {
+        mode
+    } else {
+        ceiling
+    }
+}
+
+fn width(mode: ApprovalPolicy) -> u8 {
+    match mode {
+        ApprovalPolicy::Never => 0,
+        ApprovalPolicy::ReadOnly => 1,
+        ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => 2,
+        ApprovalPolicy::Bypass => 3,
+    }
+}
+
+pub(crate) use compose::{Background, HostLane, advertised, compose};
+// The sandbox and host-lane constructors are read only from the
+// platform-gated shell tests (the deleted session shell was their last
+// production caller), so they are re-exported for those tests alone. The
+// sandbox pair's only callers are the macOS/Linux shell-test hooks, so they
+// carry that gate too; `compose_host_only` is read by Unix test modules only
+// and by no non-Unix one.
+#[cfg(test)]
+pub(crate) use compose::compose_host_only;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(crate) use compose::{compose_sandboxed, prove};
 pub(crate) use placement::ShellPlacement;
 pub(crate) use poll::WallClock;
 // The refusal and notice texts are read only from test code and `ShellPolicy`
@@ -89,7 +230,7 @@ pub(crate) use poll::WallClock;
 // a live path in a non-test build; callers still name them through this module.
 #[allow(unused_imports)]
 pub(crate) use policy::{HOST_APPROVAL_UNAVAILABLE, SANDBOX_DOWNGRADE_NOTICE, ShellPolicy};
-pub(crate) use prompt::{DeciderShellOperator, prompt};
+pub(crate) use prompt::prompt;
 // The prompt's line is read only from test code, which asserts the wording the
 // operator is shown; callers still name it through this module.
 #[cfg(test)]

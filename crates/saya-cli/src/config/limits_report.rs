@@ -16,7 +16,29 @@ pub(crate) fn lines(runtime: &RuntimeConfig) -> Vec<String> {
     push_answering(&mut lines, "limits.session", limits.session);
     push_answering(&mut lines, "limits.ask", limits.ask);
     push_run(&mut lines, &limits.run);
-    push_job(&mut lines, &limits.job);
+    lines.extend(job_guards(runtime));
+    lines
+}
+
+/// The run's `[limits.job]` guards alone, one line per ceiling: what `/status`'s
+/// Limits section states. The same lines `config doctor` prints, built by the
+/// same function, so the two views cannot disagree about a ceiling.
+pub(crate) fn job_guards(runtime: &RuntimeConfig) -> Vec<String> {
+    let mut lines = Vec::new();
+    push_job(&mut lines, &runtime.resolved.limits.job);
+    lines
+}
+
+/// The `[limits.database]` budget alone, one line per ceiling: what `/status`'s
+/// Limits section states when the session bound a database — the plugin arms
+/// this table on a turn's first database use, so with no database it is no fact.
+pub(crate) fn database_guards(runtime: &RuntimeConfig) -> Vec<String> {
+    let mut lines = Vec::new();
+    push_answering(
+        &mut lines,
+        "limits.database",
+        runtime.resolved.limits.database,
+    );
     lines
 }
 

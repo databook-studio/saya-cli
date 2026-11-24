@@ -1,0 +1,283 @@
+//! The chat layer's contract types: what a session tells the surface driving it
+//! ([`ChatEvent`]), how one turn ended ([`ChatOutcome`]), what a call puts to
+//! the operator ([`Question`]), and the front the session talks to
+//! ([`ChatFront`]), and the operator those calls are put through
+//! ([`SessionOperator`]).
+//!
+//! Presentation-free: a front decides how any of it looks, so nothing here
+//! names a terminal library, a widget, or the renderer.
+
+mod compact;
+mod compose;
+mod compose_plugins;
+mod event;
+mod front;
+mod link;
+pub(crate) mod mentions;
+mod operator;
+mod ops;
+mod ops_context;
+mod ops_continue;
+mod ops_job;
+pub(crate) mod ops_permissions;
+mod ops_rewind;
+mod ops_rewind_run;
+pub(crate) mod ops_status;
+mod ops_status_facts;
+mod ops_status_notes;
+mod port;
+mod queue;
+mod rollover;
+mod session;
+mod session_facts;
+mod transcript;
+mod turn;
+mod workspace_shape;
+mod workspace_summary;
+
+// This `pub(crate)` surface is the chat layer's boundary: the composition, the
+// session, the turn, the operator and the fronts above them consume it. Nothing
+// in the crate references it yet, so the re-exports read as unused in a lib
+// build — they are the boundary, not dead code.
+#[allow(unused_imports)]
+pub(crate) use compact::{Compacted, Compaction};
+#[allow(unused_imports)]
+pub(crate) use compose::{RunComposition, SessionRun};
+#[allow(unused_imports)]
+pub(crate) use event::{Budget, ChatEvent, ChatOutcome, Question};
+#[allow(unused_imports)]
+pub(crate) use front::ChatFront;
+#[allow(unused_imports)]
+pub(crate) use link::{Resume, RunFacts, after_prepare, decide};
+#[allow(unused_imports)]
+pub(crate) use mentions::{attach as attach_mentions, candidates as mention_candidates};
+#[allow(unused_imports)]
+pub(crate) use operator::SessionOperator;
+#[allow(unused_imports)]
+pub(crate) use ops::{ChatOps, Fate, Op, OpResult};
+#[allow(unused_imports)]
+pub(crate) use ops_context::{ContextChange, OpsContext, ReadOp, RolloverRequest, SessionOp};
+#[allow(unused_imports)]
+pub(crate) use ops_continue::{
+    CONTINUE_MESSAGE, NOTHING_TO_CONTINUE, Refusal as ContinueRefusal, TURN_RUNNING, paused,
+    refusal,
+};
+#[allow(unused_imports)]
+pub(crate) use ops_job::{JobNotes, claim_job_note};
+#[allow(unused_imports)]
+pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, Restored, rewind, undo};
+#[allow(unused_imports)]
+pub(crate) use ops_rewind_run::RunCheckpoints;
+#[allow(unused_imports)]
+pub(crate) use ops_status::{Note, Section, StatusFacts, StatusNotes, StatusPanel, with_note};
+#[allow(unused_imports)]
+pub(crate) use port::{PortError, Prepared, RunPort};
+#[allow(unused_imports)]
+pub(crate) use rollover::{Ending, Rollover, RolloverCause, RolloverError};
+#[allow(unused_imports)]
+pub(crate) use session::{Admission, ChatSession, SessionState};
+#[allow(unused_imports)]
+pub(crate) use session_facts::SessionFacts;
+#[allow(unused_imports)]
+pub(crate) use transcript::{SettledTurn, Transcript};
+#[allow(unused_imports)]
+pub(crate) use turn::{ChatTurn, JobPort};
+#[allow(unused_imports)]
+pub(crate) use workspace_shape::{Workspace, WorkspaceShape, decide as workspace_shape};
+#[allow(unused_imports)]
+pub(crate) use workspace_summary::{
+    GitFacts, Limits as SummaryLimits, MAX_BYTES as SUMMARY_MAX_BYTES, SCAN_TIME as SUMMARY_TIME,
+    WorkspaceSummary, WorkspaceSummaryCell, scan as scan_workspace,
+};
+
+#[cfg(test)]
+#[path = "contract_guard_tests.rs"]
+mod contract_guard_tests;
+
+#[cfg(test)]
+#[path = "operator_front_fixture.rs"]
+pub(crate) mod operator_front_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_fixture.rs"]
+pub(crate) mod compose_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_helpers_tests.rs"]
+mod compose_helpers_tests;
+
+#[cfg(all(test, unix))]
+#[path = "default_advertisement_tests.rs"]
+mod default_advertisement_tests;
+
+#[cfg(all(test, unix))]
+#[path = "helpers_transcript_tests.rs"]
+mod helpers_transcript_tests;
+
+#[cfg(all(test, unix))]
+#[path = "helpers_cancel_tests.rs"]
+mod helpers_cancel_tests;
+
+#[cfg(all(test, unix))]
+#[path = "turn_metrics_tests.rs"]
+mod turn_metrics_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_context_tests.rs"]
+mod compose_context_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_summary_tests.rs"]
+mod compose_summary_tests;
+
+#[cfg(all(test, unix))]
+#[path = "learning_provider_fixture.rs"]
+pub(crate) mod learning_provider_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "turn_extraction_wait_tests.rs"]
+mod turn_extraction_wait_tests;
+
+#[cfg(all(test, unix))]
+#[path = "turn_learning_soft_tests.rs"]
+mod turn_learning_soft_tests;
+
+#[cfg(all(test, unix))]
+#[path = "turn_learning_usage_tests.rs"]
+mod turn_learning_usage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_token_wallet_tests.rs"]
+mod compose_token_wallet_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_preflight_stop_tests.rs"]
+mod compose_preflight_stop_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_last_sql_tests.rs"]
+mod compose_last_sql_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_workspace_root_tests.rs"]
+mod compose_workspace_root_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_preferences_tests.rs"]
+mod compose_preferences_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_tests.rs"]
+mod compose_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_ask_tests.rs"]
+mod compose_ask_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_mode_tests.rs"]
+mod compose_mode_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_surface_twin_tests.rs"]
+mod compose_surface_twin_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_catalog_tests.rs"]
+mod compose_catalog_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_recall_fixture.rs"]
+mod compose_recall_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compose_recall_tests.rs"]
+mod compose_recall_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_sql_tests.rs"]
+mod compose_sql_tests;
+
+// The knowledge-event twins: the old turn body's supplied-knowledge and
+// override pins, on a composed session's own turn.
+#[cfg(all(test, unix))]
+#[path = "knowledge_fixture.rs"]
+mod knowledge_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_sinks.rs"]
+mod knowledge_sinks;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_supplied_tests.rs"]
+mod knowledge_supplied_tests;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_outcome_tests.rs"]
+mod knowledge_outcome_tests;
+
+#[cfg(all(test, unix))]
+#[path = "knowledge_overridden_tests.rs"]
+mod knowledge_overridden_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compose_origin_tests.rs"]
+mod compose_origin_tests;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_fixture.rs"]
+mod safety_twin_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_shell.rs"]
+mod safety_twin_shell;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_background.rs"]
+mod safety_twin_background;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_write.rs"]
+mod safety_twin_write;
+
+#[cfg(all(test, unix))]
+#[path = "safety_twin_grants.rs"]
+mod safety_twin_grants;
+
+#[cfg(all(test, unix))]
+#[path = "rollover_fixture.rs"]
+mod rollover_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "rollover_tests.rs"]
+mod rollover_tests;
+
+#[cfg(all(test, unix))]
+#[path = "rollover_clear_tests.rs"]
+mod rollover_clear_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compact_provider.rs"]
+mod compact_provider;
+
+#[cfg(all(test, unix))]
+#[path = "compact_fixture.rs"]
+mod compact_fixture;
+
+#[cfg(all(test, unix))]
+#[path = "compact_tests.rs"]
+mod compact_tests;
+
+#[cfg(all(test, unix))]
+#[path = "compact_latch_tests.rs"]
+mod compact_latch_tests;
+
+#[cfg(test)]
+#[path = "workspace_shape_tests.rs"]
+mod workspace_shape_tests;
+
+// The permission pins the old turn body carried, re-homed on the shapes the
+// live catalogue advertises (see `perm_core_twins`).
+#[cfg(test)]
+#[path = "perm_core_twins.rs"]
+mod perm_core_twins;

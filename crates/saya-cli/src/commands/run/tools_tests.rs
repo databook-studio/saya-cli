@@ -32,15 +32,14 @@ fn cancellation() -> CancellationToken {
 /// The names each step's definitions must carry, in order, for a read-only
 /// run with the privacy gate open: the database and workspace-read set, no
 /// write tool, no chart (the model tool is retired), and no contract tools
-/// (a run passes no state store). The clarification
-/// ask rides the always-available set, right after `schema_discovery`.
-/// `write` sits between `grep` and the sql tools when approved, and the
+/// (a run passes no state store). The clarification ask is the database
+/// plugin's, and these fixtures state no connection, so no step here offers
+/// it. `write` sits between `grep` and the sql tools when approved, and the
 /// scope-asking tails append after it; `notebook_edit` — added after this
 /// order was fixed — goes last of all, and only where the run's workspace
 /// holds a notebook (`tools_tests/notebook_presence.rs`).
 const OPEN_GATE: &[&str] = &[
     "schema_discovery",
-    "request_clarification",
     "read",
     "glob",
     "grep",
@@ -57,13 +56,7 @@ const FETCH_TAIL: &[&str] = &["http_fetch", "http_download"];
 
 /// The same universe with the privacy gate closed: every tool that touches
 /// database data is hidden.
-const CLOSED_GATE: &[&str] = &[
-    "schema_discovery",
-    "request_clarification",
-    "read",
-    "glob",
-    "grep",
-];
+const CLOSED_GATE: &[&str] = &["schema_discovery", "read", "glob", "grep"];
 
 fn names(toolsets: &[saya_harness::engine::StepToolset], step: usize) -> Vec<String> {
     toolsets[step]

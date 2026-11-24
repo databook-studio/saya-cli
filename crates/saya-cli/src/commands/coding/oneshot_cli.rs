@@ -5,8 +5,8 @@
 //! process surface — the sink, the signal, and the terminal events.
 
 use super::{
-    CodingApplication, CodingError, LaunchPlan, OneShotRequest, cli::find_git, oneshot_finish,
-    oneshot_start, root_mode::session_inputs,
+    CodingApplication, CodingError, Launch, LaunchPlan, OneShotRequest, cli::find_git,
+    oneshot_finish, oneshot_start, root_mode::session_inputs,
 };
 use crate::{
     cli::RootMode,
@@ -39,8 +39,8 @@ pub(crate) async fn run(
         RootMode::InPlace,
         &CancellationToken::new(),
     )
-    .await?
-    .with_approval_policy(plan.policy);
+    .await?;
+    let application = Launch::Detached(plan.policy).compose(application);
 
     let mode = request.mode;
     let job = oneshot_start(&application, request, &plan, CancellationToken::new()).await?;

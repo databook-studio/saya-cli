@@ -7,7 +7,7 @@ use saya_agent::{
     WORKSPACE_WRITE_TOKEN,
 };
 
-use super::super::switch;
+use super::super::switch_with_job;
 use super::support::Fixture;
 
 /// The `write`/`edit` family's shape: a workspace file write, needing an
@@ -31,10 +31,11 @@ fn workspace_write() -> ToolEffect {
 #[test]
 fn a_switched_mode_survives_the_next_turns_read() {
     let mut fixture = Fixture::acquire("round-trip", ApprovalPolicy::Ask, false);
-    switch(
+    switch_with_job(
         &mut fixture.state,
         &mut fixture.session,
         PermissionMode::AcceptEdits,
+        None,
     )
     .expect("accept-edits needs no gate");
 

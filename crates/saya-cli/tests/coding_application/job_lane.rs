@@ -1,6 +1,7 @@
 //! The `saya job` command's rule, on the real binary: a session control typed
-//! under `saya job` is a usage error naming the spelling that does work,
-//! never a silently accepted no-op.
+//! under the CLI's `saya job` is a usage error naming the session spelling that
+//! does work — `/job <verb>` for the child controls — never a silently accepted
+//! no-op.
 //!
 //! The command shares the one `CodingCommand` grammar, so these verbs *parse*
 //! here; the refusal is what keeps the shared grammar from advertising a
@@ -25,14 +26,17 @@ const CASES: &[(&[&str], &str)] = &[
         ],
         "saya follow-up",
     ),
-    (&["job", "approve", "job-a"], "/approve"),
-    (&["job", "deny", "job-a"], "/deny"),
-    (&["job", "message", "job-a", "agent-a", "hello"], "/message"),
-    (&["job", "pause", "job-a", "agent-a"], "/pause"),
-    (&["job", "continue", "job-a", "agent-a"], "/continue"),
+    (&["job", "approve", "job-a"], "/job approve"),
+    (&["job", "deny", "job-a"], "/job deny"),
+    (
+        &["job", "message", "job-a", "agent-a", "hello"],
+        "/job message",
+    ),
+    (&["job", "pause", "job-a", "agent-a"], "/job pause"),
+    (&["job", "continue", "job-a", "agent-a"], "/job continue"),
     (
         &["job", "cancel-child", "job-a", "agent-a"],
-        "/cancel-child",
+        "/job cancel-child",
     ),
 ];
 

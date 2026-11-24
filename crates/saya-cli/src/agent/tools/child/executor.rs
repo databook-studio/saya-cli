@@ -6,19 +6,20 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
-use saya_agent::{LocalStateEffect, ToolDefinition, ToolError, ToolExecutor};
+use saya_agent::{ActivePlugins, LocalStateEffect, ToolDefinition, ToolError, ToolExecutor};
 use saya_harness::coding::integration::AssignedPaths;
 use saya_harness::coding::policy::ChildAuthorityView;
 use saya_harness::workspace::Workspace;
-use saya_types::{ManagedCheckoutId, WorkspacePath};
+use saya_types::ManagedCheckoutId;
 
 use super::super::DatabaseTools;
 use super::super::shell_policy::{self, BackgroundOwner, ShellTool};
 use super::super::workspace;
 use super::{ChildToolsError, TrustedCheckoutPair};
-use crate::commands::coding::database::CodingDatabaseTools;
 use crate::interactive::session::tasks::{SessionTasks, TasksSet};
 
+#[path = "executor/admission.rs"]
+mod admission;
 #[path = "executor/dispatch.rs"]
 mod dispatch;
 #[path = "executor/post_edit.rs"]
@@ -27,8 +28,9 @@ mod post_edit;
 /// A tool set bound to one child's verified managed checkout: the workspace
 /// tools for the child root plus the narrowed authority that admits writes.
 /// The helper's `shell` exists only when the composition root attached one
-/// (the job's config and mode allow it), and the standard read-only database
-/// tools only when the job selected a profile the view admits.
+/// (the job's config and mode allow it), and the database tools only through
+/// the plugin the factory activated for this surface — the same definitions,
+/// reached through the plugin's executor.
 pub(crate) struct ChildTools {
     tools: DatabaseTools,
     view: ChildAuthorityView,
@@ -55,7 +57,11 @@ pub(crate) struct ChildTools {
     /// job's configured servers. Its consent rule is the lane's own, not this
     /// executor's; this surface only routes the names the lane owns.
     mcp: Option<Arc<crate::mcp::client::McpTools>>,
-    databases: Option<Arc<CodingDatabaseTools>>,
+    /// The plugins active for this surface: the database plugin the factory
+    /// registered over the job's own toolset. A name a plugin declares is the
+    /// plugin's to serve, so the executor routes it to the plugin's executor
+    /// rather than keeping a second door of its own.
+    plugins: Option<ActivePlugins>,
     coding: Option<Arc<crate::commands::coding::checks::ChildCodingOperations>>,
     /// This child's own working list. The root keeps a separate one.
     tasks: TasksSet,
@@ -78,6 +84,11 @@ pub(crate) struct ChildTools {
     /// boundary. `None` is a managed checkout, where the working checkout
     /// itself is the ceiling and the operator's review is the check.
     write_scope: Option<AssignedPaths>,
+    /// The session's grant store, when the composition states one: a held
+    /// `workspace-write` grant pre-answers this family's call, so the exact
+    /// path admission stands aside and the workspace tool's own containment
+    /// refuses a path that escapes it.
+    grants: Option<saya_agent::SessionGrants>,
 }
 
 /// Builds the definitions and the executor for one child from one view: the
@@ -118,12 +129,13 @@ pub(crate) fn child_toolset(
         web: None,
         mcp: None,
         coding: None,
-        databases: None,
+        plugins: None,
         tasks: TasksSet::new(SessionTasks::default()),
         tools_allow: saya_config::ResolvedTools::default(),
         notebook_edit: true,
         evidence: crate::agent::tools::advertisement::Evidence::default(),
         write_scope: None,
+        grants: None,
     };
     Ok((definitions, executor))
 }
@@ -257,8 +269,25 @@ impl ChildTools {
         self
     }
 
-    pub(crate) fn attach_databases(&mut self, databases: Arc<CodingDatabaseTools>) {
-        self.databases = Some(databases);
+    /// States the session's grant store: a family the session already holds a
+    /// grant for is admitted here, and a path that escapes the workspace is
+    /// refused by the workspace tool's containment rather than by this gate.
+    pub(crate) fn with_grants(mut self, grants: saya_agent::SessionGrants) -> Self {
+        self.grants = Some(grants);
+        self
+    }
+
+    /// Whether the session's own store pre-answers this family's calls.
+    fn granted(&self) -> bool {
+        super::decider::granted_workspace_write(self.grants.as_ref())
+    }
+
+    /// Attaches the plugins the factory activated for this surface. The
+    /// definitions they deliver are appended to the advertised list by the
+    /// composer; this is the executor half, so dispatch and advertisement come
+    /// from one owner.
+    pub(crate) fn attach_plugins(&mut self, plugins: ActivePlugins) {
+        self.plugins = Some(plugins);
     }
 
     pub(crate) fn attach_coding(
@@ -323,54 +352,5 @@ impl ChildTools {
         let definitions = mcp.definitions();
         self.mcp = Some(mcp);
         definitions
-    }
-}
-
-/// The write admission every mutating door runs before the anchored mutation:
-/// the owner must still be alive, the view must permit workspace writes, and
-/// the path must be one the contained checkout can hold.
-impl ChildTools {
-    fn admit_mutation(&self, arguments: &serde_json::Value) -> Result<(), ToolError> {
-        if self
-            .coding
-            .as_ref()
-            .is_some_and(|coding| coding.failed.load(Ordering::Acquire))
-        {
-            return Err(ToolError::NoEffect(Box::new(ToolError::Runner(
-                "the native job owner failed and cannot admit another workspace mutation".into(),
-            ))));
-        }
-        if !self.permit_writes {
-            return Err(ToolError::NoEffect(Box::new(ToolError::UnsupportedTool)));
-        }
-        let path = arguments
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| ToolError::NoEffect(Box::new(ToolError::PathNotString)))?;
-        if path.len() > 512 {
-            return Err(ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
-                "the path exceeds the child scope bound".into(),
-            ))));
-        }
-        WorkspacePath::try_from(path.to_owned()).map_err(|_| {
-            ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
-                "the path is not an admissible workspace path".into(),
-            )))
-        })?;
-        if let Some(scope) = &self.write_scope
-            && !scope.contains(path)
-        {
-            return Err(ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
-                super::scope::outside_write_scope(scope),
-            ))));
-        }
-        self.view
-            .admit_workspace_write(&self.checkout_id)
-            .map_err(|_| {
-                ToolError::NoEffect(Box::new(ToolError::WorkspaceWrite(
-                    "the child authority does not admit this write".into(),
-                )))
-            })?;
-        Ok(())
     }
 }

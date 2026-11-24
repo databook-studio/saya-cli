@@ -7,14 +7,12 @@
 //! This is a distinct concern from running the turn (recall + emit + loop),
 //! which lives in [`super::runtime`].
 
-use super::{provider, runtime::effective_ai};
+use super::{provider, turn_config::AgentRuntimeError, turn_config::effective_ai};
 use crate::config::runtime::RuntimeConfig;
 use crate::connection::ConnectionRegistry;
 use crate::local_metrics::LocalMetrics;
 use saya_agent::ChatProvider;
 use saya_config::ResolvedAi;
-
-pub(crate) use super::runtime::AgentRuntimeError;
 
 /// The provider, the resolved AI, and the connection registry a turn runs
 /// against — everything [`super::run_prompt_with_inputs`] needs that
@@ -25,20 +23,21 @@ pub(crate) struct TurnInputs {
     pub(crate) ai: ResolvedAi,
     pub(crate) provider: Box<dyn ChatProvider>,
     pub(crate) registry: ConnectionRegistry,
-    /// Secondaries that failed to connect, surfaced as `skipped database`
-    /// assistant-text before recall.
+    /// Databases that could not be opened, by name, with the reason: the
+    /// secondaries a run skips, and the primary a session opened without —
+    /// surfaced as `skipped database` assistant-text before recall.
     pub(crate) failures: Vec<(String, String)>,
 }
 
 /// Builds [`TurnInputs`] from config: the resolved AI + provider, and the
 /// live connection registry (primary plus secondaries). This is the only
 /// production caller of `provider::build` and `build_registry`; splitting it
-/// out leaves [`super::run_prompt_with_inputs`] provider- and
-/// registry-injectable for tests. Cancellation covers the whole turn because
-/// [`super::run_prompt_with_sink`] awaits this inside its pinned future.
+/// out keeps the line front's turn provider- and registry-injectable for
+/// tests. Cancellation covers the whole turn because the turn awaits this
+/// inside its pinned future.
 pub(crate) async fn prepare_turn(
     runtime: &RuntimeConfig,
-    overrides: &super::runtime::PromptOverrides,
+    overrides: &super::turn_config::PromptOverrides,
     can_prompt: bool,
     metrics: Option<&LocalMetrics>,
 ) -> Result<TurnInputs, AgentRuntimeError> {
@@ -67,7 +66,7 @@ pub(crate) async fn prepare_turn(
     let (registry, failures) = match profile.as_ref() {
         Some(primary_profile) => {
             let primary_name = profile_name.as_deref().unwrap_or("");
-            crate::connection::build_registry(
+            let built = crate::connection::build_registry(
                 (&runtime.secret_resolver(), &runtime.cache_scope),
                 runtime.resolved.query_timeout_seconds,
                 can_prompt,
@@ -76,7 +75,21 @@ pub(crate) async fn prepare_turn(
                 &secondaries,
                 metrics,
             )
-            .await?
+            .await;
+            match built {
+                Ok(built) => built,
+                // A session opens without its database rather than not at all:
+                // the profile is named as skipped, with the reason, and the
+                // registry stays empty — a session with no database, where the
+                // plugin never activates and `/connect` opens a new run over a
+                // profile that is there. A command that cannot run without its
+                // connection (`saya query`, `saya run`) builds the registry
+                // itself and still refuses.
+                Err(error) => (
+                    crate::connection::ConnectionRegistry::new(primary_name),
+                    vec![(primary_name.to_owned(), error.to_string())],
+                ),
+            }
         }
         None => (crate::connection::ConnectionRegistry::new(""), Vec::new()),
     };
@@ -87,3 +100,7 @@ pub(crate) async fn prepare_turn(
         failures,
     })
 }
+
+#[cfg(test)]
+#[path = "turn_inputs_tests.rs"]
+mod tests;

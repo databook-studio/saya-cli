@@ -40,7 +40,7 @@ fn write_without_an_edit_mode_is_refused() {
         let error = launch_plan(mode, &["src".to_owned()], false)
             .expect_err("a write scope needs an edit-capable mode");
         assert!(
-            error.contains("--permission-mode accept-edits"),
+            error.contains("--mode accept-edits"),
             "the refusal names the fix: {error}"
         );
     }

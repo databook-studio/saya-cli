@@ -59,6 +59,7 @@ pub(super) async fn run_serial_call(
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             effect: Some(definition.effect),
+            caller: None,
         },
     )
     .await;
@@ -147,6 +148,7 @@ pub(super) async fn run_serial_call(
             sink,
             AgentEvent::ToolDenied {
                 name: call.name.clone(),
+                arguments: call.arguments.clone(),
                 reason: refusal_detail.clone().unwrap_or_else(|| match decision {
                     tool_policy::ExecutionDecision::Deny(reason) => reason.reason().into(),
                     tool_policy::ExecutionDecision::Allow
@@ -154,6 +156,7 @@ pub(super) async fn run_serial_call(
                         unreachable!("a non-executed call has a denial decision")
                     }
                 }),
+                caller: None,
             },
         )
         .await;
@@ -252,6 +255,7 @@ pub(super) async fn run_serial_call(
             AgentEvent::ToolCompleted {
                 name: call.name,
                 summary: output::completion_summary(&completed.summary, completed.truncated),
+                caller: None,
             },
         )
         .await;

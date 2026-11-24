@@ -16,12 +16,24 @@
 //!   redirect to `/dev/null` and an fd duplication (`2>&1`, `>&2`). Input
 //!   redirection from a file stays covered.
 //! - A deny rule is evaluated first and applies in every mode. It is the one
-//!   statement the rules cannot widen, and it matches an absolute program by
-//!   its basename (`/bin/rm` matches deny `rm`).
+//!   statement the rules cannot widen, and it reads the program a command
+//!   really runs: a path by its basename, a `command`/`builtin`/`exec` prefix,
+//!   an `env` with any options, the launchers that run a later program
+//!   (`timeout`, `nice`, `nohup`, `stdbuf`, `time`, `xargs`, `find -exec`), and
+//!   a script a shell runs with `-c` or `eval`, bounded in depth. A command it
+//!   cannot read, mentioning a denied program, is refused rather than allowed.
 //! - A leading `cd <dir> &&` (a directory inside the workspace, or a relative
-//!   one with no `..`, `$`, or `~`) is stripped for matching only. Leading
-//!   `NAME=value` assignments are stripped for the deny side only: on the
-//!   allow side they make the segment match nothing.
+//!   one with no `..`, `$`, or `~`) is stripped for matching only. On the deny
+//!   side, and only there, the shapes a program can hide behind are stripped
+//!   too: leading `NAME=value` assignments, wrappers, and the openers of a
+//!   subshell or a command substitution (`(`, `$(`, a backtick) on the program
+//!   token itself. On the allow side an assignment or `env` makes the segment
+//!   match nothing, because it can change what the program does.
+//! - The vetted read-only set ([`read_only`]) is a third answer, narrower than
+//!   an allow rule: a command whose every part only reads earns
+//!   [`CommandDecision::ReadOnly`], and the asking modes skip their question
+//!   for it. A deny rule still refuses first, and
+//!   [`ReadOnlySet::Off`] withholds the answer whole.
 //!
 //! The rules are trusted-layer configuration. A project `.saya/config.toml`
 //! cannot state them, and a violation of the bounds below is a diagnostic —
@@ -29,9 +41,16 @@
 
 use std::{fmt, path::Path};
 
+mod launch;
+mod read_only;
+mod resolve;
 mod scan;
 
-use scan::{scan, strip_env, strip_leading_cd, tokens};
+pub use read_only::ReadOnlySet;
+pub use read_only::named_paths;
+
+use resolve::mentions_program;
+use scan::{scan, strip_leading_cd, tokens};
 
 /// At most this many rules per list (`allow`, `deny`).
 pub const MAX_COMMAND_RULES: usize = 64;
@@ -78,6 +97,12 @@ impl CommandRule {
         &self.text
     }
 
+    /// The program a rule names — its first token — for the fail-closed reading
+    /// of a command whose script the deny side could not read.
+    fn program(&self) -> &str {
+        self.tokens.first().map(String::as_str).unwrap_or_default()
+    }
+
     fn matches(&self, segment: &[String]) -> bool {
         segment.len() >= self.tokens.len()
             && self
@@ -87,9 +112,9 @@ impl CommandRule {
                 .all(|(rule, token)| rule == token)
     }
 
-    /// Deny matching, which additionally names an absolute program by its
-    /// basename: `/bin/rm -rf x` is denied by `rm`. `command rm` and `\rm`
-    /// stay different prefixes — the rule is a prefix, not a sandbox.
+    /// Deny matching, which additionally names a program by the basename of the
+    /// path it arrives as: `/bin/rm -rf x` and `./rm` are denied by `rm`.
+    /// `\rm` stays a different prefix — the rule is a prefix, not a sandbox.
     fn matches_deny(&self, segment: &[String]) -> bool {
         let Some((first, rest)) = segment.split_first() else {
             return false;
@@ -97,10 +122,7 @@ impl CommandRule {
         let Some((rule_first, rule_rest)) = self.tokens.split_first() else {
             return false;
         };
-        let first_matches = rule_first == first
-            || (is_absolute_program(first)
-                && Path::new(first).file_name().and_then(|name| name.to_str())
-                    == Some(rule_first.as_str()));
+        let first_matches = rule_first == first || resolve::names_by_path(first, rule_first);
         first_matches
             && rest.len() >= rule_rest.len()
             && rule_rest
@@ -138,6 +160,10 @@ pub struct CommandRules {
     pub allow: Vec<CommandRule>,
     pub deny: Vec<CommandRule>,
     pub diagnostics: Vec<String>,
+    /// Whether the vetted read-only set may answer a command. On by default,
+    /// and the one switch a cautious user turns off
+    /// (`[permissions] read_only_commands = false`).
+    pub read_only_set: ReadOnlySet,
 }
 
 /// What one command earns under the rules.
@@ -148,6 +174,10 @@ pub enum CommandDecision<'a> {
     /// Every segment matched an allow rule, and the command carries no
     /// substitution or heredoc.
     Allow,
+    /// Every segment is a vetted read-only command ([`read_only`]), and the
+    /// command carries no substitution, heredoc, or unsafe redirect: the asking
+    /// modes run it without a question.
+    ReadOnly,
     /// Nothing matched; today's lane decision applies unchanged.
     Unmatched,
 }
@@ -159,20 +189,37 @@ pub fn decide<'a>(
     command: &str,
     workspace: Option<&Path>,
 ) -> CommandDecision<'a> {
-    let scan = scan(command);
-    let mut segments = scan.segments;
-    strip_leading_cd(&mut segments, workspace);
-    // The two sides read the segment differently. Deny strips a leading
-    // assignment so `FOO=1 rm` cannot hide behind one. Allow does not: an
-    // assignment can change what the program does, so it is not covered by
-    // the prefix the operator stated.
+    let mut scan = scan(command);
+    // The directory a leading `cd` states is part of where the command reads:
+    // a vetted `git` is decided over the repository it would reach.
+    let cd = strip_leading_cd(&mut scan.segments, workspace);
+    // The two sides read the segment differently. Deny resolves the program a
+    // command really runs (wrappers, options, assignments, a shell's script);
+    // allow reads the tokens as written, because an assignment or a wrapper can
+    // change what the program does, so it is not covered by the prefix the
+    // operator stated.
+    let segments = &scan.segments;
     let raw: Vec<Vec<String>> = segments.iter().map(|segment| tokens(segment)).collect();
-    let deny: Vec<Vec<String>> = raw.iter().map(|tokens| strip_env(tokens)).collect();
+    let deny = resolve::read(segments);
     // Deny first, and regardless of substitution or readability: the refusal
     // does not depend on the allow side being parseable.
     for rule in &rules.deny {
-        if deny.iter().any(|segment| rule.matches_deny(segment)) {
+        if deny
+            .segments
+            .iter()
+            .any(|segment| rule.matches_deny(segment))
+        {
             return CommandDecision::Deny(rule);
+        }
+    }
+    // Fail closed: where a script was past the recursion bound, or could not be
+    // read, a command that mentions a denied program anywhere is refused —
+    // never allowed because the deny side ran out of ways to look.
+    if deny.undecided {
+        for rule in &rules.deny {
+            if mentions_program(command, rule.program()) {
+                return CommandDecision::Deny(rule);
+            }
         }
     }
     if scan.substitution || scan.unbalanced || scan.unsafe_redirect {
@@ -187,17 +234,40 @@ pub fn decide<'a>(
     {
         return CommandDecision::Allow;
     }
+    // A command whose every part only reads is the built-in answer, after the
+    // operator's own: it skips a question, and never widens a mode.
+    if rules.read_only_set.permits()
+        && read_only::qualifies(&scan, read_only::WorkingDir::new(workspace, cd.as_deref()))
+    {
+        return CommandDecision::ReadOnly;
+    }
     CommandDecision::Unmatched
 }
 
-/// Whether `program` names a path rather than a bare name. A leading `/` is
-/// absolute in the shell command language on every host, even where the host's
-/// path syntax does not call it so: the deny side matches `/bin/rm` by its
-/// basename wherever the rules are read.
-fn is_absolute_program(program: &str) -> bool {
-    Path::new(program).is_absolute() || program.starts_with('/')
-}
+#[cfg(test)]
+#[path = "read_only_cases.rs"]
+mod read_only_cases;
+
+#[cfg(test)]
+#[path = "read_only_fixture.rs"]
+mod read_only_fixture;
+
+#[cfg(test)]
+#[path = "read_only_repository_tests.rs"]
+mod read_only_repository_tests;
+
+#[cfg(test)]
+#[path = "read_only_tests.rs"]
+mod read_only_tests;
+
+#[cfg(test)]
+#[path = "rules_deny_tests.rs"]
+mod rules_deny_tests;
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;
+
+#[cfg(test)]
+#[path = "rules_wrapper_tests.rs"]
+mod rules_wrapper_tests;

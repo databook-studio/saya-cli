@@ -34,7 +34,15 @@ fn text_event(event: &TerminalEvent) -> Rendered {
             stdout: format!("{name}: {summary}\n"),
             stderr: String::new(),
         },
-        TerminalEvent::ToolDenied { name, reason } => Rendered {
+        // The detail stays a machine-output fact: the text line names the tool
+        // and the reason, and its bytes are pinned
+        // (`stream_render::tests::remaining_contracts`). A piped reader that
+        // wants what the call would have done reads the ndjson line.
+        TerminalEvent::ToolDenied {
+            name,
+            reason,
+            detail: _,
+        } => Rendered {
             stdout: format!("Approval denied for {name}: {reason}\n"),
             stderr: String::new(),
         },

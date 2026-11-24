@@ -7,14 +7,15 @@
 //!
 //! The orchestration is injectable via [`AttemptRunner`] the way the runtime
 //! is injectable via `run_prompt_with_inputs` / `TurnInputs`: the production
-//! runner delegates to `run_prompt_with_sink` (which builds `TurnInputs` from
-//! config), and these tests inject a scripted runner so the loop, the
-//! nomination, the decision, and the `ConsensusDecided` event are assertable in
-//! isolation from the runtime (which has its own tests in `runtime_tests.rs`).
+//! runner opens one chat session per attempt and sends the question as its one
+//! turn (which builds `TurnInputs` from config), and these tests inject a
+//! scripted runner so the loop, the nomination, the decision, and the
+//! `ConsensusDecided` event are assertable in isolation from the runtime (which
+//! has its own tests in `runtime_tests.rs`).
 
 use super::super::decide::CandidateExecutor;
 use super::super::question_scope::QuestionScope;
-use super::super::runtime::AgentRuntimeError;
+use super::super::turn_config::AgentRuntimeError;
 use super::AttemptRunner;
 use crate::{answering_receipts::AnsweringReceiptSink, config::runtime::RuntimeConfig};
 use async_trait::async_trait;
@@ -61,7 +62,7 @@ async fn orchestrate_test(
     cancellation: &CancellationToken,
 ) -> Result<AgentOutput, AgentRuntimeError> {
     let scope = test_scope(cancellation.clone());
-    let receipts = AnsweringReceiptSink::new(sink);
+    let receipts = AnsweringReceiptSink::new(Arc::new(sink.clone()));
     orchestrate(
         candidates,
         runner,
@@ -151,3 +152,12 @@ fn legacy_truncated_output(sql: &str) -> AgentOutput {
 include!("candidates_tests/budget_retention.rs");
 
 include!("candidates_tests/user_stop.rs");
+
+/// A question stopped before it starts: the live entry builds nothing.
+#[path = "candidates_tests/pre_stopped.rs"]
+mod pre_stopped;
+
+/// A question the engine refuses before admission: the live entry reads it as
+/// the budget stop and the question's token names its dimension.
+#[path = "candidates_tests/preflight_stop.rs"]
+mod preflight_stop;

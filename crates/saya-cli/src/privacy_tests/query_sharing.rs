@@ -5,12 +5,12 @@ async fn cloud_without_sharing_hides_sql_and_never_sends_rows() {
         responses: Mutex::new(vec![text_response("schema only")]),
         requests: requests.clone(),
     };
-    assert!(!crate::agent::runtime::query_data_allowed(
+    assert!(!crate::agent::turn_config::query_data_allowed(
         saya_config::AiProvider::OpenaiCompatible,
         false
     ));
     let tools = crate::agent::tools::DatabaseTools::definitions(
-        crate::agent::runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, false),
+        crate::agent::turn_config::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, false),
         false,
         false,
         false);
@@ -51,12 +51,12 @@ async fn cloud_with_sharing_exposes_sql_and_sends_bounded_rows_to_model_only() {
         ]),
         requests: requests.clone(),
     };
-    assert!(crate::agent::runtime::query_data_allowed(
+    assert!(crate::agent::turn_config::query_data_allowed(
         saya_config::AiProvider::OpenaiCompatible,
         true
     ));
     let tools = crate::agent::tools::DatabaseTools::definitions(
-        crate::agent::runtime::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, true),
+        crate::agent::turn_config::query_data_allowed(saya_config::AiProvider::OpenaiCompatible, true),
         false,
         false,
         false);

@@ -9,7 +9,7 @@
 //! `None` below is that mode or an unstated job-wide ceiling — never a missing
 //! bounded value.
 
-use saya_agent::{AgentLimits, AnsweringLimits, ProgressLimits};
+use saya_agent::{AgentLimits, AnsweringLimits, CancellationReason, ProgressLimits};
 use saya_config::{BudgetLimit, ResolvedConfig, ResolvedJobLimits};
 use saya_harness::coding::budget::CountLimits;
 use saya_types::{CodingBudgetMode, CodingFailureClass, CodingRunFailure};
@@ -52,8 +52,34 @@ pub(crate) fn count_limits(config: &ResolvedConfig) -> Option<CountLimits> {
 
 /// The root loop's own ceilings. An uncapped mode resolves every dimension to
 /// `Unlimited`, which is the `None` this engine reads as "no ceiling".
+///
+/// The environment's runaway ceilings ride over the table's: the loop the one
+/// -shot `ask` runs is the same loop, and `SAYA_AGENT_MAX_TURNS`,
+/// `SAYA_AGENT_MAX_TOOL_CALLS` and `SAYA_AGENT_MAX_CONTINUATIONS` bound it the
+/// way they bounded the turn body before the ask became a chat turn.
 pub(crate) fn agent_limits(config: &ResolvedConfig) -> AgentLimits {
-    agent_limits_for(resolved(config), config.ai.context_byte_budget)
+    env_ceilings(
+        agent_limits_for(resolved(config), config.ai.context_byte_budget),
+        saya_agent::budgets_from_env(|name| std::env::var(name).ok()),
+    )
+}
+
+/// The environment's ceilings stated over the job table's: a dimension the
+/// environment names is the one the loop runs under, and one it leaves unset
+/// keeps the table's own answer. The continuation bound defaults to its own
+/// value when the variable is unset, so an operator who never heard of it still
+/// gets the bound.
+fn env_ceilings(mut limits: AgentLimits, env: saya_agent::EnvBudgets) -> AgentLimits {
+    if let Some(turns) = env.max_turns {
+        limits.max_turns = Some(turns);
+    }
+    if let Some(calls) = env.max_tool_calls {
+        limits.max_tool_calls = Some(calls);
+    }
+    if let Some(continuations) = env.max_continuations {
+        limits.max_continuations = Some(continuations);
+    }
+    limits
 }
 
 /// The same numbers bound a helper's answering loop, so a helper is never
@@ -119,11 +145,38 @@ pub(super) fn answering_limits_for(limits: &ResolvedJobLimits) -> AnsweringLimit
 }
 
 impl super::NativeCodingJob {
-    /// The backstop stop this job's own ledger recorded, if the run ended on
-    /// one. Backstops are runaway bounds, so the failure names the key, its
-    /// configured value, and the count the ledger admitted.
+    /// Why the job stopped: the run's own reason — a stop of the run is the
+    /// turn's too — else the reason the turn that finished latched on its own
+    /// token. A turn's budget stop never reaches the run, so the job surface
+    /// reads it here.
+    pub(super) fn stopped_reason(&self) -> Option<CancellationReason> {
+        self.cancellation
+            .reason()
+            .or_else(|| self.root_run.ended_stop())
+    }
+
+    /// The backstop stop this job's own ledger recorded, if the turn running
+    /// now ended on one.
     pub(super) async fn backstop_failure(&self) -> Option<CodingRunFailure> {
-        let saya_agent::CancellationReason::Budget(dimension) = self.cancellation.reason()? else {
+        let reason = self
+            .cancellation
+            .reason()
+            .or_else(|| self.root_run.live_stop());
+        self.backstop_for(reason).await
+    }
+
+    /// The same for the turn that already finished, so a run's classification
+    /// sees the stop its turn latched after that turn's token was cleared.
+    pub(super) async fn finished_backstop_failure(&self) -> Option<CodingRunFailure> {
+        let reason = self.stopped_reason();
+        self.backstop_for(reason).await
+    }
+
+    /// The failure naming a job-ceiling backstop. Backstops are runaway bounds,
+    /// so the failure names the key, its configured value, and the count the
+    /// ledger admitted.
+    async fn backstop_for(&self, reason: Option<CancellationReason>) -> Option<CodingRunFailure> {
+        let CancellationReason::Budget(dimension) = reason? else {
             return None;
         };
         let limits = self.ledger.limits().await;

@@ -2,7 +2,6 @@
 
 use super::History;
 
-#[allow(dead_code)]
 impl History {
     /// Entries matching `needle` (case-insensitive substring), newest first.
     pub(crate) fn search(&self, needle: &str) -> Vec<String> {

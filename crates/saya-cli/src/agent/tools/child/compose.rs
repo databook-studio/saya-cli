@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use super::{CheckoutProof, ChildToolsError, CliChildFactory, TrustedCheckoutPair};
 use crate::agent::tools::consent::{Caller, Operator};
-use crate::agent::tools::shell_policy::{self, Background, ShellPlacement};
+use crate::agent::tools::shell_policy::{self, ModeCell, ShellPlacement};
 use crate::config::runtime::RuntimeConfig;
 
 #[cfg(test)]
@@ -31,17 +31,23 @@ pub(crate) struct ChildComposition {
     pub(crate) factory: CliChildFactory,
 }
 
-/// The helper's `shell`, as the job layer states it: the mode the shell reads
-/// and the operator that answers a host call. `None` on the request means this
-/// helper gets no shell at all — the config is off, the job's mode is `never`,
-/// or the helper is one the job gives no shell.
+/// The helper's `shell`, as the job layer states it: the job's one mode cell
+/// and the capability the helper's type caps it at, plus the operator that
+/// answers a host call. `None` on the request means this helper gets no shell
+/// at all — the config is off, the job's mode is `never`, or the helper is one
+/// the job gives no shell.
 ///
-/// The mode is the job's, except for a read-only (`explore`) helper, whose
-/// shell is sandbox-only with nothing writable whatever the job's mode:
-/// the job layer states that by passing `ReadOnly`.
+/// The cell is the job's own, handed over as a handle: a mode the job states
+/// while the helper runs decides the helper's next call, exactly as it decides
+/// the root's. `capability` is the narrowing applied *after* the mode — a type
+/// that cannot write is composed at `read-only` whatever the cell says, so a
+/// switch can never hand it a write it does not hold.
 #[derive(Clone)]
 pub(crate) struct HelperShell {
-    pub(crate) policy: ApprovalPolicy,
+    pub(crate) mode: ModeCell,
+    /// The widest mode this helper's type may resolve. `Bypass` caps nothing:
+    /// a writing type narrows nothing and follows the job's cell whole.
+    pub(crate) capability: ApprovalPolicy,
     pub(crate) operator: Option<Arc<dyn Operator>>,
     /// The job's private state directory, where a result too large for the
     /// model's inline bound saves its full captured output.
@@ -188,15 +194,13 @@ pub(crate) async fn compose_child(
             Some(spool) => placement.with_spool(spool),
             None => placement,
         };
-        shell_policy::compose(
+        super::shell_lane::compose_shell(
             placement,
-            request.policy,
+            &request.mode,
+            request.capability,
             prompt,
             crate::agent::tools::coding::shell_secrets::host_policy(input.runtime),
             input.cancellation.clone(),
-            // A helper's shell lives for the helper, so it owns the background
-            // runs it starts: they end when the helper does.
-            Background::Owned,
             input.runtime.resolved.permissions.rules.clone(),
         )
         .map(|tool| {

@@ -4,15 +4,15 @@ use super::super::{
     session::lifecycle::capacity::{SaveFailure, notice_after_save, save_with_explanation},
     session::lifecycle::resume::{SessionDefaults, block_on, load_session},
     session::runtime::SessionRuntime,
-    session_request::PromptResult,
     turn_summary::{ProseOutcome, ToolTally, TurnSummary, prose_status},
 };
-use crate::budget_wording::{budget_dimension, budget_partial_message};
+use super::line_chat::{Begun, LineChat, LineSession, Preparing, Said};
+use crate::chat::ChatOutcome;
 use crate::interactive::session::lifecycle::paths::default_session_dir;
 use crate::{
     Cli, GlobalOptions, RenderFormat, RuntimeConfig, SessionState, config,
     render::{TerminalEvent, TurnStatus},
-    slash::{SlashCommand, parse_slash_command},
+    slash::parse_slash_command,
 };
 use saya_store::{FsSessionStore, SqliteStateStore};
 use std::io::{self, IsTerminal, Write};
@@ -22,18 +22,23 @@ include!("launch_context.rs");
 include!("approval.rs");
 include!("headless_context.rs");
 include!("headless_loop.rs");
+include!("prepared_run.rs");
 include!("action_context.rs");
 include!("action_outcome.rs");
 include!("action_surface.rs");
 include!("action_runs.rs");
 include!("action_grants.rs");
+include!("action_status.rs");
 include!("action_sessions.rs");
 include!("action_commands.rs");
 include!("action_coding.rs");
 include!("action_lifecycle.rs");
 include!("action_dispatch.rs");
 include!("headless_entry.rs");
+include!("action_message.rs");
+include!("session_facts_sync.rs");
 include!("launch_prepare.rs");
+include!("launch_surface.rs");
 include!("launch_terminal.rs");
 include!("launch_headless.rs");
 include!("launch_entry.rs");
@@ -54,4 +59,8 @@ mod session_user_command_turn_tests;
 include!("tests/report_outcome.rs");
 include!("tests/turn_file.rs");
 include!("tests/setup_turn.rs");
+include!("tests/status_turn.rs");
 include!("tests/capacity_persist.rs");
+include!("tests/plain_env.rs");
+include!("tests/unbound_run.rs");
+include!("tests/bound_run.rs");

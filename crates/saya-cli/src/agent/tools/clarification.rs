@@ -1,13 +1,13 @@
-//! The clarification ask as one shared tool: the definition every
-//! surface advertises and the short result a directly-reached call answers
+//! The clarification ask as one shared tool: the definition the database
+//! plugin advertises and the short result a directly-reached call answers
 //! with.
 //!
-//! The ask is not a database tool. It touches no data, no local state and
-//! nothing external, so it needs no connection and no profile — a surface
-//! admits it wherever an operator can answer it: the chat toolset always, the
-//! coding surfaces only when an operator is attached (a headless coding job
-//! must never stop for a question nobody can answer). The loop intercepts the
-//! call before the ordinary tool path and ends the turn on it; see
+//! The ask belongs to the database plugin: a run with no database configured
+//! offers it nowhere, because a session whose work is code alone has no
+//! database question to put. The plugin declares the name, advertises it
+//! where it activates, and serves it; the coding surfaces reach the same
+//! definition through the database plugin's job lane, and the loop intercepts
+//! the call before the ordinary tool path and ends the turn on it — see
 //! `saya-agent`'s `loop_runner::clarification`.
 
 use saya_agent::{LocalStateEffect, ToolConcurrency, ToolDefinition, ToolEffect};
@@ -60,6 +60,20 @@ pub(crate) fn definition() -> ToolDefinition {
         concurrency: ToolConcurrency::Serial,
         completion: Some("question asked — the turn pauses for the user's answer".into()),
     }
+}
+
+/// Places the ask in a database surface's list: second, right after
+/// `schema_discovery`, where every surface has advertised it. Appending it
+/// last would move the cached prefix of every request, so the position is
+/// fixed here once rather than at each composition.
+pub(crate) fn advertise(definitions: &mut Vec<ToolDefinition>) {
+    if definitions
+        .iter()
+        .any(|definition| is_ask(&definition.name))
+    {
+        return;
+    }
+    definitions.insert(1.min(definitions.len()), definition());
 }
 
 /// The result a directly-reached ask answers with: the loop ends the turn on

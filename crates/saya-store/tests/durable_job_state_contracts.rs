@@ -14,6 +14,8 @@ mod checkout_plan_edges;
 mod child_continuation;
 #[path = "durable_state_contracts/child_result_durability.rs"]
 mod child_result_durability;
+#[path = "durable_state_contracts/coding_approval_audit.rs"]
+mod coding_approval_audit;
 #[path = "durable_state_contracts/event_projection_replay.rs"]
 mod event_projection_replay;
 #[path = "durable_state_contracts/event_projection_storage.rs"]

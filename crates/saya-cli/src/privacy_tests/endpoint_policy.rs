@@ -1,16 +1,16 @@
 #[test]
 fn remote_ollama_is_cloud_gated_but_loopback_and_explicit_sharing_work() {
-    assert!(!crate::agent::runtime::query_data_allowed_for_endpoint(
+    assert!(!crate::agent::turn_config::query_data_allowed_for_endpoint(
         saya_config::AiProvider::Ollama,
         Some("https://ollama.example.invalid"),
         false,
     ));
-    assert!(crate::agent::runtime::query_data_allowed_for_endpoint(
+    assert!(crate::agent::turn_config::query_data_allowed_for_endpoint(
         saya_config::AiProvider::Ollama,
         Some("http://127.0.0.1:11434"),
         false,
     ));
-    assert!(crate::agent::runtime::query_data_allowed_for_endpoint(
+    assert!(crate::agent::turn_config::query_data_allowed_for_endpoint(
         saya_config::AiProvider::Ollama,
         Some("https://ollama.example.invalid"),
         true,
@@ -25,7 +25,7 @@ fn ambiguous_ollama_endpoints_fail_closed() {
         "http://127.0.0.1:11434/?redirect=https://ollama.example.invalid",
     ] {
         assert!(
-            !crate::agent::runtime::query_data_allowed_for_endpoint(
+            !crate::agent::turn_config::query_data_allowed_for_endpoint(
                 saya_config::AiProvider::Ollama,
                 Some(endpoint),
                 false,

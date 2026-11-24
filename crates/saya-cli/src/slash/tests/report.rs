@@ -1,3 +1,7 @@
+/// K7: `/report` is `/export --format md`'s one-release alias. These pin the
+/// alias's grammar — the same flags, the same refusals, the same request —
+/// one variant, one writer.
+
 #[test]
 fn test_parse_report_command() {
     assert_eq!(
@@ -100,4 +104,17 @@ fn report_data_file_extension_gets_a_usage_hint() {
         parse_slash_command("/report out"),
         Ok(Some(report_request("out", None, false)))
     );
+}
+
+/// The alias's request: the one `Export` variant, the format fixed to
+/// Markdown, and the spelling recorded so the answer can say the note.
+fn report_request(path: &str, rows: Option<usize>, overwrite: bool) -> SlashCommand {
+    SlashCommand::Export(ExportRequest {
+        rows,
+        overwrite,
+        format: Some(ExportFormat::Markdown),
+        path: path.into(),
+        via_report_alias: true,
+        ..ExportRequest::default()
+    })
 }

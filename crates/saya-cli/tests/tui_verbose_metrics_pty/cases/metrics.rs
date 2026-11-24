@@ -5,29 +5,18 @@ fn tui_verbose_session_metrics_print_after_terminal_restoration() {
     let _cleanup = HomeGuard(home.clone());
     write_offline_config(&home);
     let mut tui = spawn_raw_tui(&home).expect("the verbose TUI spawns on a pty");
-    // Wait for the first paint: any non-empty screen text, bounded.
-    let start = Instant::now();
-    loop {
-        if !tui.screen().trim().is_empty() {
-            break;
-        }
-        assert!(start.elapsed() < HARD_DEADLINE, "the TUI never painted");
-        match tui.pump() {
-            Ok(true) => panic!("the TUI exited before its first paint"),
-            Ok(false) => {}
-            Err(e) => panic!("{e}"),
-        }
-    }
-    // Quit normally through the interface's own exit command. Typing `/`
-    // opens the command menu, so the sequence is type, Esc (close the menu —
-    // the menu leaving the screen proves the key was consumed), then Enter
-    // (submit): the submitted line reaches the same dispatch every smoke
-    // test drives, and the pending tick turns it into a clean exit.
-    tui.send(b"/quit");
-    tui.wait_for("Exit the REPL", INTERACTIVE_WAIT);
-    tui.send(&[0x1b]);
-    tui.wait_gone("Exit the REPL", INTERACTIVE_WAIT);
-    tui.send(&[13u8]);
+    // Wait for the surface to own the terminal. A non-empty screen is not
+    // enough: the CLI's own startup note (`--approval-mode`'s deprecation
+    // sentence) prints on the normal screen, and a key written in that window
+    // lands under the canonical tty, whose ICRNL turns Enter into Ctrl+J (the
+    // jobs drawer) instead of submitting. The status line's idle word is the
+    // proof the new surface is up and reading keys raw.
+    tui.wait_for("? help", HARD_DEADLINE);
+    // Quit through the interface's own exit command: `/` opens the command
+    // palette, its query narrows to `/exit` (whose `/quit` alias the letters
+    // spell), and Enter runs it — the launch answers that as the session op
+    // that ends the surface (T19). Nothing has to happen on screen first.
+    tui.send(b"/quit\r");
     // Drain every remaining byte, bounded. The child quit on its own, so a
     // read error past exit is the pty's end-of-stream (EIO), not a failure;
     // the grace window catches the restoration bytes after the last read.

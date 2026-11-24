@@ -1,4 +1,6 @@
-use super::super::{admission::Admission, preflight::RequestPreflightConfig};
+use super::super::{
+    DeferredAnsweringScope, admission::Admission, preflight::RequestPreflightConfig,
+};
 use crate::{
     ActorCorrelationDigest, AgentEvent, AgentEventSink, CancellationToken, ChatMessage,
     ChatProvider, CorrelationId, EffectAdmission, EffectCallKind, ToolDefinition,
@@ -34,6 +36,9 @@ pub(in crate::loop_runner) struct ReceiveContext<'a> {
     pub(in crate::loop_runner) cancellation: &'a CancellationToken,
     pub(in crate::loop_runner) events: &'a mut Vec<AgentEvent>,
     pub(in crate::loop_runner) admission: &'a mut Admission,
+    /// The turn's deferred plugin budget: unarmed it admits and counts nothing;
+    /// armed it counts the same request and settlement the supplied scope does.
+    pub(in crate::loop_runner) deferred_budget: Option<&'a DeferredAnsweringScope>,
     pub(in crate::loop_runner) effect_admission: Option<&'a dyn EffectAdmission>,
     pub(in crate::loop_runner) require_physical_effect_admission: bool,
     pub(in crate::loop_runner) call_kind: EffectCallKind,

@@ -1,6 +1,5 @@
 //! The turn's primary connection, bound per turn and read at ask time.
 
-use crate::connection::ConnectionRegistry;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The turn's primary connection name, shared between the turn and the
@@ -15,8 +14,10 @@ pub(crate) struct TurnPrimary(Arc<Mutex<Option<String>>>);
 
 impl TurnPrimary {
     /// Binds the registry's primary — its real registry name, or nothing
-    /// when no primary resolves.
-    pub(crate) fn bind(&self, registry: &ConnectionRegistry) {
+    /// when no primary resolves. The deleted turn body bound it per turn; the
+    /// grant tests bind it here.
+    #[cfg(test)]
+    pub(crate) fn bind(&self, registry: &crate::connection::ConnectionRegistry) {
         *self.locked() = registry.primary().map(str::to_owned);
     }
 

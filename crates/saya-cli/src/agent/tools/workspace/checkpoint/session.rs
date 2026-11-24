@@ -26,7 +26,9 @@ pub(in crate::agent::tools) struct SessionRecorder {
 }
 
 impl SessionRecorder {
-    /// Builds a recorder over one session's store and enable flag.
+    /// Builds a recorder over one session's store and enable flag. Built by
+    /// [`super::CheckpointRecorder::new`] and the capture tests.
+    #[allow(dead_code)]
     pub(in crate::agent::tools) fn new(
         store: Arc<FsSessionStore>,
         session_id: String,

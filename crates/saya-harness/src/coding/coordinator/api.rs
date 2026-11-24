@@ -265,6 +265,7 @@ async fn run_child_inner(
         approval,
     } = factory.build(&spec, &cancellation)?;
     let sink = ChildEventSink {
+        forward: events.forward.clone(),
         events,
         cancellation: cancellation.clone(),
         owner_failure: AtomicBool::new(false),

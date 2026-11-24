@@ -70,9 +70,9 @@ impl CodingApplication {
         // never widens or narrows what the operator approved at start.
         let tools = request.tools()?;
         let proposed = self.propose_resume(job).await?.value;
-        // The audit is written before the question is asked and closed with
-        // the answer actually given; an abandoned earlier wait is cleaned first.
-        self.close_stale_approvals(job).await?;
+        // Decide before asking or writing: the verdict is read-only, and the
+        // audit below takes the sequence its own append allocates.
+        self.clear_for_resume(job).await?;
         let audited = self
             .audit_request(
                 job,
@@ -107,7 +107,7 @@ impl CodingApplication {
             .await
             .map_err(CodingError::owner)?;
         if !status.clear_for_resume() {
-            return Err(CodingError::NotOwned);
+            return Err(CodingError::not_resumable(job, &status));
         }
         let epoch = status
             .authority
@@ -128,9 +128,18 @@ impl CodingApplication {
         let records = super::host::private_directory(&self.state_root.join(job.as_str()))?;
         let plan = self.stored_baseline(job, &record)?;
         // A resumed in-place job reopens its before-image store; a resume
-        // that will run retakes the one-live-job lease over its folder.
-        let (before_images, _in_place_lease) =
-            super::in_place_lease::job_parts(&plan, &records, &self.state_root, lease)?;
+        // that will run retakes the one-live-job lease over its folder, naming
+        // the session the surface stated for it, if any.
+        let parent = self.session_parent();
+        let owner = parent.as_deref().unwrap_or(job.as_str());
+        let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
+            &plan,
+            &records,
+            &self.state_root,
+            lease,
+            owner,
+            parent.as_deref(),
+        )?;
         let workspace = Workspace::open(self.root_path()).map_err(CodingError::owner)?;
         let project = self.capture_original_project_context(&workspace).await?;
         let policy_digest = digest(&serde_json::to_vec(&proposed).map_err(CodingError::owner)?)?;
@@ -182,6 +191,7 @@ impl CodingApplication {
             transcript_lock: std::sync::Mutex::new(()),
             root_steering,
             root_mailbox: tokio::sync::Mutex::new(Some(root_mailbox)),
+            root_run: super::parent::RootRun::new(request.job_id()),
             application: Arc::clone(self),
             request,
             plan,
@@ -192,7 +202,7 @@ impl CodingApplication {
             project,
             records,
             before_images,
-            _in_place_lease,
+            in_place_lease: std::sync::Mutex::new(_in_place_lease),
             tools,
             cancellation: token.clone(),
             failure: std::sync::Mutex::new(super::failure::FailureState::default()),
@@ -204,12 +214,12 @@ impl CodingApplication {
             operation: tokio::sync::Mutex::new(()),
             active: tokio::sync::Mutex::new(None),
             progress: tokio::sync::broadcast::channel(128).0,
-            // A resumed job gets its own one-prompt gate over the same
-            // operator.
+            forward: std::sync::Mutex::new(None),
+            // A resumed job gets its own one-prompt gate over the same operator.
             operator,
             // A resumed job composes its own egress, exactly as a fresh one
             // does: the wire is not carried across a resume.
-            web_egress: crate::agent::tools::web::advertised(self.approval_policy)
+            web_egress: crate::agent::tools::web::advertised(self.mode.get())
                 .then(|| {
                     crate::agent::tools::web::egress(
                         &self.runtime.resolved.web_search,

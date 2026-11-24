@@ -144,26 +144,49 @@ fn a_ctrl_c_after_a_budget_latch_keeps_the_budget_class() {
     cancellation.cancel_with_reason(CancellationReason::Budget(BudgetDimension::ElapsedTime));
     cancellation.cancel();
     capture_output_start();
-    let code = super::interrupted_exit(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+    let code = settle_ask(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
         .expect("an interrupted ask maps to an exit code");
     let (stdout, stderr) = capture_output_take();
     assert_eq!(code, 6, "the first stop reason wins: {code}");
     assert!(format!("{stdout}{stderr}").contains("partial"));
 }
 
-/// A plain Ctrl-C (the token carries the user's stop) is still exit 130 and
-/// prints nothing extra, exactly as before.
+/// A plain Ctrl-C (the token carries the user's stop) is still exit 130, and
+/// says the interrupted class in the ask's own words — the sentence the
+/// terminal approval's own stop restores.
 #[test]
-fn a_plain_ctrl_c_still_exits_130_quietly() {
+fn a_plain_ctrl_c_still_exits_130_with_the_interrupted_sentence() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();
     capture_output_start();
-    let code = super::interrupted_exit(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
+    let code = settle_ask(Ok(natural_output()), &cancellation, RenderFormat::Ndjson)
         .expect("an interrupted ask maps to an exit code");
     let (stdout, stderr) = capture_output_take();
     assert_eq!(code, 130);
     assert!(
-        format!("{stdout}{stderr}").is_empty(),
-        "no new output on a plain interrupt"
+        format!("{stdout}{stderr}").contains("request cancelled"),
+        "the interrupted class is said once: {stdout}{stderr}"
+    );
+}
+
+/// A turn that failed with no typed stop behind it — the one turn of the
+/// session ended `failed` — is the failure class: exit 5, with the turn's own
+/// message, the way the one-shot body's error always was.
+#[test]
+fn a_turn_that_failed_with_no_typed_stop_exits_five() {
+    let cancellation = CancellationToken::new();
+    capture_output_start();
+    let code = settle_ask(
+        Err(AgentRuntimeError::Agent("provider down".into())),
+        &cancellation,
+        RenderFormat::Ndjson,
+    )
+    .expect("a settled ask maps to an exit code");
+    let (stdout, stderr) = capture_output_take();
+    assert_eq!(code, 5, "a failed turn is the failure class: {code}");
+    let printed = format!("{stdout}{stderr}");
+    assert!(
+        printed.contains("provider down"),
+        "the run's own error is the message: {printed:?}"
     );
 }

@@ -52,6 +52,8 @@ async fn exercise() {
         PanelSenders { activity, receipts },
         control_rx,
         saya_agent::ApprovalPolicy::Ask,
+        // The fixture opens no session's dependent: it states no session.
+        None,
     );
     let task = tokio::task::spawn_local(work);
     let started = wait_for(

@@ -18,6 +18,12 @@ mod support;
 #[path = "journey/resume_tests.rs"]
 mod resume_tests;
 
+#[path = "journey/resume_paths_fixture.rs"]
+mod resume_paths_fixture;
+
+#[path = "journey/resume_paths.rs"]
+mod resume_paths;
+
 use support::*;
 
 #[test]

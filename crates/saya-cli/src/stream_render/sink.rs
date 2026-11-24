@@ -25,10 +25,6 @@ impl TerminalSink {
         self.tally = Some(tally);
         self
     }
-
-    pub(crate) fn take_answering_usage(&self) -> Option<saya_agent::TokenUsage> {
-        self.answering_usage.take()
-    }
 }
 
 #[async_trait]

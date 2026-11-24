@@ -19,6 +19,11 @@ impl SessionState {
             messages: Vec::new(),
             continuation: self.continuation.clone(),
             parent: self.parent.clone(),
+            run: self.run.clone(),
+            // The interaction keeps its summary as working memory for its own
+            // turns; the record's field is the chat session's, saved when a
+            // session compacts and replayed ahead of the pairs kept verbatim.
+            compaction_summary: None,
         }
     }
 

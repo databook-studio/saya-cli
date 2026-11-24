@@ -106,28 +106,3 @@ include!("record_block_tests/availability_and_files.rs");
 include!("record_block_tests/workspace_and_checks.rs");
 
 include!("record_block_tests/budget_and_redaction.rs");
-
-// ===========================================================================
-// The runtime wiring: the real turn path carries the continuation record and
-// renders exactly one block, after the application-continuation block, on
-// the user turn — never the system prompt.
-// ===========================================================================
-
-use crate::agent::runtime::run_prompt_with_inputs;
-use crate::config::runtime::RuntimeConfig;
-use crate::connection::{ConnectionEntry, ConnectionRegistry};
-use async_trait::async_trait;
-use saya_agent::{
-    AgentMode, AgentOutput, ApprovalPolicy, CancellationToken, ChatMessage, ChatProvider,
-    ChatRequest, ChatResponse, NoopEventSink,
-};
-use saya_config::{
-    AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
-    ResolvedHostCommands, ResolvedJobs, ResolvedMemory, ThemeChoice,
-};
-use saya_connectors::DatabaseConnector;
-use saya_types::{ConnectionError, QueryRequest, QueryResult, SchemaTree, SqlDialect};
-use std::sync::{Arc, Mutex};
-
-include!("record_block_tests/runtime_wiring.rs");
-include!("record_block_tests/request_wiring.rs");

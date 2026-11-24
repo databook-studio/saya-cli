@@ -48,6 +48,8 @@ fn run_headless(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
             last_turn: None,
             save_refused: false,
             launch_options: cli.options.clone(),
+            chat: None,
+            prepared: None,
         };
         let outcome = run_single_turn(turn, &mut ctx);
         // The turn's settled summary and the save-refusal fact, taken before
@@ -55,6 +57,10 @@ fn run_headless(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         // save so the reported exit code is the code the process returns.
         let summary = ctx.last_turn.take();
         let save_refused = ctx.save_refused;
+        // The one-turn run's run ends with it, its close stated once.
+        if let Some(chat) = ctx.chat.take() {
+            chat.close();
+        }
         drop(ctx);
         // The one-turn run has ended, cleanly or not. The end hooks observe it.
         session.end_hooks(&runtime);
@@ -132,8 +138,18 @@ fn run_headless(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         last_turn: None,
         save_refused: false,
         launch_options: cli.options.clone(),
+        chat: None,
+        prepared: None,
     };
     let outcome = run_plain_loop(&mut ctx);
+    // A run composed for a first line that never came is given up with the loop
+    // that composed it: a session that says nothing leaves no run working.
+    ctx.give_up_prepared_run();
+    // The session's run ends with the loop that owned it: its close is stated
+    // once, so the job's records finalize as a finished run.
+    if let Some(chat) = ctx.chat.take() {
+        chat.close();
+    }
     session.end_hooks(&runtime);
     crate::chart::cleanup_session_charts();
     outcome?;

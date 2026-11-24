@@ -6,6 +6,7 @@ fn requested(name: &str, arguments: serde_json::Value) -> AgentEvent {
         name: name.to_owned(),
         arguments,
         effect: None,
+        caller: None,
     }
 }
 
@@ -13,13 +14,16 @@ fn completed(name: &str) -> AgentEvent {
     AgentEvent::ToolCompleted {
         name: name.to_owned(),
         summary: "did it".to_owned(),
+        caller: None,
     }
 }
 
 fn denied(name: &str) -> AgentEvent {
     AgentEvent::ToolDenied {
         name: name.to_owned(),
+        arguments: serde_json::Value::Null,
         reason: "refused".to_owned(),
+        caller: None,
     }
 }
 

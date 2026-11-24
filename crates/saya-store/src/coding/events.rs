@@ -1,6 +1,6 @@
 use std::num::NonZeroU64;
 
-use saya_types::{CodingEventError, CodingEventKind, CodingEventV1};
+use saya_types::{CodingEventError, CodingEventKind, CodingEventV1, JobId};
 use sqlx::{Sqlite, Transaction};
 
 use super::projection::apply_common_projection;
@@ -38,6 +38,7 @@ impl SqliteStateStore {
             event.event(),
             CodingEventKind::StateChanged { .. }
                 | CodingEventKind::SnapshotWarning { .. }
+                | CodingEventKind::DiagnosticsIncomplete { .. }
                 | CodingEventKind::ProgressReported { .. }
                 | CodingEventKind::ResultReported { .. }
                 | CodingEventKind::RunTerminated { .. }
@@ -90,17 +91,8 @@ pub(crate) async fn append_event_in_tx(
             Err(StoreError::Conflict)
         };
     }
-    let last: Option<i64> =
-        sqlx::query_scalar("SELECT MAX(sequence) FROM coding_events WHERE job_id=?")
-            .bind(event.job_id().as_str())
-            .fetch_one(&mut **transaction)
-            .await
-            .map_err(|_| StoreError::Unavailable)?;
-    let expected = match last {
-        Some(last) => last.checked_add(1).ok_or(StoreError::LimitExceeded)?,
-        None => 1,
-    };
-    if sequence != expected {
+    let expected = next_sequence_in_tx(transaction, event.job_id()).await?;
+    if event.sequence() != expected {
         return Err(StoreError::Conflict);
     }
     sqlx::query("INSERT INTO coding_events(job_id, sequence, event_json) VALUES (?, ?, ?)")
@@ -112,6 +104,30 @@ pub(crate) async fn append_event_in_tx(
         .map_err(|_| StoreError::Unavailable)?;
     apply_common_projection(transaction, &event).await?;
     Ok(CodingEventAppend::Appended(event.sequence()))
+}
+
+/// The next free sequence of the job's stream, read inside the caller's own
+/// transaction. An append that takes its number here, in the transaction that
+/// writes it, cannot take a number another writer already used; a number read
+/// before that transaction can.
+pub(crate) async fn next_sequence_in_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    job: &JobId,
+) -> Result<NonZeroU64, StoreError> {
+    let last: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(sequence) FROM coding_events WHERE job_id=?")
+            .bind(job.as_str())
+            .fetch_one(&mut **transaction)
+            .await
+            .map_err(|_| StoreError::Unavailable)?;
+    let next = match last {
+        Some(last) => last.checked_add(1).ok_or(StoreError::LimitExceeded)?,
+        None => 1,
+    };
+    u64::try_from(next)
+        .ok()
+        .and_then(NonZeroU64::new)
+        .ok_or(StoreError::LimitExceeded)
 }
 
 pub(crate) fn event_error(error: CodingEventError) -> StoreError {

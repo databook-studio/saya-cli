@@ -71,6 +71,7 @@ pub(super) async fn feed_malformed(
         AgentEvent::ToolCompleted {
             name: call.name.clone(),
             summary: "tool call failed validation".into(),
+            caller: None,
         },
     )
     .await;

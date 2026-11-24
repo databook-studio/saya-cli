@@ -16,10 +16,9 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         // names the spellings that work instead of "unknown command".
         "coding" => {
             return Err(SlashParseError(
-                "`/coding` was replaced: `/start` starts a job, `/follow-up` runs a \
-                 bounded new child invocation, `/job <verb>` runs the lifecycle verbs, \
-                 and the controls are `/approve`, `/deny`, `/message`, `/pause`, \
-                 `/continue`, and `/cancel-child`"
+                "`/coding` was replaced: `/start` starts a job, `/job <verb>` runs the \
+                 lifecycle verbs and the child controls, and bare `/continue` continues a \
+                 paused turn"
                     .into(),
             ));
         }
@@ -28,7 +27,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "follow-up" => {
             job::parse_follow_up(trimmed.strip_prefix("/follow-up").unwrap_or("").trim_start())?
         }
-        "approve" | "deny" | "message" | "pause" | "continue" | "cancel-child" => {
+        "approve" | "deny" | "message" | "pause" | "cancel-child" => {
             // The tail keeps its interior whitespace and quotes: a message's
             // text is free text, and `tokenize_tail` is the one splitter.
             let tail = trimmed
@@ -37,6 +36,16 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
                 .trim_start();
             job::parse_control(name, tail)?
         }
+        // `/continue` is two spellings of two operations: bare continues the
+        // paused turn, and `<id> <agent>` is `/job continue`'s one-release
+        // top-level spelling.
+        "continue" => {
+            let tail = trimmed
+                .strip_prefix("/continue")
+                .unwrap_or("")
+                .trim_start();
+            job::parse_continue(tail)?
+        }
         "connect" => SlashCommand::Connect(required()?),
         "connections" => SlashCommand::Connections,
         "include" => SlashCommand::Include(required()?),
@@ -44,8 +53,10 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "provider" => SlashCommand::Provider((!arg.is_empty()).then_some(arg)),
         "model" => SlashCommand::Model((!arg.is_empty()).then_some(arg)),
         "privacy" => SlashCommand::Privacy(parse_bool(&arg)?),
-        "approvals" => SlashCommand::Approvals(parse_approval(&arg)?),
-        "mode" => SlashCommand::Mode(parse_mode(&arg)?),
+        // `/approvals` is `/mode`'s one-release alias, not a second command:
+        // one variant, one grammar, one switch.
+        "approvals" => SlashCommand::Mode(ModeRequest::alias(parse_mode(&arg)?)),
+        "mode" => SlashCommand::Mode(ModeRequest::mode(parse_mode(&arg)?)),
         "schema" => SlashCommand::Schema(arg == "refresh"),
         "sql" => {
             let query = trimmed.strip_prefix("/sql").unwrap_or("").trim();
@@ -58,15 +69,28 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             let tail = trimmed.strip_prefix("/export").unwrap_or("").trim_start();
             SlashCommand::Export(parse_export(tail)?)
         }
+        // `/report` is `/export --format md`'s one-release alias, not a
+        // second command: one variant, one writer, one document.
         "report" => {
             let tail = trimmed.strip_prefix("/report").unwrap_or("").trim_start();
-            SlashCommand::Report(parse_report(tail)?)
+            SlashCommand::Export(parse_report(tail)?)
         }
         "chart" => SlashCommand::Chart(arg.trim().to_string()),
         "explain" => SlashCommand::Explain(arg.trim().to_string()),
         "clear" => SlashCommand::Clear,
-        "compact" => SlashCommand::Compact,
-        "history" => SlashCommand::History,
+        "compact" => {
+            // Bare compacts this session; `--new-session` compacts and
+            // continues in a successor, which is the one operation
+            // `/rotate` runs — its one-release alias states that spelling.
+            let tail = trimmed
+                .strip_prefix("/compact")
+                .unwrap_or("")
+                .trim_start();
+            SlashCommand::Compact(parse_compact(tail)?)
+        }
+        // `/history` is `/sessions`'s one-release alias, not a second
+        // command: one variant, one grammar, one listing.
+        "history" => SlashCommand::Sessions(SessionsRequest::history()),
         "sessions" => {
             // Bare `/sessions` keeps today's meaning (REPL text history,
             // TUI picker). `list` and `delete <id>` are the shared
@@ -74,7 +98,7 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             // naming every valid form, so a typo cannot read as a silent
             // show.
             match arg.as_str() {
-                "" => SlashCommand::Sessions,
+                "" => SlashCommand::Sessions(SessionsRequest::default()),
                 "list" => SlashCommand::SessionsList,
                 other => {
                     let (head, rest) = other.split_once(' ').unwrap_or((other, ""));
@@ -101,14 +125,20 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
                 }
             }
         }
-        "resume" => SlashCommand::Resume(required()?),
+        // `/resume <id>` opens a saved session; bare `/resume` opens the saved
+        // sessions to choose from — the picker on the full-screen surface, the
+        // recent ids on the line front.
+        "resume" => SlashCommand::Resume(arg),
         "rotate" => {
-            // `/rotate` takes no argument: a trailing word is a mistake
-            // worth naming, never a silent ignore.
+            // `/rotate` takes no argument, and it is `/compact --new-session`'s
+            // one-release alias: the same variant, carrying the spelling so
+            // its note rides the one operation's answer.
             if !arg.is_empty() {
-                return Err(SlashParseError("rotate takes no argument: /rotate".into()));
+                return Err(SlashParseError(
+                    "rotate takes no argument: /rotate (alias of /compact --new-session)".into(),
+                ));
             }
-            SlashCommand::Rotate
+            SlashCommand::Compact(CompactRequest::rotate())
         }
         "setup" => {
             // `/setup` takes no argument: a trailing word is a typo, and the
@@ -153,7 +183,25 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
             SlashCommand::Recovery(parse_recovery(tail)?)
         }
         "columns" => SlashCommand::Columns((!arg.is_empty()).then_some(arg)),
+        "undo" => {
+            // `/undo` takes no argument: the run's checkpoints are named with
+            // `/rewind`, and a trailing word here would be a silent ignore.
+            let tail = trimmed.strip_prefix("/undo").unwrap_or("").trim();
+            parse_undo(tail)?;
+            SlashCommand::Undo
+        }
+        "rewind" => {
+            // `/rewind [<id>]`: bare is the listing, one word names the
+            // checkpoint restored. The id is resolved against the listing by
+            // the operation, so a typo is refused by name.
+            let tail = trimmed
+                .strip_prefix("/rewind")
+                .unwrap_or("")
+                .trim_start();
+            SlashCommand::Rewind(parse_rewind(tail)?)
+        }
         "doctor" => SlashCommand::Doctor,
+        "status" => SlashCommand::Status,
         "usage" => SlashCommand::Usage,
         "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
         "workspace" => SlashCommand::Workspace,
@@ -210,20 +258,23 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         "runs" => SlashCommand::Runs((!arg.is_empty()).then_some(arg)),
         "allow" => {
             // `/allow <scopes…>` seeds the session's grant store; `/allow`
-            // alone is not a listing — `/grants` is the listing, and the
+            // alone is not a listing — `/permissions` is the view, and the
             // error says where to find it.
             if arg.is_empty() {
                 return Err(SlashParseError(
                     "allow requires scopes to seed, e.g. /allow sql:analytics \
                      (or `/allow none` for the empty approval); /allow alone is \
-                     not a listing — use /grants to list"
+                     not a listing — use /permissions to see the grants"
                         .into(),
                 ));
             }
             SlashCommand::Allow(arg.split_whitespace().map(str::to_string).collect())
         }
         "context" => SlashCommand::Context,
-        "grants" => SlashCommand::Grants,
+        // `/grants` is `/permissions`'s one-release alias, not a second
+        // command: one variant, one view, one rendering.
+        "grants" => SlashCommand::Permissions(PermissionsRequest::grants()),
+        "permissions" => SlashCommand::Permissions(PermissionsRequest::permissions()),
         "help" => SlashCommand::Help((!arg.is_empty()).then_some(arg)),
         "tasks" => match arg.as_str() {
             "" => SlashCommand::Tasks(None),

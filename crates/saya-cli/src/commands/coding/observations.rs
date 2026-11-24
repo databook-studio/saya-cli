@@ -60,6 +60,15 @@ impl AgentEventSink for NativeSink<'_> {
         self.downstream.metric(metric).await;
     }
 }
+/// The phase a root turn's own boundary record states. The run's `started` and
+/// `finished` records stay one per run; this one is written per turn.
+const TURN_BOUNDARY: &str = "turn_started";
+
+/// The phase one non-fatal readiness observation states: the walk behind the
+/// source generation gave up because entries kept leaving the checkout under it.
+/// Readiness stays `unknown`; this record is how the job says so.
+const READINESS_WALK_GAVE_UP: &str = "readiness_walk_gave_up";
+
 /// Longest persisted error text: the closed rendering a failure class carries
 /// is already far shorter, so this bound is a ceiling on the record shape, not
 /// a truncation in practice.
@@ -104,6 +113,10 @@ impl NativeCodingJob {
         invocation: Option<&InvocationId>,
         diagnostic: &saya_agent::ToolDiagnostic,
     ) {
+        // A writer that already failed is never retried for this job.
+        if self.diagnostics_stopped() {
+            return;
+        }
         // One tool event's attach, append and marker check is one journal step:
         // holding the lock across them keeps the budget's call ordinals in the
         // order the records land, so no call can record a body after the marker
@@ -171,6 +184,9 @@ impl NativeCodingJob {
         invocation: Option<&InvocationId>,
         observation: ContextCompaction,
     ) {
+        if self.diagnostics_stopped() {
+            return;
+        }
         let record = self.observation_sequence.fetch_add(1, Ordering::AcqRel);
         let value = json!({"job_id":self.job_id(),"agent_id":agent,"invocation_id":invocation,"epoch":self.epoch,"record_id":record,"authority_policy_sha256":self.policy_digest,"observation":observation,"source":"actual_agent_context_mutation","byte_measure":"context_estimator_not_wire_or_tokens"});
         let result = serde_json::to_vec(&value)
@@ -204,13 +220,65 @@ impl NativeCodingJob {
         }
         let _ = self.progress.send(event);
     }
+    /// The run's own boundary record: one per run, at its start and its end.
     pub(super) async fn record_observation_boundary(
         &self,
         phase: &str,
         complete: bool,
     ) -> Result<(), CodingError> {
+        self.record_boundary(phase, complete, None, None).await
+    }
+
+    /// One non-fatal observation of the run: the advisory readiness walk behind
+    /// the source generation gave up on an entry that vanished under it. The
+    /// readiness view it feeds stays `unknown` and the run goes on, so this is a
+    /// record and not a failure; it carries the fixed phase and the fixed class
+    /// of what happened, never a path, a digest or a secret. A record that
+    /// cannot be written is the diagnostics fault it is for every other
+    /// observation, and the advisory read never waits on it.
+    pub(super) async fn record_readiness_walk_gave_up(&self, class: &str) {
+        let _ = self
+            .record_boundary(READINESS_WALK_GAVE_UP, false, None, Some(class))
+            .await;
+    }
+
+    /// One root turn's boundary record: the run's epoch and the turn's own
+    /// fresh sequence, so a message after the first turn is as visible as the
+    /// turn that opened the run.
+    pub(super) async fn record_turn_boundary(&self, turn: u64) -> Result<(), CodingError> {
+        self.record_boundary(TURN_BOUNDARY, false, Some(turn), None)
+            .await
+    }
+
+    /// Both boundary writers share one record: the run's identity and epoch, the
+    /// compaction count, the budget now held, `turn` only for a turn, and
+    /// `class` only for an observation that names one.
+    async fn record_boundary(
+        &self,
+        phase: &str,
+        complete: bool,
+        turn: Option<u64>,
+        class: Option<&str>,
+    ) -> Result<(), CodingError> {
+        if self.diagnostics_stopped() {
+            // One failed writer is never retried. A degraded fault lets the run
+            // go on; a fatal one keeps failing closed when it is asked again.
+            return if self.diagnostics_incomplete() {
+                Ok(())
+            } else {
+                self.failures()
+                    .diagnostic_fault()
+                    .map_or(Ok(()), |fault| Err(CodingError::Diagnostic(fault.into())))
+            };
+        }
         let budget = self.ledger.snapshot().await;
-        let value = json!({"job_id":self.job_id(),"epoch":self.epoch,"phase":phase,"complete":complete&&!self.observation_failed.load(Ordering::Acquire),"compaction_records":self.observation_sequence.load(Ordering::Acquire).saturating_sub(1),"logical_requests":budget.logical_requests,"transport_attempts":budget.transport_attempts,"tool_calls":budget.tool_calls,"unsettled_reservations":budget.unsettled_reservations});
+        let mut value = json!({"job_id":self.job_id(),"epoch":self.epoch,"phase":phase,"complete":complete&&!self.observation_failed.load(Ordering::Acquire),"compaction_records":self.observation_sequence.load(Ordering::Acquire).saturating_sub(1),"logical_requests":budget.logical_requests,"transport_attempts":budget.transport_attempts,"tool_calls":budget.tool_calls,"unsettled_reservations":budget.unsettled_reservations});
+        if let Some(turn) = turn {
+            value["turn"] = json!(turn);
+        }
+        if let Some(class) = class {
+            value["class"] = json!(class);
+        }
         let result = serde_json::to_vec(&value)
             .map_err(|_| diagnostics::Fault::InvalidRecord)
             .and_then(|bytes| {
@@ -218,7 +286,13 @@ impl NativeCodingJob {
             });
         if let Err(fault) = result {
             self.latch_diagnostic_fault(fault);
+            // A degraded write failure is stated once and the run goes on.
+            return if fault.degrades() {
+                Ok(())
+            } else {
+                Err(CodingError::Diagnostic(fault))
+            };
         }
-        result.map_err(CodingError::Diagnostic)
+        Ok(())
     }
 }

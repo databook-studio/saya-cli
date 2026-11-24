@@ -3,6 +3,12 @@
 /// echoes: not on the screen, not in the `input_history` file, not in the
 /// session files under `SAYA_SESSION_DIR`. The persisted copy (and what
 /// Up-arrow recalls) shows `--param label=…` — the user retypes values.
+///
+/// Counted from the real TUI: the value drives the run, so the bound row
+/// paints, while the persisted copy and the recall show `--param label=…` and
+/// the transcript echoes the same redacted form. The input history is today's
+/// ring (`interactive::tui::history`), which the new composer pushes to and
+/// recalls from, and the run's own line opens the turn its rows land in.
 #[test]
 fn tui_investigation_run_param_value_never_persists_or_echoes() {
     let home = scratch_home("param-redact");

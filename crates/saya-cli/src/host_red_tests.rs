@@ -1,7 +1,7 @@
 //! The prompt, the grant, the per-call journal.
 //!
 //! Each test below names a seam: the host prompt body, the name-only
-//! grant, and the allow-side journal event.
+//! grant, the job shell's command key, and the allow-side journal event.
 
 #[path = "host_red_tests/grammar.rs"]
 mod grammar;
@@ -11,6 +11,8 @@ mod grants;
 mod journal;
 #[path = "host_red_tests/prompt.rs"]
 mod prompt;
+#[path = "host_red_tests/shell_grant.rs"]
+mod shell_grant;
 
 use crate::approval_facts::{ApprovalFacts, HostFacts};
 use std::path::PathBuf;

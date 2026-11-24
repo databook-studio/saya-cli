@@ -1,20 +1,32 @@
-use super::{CodingError, NativeCodingJob, convergence::ConvergenceSink};
-use crate::agent::hooks::{HookApprovalGate, HookCaller, HookGate, Hooks};
-use crate::agent::{provider, tools::coding::RootTools};
-use saya_agent::{
-    AgentError, AgentEventSink, AgentOutput, AgentRequest, AgentRunControl, ApprovalPolicy,
-    ProgressCheck, ProgressHandle, ProviderError, run_agent_with_control,
-};
+use super::{CodingError, NativeCodingJob};
+use saya_agent::{AgentError, AgentEventSink, AgentOutput, ProviderError};
 use saya_types::CodingRunFailure;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 impl NativeCodingJob {
+    /// Whether the launch scan has landed its summary yet: the fact a test
+    /// waits on, and nothing a surface reads — no message is ever held for a
+    /// scan.
+    #[cfg(all(test, unix))]
+    pub(crate) fn workspace_summary_ready(&self) -> bool {
+        self.root_run
+            .session()
+            .is_some_and(|session| session.summary_ready())
+    }
+
     /// Runs the existing native loop with shared root/child budgets. Always
     /// settles scheduled work before returning, even if the parent fails.
+    ///
+    /// One job object is one root run: it opens the run, runs the task's one
+    /// turn on it and closes it. A message after that is `run_next_turn`'s
+    /// (another turn of a run still open), and `resume` stays the between-
+    /// process continuation.
     pub async fn run(
         self: &Arc<Self>,
         sink: &dyn AgentEventSink,
     ) -> Result<AgentOutput, CodingError> {
+        // The mailbox is taken once, before anything is composed: a second
+        // run of this job is `Busy` and touches nothing the first still owns.
         let mailbox = self
             .root_mailbox
             .lock()
@@ -22,6 +34,10 @@ impl NativeCodingJob {
             .take()
             .ok_or(CodingError::Busy)?;
         let monitor_stop = saya_agent::CancellationToken::new();
+        // The run is this call's, and it is closed on every exit path — the
+        // normal one and a dropped run alike — so a message can never land on
+        // a run that ended.
+        let _closed = self.root_run.closable();
         let mut guard = RunGuard {
             root: self.cancellation.clone(),
             monitor: monitor_stop.clone(),
@@ -29,7 +45,10 @@ impl NativeCodingJob {
         };
         let work = async {
             self.lifecycle().enter("run_setup");
-            let result = self.run_root(sink, mailbox).await;
+            // The run's one-time setup and its one turn; the run is closed as
+            // soon as that turn ended, so a message now is a finished run.
+            let result = self.open_root(sink, mailbox, TurnInputs::default()).await;
+            self.root_run.close();
             // The implicit join comes FIRST: a job that delegated without
             // awaiting must still end with its children's work in the candidate,
             // and the owner preparation below refuses while a child is live.
@@ -70,7 +89,11 @@ impl NativeCodingJob {
     /// working checkout W directly, so a finished child has nothing to
     /// merge and there is no lease to release — the join is the whole of the
     /// end-of-run settle. Nothing happens when no schedule was live.
-    async fn settle_implicit_join(&self) {
+    ///
+    /// `run_finish` states the same join for a prepared run whose turns are
+    /// done, so a session's rollover settles its children exactly as `run()`
+    /// does.
+    pub(super) async fn settle_implicit_join(&self) {
         if self.active.lock().await.is_none() {
             return;
         }
@@ -78,247 +101,18 @@ impl NativeCodingJob {
             self.latch_error(&error);
         }
     }
-    async fn run_root(
-        self: &Arc<Self>,
-        sink: &dyn AgentEventSink,
-        mailbox: saya_agent::AgentMailbox,
-    ) -> Result<AgentOutput, CodingError> {
-        // A direct-mode coordinator owns one working checkout for the whole
-        // run; `RootTools::build` ensures it (resume re-ensures it) and composes
-        // the toolset. Delegate-only jobs create nothing.
-        self.record_provider_binding().map_err(|_| {
-            CodingError::Failed(Box::new(CodingRunFailure::root(
-                saya_types::CodingFailureClass::MandatoryPersistence,
-            )))
-        })?;
-        let config = &self.application.runtime.resolved;
-        self.lifecycle().enter("provider");
-        let provider = provider::build(&config.ai, &self.application.runtime.secret_resolver())
-            .map_err(|_| {
-                CodingError::Failed(Box::new(CodingRunFailure::root(
-                    saya_types::CodingFailureClass::ProviderError,
-                )))
-            })?;
-        self.lifecycle().enter("tools");
-        let (tools, built_checkout) = RootTools::build(self).await?;
-        let tools = Arc::new(tools);
-        // The run's own working checkout, resolved once: `RootTools::build` has
-        // just ensured it and returns the use-time verification it composed the
-        // toolset with, so every checkpoint this run takes is of this one
-        // directory without a second inventory of it. A read-only surface has
-        // no checkout to take; a checkout that cannot be resolved takes no
-        // checkpoint, and that refusal is recorded rather than failing the run.
-        let checkout = match built_checkout {
-            Some(verified) => Some(verified),
-            None => match self.verified_root_checkout().await {
-                Ok(verified) => verified.map(std::sync::Arc::new),
-                Err(error) => {
-                    self.record_capture_refusal(&error);
-                    None
-                }
-            },
-        };
-        // The user's own hooks, over the run's working checkout — the one
-        // directory this run's tools work in. A job whose checkout cannot be
-        // resolved runs no hook, the same way it takes no checkpoint. The mode
-        // is `bypass`: this root decides its own calls through its own
-        // decider, so the host lane a hook runs in is the lane this run
-        // already has.
-        let hooks = checkout.as_ref().and_then(|verified| {
-            Hooks::compose(
-                &self.application.runtime,
-                ApprovalPolicy::Bypass,
-                std::path::Path::new(verified.path().as_str()),
-                HookCaller::Job(self.job_id().as_str().to_owned()),
-                self.cancellation.clone(),
-            )
-        });
-        // The advisory readiness may be computed while the model streams; the
-        // precompute itself decides whether this run's shape allows it.
-        self.plan_readiness_precompute(hooks.is_some());
-        // The job root's start hook, once; its bounded stdout rides every turn.
-        let session_context = match hooks.as_ref() {
-            Some(hooks) => hooks.session_start().await,
-            None => None,
-        };
-        let executor: Arc<dyn saya_agent::ToolExecutor> = match hooks.as_ref() {
-            Some(hooks) => Arc::new(
-                HookGate::new(
-                    Arc::clone(hooks),
-                    Arc::clone(&tools) as Arc<dyn saya_agent::ToolExecutor>,
-                )
-                .with_session_context(session_context),
-            ),
-            None => Arc::clone(&tools) as Arc<dyn saya_agent::ToolExecutor>,
-        };
-        // A `PermissionRequest` hook can only refuse an ask this root would make.
-        let approval_gate = hooks.as_ref().map(|hooks| {
-            HookApprovalGate::new(
-                Arc::clone(hooks),
-                Arc::clone(&tools) as Arc<dyn saya_agent::ApprovalDecider>,
-            )
-        });
-        let approver: &dyn saya_agent::ApprovalDecider = match &approval_gate {
-            Some(gate) => gate,
-            None => tools.as_ref(),
-        };
-        let root_budget = self.ledger.root_view();
-        let observed = super::observations::NativeSink {
-            job: self,
-            downstream: sink,
-        };
-        let watched = ConvergenceSink::new(self, &observed);
-        // The turn-boundary checkpoint rides outside the stall watcher: it
-        // observes the same events and changes nothing about them.
-        let checkpointed = super::rewind::RewindSink::new(self, &watched, checkout);
-        self.record_observation_boundary("started", false).await?;
-        // The loop publishes progress here after every turn; a clean stop
-        // returns `Ok`, so the stop itself travels on this handle. Each turn
-        // that reports a check is also appended to `progress.jsonl` as it
-        // happens, so `saya job show` sees the streak while the job runs.
-        let checks: Arc<Mutex<Vec<ProgressCheck>>> = Arc::default();
-        let observed_checks = Arc::clone(&checks);
-        let progress_records = self.records.clone();
-        let progress_lifecycle = self.lifecycle_arc();
-        let progress = ProgressHandle::new().with_observer(Arc::new(move |snapshot| {
-            let Some(check) = snapshot.report.check else {
-                return;
-            };
-            let Ok(mut checks) = observed_checks.lock() else {
-                return;
-            };
-            // A turn boundary can publish twice (the final turn is published
-            // by its own end and again with the stop); record it once.
-            if checks.last().is_some_and(|last| last.turn == check.turn) {
-                return;
-            }
-            checks.push(check);
-            let started = std::time::Instant::now();
-            super::progress_report::record(&progress_records, &snapshot.report);
-            progress_lifecycle.note_elapsed("progress_persist", started.elapsed());
-        }));
-        let control = AgentRunControl::new(
-            super::limits::agent_limits(config),
-            super::limits::answering_limits(config),
-            approver,
-            &checkpointed,
-            self.cancellation.clone(),
-        )
-        .with_actor_correlation(super::create::actor_correlation_digest(&[
-            "root",
-            self.job_id().as_str(),
-        ]))
-        .with_physical_effect_admission(&root_budget)
-        .with_progress_report(progress.clone())
-        // A headless run waits one request-deadline slice at a time for a
-        // background exit instead of ending and polling; the job's wall clock
-        // still bounds the whole wait.
-        .with_background_wait(std::time::Duration::from_secs(
-            config.ai.request_timeout_seconds,
-        ))
-        .with_mailbox(mailbox)
-        // This job's blocks are the continuation snapshot, not database
-        // context, so the framing says only that they are untrusted data.
-        .with_context_preamble(saya_agent::ContextPreamble::Coding)
-        .with_request_preflight(
-            crate::agent::preflight_config::request_preflight_config(&config.ai)
-                .map_err(|_| CodingError::InvalidRequest)?,
-        );
-        // The shell route for local data files is decided once, from the
-        // checkout this run owns, the `PATH` this process was started with, and
-        // whether this root's toolset actually offers `shell`: the route names
-        // that tool, so a composition without one must not carry it.
-        let file_sources = crate::agent::file_sources::for_session(
-            tools.offers_shell(),
-            crate::agent::file_sources::detect(
-                tools.workspace(),
-                std::env::var_os("PATH").as_deref(),
-            ),
-        );
-        let request = AgentRequest {
-            prompt: self.request.task.clone(),
-            profile_names: vec![],
-            model: config.ai.model.clone(),
-            system_prompt: Some(super::prompts::system_with_file_sources(
-                self.request.plan,
-                self.is_read_only_root(),
-                file_sources,
-            )),
-            history: vec![],
-            context_blocks: self.continuation_context().await?,
-        };
-        self.lifecycle().enter("model_loop");
-        let outcome = run_agent_with_control(
-            provider.as_ref(),
-            executor.as_ref(),
-            request,
-            tools.definitions(),
-            control,
-        )
-        .await;
-        self.lifecycle().enter("after_loop");
-        // The root loop has finished: record its progress as durable job
-        // events, then the final report, then run the `stop` hooks. Reporting
-        // is not authority, so its failure never changes the run's outcome.
-        let checks = checks
-            .lock()
-            .map(|checks| checks.clone())
-            .unwrap_or_default();
-        for check in checks {
-            let started = std::time::Instant::now();
-            self.record_progress_event(check).await;
-            self.lifecycle()
-                .note_elapsed("progress_event", started.elapsed());
-        }
-        if let Some(snapshot) = progress.snapshot() {
-            let started = std::time::Instant::now();
-            super::progress_report::record(&self.records, &snapshot.report);
-            self.lifecycle()
-                .note_elapsed("progress_persist", started.elapsed());
-        }
-        // The root loop has finished: the `stop` hooks run now, after it and
-        // whatever its outcome was. They observe the run's end and decide
-        // nothing about it.
-        if let Some(hooks) = hooks.as_ref() {
-            hooks.stop().await;
-            // The job root has ended: the end hooks observe it, bounded by
-            // their own timeouts and never able to change the outcome.
-            hooks.session_end().await;
-        }
-        // The last turn has no later boundary to be checkpointed at, so the
-        // run end takes it, over the checkout this run already resolved.
-        let started = std::time::Instant::now();
-        self.capture_rewind_at(checkpointed.checkout()).await;
-        self.lifecycle()
-            .note_elapsed("rewind_checkpoint", started.elapsed());
-        match outcome {
-            Ok(output) => {
-                // A clean progress stop ended the loop `Ok`; the final turn
-                // wrote its best state, and the candidate is prepared as for
-                // a normal finish.
-                if let Some(stop) = progress.snapshot().and_then(|snapshot| snapshot.stop) {
-                    self.latch_progress_stop(stop);
-                }
-                Ok(output)
-            }
-            Err(error) => {
-                // The owner's own stop reaches the loop as a cancellation; the cause is the stop.
-                if matches!(error, AgentError::Cancelled)
-                    && let Some(failure) = watched.failure()
-                {
-                    return Err(CodingError::Failed(Box::new(failure)));
-                }
-                let backstop = self.backstop_failure().await;
-                Err(map_root_error(error, config.ai.max_output_tokens, backstop))
-            }
-        }
-    }
 
     pub(super) async fn watch_cancel(&self, stop: saya_agent::CancellationToken) {
         use saya_agent::{BudgetDimension, CancellationReason};
         let owner = self.ledger.cancellation_token();
         let remaining = self.ledger.remaining().await;
-        let durable = super::cancel_poll::watch(&self.application.store, self.job_id());
+        // The durable poll is its own task, not one arm of the wait below: a
+        // read an owner has in flight is held until that owner is polled again,
+        // and parked here — the state a second surface reads a status in — the
+        // read would keep the store's ONE connection while the surface that
+        // needs it waits out the pool's acquisition timeout.
+        let mut durable =
+            super::cancel_poll::Poll::start(self.application.store.clone(), self.job_id().clone());
         let reason = tokio::select! {
             biased;
             _=owner.cancelled()=>owner.reason().unwrap_or(CancellationReason::OwnerFailure),
@@ -327,7 +121,7 @@ impl NativeCodingJob {
                 owner.reason().unwrap_or(CancellationReason::Budget(BudgetDimension::ElapsedTime))
             },
             _=stop.cancelled()=>return,
-            reason=durable=>reason,
+            reason=durable.reason()=>reason,
         };
         self.cancellation.cancel_with_reason(reason);
     }
@@ -369,6 +163,57 @@ fn map_root_error(
 #[cfg(all(test, unix))]
 #[path = "parent_tests.rs"]
 mod parent_tests;
+
+#[path = "parent_arming.rs"]
+mod parent_arming;
+#[path = "parent_control.rs"]
+mod parent_control;
+#[path = "parent_loop.rs"]
+mod parent_loop;
+#[path = "parent_plugins.rs"]
+mod parent_plugins;
+#[path = "parent_prepare.rs"]
+mod parent_prepare;
+#[path = "parent_progress.rs"]
+mod parent_progress;
+#[path = "parent_run.rs"]
+mod parent_run;
+#[path = "parent_setup.rs"]
+mod parent_setup;
+#[path = "parent_turn.rs"]
+mod parent_turn;
+pub(super) use parent_run::RootRun;
+#[path = "parent_turn_limits.rs"]
+mod parent_turn_limits;
+pub(crate) use parent_turn_limits::RunPlugins;
+pub(crate) use parent_turn_limits::TurnInputs;
+
+#[cfg(all(test, unix))]
+#[path = "parent_turn_fixture.rs"]
+pub(crate) mod parent_turn_fixture;
+
+/// The scripted provider the chat and coding rows drive. It holds no Unix-only
+/// call, and the candidates' preflight row — which runs on every host — drives
+/// it, so only the Unix-only turn fixtures below stay gated.
+#[cfg(test)]
+#[path = "parent_turn_provider.rs"]
+pub(crate) mod parent_turn_provider;
+
+#[cfg(all(test, unix))]
+#[path = "parent_turn_tests.rs"]
+mod parent_turn_tests;
+
+#[cfg(all(test, unix))]
+#[path = "parent_turn_arming_tests.rs"]
+mod parent_turn_arming_tests;
+
+#[cfg(all(test, unix))]
+#[path = "parent_turn_arming_elapsed_tests.rs"]
+mod parent_turn_arming_elapsed_tests;
+
+#[cfg(all(test, unix))]
+#[path = "parent_arming_fixture.rs"]
+mod parent_arming_fixture;
 
 struct RunGuard {
     root: saya_agent::CancellationToken,

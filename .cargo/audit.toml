@@ -30,4 +30,16 @@ ignore = [
     # unused optional dependency. Revisit if we ever enable `rust_decimal/rkyv`
     # (a fixed rkyv >= 0.8.17 would then be required).
     "RUSTSEC-2026-0235",
+
+    # chrono 0.4.45 — "chrono is unmaintained" (RUSTSEC-2026-0543). This is a
+    # maintenance NOTICE, not a vulnerability: no known flaw is described and
+    # no fixed release is withheld. Pulled by `saya-cli`, `saya-connectors` and
+    # `saya-harness` directly, by `rmcp` (via `schemars`) and by every `sqlx`
+    # backend for row timestamp decoding. Not replaced now because `chrono` is
+    # the datetime type in sqlx's row decoding and in the persisted session and
+    # report formats; moving to a maintained backend (`jiff`/`time`) is a
+    # cross-crate data-format change, not a 0.5.1 release fix. Revisit when a
+    # sqlx release admits another datetime backend, on the next dependency
+    # review, or if the advisory gains a vulnerability and an upgrade path.
+    "RUSTSEC-2026-0543",
 ]

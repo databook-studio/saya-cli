@@ -12,6 +12,6 @@ mod materialize_gitfile;
 #[path = "snapshot_materialization/materialize_refusals.rs"]
 mod materialize_refusals;
 #[allow(clippy::duplicate_mod)] // intentional: this test group links its own private copy of the shared fixture (own statics)
-#[allow(dead_code)]
+#[allow(dead_code)] // shared test harness: this target uses part of it
 #[path = "worktree_inventory_support.rs"]
 mod support;

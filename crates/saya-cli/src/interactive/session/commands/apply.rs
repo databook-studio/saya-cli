@@ -1,7 +1,17 @@
 impl SessionState {
     pub fn apply(&mut self, command: SlashCommand, available: &[String]) -> SessionAction {
+        use crate::chat::ops_status::{Note, Section};
         match command {
-            SlashCommand::Coding(command) => SessionAction::Coding(command),
+            // The alias's note is owed once per session (`chat::ops_job`).
+            SlashCommand::Coding(mut request) => {
+                self.claim_job_note(&mut request);
+                SessionAction::Coding(request)
+            }
+            // This engine's turns never pause, so the continuation turn has
+            // nothing to continue: the one sentence is the answer.
+            SlashCommand::ContinueTurn => {
+                SessionAction::Message(crate::chat::NOTHING_TO_CONTINUE.into())
+            }
             SlashCommand::Connect(name) => {
                 if !available.iter().any(|profile| profile == &name) {
                     return SessionAction::Error(format!("Unknown configured profile: {name}"));
@@ -84,27 +94,28 @@ impl SessionState {
                     if self.allow_data_sharing { "on" } else { "off" }
                 ))
             }
-            SlashCommand::Approvals(value) => {
-                if let Some(value) = value {
-                    self.approval_mode = approval_name(value);
-                }
-                SessionAction::Message(format!("Approval mode: {}", self.approval_mode))
-            }
-            SlashCommand::Mode(value) => match value {
-                // A switch needs the session's one policy, the journal and
-                // the launch's gate, none of which this pure state layer
-                // holds: it hands the mode to the loops, which run the one
-                // `permissions::mode::switch` the key cycle runs too.
-                Some(next) => SessionAction::Mode(next),
+            SlashCommand::Mode(request) => match request.value {
+                // A switch needs the session's one policy, the journal and the
+                // launch's gate, none of which this pure state layer holds: it
+                // hands the request to the loops, which run the one
+                // `permissions::mode::switch` the key cycle runs too. The
+                // request keeps the spelling, so the alias's note is said by
+                // that one switch.
+                Some(_) => SessionAction::Mode(request),
                 None => SessionAction::Message(mode_report(self)),
             },
             SlashCommand::Schema(refresh) => SessionAction::Schema(refresh),
             SlashCommand::Sql(query) => SessionAction::Sql(query),
             SlashCommand::Export(request) => SessionAction::Export(request),
-            SlashCommand::Report(request) => SessionAction::Report(request),
             SlashCommand::Chart(args) => SessionAction::Chart(args),
             SlashCommand::Explain(sql) => SessionAction::Explain(sql),
-            SlashCommand::Compact => SessionAction::Compact,
+            SlashCommand::Compact(request) => {
+                if request.new_session {
+                    SessionAction::Rotate(request)
+                } else {
+                    SessionAction::Compact
+                }
+            }
             SlashCommand::Clear => {
                 self.messages.clear();
                 self.turns.clear();
@@ -132,14 +143,9 @@ impl SessionState {
                         .into(),
                 )
             }
-            SlashCommand::History => SessionAction::History,
             SlashCommand::Doctor => SessionAction::Doctor,
-            SlashCommand::Usage => SessionAction::Message(self.usage.render()),
-            SlashCommand::Workspace => SessionAction::Message(match self.workspace_root.as_deref() {
-                Some(root) => format!("workspace: {root}"),
-                None => "no workspace is bound: writes and downloads are unavailable — launch                          inside a git worktree or with --workspace <dir>"
-                    .to_string(),
-            }),
+            SlashCommand::Usage => section_answer(self, Note::Usage, Section::Model),
+            SlashCommand::Workspace => section_answer(self, Note::Workspace, Section::Workspace),
             SlashCommand::Thinking(value) => {
                 if let Some(value) = value {
                     self.show_thinking = value;
@@ -155,9 +161,8 @@ impl SessionState {
                     if self.show_thinking { "on" } else { "off" }
                 ))
             }
-            SlashCommand::Sessions => SessionAction::History,
+            SlashCommand::Sessions(request) => SessionAction::History(request.via_history_alias),
             SlashCommand::Resume(id) => SessionAction::Resume(id),
-            SlashCommand::Rotate => SessionAction::Rotate,
             SlashCommand::Tasks(subcommand) => match subcommand.as_deref() {
                 // `/tasks clear` empties the stored list, so the next turn
                 // injects no task block. Nothing else edits from here: the
@@ -191,7 +196,7 @@ impl SessionState {
                 topic.as_deref(),
                 &self.user_commands,
             )),
-            SlashCommand::Contracts(command) => SessionAction::Contracts(command),
+            SlashCommand::Contracts(request) => SessionAction::Contracts(request),
             SlashCommand::Investigation(command) => SessionAction::Investigation(command),
             SlashCommand::Run(args) => {
                 // Plan's escape hatch stays shut here: a run writes through
@@ -216,7 +221,8 @@ impl SessionState {
             SlashCommand::RunCancel(run_id) => SessionAction::RunCancel(run_id),
             SlashCommand::Runs(run_id) => SessionAction::Runs(run_id),
             SlashCommand::Allow(tokens) => SessionAction::Allow(tokens),
-            SlashCommand::Grants => SessionAction::Grants,
+            SlashCommand::Permissions(request) => SessionAction::Permissions(request),
+            SlashCommand::Status => SessionAction::Status,
             SlashCommand::Context => SessionAction::Context,
             SlashCommand::SessionsList => SessionAction::SessionsList,
             SlashCommand::SessionsDelete(id) => SessionAction::SessionsDelete(id),
@@ -224,6 +230,13 @@ impl SessionState {
             SlashCommand::Recovery(command) => SessionAction::Recovery(command),
             SlashCommand::Setup => SessionAction::Setup,
             SlashCommand::Reload => SessionAction::Reload,
+            // `/undo` and `/rewind` restore a job run's own checkpoints. This
+            // session runs no job, and its recorded edits are the per-edit
+            // store `/recovery` operates, so the answer names that store
+            // instead of pretending to undo something it never checkpointed.
+            SlashCommand::Undo | SlashCommand::Rewind(_) => {
+                SessionAction::Message(UNDO_NEEDS_A_RUN.into())
+            }
             SlashCommand::Exit => SessionAction::Exit,
         }
     }

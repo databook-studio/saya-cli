@@ -23,6 +23,7 @@ mod profile_env;
 mod provenance;
 mod resolve;
 mod secret;
+mod sensitive;
 mod tools;
 mod values;
 mod web_search;
@@ -63,17 +64,19 @@ pub use model::{
 };
 pub use permissions::{
     CommandDecision, CommandRule, CommandRules, MAX_COMMAND_RULE_BYTES, MAX_COMMAND_RULES,
-    PermissionsFile, ResolvedPermissions, decide,
+    PermissionsFile, ReadOnlySet, ResolvedPermissions, decide, named_paths,
 };
 pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::{CodingBudgetMode, SecretRef};
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};
+pub use sensitive::sensitive_path;
 pub use tools::{
-    DATABASE_TOOLS, GOVERNED_TOOLS, MAX_MCP_TOOL_NAME_CHARS, MCP_TOOL_PREFIX, ResolvedTools,
-    ToolsAllow, ToolsAllowError, allow_list_name, canonical_tool_name, database_tool_names,
-    governed_tool_names, is_database_tool, is_governed_tool, is_mcp_allow_name,
-    is_mcp_tool_call_name, is_valid_mcp_tool_segment, mcp_server_of,
+    DATABASE_TOOLS, DEPRECATED_TOOL_ALIASES, GOVERNED_TOOLS, MAX_MCP_TOOL_NAME_CHARS,
+    MCP_TOOL_PREFIX, ResolvedTools, ToolsAllow, ToolsAllowError, allow_list_name,
+    canonical_tool_name, database_tool_names, deprecation_note, governed_tool_names,
+    is_database_tool, is_governed_tool, is_mcp_allow_name, is_mcp_tool_call_name,
+    is_valid_mcp_tool_segment, mcp_server_of, tool_successor,
 };
 pub use values::{
     AiProvider, ColorChoice, CompactionMode, MemoryMode, OutputFormat, ReasoningEffort, ThemeChoice,

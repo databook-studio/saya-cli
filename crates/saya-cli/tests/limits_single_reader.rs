@@ -20,6 +20,8 @@ const ADAPTERS: &[&str] = &[
     "crates/saya-cli/src/commands/coding/limits.rs",
     // Run -> `saya_types::Budgets` through `ResolvedRunLimits::budgets`.
     "crates/saya-cli/src/commands/run/start/prepare.rs",
+    // The database plugin's per-turn question budget -> `DatabaseBudget`.
+    "crates/saya-cli/src/plugins/database/turn_policy.rs",
 ];
 
 /// Display-only readers: `config doctor` and `config show` report ceilings;

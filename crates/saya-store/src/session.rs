@@ -25,6 +25,26 @@ pub struct ParentLink {
     pub rotation_id: String,
 }
 
+/// A saved session's link to the run it owns: the job, and the epoch that run
+/// was read at.
+/// LINEAGE ONLY: the link records which run a session belongs to and nothing
+/// else — it grants no approval, permission, capability, or budget of any
+/// kind, and resuming a session never adopts a run's authority through it.
+/// Additive at `SESSION_VERSION` 2 with `#[serde(default)]` and
+/// `skip_serializing_if`: a record written before the link existed carries
+/// none and re-serializes without the key. A shape this binary cannot read —
+/// a missing epoch, an epoch of the wrong type, a job id that does not
+/// validate — refuses the whole record, exactly as a malformed [`ParentLink`]
+/// does, rather than dropping half a link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunLink {
+    /// The job the session's run belongs to.
+    pub job: saya_types::JobId,
+    /// The run epoch the link was written at.
+    pub epoch: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedactedSession {
     #[serde(default = "legacy_session_version")]
@@ -93,6 +113,19 @@ pub struct RedactedSession {
     /// save preserves whatever a loaded record carried.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<ParentLink>,
+    /// The session's optional link to the run it owns, additive at
+    /// `SESSION_VERSION` 2 beside `parent` — records written before the link
+    /// existed carry none and re-serialize without the key. LINEAGE ONLY: the
+    /// link says which run a session belongs to and grants nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunLink>,
+    /// The narrative a compaction folded the session's older turns into,
+    /// additive beside `run`: a chat session saves it here when it compacts,
+    /// and the run that follows replays it as its working memory ahead of the
+    /// pairs kept verbatim. Absent is a session that never compacted, and it
+    /// re-serializes without the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_summary: Option<String>,
 }
 
 impl Default for RedactedSession {
@@ -116,6 +149,8 @@ impl Default for RedactedSession {
             messages: Vec::new(),
             continuation: None,
             parent: None,
+            run: None,
+            compaction_summary: None,
         }
     }
 }

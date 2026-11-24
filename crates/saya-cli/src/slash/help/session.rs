@@ -2,14 +2,19 @@ fn command_help_session(name: &str) -> Option<&'static str> {
     match name {
         "clear" => Some("clear — clear the conversation and context. Example: /clear"),
         "compact" => Some(
-            "compact — summarise the older turns into a short summary the model replays ahead of \
-             the newest verbatim turns. Working memory only: the transcript is unchanged \
-             (/export first if you want the full text). Automatic at 95% of the known context \
-             window when `[ai] compaction` is `auto` (the default); `manual` keeps only this \
-             command, `off` additionally silences the 70% warning — and a failed compaction \
-             leaves the conversation exactly as it was. Example: /compact",
+            "compact [--new-session] — summarise the older turns into a short summary the model \
+             replays ahead of the newest verbatim turns. Working memory only: the transcript is \
+             unchanged (/export first if you want the full text). Automatic at 95% of the known \
+             context window when `[ai] compaction` is `auto` (the default); `manual` keeps only \
+             this command, `off` additionally silences the 70% warning — and a failed compaction \
+             leaves the conversation exactly as it was. `--new-session` compacts and then \
+             continues in a smaller successor (`/rotate`, this command's one-release alias). \
+             Example: /compact   or   /compact --new-session",
         ),
-        "history" => Some("history — list saved sessions as text. Example: /history"),
+        "history" => Some(
+            "history — deprecated alias of /sessions, removed in the next release: it prints the \
+             same saved-session listing, and says so the first time. Example: /history",
+        ),
         "sessions" => Some(
             "sessions — browse saved sessions: `/sessions list` prints the saved-session \
                  listing the headless `saya sessions list` shows, `/sessions delete <id>` \
@@ -30,23 +35,41 @@ fn command_help_session(name: &str) -> Option<&'static str> {
              /preferences forget-all",
         ),
         "context" => Some(
-            "context — show which project and personal instruction files are loaded into \
-             requests: names, whole-file and included sizes, short digests, truncation and \
-             redaction counts, plus why any source was skipped (symlink, not a regular file, \
-             too large, not UTF-8, unreadable) or omitted for budget, and the effective \
-             settings. Never their text: the files carry project guidance only and grant no \
-             permissions. Example: /context",
+            "context — deprecated alias of /status, removed in the next release: it opens the \
+             panel's Instructions section, which shows which project and personal instruction \
+             files are loaded into requests: names, whole-file and included sizes, short digests, \
+             truncation and redaction counts, plus why any source was skipped (symlink, not a \
+             regular file, too large, not UTF-8, unreadable) or omitted for budget, and the \
+             effective settings. Never their text: the files carry project guidance only and \
+             grant no permissions. Example: /context",
+        ),
+        "status" => Some(
+            "status — the one panel, in five sections: Session (the id, how full the saved record \
+             is, and the run it belongs to), Model (provider, model, context use, and this \
+             session's token totals), Workspace (the bound root and whether the host lane \
+             composed), Instructions (the instruction sources the next request would load), and \
+             Limits (the `[limits.job]` guards, plus `[limits.database]` when a database is \
+             bound). Every fact is one the session already holds or one read without a probe: no \
+             provider call, no database query, no network — /doctor is the command that checks. \
+             Example: /status",
         ),
         "doctor" => Some(
             "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
         ),
         "usage" => Some(
-            "usage — show session token usage: input, output, reasoning, cached input, cache creation, and the cache hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a mean of per-turn rates). Fields the provider did not report show —; the hit rate shows 'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
+            "usage — deprecated alias of /status, removed in the next release: it opens the \
+             panel's Model section — the provider, the model, the context use, and this session's \
+             token totals: input, output, reasoning, cached input, cache creation, and the cache \
+             hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a \
+             mean of per-turn rates). Fields the provider did not report show —; the hit rate shows \
+             'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
         ),
         "workspace" => Some(
-            "workspace — show the session's bound workspace root, the one tree every file tool \
-             and run_command child is contained to. Unbound means the write-shaped tools are \
-             hidden and workspace reads refuse. Example: /workspace",
+            "workspace — deprecated alias of /status, removed in the next release: it opens the \
+             panel's Workspace section — the session's bound workspace root, the one tree every \
+             file tool and run_command child is contained to, and whether the host lane composed. \
+             Unbound means the write-shaped tools are hidden and workspace reads refuse. \
+             Example: /workspace",
         ),
         "thinking" => Some(
             "thinking [on|off] — toggle display of the model's chain-of-thought in the transcript. Off by default: thinking is verbose (often longer than the answer) and restates database contents in prose. With no argument, toggles; with on/off, sets explicitly. Display only — reasoning is never written to a saved session, and the copy keys (Ctrl+Y, Ctrl+B) leave it out. Selection mode (Ctrl+O) hands the screen to your terminal, so a mouse drag can still copy thinking that is visible. Example: /thinking on",
@@ -65,8 +88,18 @@ fn command_help_session(name: &str) -> Option<&'static str> {
              never stored. Example: /notes set prefer bounded queries",
         ),
         "resume" => Some("resume <id> — resume a previous session by ID. Example: /resume 12345"),
+        "continue" => Some(
+            "continue — continue the turn that paused. A progress guard stopping a turn is a \
+             pause the run stays open from, so /continue sends the message Continue. through \
+             the same path a typed line uses: one turn of the same run, nothing else. Takes no \
+             argument. Refused with `nothing to continue — the last turn did not pause` when \
+             the last turn answered, failed or was cancelled, and refused while a turn runs \
+             (it waits, it is not queued). The <id> <agent> form is the job control \
+             /job continue for this release. Example: /continue",
+        ),
         "rotate" => Some(
-            "rotate — continue in a new, smaller session: saves this session, publishes a \
+            "rotate — deprecated alias of /compact --new-session, removed in the next release: it \
+             compacts and continues in a new, smaller session: saves this session, publishes a \
              successor linked to it (the link is lineage only), and continues there. Requires \
              /compact first: a session with no saved summary has nothing to carry over. The \
              successor keeps the saved summary, your notes and file/check facts, and the \
@@ -74,7 +107,7 @@ fn command_help_session(name: &str) -> Option<&'static str> {
              denials, or recovery setting. The parent stays on disk, unchanged and resumable \
              (/resume <old id>). Run it when the session record nears the 4 MiB cap (the \
              store warns at 3 MiB) and compaction alone no longer keeps it small. \
-             Example: /rotate",
+             Example: /compact --new-session   (or, for one release, /rotate)",
         ),
         "recovery" => Some(
             "recovery [on|off|list|diff <id>|restore <id>] — record this session's direct \

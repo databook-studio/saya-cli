@@ -1,30 +1,34 @@
-/// The `/run` family is wired at every hand-maintained touchpoint, not just
-/// the parser: the registry, the description table (the popup's single
-/// source), the `/help` listing, and the per-command help. A command that
-/// parses but is absent from help is exactly the defect this test exists to
-/// catch — a half-existing command.
+/// The `/run` family stays registered, described and documented where a
+/// reader decides to use it — and K8 hides it from the listing. A command
+/// that parses but is absent from help is exactly the defect this test exists
+/// to catch — a half-existing command; the hide is the one deliberate
+/// exception, and `/help run` still carries the words.
 #[test]
-fn run_and_runs_are_registered_listed_and_described() {
+fn run_and_runs_stay_registered_and_described_but_unlisted() {
     for name in ["run", "runs"] {
         assert!(
-            registry::KNOWN_COMMANDS.contains(&name),
+            crate::slash::catalog::is_command(name),
             "{name} is registered"
         );
+        // The description is the catalogue's even though the popup and the
+        // listing no longer offer the row (K8), so read the rows themselves.
         assert!(
-            description_for(name).is_some(),
-            "{name} has a popup description"
+            crate::slash::catalog::all()
+                .find(|spec| spec.name == name)
+                .is_some_and(|spec| !spec.description.is_empty()),
+            "{name} carries a one-line description"
         );
         let help = command_help(name).expect("per-command help exists");
         assert!(!help.is_empty(), "{name} help is not empty");
     }
     let listing = help_text();
     assert!(
-        listing.contains("/run <goal…> --allow <scopes>"),
-        "the listing shows the /run usage: {listing}"
+        !listing.contains("/run <goal…> --allow <scopes>"),
+        "the listing hides the /run usage (K8): {listing}"
     );
     assert!(
-        listing.contains("/runs [id]"),
-        "the listing shows the /runs usage: {listing}"
+        !listing.contains("/runs [id]"),
+        "the listing hides the /runs usage (K8): {listing}"
     );
     // `/run cancel` is reachable and documented where a reader decides how to
     // stop a run.
@@ -39,65 +43,80 @@ fn run_and_runs_are_registered_listed_and_described() {
     );
 }
 
-/// the merged `/contracts` command has one help entry covering both
-/// forms, and the optional argument that selects the operation is obvious —
-/// the `[…]` bracket, the prose ("or … when you name it"), and both examples.
-/// `/contract` stays documented so `/help contract` does not say "no help".
+/// `/contracts` is one command over the knowledge store: eight verbs, one help
+/// entry, and each verb named in the prose a reader decides with. The five old
+/// spellings keep help of their own — it says they are deprecated aliases and
+/// names the verb that replaces them — but the `/help` listing lists only the
+/// canonical row.
 #[test]
-fn contracts_help_covers_both_forms_and_marks_the_optional_argument() {
+fn contracts_help_lists_the_eight_verbs_and_folds_the_old_names() {
     let summary = help_text();
-    // The one-line summary lists the merged spelling, with the optional table
-    // in brackets — not two separate `/contracts` and `/contract <table>` lines.
     assert!(
-        summary.contains("/contracts [table]"),
-        "summary must show the merged /contracts [table] form, got: {summary}"
+        summary.contains("/contracts <list|show|queue|confirm|reject|confirm-all|export|import>"),
+        "summary must show the /contracts verb row, got: {summary}"
     );
-    assert!(
-        !summary.contains("/contract <table>"),
-        "summary must not keep the old separate /contract <table> entry, got: {summary}"
-    );
+    for old in ["/queue", "/confirm", "/reject", "/approve-all"] {
+        assert!(
+            !summary.contains(old),
+            "{old} is an alias; the listing shows canonical rows only, got: {summary}"
+        );
+    }
 
     let contracts = command_help("contracts").expect("contracts has help");
-    // Both operations are named: listing every contract, and showing one.
+    // Every verb the row names is explained, so the row is not the only place a
+    // reader learns what a verb does.
+    for verb in [
+        "list",
+        "show",
+        "queue",
+        "confirm",
+        "reject",
+        "confirm-all",
+        "export",
+        "import",
+    ] {
+        assert!(
+            contracts.contains(verb),
+            "/contracts help must name the {verb} verb, got: {contracts}"
+        );
+    }
+    // The show form marks its argument, and an example shows it.
     assert!(
-        contracts.contains("list every recalled contract"),
-        "/contracts help must name the list form, got: {contracts}"
+        contracts.contains("<catalog.schema.object>"),
+        "/contracts help must mark the show argument, got: {contracts}"
     );
     assert!(
-        contracts.contains("show one object's contract"),
-        "/contracts help must name the show form, got: {contracts}"
-    );
-    // The optional argument is marked: the `[…]` bracket signals "absent or
-    // present", which is what selects list-vs-show.
-    assert!(
-        contracts.contains("[catalog.schema.object]"),
-        "/contracts help must mark the optional argument with brackets, got: {contracts}"
-    );
-    // Both forms get an example so a reader sees the argument selecting the
-    // operation, not two separate commands.
-    assert!(
-        contracts.contains("/contracts") && contracts.contains("analytics.public.orders"),
-        "/contracts help must show a no-arg and a with-arg example, got: {contracts}"
+        contracts.contains("analytics.public.orders"),
+        "/contracts help must keep its example, got: {contracts}"
     );
 
-    // `/contract` is an alias, so its help exists and describes the same
-    // merged behaviour — it must not be the Show-only usage.
-    let contract = command_help("contract").expect("contract still has help");
+    // The deprecated spellings keep help, and it says which verb replaces them.
+    for (old, new) in [
+        ("contract", "/contracts"),
+        ("queue", "/contracts queue"),
+        ("confirm", "/contracts confirm"),
+        ("reject", "/contracts reject"),
+        ("approve-all", "/contracts confirm-all"),
+    ] {
+        let help = command_help(old).unwrap_or_else(|| panic!("/{old} still has help"));
+        assert!(
+            help.contains("deprecated") && help.contains(new),
+            "/{old} help must say it is deprecated and name {new}, got: {help}"
+        );
+    }
+    // `/approve-all` reads like a job approval: its help says it never was one.
+    let approve_all = command_help("approve-all").expect("approve-all still has help");
     assert!(
-        contract.contains("alias"),
-        "/contract help must name itself an alias of /contracts, got: {contract}"
-    );
-    assert!(
-        contract.contains("show one object's contract"),
-        "/contract help must describe the merged show form, got: {contract}"
+        approve_all.contains("knowledge claims"),
+        "/approve-all help must say what it approves, got: {approve_all}"
     );
 }
 
-/// The approvals grammar has one authority (`ApprovalPolicy::from_str`)
-/// and every help surface must name the whole vocabulary it parses —
-/// including `bypass`. A mode that parses but no help names is the exact
-/// drift the run grammar's equivalence tests (`scopes.rs`) catch, on
-/// the session's own mode word. The clap doc, the `/approvals` per-command
+/// The consent mode has one grammar (the six-value mode parse) and every help
+/// surface must name the whole vocabulary it parses — including `bypass`,
+/// `read-only` and `never`. A mode that parses but no help names is the exact
+/// drift the run grammar's equivalence tests (`scopes.rs`) catch, on the
+/// session's own mode word. The clap docs, the `/approvals` alias's per-command
 /// help, and the `/help` listing must all carry it.
 #[test]
 fn every_help_surface_names_bypass() {
@@ -125,36 +144,39 @@ fn every_help_surface_names_bypass() {
 
     let listing = help_text();
     assert!(
-        listing.contains("/approvals [ask|read-only|never|bypass]"),
+        listing.contains("/mode [ask|accept-edits|plan|bypass|read-only|never]"),
         "the /help listing must show the full mode vocabulary: {listing}"
+    );
+    assert!(
+        !listing.contains("/approvals"),
+        "/approvals is an alias: the listing shows canonical names only: {listing}"
     );
 }
 
-/// `/rotate` is wired at every hand-maintained touchpoint the
-/// cli-application standard names: the registry, the description table
-/// (the popup's single source), the `/help` listing (the Session group),
-/// and the per-command help that states what carries over, what does
-/// not, and the /compact-first requirement.
+/// `/rotate` is `/compact --new-session`'s one-release alias, wired at every
+/// touchpoint: the catalogue resolves it, it keeps its own popup description
+/// (aliases are catalogue rows' aliases, each with its own description), the
+/// listing shows the canonical `/compact [--new-session]` row instead, and the
+/// per-command help states what carries over, what does not, and the
+/// /compact-first requirement.
 #[test]
-fn rotate_is_registered_listed_and_described() {
+fn rotate_is_an_alias_listed_described_and_helped() {
     assert!(
-        registry::KNOWN_COMMANDS.contains(&"rotate"),
-        "rotate is registered"
+        crate::slash::catalog::resolve("rotate") == Some("compact"),
+        "rotate is /compact's alias"
     );
     assert_eq!(
         description_for("rotate"),
-        Some(
-            "Continue in a new, smaller session that keeps your summary and notes (run /compact first)"
-        ),
-        "the description is the shared one-liner"
+        Some("Deprecated alias for /compact --new-session (removed next release)"),
+        "the alias keeps its own one-line description"
     );
     let listing = help_text();
     assert!(
-        listing.contains("/rotate"),
-        "the listing shows the /rotate usage: {listing}"
+        listing.contains("/compact [--new-session]"),
+        "the listing shows the canonical row: {listing}"
     );
     let help = command_help("rotate").expect("rotate has per-command help");
-    for stated in ["/compact", "grants", "resumable"] {
+    for stated in ["/compact --new-session", "grants", "resumable"] {
         assert!(
             help.contains(stated),
             "the /rotate help states {stated:?}: {help}"

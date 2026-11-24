@@ -14,7 +14,7 @@
 //! [`MAX_COMMAND_NAME_CHARS`] in a name. A file that breaks one is refused
 //! with a diagnostic, never truncated into something else.
 
-use crate::slash::registry;
+use crate::slash::catalog;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};

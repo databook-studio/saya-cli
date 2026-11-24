@@ -2,7 +2,8 @@ use super::{CodingMessage, CodingPanel};
 use crate::{
     cli::CodingCommand,
     commands::coding::{
-        CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, dispatch_coding,
+        CodingApplication, CodingAuthorization, CodingError, CodingJobRequest, Launch,
+        dispatch_coding,
     },
     config::runtime::RuntimeConfig,
 };
@@ -16,34 +17,19 @@ use std::{
 };
 #[path = "worker/active.rs"]
 mod active;
-#[path = "worker/egress_approval.rs"]
-mod egress_approval;
+#[path = "worker/chat_operator.rs"]
+mod chat_operator;
+#[path = "worker/wait_policy.rs"]
+mod wait_policy;
 #[cfg(test)]
-#[path = "worker/egress_approval_tests.rs"]
-mod egress_approval_tests;
+mod wait_policy_tests;
 #[cfg(test)]
 mod worker_tests;
+use self::wait_policy::{WaitPolicy, ask_operator};
 struct PanelApproval {
     sender: mpsc::SyncSender<CodingMessage>,
     token: CancellationToken,
     id: String,
-}
-/// Puts one question to the panel and waits for the operator's answer. A full
-/// or closed queue, a cancelled run, and the 120 s deadline all refuse. No
-/// answer is ever remembered: a run outside the sandbox asks again.
-async fn ask_operator(
-    sender: &mpsc::SyncSender<CodingMessage>,
-    token: &CancellationToken,
-    text: String,
-) -> bool {
-    let (respond, answer) = tokio::sync::oneshot::channel();
-    if sender
-        .try_send(CodingMessage::Approval { text, respond })
-        .is_err()
-    {
-        return false;
-    }
-    tokio::select! { _=token.cancelled()=>false, answer=tokio::time::timeout(std::time::Duration::from_secs(120),answer)=>matches!(answer,Ok(Ok(true))) }
 }
 #[async_trait]
 impl ApprovalDecider for PanelApproval {
@@ -55,11 +41,8 @@ impl ApprovalDecider for PanelApproval {
         {
             return false;
         }
-        let text = format!(
-            "Approve job {} with this exact scope:\n{}\nUse `/approve {}` or `/deny {}`.",
-            self.id, arguments, self.id, self.id
-        );
-        ask_operator(&self.sender, &self.token, text).await
+        let text = super::consent::text(&self.id, arguments);
+        ask_operator(&self.sender, &self.token, text, WaitPolicy::PANEL).await
     }
 }
 /// The root mode a panel launch opens over: the command's flag, its configured
@@ -81,12 +64,13 @@ pub(super) fn panel_consent(approve: bool, policy: saya_agent::ApprovalPolicy) -
     approve || crate::commands::coding::consent_implied(policy)
 }
 
-pub(super) fn spawn(
+pub(crate) fn spawn(
     command: CodingCommand,
     runtime: RuntimeConfig,
     store: SqliteStateStore,
     repository: PathBuf,
     approval_policy: saya_agent::ApprovalPolicy,
+    session: Option<String>,
 ) -> CodingPanel {
     let (tx, rx) = mpsc::sync_channel(128);
     let (receipt_tx, receipts) = mpsc::sync_channel(64);
@@ -118,6 +102,7 @@ pub(super) fn spawn(
                         senders,
                         control,
                         approval_policy,
+                        session,
                     ))
                     .map_err(|error| error.to_string())
             });
@@ -161,11 +146,16 @@ async fn work(
     senders: PanelSenders,
     controls: tokio::sync::mpsc::Receiver<CodingCommand>,
     approval_policy: saya_agent::ApprovalPolicy,
+    session: Option<String>,
 ) -> Result<String, CodingError> {
     let PanelSenders {
         activity: tx,
         receipts,
     } = senders;
+    // A session start with no `--write` edits the whole workspace, like
+    // `saya -p`; an explicit `--write` narrows. The panel still puts this
+    // exact scope to the operator.
+    let command = command.with_session_write_scope();
     // The job id the panel's own approval answers for, when this command runs
     // a root with the panel open.
     let shell_id = match &command {
@@ -176,27 +166,40 @@ async fn work(
     // Only a start may take the fallback; every other verb opens over the
     // mode its job records.
     let (application, _) = if matches!(command, CodingCommand::Start { .. }) {
-        CodingApplication::session_for_start(runtime, store, &repository, mode, &token).await?
+        CodingApplication::session_for_start(
+            runtime,
+            store,
+            &repository,
+            mode,
+            command.states_checkout(),
+            &token,
+        )
+        .await?
     } else {
         (
             CodingApplication::session(runtime, store, &repository, mode, &token).await?,
             None,
         )
     };
+    // The session this surface opened the job for, when it stated one: the job
+    // is that session's own, so the folder's lease admits it beside the
+    // session's run rather than refusing it.
+    application.set_session_parent(session.as_deref());
     // The live session's mode, stated once at composition: the root's `shell`
     // reads it to decide whether a run outside the sandbox is put to the
-    // operator.
-    let application = application.with_approval_policy(approval_policy);
-    // A run outside the sandbox is asked of the operator through the same
-    // sender, token and job id the job approval uses. Any other command runs
-    // no root, so it keeps the application without an operator.
-    let application = match shell_id {
-        Some(id) => application.with_operator(Arc::new(egress_approval::PanelEgressApproval {
-            sender: tx.clone(),
-            token: token.clone(),
-            id,
-        })),
-        None => application,
+    // operator. The panel is an attached surface, so its mode stays
+    // switchable.
+    let application = Launch::Attached(approval_policy).compose(application);
+    // A job started from this panel asks its egressing calls in the chat's
+    // approval prompt, waiting on the job's own token for the person sitting
+    // at the TUI. Any other command runs no root, so it keeps no operator.
+    let application = if shell_id.is_some() {
+        application.with_operator(Arc::new(chat_operator::ChatOperator::new(
+            tx.clone(),
+            token.clone(),
+        )))
+    } else {
+        application
     };
     if matches!(command, CodingCommand::FollowUp { .. }) {
         let (job, request) = resume_follow_up(&application, command, token, tx.clone()).await?;
@@ -233,9 +236,8 @@ async fn work(
             .await
             .map(|value| crate::render::render_coding_result(&shown, &value));
     };
-    // An edit-capable consent answers the approve question and gives an empty
-    // scope the folder; `ask` keeps both as stated.
-    let write_paths = crate::commands::coding::launch_write_scope(approval_policy, &write_paths);
+    // The scope already carries the session default: the workspace root when
+    // no `--write` was stated, the stated paths otherwise.
     let request = CodingJobRequest::new(
         saya_types::JobId::parse(&id).map_err(CodingError::owner)?,
         task,

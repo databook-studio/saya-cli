@@ -7,10 +7,18 @@ use std::path::Path;
 
 /// The one root a coding application opens: the folder itself, or a managed
 /// checkout copied from a Git repository.
+///
+/// `NoWorkspace` is not a launch choice: it is what a session over a folder that
+/// cannot root an in-place job composes — the one-turn `ask`, a line session, a
+/// headless `--turn-file` run — as the folder's shape states it (the home
+/// directory, the filesystem root, saya's own state directory, a folder that
+/// would hold the job's private state root). The run has no workspace at all —
+/// the folder is its label, and it is offered no file, shell or write tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootMode {
     InPlace,
     Managed,
+    NoWorkspace,
 }
 
 impl CodingCommand {
@@ -111,7 +119,11 @@ mod tests {
             "--managed forces a checkout over an in_place config"
         );
         assert_eq!(
-            CodingCommand::List { after: None }.root_mode_for(&root, JobRootMode::Managed),
+            CodingCommand::List {
+                after: None,
+                all: false,
+            }
+            .root_mode_for(&root, JobRootMode::Managed),
             RootMode::Managed
         );
         let _ = fs::remove_dir_all(&root);

@@ -7,11 +7,8 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use saya_agent::{ApprovalDecider, ToolDefinition};
-use serde_json::Value;
+use saya_agent::SessionGrants;
 
-use super::schema::definition;
 use crate::agent::tools::consent::{Caller, Operator, Prompt};
 
 /// How the shell names its own call: the imperative a root's or a session's
@@ -26,35 +23,13 @@ pub(crate) fn line(caller: &Caller) -> String {
     caller.line(IMPERATIVE, VERB)
 }
 
-/// The shell's prompt: the operator, and the line that names the caller
-/// ([`Caller`]) in the shell's own words. A shell with nobody to ask has no
-/// prompt at all, and `None` on the host lane under `ask` is the headless case.
+/// The shell's prompt: the operator, the line that names the caller
+/// ([`Caller`]) in the shell's own words, and the store the operator remembers
+/// a "yes for this run" in. A shell with nobody to ask has no prompt at all,
+/// and `None` on the host lane under `ask` is the headless case — which is
+/// also the only case with nothing remembered: the store belongs to the
+/// operator, so every shell of one job shares the job's.
 pub(crate) fn prompt(operator: Arc<dyn Operator>, caller: Caller) -> Prompt {
-    Prompt::new(operator, line(&caller))
-}
-
-/// The bridge from the model-facing approval contract to a shell prompt: the
-/// interactive session's own surface is an [`ApprovalDecider`], so a host shell
-/// call is put to it under the shell's advertised definition. The session
-/// words its own prompt from the tool call, so the line the session's caller
-/// builds is not rendered by that surface.
-pub(crate) struct DeciderShellOperator {
-    decider: Arc<dyn ApprovalDecider>,
-    definition: ToolDefinition,
-}
-
-impl DeciderShellOperator {
-    pub(crate) fn new(decider: Arc<dyn ApprovalDecider>) -> Self {
-        Self {
-            decider,
-            definition: definition(),
-        }
-    }
-}
-
-#[async_trait]
-impl Operator for DeciderShellOperator {
-    async fn ask(&self, _line: &str, arguments: &Value) -> bool {
-        self.decider.approve(&self.definition, arguments).await
-    }
+    let grants: Option<SessionGrants> = operator.grants();
+    Prompt::new(operator, line(&caller)).with_grants(grants)
 }

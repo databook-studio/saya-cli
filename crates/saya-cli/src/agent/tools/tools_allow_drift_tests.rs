@@ -37,19 +37,21 @@ fn names(definitions: Vec<ToolDefinition>) -> Vec<String> {
         .collect()
 }
 
-/// The widest database composition: every optional member switched on.
+/// The widest database composition: every optional member switched on, plus
+/// the plugin's own ask, which it advertises before its family is latched.
 fn database_names() -> Vec<String> {
-    names(DatabaseTools::definitions(true, true, true, true))
+    let mut names = names(DatabaseTools::definitions(true, true, true, true));
+    names.push(crate::plugins::database::family::USE_DATABASE.to_owned());
+    names
 }
 
-/// The interactive session's own members: the write-shaped and network tools
-/// it rewords for its surface (`interactive/session_definitions`), plus the
-/// job-local checklist.
+/// The session's own remaining member: the job-local checklist. The
+/// write-shaped and network tools it reworded for its old surface
+/// (`interactive/session_definitions`, deleted with the turn body) are the
+/// run surface's own definitions now, collected by
+/// `commands::run::tools_tests::widest_composed_names`.
 fn session_names() -> Vec<String> {
     names(vec![
-        crate::interactive::session_definitions::http_fetch(),
-        crate::interactive::session_definitions::http_download(),
-        crate::interactive::session_definitions::run_command(),
         crate::interactive::session::tasks::render::checklist_definition(),
     ])
 }

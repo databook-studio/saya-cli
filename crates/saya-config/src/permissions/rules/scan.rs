@@ -1,6 +1,5 @@
 //! Reading a shell command string: segmentation, tokens, substitutions, and
-//! the leading `cd`/assignment normalization the matcher applies before it
-//! compares prefixes.
+//! the leading `cd` the matcher strips before it compares prefixes.
 //!
 //! The scanner is deliberately textual. It expands nothing; it records the
 //! facts that make a stated prefix untrue (a substitution, an unsafe redirect,
@@ -10,11 +9,18 @@
 use std::path::{Component, Path};
 
 /// A command split into segments, and the facts that make a prefix claim
-/// untrue: a substitution, an unsafe output redirect, or unbalanced quotes.
+/// untrue: a substitution, an unsafe output redirect, an expansion, or
+/// unbalanced quotes.
 pub(super) struct Scan {
     pub(super) segments: Vec<String>,
     pub(super) substitution: bool,
     pub(super) unsafe_redirect: bool,
+    /// A `$` or `~` the shell would expand: what the command reads is then not
+    /// the text that was read, so no vetted set may answer for it.
+    pub(super) expansion: bool,
+    /// An unquoted glob: the shell expands it to names the command never wrote,
+    /// hidden and private ones included.
+    pub(super) glob: bool,
     pub(super) unbalanced: bool,
 }
 
@@ -25,6 +31,8 @@ pub(super) fn scan(command: &str) -> Scan {
     let (mut single, mut double) = (false, false);
     let mut substitution = false;
     let mut unsafe_redirect = false;
+    let mut expansion = false;
+    let mut glob = false;
     while let Some(c) = chars.next() {
         match c {
             '\\' if !single => match chars.peek().copied() {
@@ -59,10 +67,25 @@ pub(super) fn scan(command: &str) -> Scan {
             }
             '$' if !single => {
                 current.push(c);
+                // `$( )` runs a command; a bare `$NAME` expands to text the
+                // command never stated, and both are past the set's reading.
+                expansion = true;
                 if chars.peek() == Some(&'(') {
                     substitution = true;
                     current.push(chars.next().expect("peeked"));
                 }
+            }
+            '~' if !single => {
+                // A tilde the shell expands names a home directory the command
+                // never wrote out.
+                expansion = true;
+                current.push(c);
+            }
+            '*' | '?' | '[' if !single && !double => {
+                // A glob outside every quote is expanded by the shell to the
+                // names that match it, which the command never wrote.
+                glob = true;
+                current.push(c);
             }
             '<' if !single && !double => {
                 current.push(c);
@@ -107,6 +130,8 @@ pub(super) fn scan(command: &str) -> Scan {
         segments,
         substitution,
         unsafe_redirect,
+        expansion,
+        glob,
         unbalanced: single || double,
     }
 }
@@ -157,15 +182,22 @@ pub(super) fn tokens(text: &str) -> Vec<String> {
 }
 
 /// Strips one leading `cd <dir>` segment when it is the first of several and
-/// the directory stays inside the workspace (or is relative with no `..`).
-pub(super) fn strip_leading_cd(segments: &mut Vec<String>, workspace: Option<&Path>) {
+/// the directory stays inside the workspace (or is relative with no `..`), and
+/// reports the directory it stripped: a command that changes where it runs is
+/// read against the repository it changes to.
+pub(super) fn strip_leading_cd(
+    segments: &mut Vec<String>,
+    workspace: Option<&Path>,
+) -> Option<String> {
     if segments.len() < 2 {
-        return;
+        return None;
     }
     let first = tokens(&segments[0]);
     if first.len() == 2 && first[0] == "cd" && cd_within(&first[1], workspace) {
         segments.remove(0);
+        return Some(first[1].clone());
     }
+    None
 }
 
 fn cd_within(dir: &str, workspace: Option<&Path>) -> bool {
@@ -197,24 +229,4 @@ fn cd_within(dir: &str, workspace: Option<&Path>) -> bool {
             .unwrap_or(false);
     }
     true
-}
-
-/// Strips leading `NAME=value` assignments for the deny side. The first
-/// non-assignment token is the program; a segment made only of assignments
-/// matches nothing.
-pub(super) fn strip_env(tokens: &[String]) -> Vec<String> {
-    let start = tokens
-        .iter()
-        .position(|token| !is_env_assignment(token))
-        .unwrap_or(tokens.len());
-    tokens[start..].to_vec()
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

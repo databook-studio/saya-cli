@@ -2,6 +2,8 @@ mod clarification;
 mod cli;
 mod common;
 mod config;
+#[cfg(unix)]
+mod db_goldens;
 mod paths;
 mod profiles;
 mod provider;
@@ -10,5 +12,6 @@ mod session;
 mod session_auto_compact;
 mod session_budget_wording;
 mod session_cancel_metrics;
+mod session_line_chat;
 mod session_question_budget;
 mod session_verbose_metrics;

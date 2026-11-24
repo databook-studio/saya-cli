@@ -78,7 +78,10 @@ mod materialize_reset_windows;
 pub(crate) use materialize_reset::privatize_materialization_target;
 pub(crate) use materialize_reset::reset_materialization_target;
 
-pub use select_support::sensitive_path;
+/// The credential-shape table is config's, not this crate's: one table decides
+/// snapshot omission, the in-place workspace predicates, and the vetted
+/// read-only shell set.
+pub use saya_config::sensitive_path;
 
 #[cfg(any(unix, windows))]
 pub(crate) use symlink::{SymlinkSet, validate_symlink_target};

@@ -7,9 +7,11 @@
 //! the literal `unlimited`; a value that is neither is refused at resolve time
 //! rather than clamped, so a typo cannot silently become an unbounded run.
 //!
-//! `[limits.session]` bounds the interactive session; `[limits.ask]` bounds the
-//! one-shot `ask` surface, and every key it leaves unset falls back to the
-//! session's. Both are protected — see
+//! `[limits.database]` bounds the database work a turn may spend, from its
+//! first database call on. The retired `[limits.session]` and `[limits.ask]`
+//! tables still resolve for one release — see [`database`] — and their resolved
+//! fields stay exposed for the surfaces that read them today. They are
+//! protected — see
 //! [`crate::layers`]' protected snapshot — because a repository's
 //! `.saya/config.toml` is untrusted input and must not raise a ceiling the user
 //! set.
@@ -24,6 +26,7 @@
 //! must not raise a ceiling the user set. `budget_mode = "uncapped"` is the one
 //! unlimited spelling there — see [`job`].
 
+mod database;
 mod dimension;
 mod job;
 mod merge;
@@ -56,6 +59,11 @@ pub struct LimitsFile {
     /// every dimension.
     #[serde(default)]
     pub ask: AnsweringLimitsFile,
+    /// The database work a turn may spend, from the first database call on.
+    /// `Some` records that a layer stated the table — an empty table still
+    /// means "the defaults", so presence cannot be read off the keys.
+    #[serde(default)]
+    pub database: Option<AnsweringLimitsFile>,
     /// The `saya run` surface's ceilings. Ordinary, not protected.
     #[serde(default)]
     pub run: RunLimitsFile,
@@ -77,6 +85,17 @@ pub struct AnsweringLimitsFile {
     pub elapsed_seconds: Option<toml::Value>,
     /// Known reported tokens the surface may spend.
     pub known_tokens: Option<toml::Value>,
+}
+
+impl AnsweringLimitsFile {
+    /// Whether a layer stated this table at all. A table naming no key states
+    /// nothing, so it maps onto nothing and needs no diagnostic.
+    pub(crate) fn is_stated(&self) -> bool {
+        self.requests.is_some()
+            || self.tool_calls.is_some()
+            || self.elapsed_seconds.is_some()
+            || self.known_tokens.is_some()
+    }
 }
 
 /// The run surface's raw ceilings. Same discipline as the answering tables:

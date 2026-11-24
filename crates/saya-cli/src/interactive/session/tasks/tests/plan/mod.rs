@@ -1,13 +1,12 @@
 //! Universe advertisement, the user-turn context block, and the prefix-cache
 //! property of the task list.
 
-use saya_agent::{AgentMode, ApprovalPolicy};
-
 use crate::interactive::session::tasks::SessionTasks;
 use crate::interactive::session::tasks::render::{
-    TASKS_BLOCK_LABEL, TASKS_RENDER_CEILING, checklist_definition, render_tasks_block,
+    TASKS_BLOCK_LABEL, TASKS_RENDER_CEILING, render_tasks_block,
 };
 
+#[allow(dead_code)]
 fn test_runtime() -> crate::config::runtime::RuntimeConfig {
     use saya_config::{
         AiProvider, ColorChoice, MemoryMode, OutputFormat, ResolvedAi, ResolvedConfig,
@@ -54,6 +53,8 @@ fn test_runtime() -> crate::config::runtime::RuntimeConfig {
             output_format: OutputFormat::Text,
             output_color: ColorChoice::Auto,
             ui_theme: ThemeChoice::Auto,
+            ui_notifications: true,
+            ui_notify_after_seconds: 30,
             memory: ResolvedMemory {
                 mode: MemoryMode::Off,
                 max_contracts: 5,
@@ -76,8 +77,6 @@ fn test_runtime() -> crate::config::runtime::RuntimeConfig {
 }
 
 #[cfg(test)]
-#[path = "advertisement.rs"]
-mod advertisement;
 #[cfg(test)]
 #[path = "context_render.rs"]
 mod context_render;

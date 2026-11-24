@@ -150,16 +150,31 @@ fn scratch_child(home: &Path) -> CommandBuilder {
 /// The child command every rung and the interactive harness share, with the
 /// offline smoke config and read-only approval.
 fn tui_command(home: &Path, config: &Path, connections: &Path) -> CommandBuilder {
+    tui_command_in(home, config, connections, READ_ONLY)
+}
+
+/// The approval mode every rung launches with: read-only, so nothing could
+/// prompt for a query (we send none, but this keeps the startup path fully
+/// offline and safe).
+const READ_ONLY: &str = "read-only";
+
+/// The same command with the approval posture the caller states: the mode is
+/// one argument and may be given once, so a case that needs a call the
+/// read-only posture refuses states its mode here rather than appending one.
+fn tui_command_in(
+    home: &Path,
+    config: &Path,
+    connections: &Path,
+    mode: &str,
+) -> CommandBuilder {
     let mut cmd = scratch_child(home);
     cmd.args([
         "--config",
         config.to_str().unwrap(),
         "--connections",
         connections.to_str().unwrap(),
-        // Read-only approval so nothing could prompt for a query (we send
-        // none, but this keeps the startup path fully offline and safe).
         "--approval-mode",
-        "read-only",
+        mode,
     ]);
     cmd
 }
@@ -233,7 +248,8 @@ impl Drop for HomeGuard {
 /// newlines.
 fn screen_text(screen: &vt100::Screen) -> String {
     let mut out = String::new();
-    for row in screen.rows(0, COLS) {
+    let cols = screen.size().1;
+    for row in screen.rows(0, cols) {
         out.push_str(row.trim_end());
         out.push('\n');
     }
@@ -242,8 +258,15 @@ fn screen_text(screen: &vt100::Screen) -> String {
 
 /// Resolves the real `saya` binary cargo builds for integration tests. Never
 /// hardcodes a path — `CARGO_BIN_EXE_saya` is provided by cargo at build time.
+///
+/// `SAYA_PTY_BINARY` is the one seam: a capture run may name a binary built
+/// from another commit, which is how REPORT.md's before/after screens of one
+/// launch are taken; every other run gets the binary this suite was built
+/// beside.
 fn saya_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_saya"))
+    std::env::var_os("SAYA_PTY_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_saya")))
 }
 
 /// A throwaway HOME under the test's temp dir, removed first in case a prior

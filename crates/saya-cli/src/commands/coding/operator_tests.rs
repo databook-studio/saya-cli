@@ -132,22 +132,29 @@ async fn an_application_without_an_operator_leaves_the_job_without_one() {
     assert!(job.operator().is_none());
 }
 
-/// The same operator is the surface that answers a clarification question: a
-/// job created by a panel that attached one advertises the ask even with no
-/// database profile selected, and answers it without a connection.
+/// The ask is a database tool: a job with an operator but no selected profile
+/// advertises nothing on its data surface, so a code-only job is offered no
+/// question to put.
 #[tokio::test]
-async fn a_job_with_an_operator_advertises_the_ask_without_a_profile() {
+async fn a_job_with_an_operator_and_no_profile_advertises_no_ask() {
     let fixture = fixture("ask-present", Some(Arc::new(Refusing))).await;
     let job = create(&fixture, "ask-present").await;
     let databases = job
         .databases()
-        .expect("an operator surface can answer an ask");
+        .expect("an operator surface keeps the data lane to decide a call with");
     let definitions = databases.definitions(None);
-    let advertised: Vec<&str> = definitions
-        .iter()
-        .map(|definition| definition.name.as_str())
-        .collect();
-    assert_eq!(advertised, vec!["request_clarification"]);
+    assert!(
+        definitions.is_empty(),
+        "no profile means no database and no ask: {:?}",
+        definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !databases.advertises_clarification(),
+        "the ask needs a database as much as the SQL tools do"
+    );
 }
 
 /// A headless job has nobody to answer, so it advertises no ask at all: it

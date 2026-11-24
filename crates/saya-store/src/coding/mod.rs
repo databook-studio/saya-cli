@@ -2,6 +2,7 @@
 
 use saya_types::{CheckoutOperationState, ManagedCheckoutLifecycle, RepositoryMutationAction};
 
+mod approval_append;
 mod approval_consumption;
 mod approval_records;
 mod approvals;

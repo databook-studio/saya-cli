@@ -208,6 +208,12 @@ async fn an_open_request_is_not_cancelled_while_another_blocker_remains() {
         .await
         .unwrap();
     abandon_a_wait(&fixture, &job).await;
+    let tail = fixture
+        .store
+        .coding_recovery_status(&job)
+        .await
+        .unwrap()
+        .last_sequence;
 
     let consent =
         CodingAuthorization::scoped(&fixture.application.propose_resume(&job).await.unwrap())
@@ -216,15 +222,29 @@ async fn an_open_request_is_not_cancelled_while_another_blocker_remains() {
         .application
         .resume(&job, &consent, CancellationToken::new())
         .await;
-    assert!(matches!(refused, Err(CodingError::NotOwned)));
-    // The abandoned request stays open: the guard saw another blocker and
-    // touched nothing. This resume's own ask was answered, so it is closed.
+    let Err(refusal) = refused else {
+        panic!("another blocker refuses the resume");
+    };
+    assert!(
+        refusal.to_string().contains("cannot be resumed yet"),
+        "the blocker is stated as a recovery fact, not a denial of the job: {refusal}"
+    );
+    // The guard saw another blocker and touched nothing, and this resume
+    // decided before it asked: no request of its own was written.
     assert_eq!(pending(&fixture, &job).await, 1);
     let records = audit(&fixture, &job).await;
-    assert_eq!(records.len(), 3);
+    assert_eq!(
+        records.len(),
+        2,
+        "the refusal neither closed the wait nor asked: {records:?}"
+    );
     assert!(
         records[1].closure.is_none(),
         "the abandoned wait is untouched"
     );
-    assert_eq!(closed_as(&records[2]), &ApprovalDisposition::Granted);
+    let after = fixture.store.coding_recovery_status(&job).await.unwrap();
+    assert_eq!(
+        after.last_sequence, tail,
+        "and the refusal appended nothing to the job's stream"
+    );
 }

@@ -1,0 +1,99 @@
+{
+  "scenario": "question_budget_stop",
+  "requests": [
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 20769,
+      "messages": 2,
+      "launch_summary_count": 1
+    },
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 21019,
+      "messages": 4,
+      "launch_summary_count": 1
+    },
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 20853,
+      "messages": 4,
+      "launch_summary_count": 0
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "schema_discovery",
+      "outcome": "ok"
+    }
+  ],
+  "states": [
+    {
+      "kind": "budget-stop",
+      "text": "the run stopped on its elapsed-time budget; any answer it produced is partial or absent"
+    },
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
+    }
+  ]
+}

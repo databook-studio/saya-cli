@@ -1,4 +1,7 @@
 impl SessionRuntime {
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn begin_question(
         &mut self,
         runtime: &crate::config::runtime::RuntimeConfig,
@@ -22,6 +25,9 @@ impl SessionRuntime {
     /// other scope — and any completion while idle or pending clarification
     /// — is ignored outright, so a late completion of a stale question can
     /// never restore or change the live question's state.
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn settle_question(&mut self, completed: &QuestionScope, clarification: bool) {
         let settling = match &self.question {
             QuestionLifecycle::Active(scope) if scope.is_same_question(completed) => scope.clone(),
@@ -47,6 +53,9 @@ impl SessionRuntime {
     }
 
     /// Keeps the just-settled question's metrics snapshot; only the last is held.
+    // The old surface was this seam's only caller; X1 deleted it. The code here
+    // is X2/X3's to remove, kept compiled rather than deleted twice.
+    #[allow(dead_code)]
     pub(crate) fn remember_question_metrics(&mut self, snapshot: LocalPhaseSnapshot) {
         self.last_question_metrics = Some(snapshot);
     }

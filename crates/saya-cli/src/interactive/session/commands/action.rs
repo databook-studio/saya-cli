@@ -2,47 +2,59 @@
 // this enum is `PartialEq` but not `Eq`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionAction {
-    Coding(crate::cli::CodingCommand),
+    Coding(crate::slash::JobRequest),
     Message(String),
     /// `/mode <mode>` — a switch, carried to the loops. The switch needs the
     /// session's one policy, the journal, and the launch's bypass gate, so it
     /// runs through the one shared `permissions::mode::switch` the keyboard
-    /// cycle runs, never in this pure state layer. The arm here keeps the
-    /// match exhaustive; an unhandled `Mode` is a bug, not a silent no-op.
-    Mode(PermissionMode),
+    /// cycle runs, never in this pure state layer. The request carries the
+    /// spelling that stated it, so the `/approvals` alias's deprecation note is
+    /// said by the one switch. The arm here keeps the match exhaustive; an
+    /// unhandled `Mode` is a bug, not a silent no-op.
+    Mode(crate::slash::ModeRequest),
     /// `/compact` — shrink working memory through a bounded summariser call.
     /// The loops intercept this (it needs the provider runtime); the arm here
     /// keeps the match exhaustive.
     Compact,
+    /// `/status` — the one panel. Intercepted in both loops, which hold the
+    /// runtime's settings, the instruction sources and the store's record
+    /// size; the arm here keeps the match exhaustive. Nothing here probes —
+    /// `/doctor` is the command that checks.
+    Status,
     Agent(AgentOutput),
     Cancelled,
     NotImplemented(String),
     Error(String),
-    History,
+    /// `/sessions` — the saved-session listing, through the adapter's own
+    /// store. The flag says the one-release `/history` alias stated it, so
+    /// the one listing carries that spelling's note.
+    History(bool),
     /// Run `config doctor` and surface its report as a message.
     Doctor,
     Resume(String),
-    /// `/rotate` — continue the session in a small successor. Intercepted
-    /// in both loops (they own the store and the runtime, and the shared
-    /// `session_rotate_run` runner needs both); the arm here keeps the
-    /// match exhaustive.
-    Rotate,
+    /// `/compact --new-session` (and its one-release alias `/rotate`) —
+    /// continue the session in a small successor. Intercepted in both loops
+    /// (they own the store and the runtime, and the shared
+    /// `session_rotate_run` runner needs both); the arm here keeps the match
+    /// exhaustive. The request carries the spelling, so the alias's note is
+    /// said by the one rotation.
+    Rotate(crate::slash::CompactRequest),
     Schema(bool),
     Sql(String),
-    /// `/export` — the parsed request (mode, overwrite, path) the TUI's
-    /// export dispatch acts on. Headless sessions never receive it: they
-    /// refuse export as TUI-only.
+    /// `/export` — the parsed request (mode, format, rows, overwrite, path)
+    /// the TUI's export dispatch acts on: a `.csv`/`.json` destination
+    /// writes the rows, a `.md` one (or `--format md`) writes today's
+    /// Markdown report. `/report` is the one-release alias of that
+    /// `--format md` form. Headless sessions never receive it: they refuse
+    /// export as TUI-only.
     Export(crate::slash::ExportRequest),
-    /// `/report` — the parsed request (path, rows, overwrite) the TUI's
-    /// report dispatch acts on. Headless sessions never receive it: they
-    /// refuse report as TUI-only, exactly like export.
-    Report(crate::slash::ReportRequest),
     Chart(String),
     Explain(String),
     /// A contract slash command, translated to the same `ContractsCommand` the
-    /// headless `saya contracts` parser produces. The loops hand it to the
-    /// shared `run_contracts` dispatcher — no second parsing or DTO mapping.
-    Contracts(ContractsCommand),
+    /// headless `saya contracts` parser produces, plus the deprecation note a
+    /// deprecated spelling states. The loops hand it to the shared
+    /// `run_contracts_request` seam — no second parsing or DTO mapping.
+    Contracts(crate::slash::ContractsRequest),
     /// A saved-investigation slash command, translated to the same
     /// `InvestigationCommand` the headless `saya investigation` parser
     /// produces. Both loops hand it to the shared `run_investigation`
@@ -66,9 +78,13 @@ pub enum SessionAction {
     /// them on the session surface and seeds the session's one grant store;
     /// the loops own the policy, so the seeding lives there.
     Allow(Vec<String>),
-    /// `/grants` — the session grant store listed verbatim by the shared
-    /// `permissions::grants::listing`.
-    Grants,
+    /// `/permissions` — one read-only view: the mode, the grant store, the
+    /// deny list, the host lane and data sharing, through the shared
+    /// `chat::ops_permissions` renderer. `/grants` carries the same request
+    /// with its alias spelling, so its note rides the one view. Intercepted
+    /// in both loops (they hold the session's policy, its grant store and the
+    /// runtime's deny list); the arm here keeps the match exhaustive.
+    Permissions(crate::slash::PermissionsRequest),
     /// `/context` — the instruction-source view through the shared
     /// `context_view::context_view`. Intercepted in the loop (it needs
     /// the runtime's settings and the session's root); the arm here keeps

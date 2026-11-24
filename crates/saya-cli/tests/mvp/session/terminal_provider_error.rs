@@ -1,3 +1,10 @@
+/// The sentence the turn_stop table prints for a provider it could not reach
+/// (`commands/coding/turn_stop.rs`): Saya's own words for the class, which is
+/// all a job keeps of a failed provider call.
+#[cfg(unix)]
+const PROVIDER_UNREACHABLE: &str =
+    "could not reach the provider — check that it is running and the configured base_url is correct";
+
 #[cfg(unix)]
 #[test]
 fn terminal_provider_error_keeps_same_question_settled_usage_once() {
@@ -109,6 +116,11 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
 
     let session_root = root.join("sessions");
     let state_db = root.join("state.sqlite3");
+    // The session opens its run over the folder it was started in, so the
+    // child gets a scratch one: a plain fixture, not the checkout this test
+    // binary happens to run from.
+    let working_dir = root.join("cwd");
+    fs::create_dir_all(&working_dir).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_saya"));
     command
         .args([
@@ -125,7 +137,11 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .current_dir(&working_dir)
         .env_clear()
+        // The run's composition resolves the host's Git through PATH; the
+        // environment is cleared for hermeticity, so restore the real one.
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .env("SAYA_SESSION_DIR", &session_root)
         .env("SAYA_STATE_DB", &state_db)
         .env("SAYA_PROVIDER", "openai_compatible")
@@ -179,7 +195,11 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
         .expect("the completed SQLite tool should prompt the next provider response");
     wait_for_stream(&stdout, b"terminal-marker", "second response marker");
     marker_seen_tx.send(()).unwrap();
-    wait_for_stream(&stderr, b"tool call", "terminal provider error");
+    wait_for_stream(
+        &stderr,
+        PROVIDER_UNREACHABLE.as_bytes(),
+        "terminal provider error",
+    );
     stdin.write_all(b"complete normally\n").unwrap();
     stdin.flush().unwrap();
     wait_for_stream(&stdout, b"normal-marker", "normal completion marker");
@@ -204,7 +224,10 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
     let output = String::from_utf8_lossy(&stdout.lock().unwrap()).into_owned();
     let errors = String::from_utf8_lossy(&stderr.lock().unwrap()).into_owned();
     assert!(output.contains("bounded_sql_query"), "output: {output}");
-    assert!(errors.contains("tool call"), "stderr: {errors}");
+    assert!(
+        errors.contains(PROVIDER_UNREACHABLE),
+        "stderr: {errors}"
+    );
     assert!(output.contains("Input tokens: 21"), "usage: {output}");
     assert!(output.contains("Output tokens: 6"), "usage: {output}");
     assert!(output.contains("2 turns"), "usage: {output}");

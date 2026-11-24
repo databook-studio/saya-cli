@@ -13,7 +13,10 @@ use saya_types::{
     JobState, MAX_SNAPSHOT_WARNING_PATH_BYTES, Sha256Digest,
 };
 use sha2::{Digest, Sha256};
-use std::{num::NonZeroU64, path::Path, sync::Arc};
+use std::{num::NonZeroU64, sync::Arc};
+
+#[path = "job_files.rs"]
+mod job_files;
 
 impl CodingApplication {
     /// Captures the original project only after exact fresh approval; creates
@@ -203,44 +206,25 @@ impl CodingApplication {
             .await
             .map_err(CodingError::owner)?;
         let records = private_directory(&self.state_root.join(request.job_id.as_str()))?;
-        super::context::write_new(
-            &records.join("request.json"),
-            &serde_json::to_vec(&request).map_err(CodingError::owner)?,
-            64 * 1024,
-        )?;
-        match &plan {
-            saya_harness::coding::local::JobBaseline::Git(_) => {
-                super::context::write_new(
-                    &records.join("plan.json"),
-                    plan.canonical_bytes(),
-                    saya_harness::coding::snapshot::MAX_SNAPSHOT_MANIFEST_BYTES,
-                )?;
-            }
-            saya_harness::coding::local::JobBaseline::InPlace(baseline) => {
-                super::context::write_new(
-                    &records.join("baseline.json"),
-                    plan.canonical_bytes(),
-                    saya_harness::coding::snapshot::MAX_SNAPSHOT_MANIFEST_BYTES,
-                )?;
-                // Shell-made changes are this start read's difference; non-Git is unrecorded.
-                let start = super::in_place_start::capture(
-                    &self.service,
-                    Path::new(baseline.root_path()),
-                    &records,
-                    &token,
-                )
-                .await?;
-                let (git, start_head) = super::in_place_start::git_and_head(&start);
-                super::root_checkout::InPlaceRootRecord::new(baseline, git, start_head)
-                    .write(&records.join("inplace-root.json"))?;
-            }
-        }
+        job_files::write(&request, &plan, &records, &self.service, &token).await?;
         lifecycle.attach(&records);
-        // An in-place job records edit-time before-images and holds the
-        // one-live-job lease over its folder; a managed checkout needs
-        // neither.
-        let (before_images, _in_place_lease) =
-            super::in_place_lease::job_parts(&plan, &records, &self.state_root, true)?;
+        // An in-place job that states a write scope records edit-time
+        // before-images and holds the one-live-job lease over its folder; a
+        // job that only reads takes neither, so another session may hold the
+        // folder's lease while this run reads it. A managed checkout needs
+        // neither part either way. The lease names the session this job is a
+        // job of when a surface stated one, so the session's own folder admits
+        // it beside the session's run.
+        let parent = self.session_parent();
+        let owner = parent.as_deref().unwrap_or(request.job_id.as_str());
+        let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
+            &plan,
+            &records,
+            &self.state_root,
+            request.has_write_scope()?,
+            owner,
+            parent.as_deref(),
+        )?;
         let (root_steering, root_mailbox) = saya_agent::agent_mailbox();
         Ok(Arc::new(NativeCodingJob {
             observation_sequence: std::sync::atomic::AtomicU64::new(1),
@@ -249,6 +233,7 @@ impl CodingApplication {
             transcript_lock: std::sync::Mutex::new(()),
             root_steering,
             root_mailbox: tokio::sync::Mutex::new(Some(root_mailbox)),
+            root_run: super::parent::RootRun::new(request.job_id()),
             failure: std::sync::Mutex::new(super::failure::FailureState::default()),
             preparation: std::sync::Mutex::new(None),
             delegated_children: std::sync::atomic::AtomicUsize::new(0),
@@ -258,6 +243,7 @@ impl CodingApplication {
             operation: tokio::sync::Mutex::new(()),
             active: tokio::sync::Mutex::new(None),
             progress: tokio::sync::broadcast::channel(128).0,
+            forward: std::sync::Mutex::new(None),
             application: Arc::clone(self),
             request,
             plan,
@@ -268,7 +254,7 @@ impl CodingApplication {
             project,
             records,
             before_images,
-            _in_place_lease,
+            in_place_lease: std::sync::Mutex::new(_in_place_lease),
             tools,
             cancellation: token.clone(),
             // One prompt pending at a time, whatever asks: the root's
@@ -279,7 +265,7 @@ impl CodingApplication {
             // the network: `read-only` and `never` compose no wire at all. The
             // search backend rides along when the user configured one, and is
             // absent otherwise — the ordinary case.
-            web_egress: crate::agent::tools::web::advertised(self.approval_policy)
+            web_egress: crate::agent::tools::web::advertised(self.mode.get())
                 .then(|| {
                     crate::agent::tools::web::egress(
                         &self.runtime.resolved.web_search,

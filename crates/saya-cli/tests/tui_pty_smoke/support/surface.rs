@@ -1,0 +1,288 @@
+/// The new surface's harness: the real binary on a pty, a config that names a
+/// provider (when one is given), and the terminal left in the caller's hands so
+/// a test can read the modes it was put back into.
+struct SurfaceTui {
+    writer: Box<dyn Write + Send>,
+    parser: vt100::Parser,
+    rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    /// The pty master, kept for the question `/exit` has to answer: the line
+    /// discipline the child leaves behind is read from its descriptor.
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    child: ChildGuard,
+    raw: Vec<u8>,
+}
+
+impl SurfaceTui {
+    fn send(&mut self, text: &str) -> std::io::Result<()> {
+        self.writer.write_all(text.as_bytes())?;
+        self.writer.flush()
+    }
+
+    /// Types one line and presses Enter.
+    fn send_line(&mut self, line: &str) -> std::io::Result<()> {
+        self.send(line)?;
+        self.send("\r")
+    }
+
+    fn screen(&self) -> String {
+        screen_text(self.parser.screen())
+    }
+
+    fn wait_for(&mut self, needle: &str, within: Duration) -> Result<(), String> {
+        let start = Instant::now();
+        loop {
+            if self.screen().contains(needle) {
+                return Ok(());
+            }
+            if start.elapsed() >= within {
+                return Err(format!(
+                    "'{needle}' never appeared within {within:?}; screen:\n{}",
+                    self.screen()
+                ));
+            }
+            self.pump()?;
+        }
+    }
+
+    /// Boundedly waits until the child process has ended, draining its output
+    /// as it goes: the proof that the surface left on its own.
+    fn wait_exit(&mut self, within: Duration) -> Result<(), String> {
+        let start = Instant::now();
+        loop {
+            if matches!(self.child.child.try_wait(), Ok(Some(_))) {
+                return Ok(());
+            }
+            if start.elapsed() >= within {
+                return Err(format!(
+                    "the surface never left within {within:?}; screen:\n{}",
+                    self.screen()
+                ));
+            }
+            let _ = self.pump();
+        }
+    }
+
+    fn still_running(&mut self) -> bool {
+        matches!(self.child.child.try_wait(), Ok(None))
+    }
+
+    /// Boundedly waits until `needle` has left the screen: the proof that a
+    /// pane closed rather than that its successor painted over it.
+    fn wait_gone(&mut self, needle: &str, within: Duration) -> Result<(), String> {
+        let start = Instant::now();
+        loop {
+            if !self.screen().contains(needle) {
+                return Ok(());
+            }
+            if start.elapsed() >= within {
+                return Err(format!(
+                    "'{needle}' never left within {within:?}; screen:\n{}",
+                    self.screen()
+                ));
+            }
+            self.pump()?;
+        }
+    }
+
+    /// Whether the terminal the child was given is back in canonical mode: the
+    /// raw mode it drew in is gone, so an operator's shell reads normally.
+    fn canonical(&self) -> bool {
+        let Some(fd) = self.master.as_raw_fd() else {
+            return false;
+        };
+        let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+        if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
+            return false;
+        }
+        termios.c_lflag & libc::ICANON != 0
+    }
+
+    /// Answers the startup trust question by binding this folder as the
+    /// session workspace (`y`): the run then opens over it, and the launch scan
+    /// this job adds starts there. The surface says so in the transcript, which
+    /// is what this waits for.
+    fn bind_trust(&mut self) {
+        self.wait_for("trust this folder?", INTERACTIVE)
+            .expect("the startup trust question is up");
+        self.send("y").expect("the trust answer");
+        self.wait_for("workspace trusted", INTERACTIVE)
+            .expect("the launch bound the folder it was answered with");
+    }
+
+    fn pump(&mut self) -> Result<(), String> {
+        match self.rx.recv_timeout(READ_TIMEOUT) {
+            Ok(Ok(bytes)) if bytes.is_empty() => {
+                Err(format!("the surface exited; screen:\n{}", self.screen()))
+            }
+            Ok(Ok(bytes)) => {
+                self.raw.extend_from_slice(&bytes);
+                self.parser.process(&bytes);
+                Ok(())
+            }
+            Ok(Err(error)) => Err(format!("pty read failed: {error}")),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(()),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                Err("pty reader ended".to_string())
+            }
+        }
+    }
+
+    /// Answers the startup trust question by continuing without a workspace
+    /// (`n`) and waits until the pane is gone, so the keys after it reach the
+    /// composer.
+    fn dismiss_trust(&mut self) {
+        self.wait_for("trust this folder?", INTERACTIVE)
+            .expect("the startup trust question is up");
+        self.send("n").expect("the trust answer");
+        self.wait_for("Message", INTERACTIVE)
+            .expect("the composer is back after the answer");
+    }
+}
+
+/// Launches the surface on a pty: `offline` is the smoke config with no
+/// provider answering, and `Some(provider)` points the launch at the mock.
+fn surface_tui(home: &Path, provider: Option<&MockProvider>) -> Result<SurfaceTui, String> {
+    surface_over(home, provider, true)
+}
+/// The same launch with the configured profile pointing at a SQLite file that
+/// is not there: the launch that must still open — as a session with no
+/// database — and say why.
+fn surface_tui_without_database(
+    home: &Path,
+    provider: Option<&MockProvider>,
+) -> Result<SurfaceTui, String> {
+    surface_over(home, provider, false)
+}
+
+/// The same launch at a size the caller states, in the approval posture it
+/// states, with its own arguments appended: a pane's look is asserted at the
+/// sizes `02` draws it in, and a case that states a width differs in nothing
+/// else.
+fn surface_sized(
+    home: &Path,
+    provider: Option<&str>,
+    cols: u16,
+    rows: u16,
+    mode: &str,
+    args: &[&str],
+) -> Result<SurfaceTui, String> {
+    open_surface(home, provider, true, cols, rows, mode, args)
+}
+
+/// `database_present` decides whether the profile's file exists: a profile
+/// naming a missing file is the stale-config case, and every other byte of the
+/// launch is the same.
+fn surface_over(
+    home: &Path,
+    provider: Option<&MockProvider>,
+    database_present: bool,
+) -> Result<SurfaceTui, String> {
+    let base_url = provider.map(MockProvider::base_url);
+    open_surface(
+        home,
+        base_url.as_deref(),
+        database_present,
+        COLS,
+        ROWS,
+        READ_ONLY,
+        &[],
+    )
+}
+
+/// The same launch at a stated terminal size: the review sizes a screen is
+/// captured at, and the harness's own default everywhere else.
+fn surface_over_at(
+    home: &Path,
+    provider: Option<&MockProvider>,
+    database_present: bool,
+    (cols, rows): (u16, u16),
+) -> Result<SurfaceTui, String> {
+    let base_url = provider.map(MockProvider::base_url);
+    open_surface(
+        home,
+        base_url.as_deref(),
+        database_present,
+        cols,
+        rows,
+        READ_ONLY,
+        &[],
+    )
+}
+
+/// The launch every surface case starts from: a scratch HOME's config and one
+/// `demo` profile, a pty of the caller's size, and the caller's arguments.
+fn open_surface(
+    home: &Path,
+    provider: Option<&str>,
+    database_present: bool,
+    cols: u16,
+    rows: u16,
+    mode: &str,
+    args: &[&str],
+) -> Result<SurfaceTui, String> {
+    let config = home.join("config.toml");
+    let memory = if provider.is_some() {
+        "[memory]\nmode = 'off'\n"
+    } else {
+        ""
+    };
+    std::fs::write(
+        &config,
+        format!(
+            "[ai]\nmodel = 'smoke'\nallow_data_sharing = true\n\n[run]\nmax_rows = 10\n\n{memory}"
+        ),
+    )
+    .expect("the surface config writes");
+    let connections = home.join("connections.toml");
+    std::fs::write(
+        &connections,
+        format!(
+            "[profiles.demo]\ntype = 'sqlite'\npath = '{}'\nread_only = false\n",
+            home.join("demo.sqlite3").display()
+        ),
+    )
+    .expect("the surface connections write");
+    if database_present {
+        std::fs::write(home.join("demo.sqlite3"), b"").expect("the demo db file is created");
+    }
+
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("could not allocate pty: {e}"))?;
+    let mut command = tui_command_in(home, &config, &connections, mode);
+    command.args(args.iter().copied());
+    if let Some(base_url) = provider {
+        command.env("SAYA_PROVIDER", "openai_compatible");
+        command.env("SAYA_MODEL", "mock");
+        command.env("SAYA_PROVIDER_BASE_URL", base_url);
+        command.env("SAYA_API_KEY", "test-only");
+    }
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|e| format!("could not spawn saya on pty: {e}"))?;
+    drop(pair.slave);
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("could not take pty writer: {e}"))?;
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("could not clone pty reader: {e}"))?;
+    let rx = reader_channel(reader);
+    Ok(SurfaceTui {
+        writer,
+        parser: vt100::Parser::new(rows, cols, 0),
+        rx,
+        master: pair.master,
+        child: ChildGuard::new(child),
+        raw: Vec::new(),
+    })
+}

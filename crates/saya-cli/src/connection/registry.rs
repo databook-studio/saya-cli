@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use crate::local_metrics::LocalMetrics;
 
 /// Represents a live database connection entry.
-#[allow(dead_code)]
 pub(crate) struct ConnectionEntry {
     /// The database connector implementation.
     pub(crate) connector: Box<dyn DatabaseConnector>,
@@ -41,7 +40,6 @@ impl fmt::Debug for ConnectionEntry {
 }
 
 /// A typed registry of live database connections for multi-database agent navigation.
-#[allow(dead_code)]
 pub(crate) struct ConnectionRegistry {
     primary: String,
     names: Vec<String>,
@@ -49,7 +47,6 @@ pub(crate) struct ConnectionRegistry {
     leases: HashMap<String, Mutex<()>>,
 }
 
-#[allow(dead_code)]
 impl ConnectionRegistry {
     /// Creates an empty registry whose primary connection is `primary`.
     pub(crate) fn new(primary: impl Into<String>) -> Self {
@@ -188,39 +185,6 @@ impl ConnectionRegistry {
             .into_iter()
             .find(|(_, entry)| entry.profile_id.as_deref() == Some(identity))
             .map(|(name, _)| name)
-    }
-
-    /// The dialect of every connection, in registration order.
-    ///
-    /// Callers that must phrase something per engine — SQL naming rules, for
-    /// one — need this even when `describe_context` stays silent because there
-    /// is only a single connection.
-    pub(crate) fn dialects(&self) -> impl Iterator<Item = SqlDialect> + '_ {
-        self.names
-            .iter()
-            .filter_map(|name| self.map.get(name).map(|entry| entry.dialect))
-    }
-
-    /// System-prompt addendum listing every connection and its dialect, instructing the
-    /// model to pass the `connection` argument and inspect each database separately then
-    /// combine findings. Returns None when there is <= 1 connection (no navigation needed).
-    pub(crate) fn describe_context(&self) -> Option<String> {
-        if self.len() <= 1 {
-            return None;
-        }
-
-        let mut lines = Vec::new();
-        lines.push("Available database connections:".to_string());
-        for name in &self.names {
-            if let Some(entry) = self.map.get(name) {
-                lines.push(format!("- {name} ({})", entry.dialect.as_str()));
-            }
-        }
-        lines.push(
-            "To inspect a database, pass its `connection` argument to schema and query tools. Inspect each database separately and combine your findings. When the same query should run against every connected database, call `bounded_sql_query_all` once instead of repeating `bounded_sql_query` per connection."
-                .to_string(),
-        );
-        Some(lines.join("\n"))
     }
 }
 

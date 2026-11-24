@@ -14,6 +14,7 @@ fn rules(allow: &[&str], deny: &[&str]) -> CommandRules {
             .map(|rule| CommandRule::parse(rule).expect("a valid test rule"))
             .collect(),
         diagnostics: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -271,17 +272,17 @@ fn a_leading_environment_assignment_is_not_auto_allowed() {
     );
 }
 
-/// Deny matches an absolute program path by its basename, and nothing else:
-/// `command rm` and `\rm` are different prefixes, as the docs say.
+/// Deny reads a program's basename wherever the program arrives as a path, and
+/// `command rm` names the same program; `\rm` is still a different prefix.
 #[test]
-fn deny_matches_the_basename_of_an_absolute_program() {
+fn deny_matches_the_basename_of_a_program_path() {
     let deny_rm = rules(&[], &["rm"]);
     assert_eq!(denied(&deny_rm, "/bin/rm -rf x"), Some("rm"));
     assert_eq!(denied(&deny_rm, "/usr/local/bin/rm x"), Some("rm"));
     assert_eq!(denied(&deny_rm, "rm -rf x"), Some("rm"));
-    assert_eq!(denied(&deny_rm, "command rm -rf x"), None);
+    assert_eq!(denied(&deny_rm, "command rm -rf x"), Some("rm"));
+    assert_eq!(denied(&deny_rm, "./rm -rf x"), Some("rm"));
     assert_eq!(denied(&deny_rm, "\\rm -rf x"), None);
-    assert_eq!(denied(&deny_rm, "./rm -rf x"), None);
     assert_eq!(
         denied(&rules(&[], &["rm -rf"]), "/bin/rm -rf x"),
         Some("rm -rf")

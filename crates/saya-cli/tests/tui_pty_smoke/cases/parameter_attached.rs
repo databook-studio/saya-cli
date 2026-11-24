@@ -4,6 +4,13 @@
 /// `--param=label=… confidential words`. The whole remainder redacts:
 /// the trailing value text reaches neither the screen nor the history file
 /// nor the session files, and the refusal still paints.
+///
+/// Counted from the real TUI, not deferred: the new surface keeps the input
+/// history (`interactive::tui::history`, pushed to and recalled from by the
+/// composer), echoes the submitted line — redacted — as the turn its answer
+/// lands in, and settles the refusal on its own row. The attached spelling is
+/// still refused by the parser, and its value text reaches neither the screen
+/// nor the history file nor the session files.
 #[test]
 fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
     let home = scratch_home("param-attached");
@@ -27,12 +34,13 @@ fn tui_investigation_run_attached_param_value_never_persists_or_echoes() {
     // The spelling is refused — pinning that this tests the rejected path.
     tui.wait_for("unknown investigation flag", INTERACTIVE)
         .expect("the attached spelling is refused by the parser");
-    // Wait for the steady state (the draft cleared — the placeholder paints
-    // exactly when the box is empty) before reading the screen: the
-    // typing-time echo of the draft is the user's own keystrokes, not a
-    // persisted or displayed copy of the submitted line.
-    tui.wait_for("Ask about your data", INTERACTIVE)
+    // Wait for the steady state before reading the screen: the draft is
+    // cleared, and the redraw has blanked the cells past the shorter
+    // placeholder, so the typing-time echo of the submitted line is gone.
+    tui.wait_for("Ask about demo or describe a change", INTERACTIVE)
         .expect("the input draft cleared after the submit");
+    tui.wait_gone("confidential words", INTERACTIVE)
+        .expect("the input box cleared the submitted line");
 
     let screen = tui.screen();
     assert_in(

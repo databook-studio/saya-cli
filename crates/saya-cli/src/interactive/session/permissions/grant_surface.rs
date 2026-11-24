@@ -5,8 +5,8 @@
 //! session's [`SessionPolicy`] holds:
 //!
 //! - [`GrantView`] is the universe's handle on that store. The session
-//!   surfaces (`session_request::run`, the TUI spawn) hold the turn's
-//!   policy and bind its store onto the universe before the turn runs —
+//!   surfaces hold the turn's policy and bind its store onto the universe
+//!   before the turn runs (the old request entry did; it is deleted) —
 //!   the same per-turn bind [`crate::grant_token::TurnPrimary`] uses for
 //!   the turn's primary connection. Clones of the store share one
 //!   `Arc`-backed set, so the view is never a stale copy: a grant recorded
@@ -28,6 +28,7 @@
 //!   and `never` deny without consulting grants, and `plan` denies before
 //!   the approval match.
 
+#[cfg(test)]
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use saya_agent::{AgentMode, ApprovalPolicy, SessionGrants, WORKSPACE_WRITE_TOKEN};
@@ -41,10 +42,13 @@ const WORKSPACE_FILE_TOKEN: &str = WORKSPACE_WRITE_TOKEN;
 
 /// The universe's live view of the session's grant store, bound per turn by
 /// the surface that holds the policy. `Default` is the unbound, closed
-/// shape.
+/// shape. The deleted `SessionUniverse::definitions` was its only production
+/// reader; the grant-surface tests drive the same decision through it.
+#[cfg(test)]
 #[derive(Clone, Default)]
 pub(crate) struct GrantView(Arc<Mutex<Option<SessionGrants>>>);
 
+#[cfg(test)]
 impl GrantView {
     /// Binds the turn's live store. Production binds once per turn, from
     /// the policy the surface holds (`SessionPolicy::grants`); the clone is

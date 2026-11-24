@@ -147,3 +147,29 @@ fn the_refresh_bound_caps_disk_work_at_sixteen_files() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// The record reaches the request once, as one labelled block, and neither the
+/// renderer nor its `SessionFacts::blocks` caller takes a data-sharing-lane
+/// input: with `allow_query_data` closed there is nothing to gate the block on,
+/// so the record still rides the request (the old request-wiring row).
+#[test]
+fn the_record_block_is_one_block_with_no_data_lane_gate() {
+    let (root, workspace) = workspace("lane");
+    let record = current_record(Some("remember the migration note"), Vec::new(), Vec::new());
+    let block = render_record_block_at(Some(&record), Some(&workspace), NOW, 16 * 1024)
+        .expect("a record with notes carries a block");
+    assert_eq!(block.label, "continuation-record");
+    assert_eq!(
+        block.body.matches(HEADER).count(),
+        1,
+        "one header, one block: {}",
+        block.body
+    );
+    assert_eq!(
+        block.body.matches("remember the migration note").count(),
+        1,
+        "the note appears exactly once: {}",
+        block.body
+    );
+    let _ = std::fs::remove_dir_all(root);
+}

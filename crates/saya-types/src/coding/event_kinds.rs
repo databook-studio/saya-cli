@@ -60,6 +60,14 @@ pub enum CodingEventKind {
         path: String,
         reason: SnapshotWarningReason,
     },
+    /// The job's own diagnostics could not be written: its audit trail is
+    /// incomplete and the run continued without it. Never a failure — the
+    /// diagnostic files carry no execution authority. The one line the job
+    /// states is "diagnostics could not be written: <class>; the job continues
+    /// without them".
+    DiagnosticsIncomplete {
+        fault: super::CodingDiagnosticFault,
+    },
     /// One turn's check against the no-progress guard, recorded by the root
     /// loop. `reset` is a turn that made progress after a non-zero streak;
     /// otherwise `turns_without_progress` is the streak after this turn.
@@ -130,6 +138,9 @@ pub(super) enum WireCodingEventKind {
         path: String,
         reason: SnapshotWarningReason,
     },
+    DiagnosticsIncomplete {
+        fault: super::CodingDiagnosticFault,
+    },
     ProgressReported {
         turn: u64,
         turns_without_progress: u32,
@@ -189,6 +200,9 @@ impl WireCodingEventKind {
             Self::StateChanged { state } => CodingEventKind::StateChanged { state },
             Self::SnapshotWarning { path, reason } => {
                 CodingEventKind::SnapshotWarning { path, reason }
+            }
+            Self::DiagnosticsIncomplete { fault } => {
+                CodingEventKind::DiagnosticsIncomplete { fault }
             }
             Self::ProgressReported {
                 turn,

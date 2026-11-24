@@ -32,15 +32,22 @@ fn cli_parse<const N: usize>(words: [&str; N]) -> CodingCommand {
 fn slash_parse(input: &str) -> CodingCommand {
     let parsed = parse_slash_command(input).unwrap().unwrap();
     match parsed {
-        SlashCommand::Coding(command) => command,
+        // The operation, never the deprecated spelling that stated it.
+        SlashCommand::Coding(request) => request.command,
         _ => panic!("coding command"),
     }
 }
 
 async fn list_job_ids(fixture: &Fixture) -> Vec<String> {
-    let listed = dispatch_coding(&fixture.application, CodingCommand::List { after: None })
-        .await
-        .unwrap();
+    let listed = dispatch_coding(
+        &fixture.application,
+        CodingCommand::List {
+            after: None,
+            all: false,
+        },
+    )
+    .await
+    .unwrap();
     listed["jobs"]
         .as_array()
         .unwrap()

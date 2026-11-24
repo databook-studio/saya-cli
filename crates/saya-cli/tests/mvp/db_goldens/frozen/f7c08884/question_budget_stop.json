@@ -1,0 +1,39 @@
+{
+  "scenario": "question_budget_stop",
+  "requests": [
+    {
+      "tools": [
+        "schema_discovery",
+        "request_clarification",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read",
+        "checklist",
+        "write",
+        "edit",
+        "http_fetch",
+        "http_download",
+        "run_command",
+        "shell"
+      ],
+      "body_bytes": 20352,
+      "messages": 2
+    }
+  ],
+  "tool_calls": [],
+  "states": [
+    {
+      "kind": "budget-stop",
+      "text": "the run stopped on its elapsed-time budget; any answer it produced is partial or absent"
+    }
+  ]
+}

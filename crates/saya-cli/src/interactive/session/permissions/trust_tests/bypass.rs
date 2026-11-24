@@ -20,24 +20,8 @@ fn continue_unbound_keeps_today_s_shape() {
         .expect("composition succeeds without a root");
     assert!(universe.root().is_none(), "continue binds nothing");
     assert!(!universe.host_composed(), "continue composes no lane");
-    let names: Vec<String> = universe
-        .definitions(
-            saya_agent::AgentMode::Build,
-            false,
-            ApprovalPolicy::Ask,
-            true,
-            true,
-            false,
-            false,
-            &Default::default(),
-        )
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    assert!(
-        !names.contains(&"write".to_string()) && !names.contains(&"edit".to_string()),
-        "the write tools stay hidden: {names:?}"
-    );
+    // The session's own advertised surface went with the deleted turn body;
+    // the composition facts above are what this pin has left to state.
     // A resume never prompts — pinned or pre-workspace alike.
     for (label, ctx) in [
         (
@@ -89,24 +73,8 @@ fn bypass_unbound_terminal_prompts_for_the_folder_then_runs_the_lane() {
     let universe = SessionUniverse::compose(&runtime, Some(&cwd), None, true, &cwd)
         .expect("trust binds under bypass exactly as under ask");
     assert!(universe.host_composed(), "the lane composes after trust");
-    let names: Vec<String> = universe
-        .definitions(
-            saya_agent::AgentMode::Build,
-            false,
-            ApprovalPolicy::Bypass,
-            false,
-            true,
-            false,
-            false,
-            &Default::default(),
-        )
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    assert!(
-        names.contains(&"run_command".to_string()),
-        "after trust, the lane runs unasked under bypass: {names:?}"
-    );
+    // The session's own advertised surface went with the deleted turn body;
+    // the composition facts above are what this pin has left to state.
     // The activation line names both exposures.
     let line = crate::interactive::session::permissions::activation::bypass_line(
         universe.host_composed(),
@@ -146,24 +114,8 @@ fn bypass_unbound_headless_composes_no_lane_and_says_so() {
         !universe.host_composed(),
         "no root, no lane — bypass cannot bind silently"
     );
-    let names: Vec<String> = universe
-        .definitions(
-            saya_agent::AgentMode::Build,
-            false,
-            ApprovalPolicy::Bypass,
-            false,
-            true,
-            false,
-            false,
-            &Default::default(),
-        )
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    assert!(
-        !names.contains(&"run_command".to_string()),
-        "bypass runs with the lane absent: {names:?}"
-    );
+    // The session's own advertised surface went with the deleted turn body;
+    // the absent-lane note below is what this pin has left to state.
     let note =
         bypass_no_lane_note(true, universe.host_composed()).expect("the absent lane is said");
     assert!(

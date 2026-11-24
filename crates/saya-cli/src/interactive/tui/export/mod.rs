@@ -46,14 +46,35 @@ pub(crate) fn write_report(
     Ok(markdown::clamped_rows(rows, result))
 }
 
-/// Writes `result` to `path`, refusing an existing destination unless
-/// `overwrite`. Format is chosen by extension: `.csv` or `.json`.
+/// The extension-selecting write, with no request at all: the seam the
+/// export tests pin. A slash command states its format through
+/// [`write_result_for`], so the two can never disagree about which file a
+/// `.md`/`.csv`/`.json` destination gets.
+#[cfg(test)]
 pub(crate) fn write_result_overwrite(
     result: &QueryResult,
     path: &Path,
     overwrite: bool,
 ) -> Result<usize, String> {
-    write_within(result, path, overwrite, MAX_EXPORT_BYTES)
+    write_within(result, path, None, overwrite, MAX_EXPORT_BYTES)
+}
+
+/// Writes one `/export` request's data file: the format it states
+/// (`--format`), or the destination's extension when it states none. The
+/// Markdown report is not written here — the dispatch writes it from the
+/// capture, through `write_report`, so a `.md` destination never reaches this
+/// function from a slash command.
+pub(crate) fn write_result_for(
+    result: &QueryResult,
+    request: &crate::slash::ExportRequest,
+) -> Result<usize, String> {
+    write_within(
+        result,
+        Path::new(&request.path),
+        request.format(),
+        request.overwrite,
+        MAX_EXPORT_BYTES,
+    )
 }
 
 /// Test seam: a smaller ceiling exercises the while-encoding stop without
@@ -65,25 +86,26 @@ pub(crate) fn write_result_with_ceiling(
     overwrite: bool,
     ceiling: usize,
 ) -> Result<usize, String> {
-    write_within(result, path, overwrite, ceiling)
+    write_within(result, path, None, overwrite, ceiling)
 }
 
 fn write_within(
     result: &QueryResult,
     path: &Path,
+    format: Option<crate::slash::ExportFormat>,
     overwrite: bool,
     ceiling: usize,
 ) -> Result<usize, String> {
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_lowercase());
+    // A stated format wins; the destination's extension selects otherwise.
+    let format = format.or_else(|| crate::slash::ExportFormat::of_path(&path.to_string_lossy()));
     // Fail fast on the destination before encoding anything.
     atomic::guard(path, overwrite)?;
-    let bytes = match ext.as_deref() {
-        Some("csv") => csv::encode_csv(result, ceiling)?,
-        Some("json") => json::encode_json(result, ceiling)?,
-        _ => return Err("unsupported export format; use a .csv or .json path".into()),
+    let bytes = match format {
+        Some(crate::slash::ExportFormat::Csv) => csv::encode_csv(result, ceiling)?,
+        Some(crate::slash::ExportFormat::Json) => json::encode_json(result, ceiling)?,
+        Some(crate::slash::ExportFormat::Markdown) | None => {
+            return Err("unsupported export format; use a .csv or .json path".into());
+        }
     };
     atomic::publish(path, &bytes, overwrite)?;
     Ok(result.rows.len())
@@ -99,3 +121,10 @@ pub(crate) use json::disambiguated_columns;
 #[cfg(test)]
 #[path = "export_tests.rs"]
 mod tests;
+
+// The writer's publication rules, ported from the deleted surface's `/export`
+// tests: a refusal, an atomic replace, no write through a link, and nothing
+// left behind on failure.
+#[cfg(test)]
+#[path = "publication_tests.rs"]
+mod publication_tests;

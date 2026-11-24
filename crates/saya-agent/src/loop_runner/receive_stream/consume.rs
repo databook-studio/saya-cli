@@ -1,4 +1,5 @@
 use super::RequestDeadline;
+use super::progress::ContentProgress;
 use super::{
     super::{attempt, attempt_metrics::AttemptTiming},
     emit,
@@ -72,12 +73,16 @@ pub(super) async fn consume_stream(
     events: &mut Vec<AgentEvent>,
     timing: &mut AttemptTiming,
     deadline: RequestDeadline,
+    stall: Duration,
 ) -> attempt::AttemptOutcome {
     let (mut content, mut calls, mut complete, mut usage, mut reasoning, mut signature) =
         (String::new(), Vec::new(), false, None, None, None);
     let mut useful_text_seen = false;
     let mut tool_call_bytes = 0usize;
     let stream_started = Instant::now();
+    // The gap between content-bearing events, not between frames: a transport
+    // a gateway keeps alive is not an answer.
+    let mut progress = ContentProgress::new(stall);
     let mut items = crate::protocol::stream_item_limit::StreamItemCount::default();
     loop {
         let read_started = Instant::now();
@@ -101,6 +106,12 @@ pub(super) async fn consume_stream(
                     ),
                     usage,
                 );
+            }
+            // A stall is typed and retryable: the identical request may answer
+            // on the next attempt, unlike a cut that already delivered content.
+            _ = tokio::time::sleep_until(progress.deadline()) => {
+                timing.add_read_elapsed(read_started.elapsed());
+                return failed(provider_failure(ProviderError::StreamStalled), usage);
             }
             next = stream.next() => next,
         };
@@ -143,6 +154,7 @@ pub(super) async fn consume_stream(
         if let Err(error) = items.admit(usage) {
             return failed(provider_failure(error), usage);
         }
+        progress.observe(&event);
         match event {
             ProviderEvent::TextDelta(text) => {
                 if !useful_text_seen && !text.trim().is_empty() {

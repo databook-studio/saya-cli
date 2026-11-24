@@ -46,6 +46,7 @@ fn a_user_command_turn_sends_the_expanded_prompt() {
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.base_url = Some(endpoint);
     runtime.resolved.ai.retry_delays_ms.clear();
+    super::session_headless_receipt_tests::state_orchestrator_endpoint(&mut runtime);
     let store = FsSessionStore::new(root.join("sessions"));
     let state_db = SqliteStateStore::new(std::path::PathBuf::new());
     let mut state = SessionState::new("user-command-turn", None, "test-model");
@@ -73,6 +74,8 @@ fn a_user_command_turn_sends_the_expanded_prompt() {
         last_turn: None,
         save_refused: false,
         launch_options: GlobalOptions::default(),
+        chat: None,
+        prepared: None,
     };
 
     let outcome = handle_line_verbatim("/bypass the thing", &mut ctx).expect("the turn settles");

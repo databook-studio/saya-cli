@@ -3,11 +3,41 @@
 #[derive(Clone)]
 pub(crate) enum ScriptStep {
     Harmless,
-    HoldOpen { marker: String },
+    /// One assistant turn carrying a single tool call: the loop executes the
+    /// call and continues, and the next slot answers the request that carries
+    /// its result.
+    ToolCall {
+        name: String,
+        arguments: serde_json::Value,
+    },
+    HoldOpen {
+        marker: String,
+    },
 }
 #[cfg(unix)]
 pub(crate) fn harmless_body() -> String {
     "data: {\"content\":\"{\\\"proposals\\\": []}\"}\n\n".to_owned()
+}
+
+/// The body of one scripted tool call, under an id unique to the request slot
+/// the call was asked for in.
+#[cfg(unix)]
+pub(crate) fn tool_call_body(
+    name: &str,
+    arguments: &serde_json::Value,
+    request_index: usize,
+) -> String {
+    let call = serde_json::json!({
+        "choices": [{
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": format!("call-budget-{request_index}"),
+                "function": {"name": name, "arguments": arguments.to_string()}
+            }]},
+            "finish_reason": "tool_calls"
+        }]
+    });
+    format!("data: {call}\n\n")
 }
 
 #[cfg(unix)]
@@ -72,6 +102,9 @@ pub(crate) fn spawn_script_server(
             let step = script.get(index).cloned().unwrap_or(ScriptStep::Harmless);
             match step {
                 ScriptStep::Harmless => reply_finished(&mut stream, &harmless_body()),
+                ScriptStep::ToolCall { name, arguments } => {
+                    reply_finished(&mut stream, &tool_call_body(&name, &arguments, index))
+                }
                 ScriptStep::HoldOpen { marker } => {
                     // A 429 establishment refusal: the loop backs off and
                     // retries the SAME answering request against the next

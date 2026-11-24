@@ -1,31 +1,34 @@
-use crate::cli::{ContractsCommand, InvestigationCommand, PreferencesCommand};
+use crate::cli::{InvestigationCommand, PreferencesCommand};
 use crate::commands::recovery::RecoveryCommand;
 use crate::interactive::session::lifecycle::notes::NotesCommand;
-use saya_agent::{ApprovalPolicy, PermissionMode};
-use std::{fmt, str::FromStr};
+use saya_agent::PermissionMode;
+use std::fmt;
 
+pub(crate) mod catalog;
 mod contracts;
 mod help;
 mod investigation;
 mod job;
+mod job_request;
 pub(crate) mod param_redact;
 pub(crate) mod registry;
 pub(crate) mod user_commands;
 
+// The contract slash request (the one operation plus the note a deprecated
+// spelling states), re-exported so `SlashCommand::Contracts` and
+// `SessionAction::Contracts` name the same type from every layer.
+pub(crate) use contracts::ContractsRequest;
+// The job surface's one operation and the alias that states it: `/job <verb>`
+// and its seven one-release top-level spellings produce the same
+// `JobRequest`, so `SlashCommand::Coding` and `SessionAction::Coding` name one
+// type from every layer.
+pub(crate) use job_request::{JobAlias, JobRequest};
 // Re-exported so the session command layer's `crate::slash::help_for` path
 // resolves through the `help` module.
 pub(crate) use help::help_for;
 // The bypass-composition sentence is shared by the `/mode` help entry and the
 // `/mode` answers, so it is re-exported for the session command layer.
 pub(crate) use help::PLAN_BYPASS_SENTENCE;
-// the one-line description per command is the single source shared by the
-// `/help` listing and the completion popup (`interactive::tui::complete`), so
-// the two surfaces cannot drift. `description_for` is read by the popup in
-// production; `COMMAND_DESCRIPTIONS` is only needed by tests that assert the
-// shared table covers the registry, so it is re-exported under `cfg(test)`.
-#[cfg(test)]
-pub(crate) use help::COMMAND_DESCRIPTIONS;
-pub(crate) use help::description_for;
 // The run scope parser's equivalence tests read the `/run` help from
 // `commands/run/scopes.rs`, so the per-command help joins the re-exports.
 #[cfg(test)]
@@ -38,10 +41,11 @@ use help::help_text;
 include!("slash/command_types.rs");
 include!("slash/request_types.rs");
 include!("slash/export_parser.rs");
-include!("slash/report_parser.rs");
 include!("slash/preferences_parser.rs");
 include!("slash/notes_parser.rs");
 include!("slash/recovery_parser.rs");
+include!("slash/compact_parser.rs");
+include!("slash/rewind_parser.rs");
 include!("slash/dispatch.rs");
 include!("slash/value_parsers.rs");
 #[cfg(test)]

@@ -2,9 +2,8 @@ use super::*;
 
 #[test]
 fn parse_queue_no_arg_is_default_limit() {
-    let cmd = parse_contract_command("queue", "").unwrap().unwrap();
     assert_eq!(
-        cmd,
+        command_of("/queue"),
         ContractsCommand::Queue {
             profile: None,
             limit: None
@@ -14,9 +13,8 @@ fn parse_queue_no_arg_is_default_limit() {
 
 #[test]
 fn parse_queue_optional_numeric_limit() {
-    let cmd = parse_contract_command("queue", "20").unwrap().unwrap();
     assert_eq!(
-        cmd,
+        command_of("/queue 20"),
         ContractsCommand::Queue {
             profile: None,
             limit: Some(20),

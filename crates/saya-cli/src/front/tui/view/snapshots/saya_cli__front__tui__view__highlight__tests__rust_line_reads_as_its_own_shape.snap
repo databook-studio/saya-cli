@@ -1,0 +1,13 @@
+---
+source: crates/saya-cli/src/front/tui/view/highlight_tests.rs
+expression: "outline(\"fn main() { let name = \\\"saya\\\"; // the entry\",\nSome(super::Language::Rust), Scheme::Dark,)"
+---
+[
+    "keyword  fn",
+    "plain     main() { ",
+    "keyword  let",
+    "plain     name = ",
+    "string   \"saya\"",
+    "plain    ; ",
+    "comment  // the entry",
+]

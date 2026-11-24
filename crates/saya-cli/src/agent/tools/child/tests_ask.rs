@@ -1,7 +1,7 @@
-//! The coding surfaces' clarification ask: the ask is advertised exactly
-//! when an operator surface can answer it, it needs no database connection,
-//! and a call ends the turn — the model is told the user's next message is the
-//! answer.
+//! The coding surfaces' clarification ask: the ask is a database tool, so it
+//! is advertised exactly where the job selected a profile AND an operator
+//! surface can answer it, and a call ends the turn — the model is told the
+//! user's next message is the answer.
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use std::collections::BTreeMap;
@@ -13,37 +13,41 @@ use saya_agent::{
     ChatRequest, ChatResponse, NoopEventSink, ProviderError, ProviderStream, ToolCall,
     ToolExecutor, run_agent_with_sink,
 };
-use saya_store::SqliteStateStore;
+use saya_harness::coding::policy::ChildAuthorityView;
+use saya_types::ManagedCheckoutId;
 
 use super::CliChildFactory;
-use super::tests::{Sandbox, checkout, database_view};
+use super::tests::{Sandbox, checkout, database_view, profile_identity};
+use super::tests_database::{runtime_with, selected, sqlite_profile, store};
 use crate::commands::coding::database::CodingDatabaseTools;
-use crate::config::runtime::RuntimeConfig;
 
-/// A resolved runtime with no configured profile: the ask needs no connection,
-/// so these tests never select one.
-fn runtime() -> RuntimeConfig {
-    let root = std::env::temp_dir().join(format!("saya-coding-ask-{}", std::process::id()));
+/// The job's data surface over one selected SQLite profile, with the view that
+/// admits it: the ask rides the database, so this is the shape that can offer
+/// it at all.
+fn ask_surface(
+    checkout_id: &ManagedCheckoutId,
+    tag: &str,
+    clarification: bool,
+) -> (CodingDatabaseTools, ChildAuthorityView) {
+    let root = std::env::temp_dir().join(format!("saya-coding-ask-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    crate::load_with_sources(
-        &crate::GlobalOptions::default(),
-        &root,
-        &root,
-        BTreeMap::new(),
-    )
-    .unwrap()
-}
-
-fn store() -> SqliteStateStore {
-    SqliteStateStore::new(
-        std::env::temp_dir().join(format!("saya-coding-ask-{}.sqlite3", std::process::id())),
-    )
+    let (profile, _path) = sqlite_profile(&root, "main");
+    let runtime = runtime_with(&[("main".to_owned(), profile.clone())]);
+    let identity = profile_identity("main", &profile, &runtime.cache_scope);
+    let view = database_view(checkout_id, vec![identity.clone()]);
+    let tools = CodingDatabaseTools::new(
+        runtime,
+        store(),
+        selected(&[("main".to_owned(), identity)]),
+        clarification,
+    );
+    (tools, view)
 }
 
 /// The job's data surface for a job that selected no profile. `clarification`
 /// is whether an operator surface is attached to answer an ask.
 fn ask_only(clarification: bool) -> CodingDatabaseTools {
-    CodingDatabaseTools::new(runtime(), store(), BTreeMap::new(), clarification)
+    CodingDatabaseTools::new(runtime_with(&[]), store(), BTreeMap::new(), clarification)
 }
 
 fn factory_with(
@@ -159,24 +163,41 @@ fn answered_request() -> AgentRequest {
     }
 }
 
-/// A helper with no selected profile advertises the ask and no SQL tool when
-/// an operator can answer, and nothing at all when none can.
+/// A helper with no selected profile is offered no ask, whoever is attached:
+/// the ask is a database tool, and a job whose work is code alone has none.
 #[tokio::test]
-async fn a_helper_without_a_profile_advertises_the_ask_only_for_an_operator() {
+async fn a_helper_without_a_profile_is_offered_no_ask() {
     let checkout_id = checkout("checkout");
     let view = database_view(&checkout_id, Vec::new());
-    let sandbox = Sandbox::new("ask-advertise");
+    let sandbox = Sandbox::new("ask-advertise-none");
+    for clarification in [true, false] {
+        let definitions = factory_with(&sandbox, &checkout_id, ask_only(clarification))
+            .build_toolset(&view)
+            .unwrap()
+            .0;
+        assert!(
+            !advertises(&definitions, "request_clarification"),
+            "no profile means no database and no ask (operator: {clarification})"
+        );
+    }
+}
 
-    let answered = factory_with(&sandbox, &checkout_id, ask_only(true))
-        .build_toolset(&view)
+/// A helper with a selected profile advertises the ask when an operator can
+/// answer, and nothing at all when none can.
+#[tokio::test]
+async fn a_helper_with_a_profile_advertises_the_ask_only_for_an_operator() {
+    let checkout_id = checkout("checkout");
+    let sandbox = Sandbox::new("ask-advertise");
+    let (answered_tools, answered_view) = ask_surface(&checkout_id, "advertise", true);
+    let answered = factory_with(&sandbox, &checkout_id, answered_tools)
+        .build_toolset(&answered_view)
         .unwrap()
         .0;
     assert!(advertises(&answered, "request_clarification"));
-    assert!(!advertises(&answered, "schema_discovery"));
-    assert!(!advertises(&answered, "bounded_sql_query"));
 
-    let headless = factory_with(&sandbox, &checkout_id, ask_only(false))
-        .build_toolset(&view)
+    let (headless_tools, headless_view) = ask_surface(&checkout_id, "advertise-headless", false);
+    let headless = factory_with(&sandbox, &checkout_id, headless_tools)
+        .build_toolset(&headless_view)
         .unwrap()
         .0;
     assert!(
@@ -191,9 +212,9 @@ async fn a_helper_without_a_profile_advertises_the_ask_only_for_an_operator() {
 #[tokio::test]
 async fn the_ask_ends_the_turn_and_the_next_message_is_the_answer() {
     let checkout_id = checkout("checkout");
-    let view = database_view(&checkout_id, Vec::new());
     let sandbox = Sandbox::new("ask-turn");
-    let (definitions, tools, approval) = factory_with(&sandbox, &checkout_id, ask_only(true))
+    let (databases, view) = ask_surface(&checkout_id, "turn", true);
+    let (definitions, tools, approval) = factory_with(&sandbox, &checkout_id, databases)
         .build_toolset(&view)
         .unwrap();
     assert!(advertises(&definitions, "request_clarification"));
@@ -248,9 +269,9 @@ async fn the_ask_ends_the_turn_and_the_next_message_is_the_answer() {
 #[tokio::test]
 async fn the_answer_is_the_next_user_message_the_model_receives() {
     let checkout_id = checkout("checkout");
-    let view = database_view(&checkout_id, Vec::new());
     let sandbox = Sandbox::new("ask-answer");
-    let (definitions, tools, approval) = factory_with(&sandbox, &checkout_id, ask_only(true))
+    let (databases, view) = ask_surface(&checkout_id, "answer", true);
+    let (definitions, tools, approval) = factory_with(&sandbox, &checkout_id, databases)
         .build_toolset(&view)
         .unwrap();
     let provider = ScriptedProvider {

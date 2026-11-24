@@ -3,6 +3,11 @@
 //! write nothing. The workspace tools are the shared read-only family, bound to
 //! the job's root; the database and ask tools ride the coordinator exactly as
 //! they do on a working checkout.
+//!
+//! A run with no workspace at all — the one-turn `ask` asked in a folder that
+//! cannot root an in-place job — has no folder to read: its surface is the
+//! coordinator's database tools and nothing else, so no file, search, shell or
+//! write tool is advertised or served.
 
 use std::sync::Arc;
 
@@ -19,8 +24,14 @@ use super::parent::CodingTools;
 
 pub(crate) struct ReadOnlyTools {
     coordinator: CodingTools,
-    workspace: DatabaseTools,
+    /// The workspace this run reads, when it has one: no workspace at all is a
+    /// folder that cannot root a job, and it reads nothing.
+    workspace: Option<DatabaseTools>,
     defs: Vec<ToolDefinition>,
+    /// The plugin's database lane, when this run put the plugin on the chat
+    /// surface: `None` — every job surface — decides database calls the way
+    /// this surface always did.
+    pub(super) db_lane: Option<Arc<crate::plugins::database::approval::DbApprovalLane>>,
 }
 
 impl ReadOnlyTools {
@@ -28,14 +39,21 @@ impl ReadOnlyTools {
     /// never composed: the workspace definitions are the read family only, and
     /// the coordinator's database tools are the standard read-only pair.
     pub(crate) fn build(job: &Arc<NativeCodingJob>) -> Result<Self, CodingError> {
-        let workspace = DatabaseTools::for_child_checkout(job.read_only_workspace()?);
+        let workspace = match job.has_workspace() {
+            true => Some(DatabaseTools::for_child_checkout(
+                job.read_only_workspace()?,
+            )),
+            false => None,
+        };
         let coordinator = CodingTools {
             job: Arc::clone(job),
             databases: job.databases(),
             denials: super::owner_denial::DenialTally::default(),
         };
         let mut defs = Vec::new();
-        crate::agent::tools::workspace::append_definitions(&mut defs, false);
+        if workspace.is_some() {
+            crate::agent::tools::workspace::append_definitions(&mut defs, false);
+        }
         if let Some(databases) = coordinator.databases.as_ref() {
             defs.extend(databases.definitions(None));
         }
@@ -52,6 +70,7 @@ impl ReadOnlyTools {
             coordinator,
             workspace,
             defs,
+            db_lane: None,
         })
     }
 
@@ -77,7 +96,10 @@ impl ToolExecutor for ReadOnlyTools {
     }
 
     async fn settle_invocation(&self) -> Result<(), ToolError> {
-        self.workspace.settle_invocation().await
+        match &self.workspace {
+            Some(workspace) => workspace.settle_invocation().await,
+            None => Ok(()),
+        }
     }
 
     async fn execute_with_context(
@@ -96,7 +118,11 @@ impl ToolExecutor for ReadOnlyTools {
                 .execute_with_context(name, arguments, context)
                 .await;
         }
+        // Only a workspace tool reaches here, and only the defs above are
+        // advertised: a run with no workspace has none of them.
         self.workspace
+            .as_ref()
+            .ok_or(ToolError::UnsupportedTool)?
             .execute_with_context(name, arguments, context)
             .await
     }
@@ -109,7 +135,11 @@ impl ToolExecutor for ReadOnlyTools {
         if crate::commands::coding::database::routes_here(name) {
             return self.coordinator.execute(name, arguments).await;
         }
-        self.workspace.execute(name, arguments).await
+        self.workspace
+            .as_ref()
+            .ok_or(ToolError::UnsupportedTool)?
+            .execute(name, arguments)
+            .await
     }
 }
 

@@ -21,7 +21,9 @@ fn a_run_command_exit_code_becomes_a_check() {
                 completed_run_command("cargo vanished"),
                 AgentEvent::ToolDenied {
                     name: "run_command".into(),
+                    arguments: serde_json::Value::Null,
                     reason: "not allowed".into(),
+                    caller: None,
                 },
             ],
         ),

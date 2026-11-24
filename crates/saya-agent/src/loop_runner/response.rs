@@ -8,9 +8,42 @@ use super::{
 pub(super) async fn handle(
     state: &mut RunState<'_>,
     admission: &mut admission::Admission,
+    deferred_budget: Option<&super::DeferredAnsweringScope>,
     assistant: ChatMessage,
     reasoning: Option<super::attempt::ReasoningTrace>,
 ) -> Result<Option<super::AgentOutput>, AgentError> {
+    // The turn's deferred plugin budget charges the batch before it runs: once a
+    // turn has used a plugin, the calls it requests from then on are the
+    // plugin's budget's, and a batch past the ceiling is refused whole. Unarmed,
+    // it charges nothing and this is not reached.
+    if !assistant.tool_calls.is_empty()
+        && let Some(budget) = deferred_budget
+        && let Err(error) = budget
+            .admit_tool_batch(assistant.tool_calls.len() as u64, state.sink)
+            .await
+        && let Some(dimension) = admission.stopped_dimension(&error, &state.cancellation)
+    {
+        tool_diagnostics::refused(&assistant.tool_calls, &state.definitions, state.sink).await;
+        return Ok(Some(
+            super::budget_output(
+                dimension,
+                &mut state.events,
+                state.sink,
+                PartialOutput {
+                    usage: state.usage,
+                    used_bounded_sql_query: state.used_bounded_sql_query,
+                    tool_metadata: std::mem::take(&mut state.tool_metadata),
+                    answer_sql: state
+                        .designation
+                        .sql
+                        .clone()
+                        .or(state.last_successful_sql.clone()),
+                    answer: assistant.content,
+                },
+            )
+            .await,
+        ));
+    }
     if !assistant.tool_calls.is_empty()
         && let Err(error) = admission.enforce_tools(&state.cancellation)
         && let Some(dimension) = admission.stopped_dimension(&error, &state.cancellation)
@@ -198,5 +231,13 @@ pub(super) async fn handle(
             answer_sql: state.designation.sql.clone(),
         }));
     }
-    response_tools::execute(state, admission, assistant, result_caps, response_limits).await
+    response_tools::execute(
+        state,
+        admission,
+        deferred_budget,
+        assistant,
+        result_caps,
+        response_limits,
+    )
+    .await
 }

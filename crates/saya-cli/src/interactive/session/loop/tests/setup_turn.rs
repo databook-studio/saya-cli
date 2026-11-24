@@ -14,7 +14,7 @@ mod setup_turn_tests {
     /// The explicit runtime the interactive test modules hand-build (the
     /// `session_headless_receipt_tests` pattern): no profile configured, no
     /// provider reachable — the refusal must fire before any connector.
-    fn handoff_runtime() -> RuntimeConfig {
+    pub(super) fn handoff_runtime() -> RuntimeConfig {
         RuntimeConfig {
             resolved: ResolvedConfig {
                 hooks: Default::default(),
@@ -57,6 +57,8 @@ mod setup_turn_tests {
                 output_format: OutputFormat::Text,
                 output_color: ColorChoice::Auto,
                 ui_theme: ThemeChoice::Auto,
+                ui_notifications: true,
+                ui_notify_after_seconds: 30,
                 memory: ResolvedMemory {
                     mode: MemoryMode::Off,
                     max_contracts: 5,
@@ -125,6 +127,8 @@ mod setup_turn_tests {
             last_turn: None,
             save_refused: false,
             launch_options: GlobalOptions::default(),
+            chat: None,
+            prepared: None,
         };
         let outcome = handle_line_verbatim("/setup", &mut ctx).expect("the turn runs");
         assert!(

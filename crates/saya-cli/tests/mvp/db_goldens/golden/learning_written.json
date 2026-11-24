@@ -1,0 +1,81 @@
+{
+  "scenario": "learning_written",
+  "requests": [
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 21362,
+      "messages": 2,
+      "launch_summary_count": 1
+    },
+    {
+      "tools": [
+        "checklist",
+        "read",
+        "glob",
+        "grep",
+        "edit",
+        "write",
+        "shell",
+        "rewind",
+        "use_database",
+        "request_clarification",
+        "schema_discovery",
+        "bounded_sql_query",
+        "bounded_sql_query_all",
+        "result_shape",
+        "column_health",
+        "join_check",
+        "designate_answer",
+        "contract_search",
+        "contract_read"
+      ],
+      "body_bytes": 21759,
+      "messages": 4,
+      "launch_summary_count": 1
+    },
+    {
+      "tools": [],
+      "body_bytes": 5566,
+      "messages": 2,
+      "launch_summary_count": 0
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "bounded_sql_query",
+      "sql": "SELECT SUM(amount) AS total FROM revenue",
+      "outcome": "ok"
+    }
+  ],
+  "states": [
+    {
+      "kind": "answer",
+      "text": "the-final-answer"
+    }
+  ],
+  "learning": {
+    "extraction_requests": 1,
+    "proposed": 1,
+    "stored": 1
+  }
+}

@@ -7,9 +7,7 @@ use std::sync::Arc;
 use saya_agent::{ApprovalPolicy, CancellationToken};
 use saya_config::CommandRules;
 use saya_harness::runner::sandbox::{RunSandbox, RunnerSpawn, SandboxProvision};
-use saya_harness::runner::{
-    BackgroundRuns, HostPolicy, SHELL_PATH, SHELL_SPOOL_CAPTURE_CAP_BYTES, WorkspaceShell,
-};
+use saya_harness::runner::{HostPolicy, SHELL_PATH, SHELL_SPOOL_CAPTURE_CAP_BYTES, WorkspaceShell};
 
 use super::model_output::OutputSpool;
 use super::placement::ShellPlacement;
@@ -28,13 +26,6 @@ pub(crate) enum Background {
     /// The shell lives as long as the surface that composed it (a job's root,
     /// a helper): its registry and its cancellation token end with it.
     Owned,
-    /// The shell is composed per turn, but its runs belong to a longer-lived
-    /// owner (a session): every turn's shell reaches the same registry, and
-    /// the owner's token ends the runs.
-    Shared {
-        runs: Arc<BackgroundRuns>,
-        cancellation: CancellationToken,
-    },
 }
 
 impl Background {
@@ -48,7 +39,6 @@ impl Background {
     fn attach(self, shell: WorkspaceShell) -> WorkspaceShell {
         match self {
             Self::Off | Self::Owned => shell,
-            Self::Shared { runs, cancellation } => shell.with_shared_background(runs, cancellation),
         }
     }
 }
@@ -65,6 +55,17 @@ pub(crate) fn advertised(policy: ApprovalPolicy) -> bool {
     policy != ApprovalPolicy::Never
 }
 
+/// Whether a composition may fall back to the host lane. A surface that cannot
+/// obtain a per-call approval may not: a host-lane call is one a person answers,
+/// so with nobody to ask the shell exists only where a sandbox proves.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HostLane {
+    /// The host lane is offered wherever the sandbox does not prove.
+    Allowed,
+    /// No host lane: only a proven sandbox composes a shell at all.
+    ProvenOnly,
+}
+
 /// Proves the sandbox over the placement's root and builds the shell, choosing
 /// the lanes the mode allows. `None` where the config is off or the mode is
 /// `never`, and `None` under `read-only` on a host where the sandbox does not
@@ -77,6 +78,9 @@ pub(crate) fn advertised(policy: ApprovalPolicy) -> bool {
 /// shell outlives one call — a coding job's root, a helper — owns it, a
 /// session shares one registry across its per-turn shells, and a shell that
 /// lives for one call offers none, so no shell offers a run it could not keep.
+/// `host_lane` is the caller's decision about its own host lane, taken with the
+/// same lanes: see [`HostLane`].
+#[allow(clippy::too_many_arguments)] // each argument is a distinct, named input; grouping would obscure the call sites
 pub(crate) fn compose(
     placement: ShellPlacement<'_>,
     policy: ApprovalPolicy,
@@ -85,6 +89,7 @@ pub(crate) fn compose(
     cancellation: CancellationToken,
     background: Background,
     rules: CommandRules,
+    host_lane: HostLane,
 ) -> Option<ShellTool> {
     match prove(placement.root, policy) {
         Some(spawn) => Some(compose_sandboxed(
@@ -98,8 +103,9 @@ pub(crate) fn compose(
             rules,
         )),
         // No proven sandbox: the host lane alone is all this host has, and a
-        // read-only session does not take it.
-        None if policy == ApprovalPolicy::ReadOnly => None,
+        // read-only session — or a surface with nobody to put the call to —
+        // does not take it.
+        None if policy == ApprovalPolicy::ReadOnly || host_lane == HostLane::ProvenOnly => None,
         None => compose_host_only(
             placement.root,
             policy,

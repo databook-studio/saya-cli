@@ -3,7 +3,7 @@ async fn remember_column_kind_translates_to_headless_command() {
     let cmd = match parse_slash_command(
         "/remember analytics.public.orders column-description amount order total",
     ) {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected Contracts, got {other:?}"),
     };
     assert_eq!(
@@ -21,7 +21,7 @@ async fn remember_column_kind_translates_to_headless_command() {
     // column-role: the role is the value, the column precedes it.
     let cmd =
         match parse_slash_command("/remember analytics.public.orders column-role amount measure") {
-            Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+            Ok(Some(SlashCommand::Contracts(request))) => request.command,
             other => panic!("expected Contracts, got {other:?}"),
         };
     assert_eq!(
@@ -39,7 +39,7 @@ async fn remember_column_kind_translates_to_headless_command() {
     // time-column: a table kind (no column); the value is the column name.
     let cmd = match parse_slash_command("/remember analytics.public.orders time-column created_at")
     {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected Contracts, got {other:?}"),
     };
     assert_eq!(
@@ -59,7 +59,7 @@ async fn remember_column_kind_translates_to_headless_command() {
     let cmd = match parse_slash_command(
         "/remember analytics.public.orders description orders fact table",
     ) {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected Contracts, got {other:?}"),
     };
     assert_eq!(
@@ -83,7 +83,7 @@ async fn remember_because_clause_translates_to_headless_reason() {
     let cmd = match parse_slash_command(
         "/remember analytics.public.orders time-column return_date because a rental only counts once it comes back",
     ) {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected Contracts, got {other:?}"),
     };
     assert_eq!(
@@ -103,7 +103,7 @@ async fn remember_because_clause_translates_to_headless_reason() {
     let cmd = match parse_slash_command(
         "/remember analytics.public.orders column-role amount measure because money the customer paid",
     ) {
-        Ok(Some(SlashCommand::Contracts(cmd))) => cmd,
+        Ok(Some(SlashCommand::Contracts(request))) => request.command,
         other => panic!("expected Contracts, got {other:?}"),
     };
     assert_eq!(

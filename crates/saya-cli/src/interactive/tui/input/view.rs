@@ -1,6 +1,6 @@
 use super::{InputBuffer, cursor, wrap};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // the buffer's wrapping view: the new composer wraps its own, the leaf's tests this
 impl InputBuffer {
     /// Returns the text split on '\n'.
     pub(crate) fn lines(&self) -> Vec<&str> {

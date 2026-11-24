@@ -188,7 +188,7 @@ async fn list_shows_both_modes() {
         app
     };
 
-    let listed = in_place_app.list(None).await.unwrap();
+    let listed = in_place_app.list(None, false).await.unwrap();
     let ids: Vec<&str> = listed["jobs"]
         .as_array()
         .unwrap()

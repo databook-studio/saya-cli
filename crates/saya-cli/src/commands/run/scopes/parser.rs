@@ -5,9 +5,9 @@
 /// token and a suggested token are one string for one destination. A
 /// session's `/allow` seeds these words, so `/grants` shows the grammar's
 /// form of what was granted. A run's approval is `capabilities` plus the
-/// frozen decider's seeds. `command:` tokens build no run capability and
-/// ride the tokens verbatim (the run surface never produces them — it
-/// refuses them above — so they only flow on the session surface).
+/// frozen decider's seeds. `command:` and `shell:` tokens build no run
+/// capability and ride the tokens verbatim (the run surface never produces
+/// them — it refuses each above — so they only flow on the session surface).
 #[derive(Debug)]
 pub(crate) struct Approved {
     pub(crate) capabilities: Capabilities,
@@ -72,17 +72,32 @@ pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, Str
     // spelling a call's URL. Normalising at parse, on both surfaces, makes
     // a seeded token and a suggested token one string for one destination:
     // whatever casing the user typed, the grant pre-answers the call it
-    // names. Every other family rides the stated spelling
+    // names. The shell family is normalised the way its suggester spells it
+    // — the command's first words joined by single spaces — by asking that
+    // suggester's own function, so a typed payload and a prompted one are
+    // one token. Every other family rides the stated spelling
     // verbatim: connection names are case-sensitive identifiers nothing in
     // the engine folds, so normalising them would widen a grant across
     // distinct names.
     let stated: Vec<String> = tokens
         .iter()
         .map(|token| match token.split_once(':') {
-            Some(("fetch", rest)) => format!("fetch:{}", rest.to_ascii_lowercase()),
-            _ => token.clone(),
+            Some(("fetch", rest)) => Ok(format!("fetch:{}", rest.to_ascii_lowercase())),
+            // A `shell:` payload is judged by the suggester's own validation,
+            // never a second parser: a prefix it would never derive is a
+            // usage error here, before any surface decides anything.
+            Some(("shell", rest)) => crate::grant_token::normalised_prefix(rest)
+                .map(|prefix| format!("shell:{prefix}"))
+                .ok_or_else(|| {
+                    format!(
+                        "scope `{token}` must be shell:<command prefix>, the leading words of \
+                         one plain command; the suggested prefix is the only one this grammar \
+                         states; {KNOWN}"
+                    )
+                }),
+            _ => Ok(token.clone()),
         })
-        .collect();
+        .collect::<Result<Vec<String>, String>>()?;
     let mut capabilities = Capabilities::default();
     let mut destinations = Vec::new();
     let mut bindings = Vec::new();
@@ -130,6 +145,15 @@ pub(crate) fn parse(tokens: &[String], surface: Surface) -> Result<Approved, Str
             }
             if surface == Surface::Run {
                 return Err(run_command_refusal(token));
+            }
+        } else if token.starts_with("shell:") {
+            // The job shell's own family: a per-call grant word, like `sql:`
+            // — the payload was validated and normalised above, and the token
+            // builds no run capability. The session surface binds it (its
+            // shell's lane consults the store); the run surface refuses it,
+            // because a run composes no session grant store at all.
+            if surface == Surface::Run {
+                return Err(run_shell_refusal(token));
             }
         } else if let Some(rest) = token.strip_prefix("endpoint:") {
             // The payload is judged by the grammar's own shape rule first:

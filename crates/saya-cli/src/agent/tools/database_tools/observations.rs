@@ -43,7 +43,6 @@ pub(crate) enum ObservationOutcome {
 /// Consumed by the bounded turn record, which is the mechanism that stops
 /// learning depending on the model volunteering a `contract_propose` call. Only
 /// tests exercise it today.
-#[allow(dead_code)]
 pub(crate) struct DrainedObservations {
     pub(crate) observations: Vec<ToolObservation>,
     pub(crate) truncated: bool,
@@ -80,7 +79,6 @@ impl ObservationLog {
     /// Returns and clears the turn's observations, reporting whether the cap
     /// dropped any. A second call returns nothing — a turn cannot double-count.
     /// See [`DrainedObservations`] — no production consumer yet.
-    #[allow(dead_code)]
     pub(crate) fn drain(&self) -> DrainedObservations {
         let mut guard = self
             .observations
@@ -107,7 +105,7 @@ impl ObservationLog {
     /// this turn from earning strong evidence from a query it caused, and
     /// `knowledge_items` has no evidence column for a grade to live in, so nothing
     /// in production asks this any more.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // no production reader: retained for its tests only
     pub(crate) fn touched(&self, catalog: &str, schema: &str, object: &str) -> bool {
         let guard = self
             .observations

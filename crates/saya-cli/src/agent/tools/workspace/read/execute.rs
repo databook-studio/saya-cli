@@ -45,6 +45,11 @@ pub(super) async fn execute(
     let Some(workspace) = tools.workspace.as_ref().cloned() else {
         return Err(ToolError::WorkspaceUnavailable);
     };
+    // The privacy rule is the file tools' own, stated before a byte is read:
+    // a path the search walk would not list is a path a read does not serve.
+    if saya_harness::workspace::private_path(&path) {
+        return Err(ToolError::WorkspacePrivatePath { path });
+    }
     validate_context(&context, "workspace read")?;
     let range = requested_range(arguments)?;
     ensure_metadata_fits(&path, context.result_cap, range)?;

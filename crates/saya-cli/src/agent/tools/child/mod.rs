@@ -7,7 +7,9 @@ pub(crate) mod decider;
 mod executor;
 mod factory;
 mod no_effect;
+pub(crate) mod plugins;
 mod scope;
+mod shell_lane;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -15,7 +17,9 @@ mod tests_allow;
 #[cfg(test)]
 mod tests_ask;
 #[cfg(test)]
-mod tests_database;
+pub(crate) mod tests_database;
+#[cfg(test)]
+mod tests_database_plugin;
 #[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
@@ -36,6 +40,9 @@ mod tests_scope;
 mod tests_shell;
 #[cfg(all(test, unix))]
 mod tests_stop;
+#[cfg(test)]
+#[path = "write_ask_tests.rs"]
+mod write_ask_tests;
 
 pub(crate) use compose::{ChildComposeRequest, HelperShell, HelperWeb, compose_child};
 // `ChildTools` is exposed unconditionally so the direct-mode root composition

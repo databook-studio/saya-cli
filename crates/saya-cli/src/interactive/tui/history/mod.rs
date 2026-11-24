@@ -12,7 +12,7 @@ const MAX_ENTRIES: usize = 1000;
 /// stash is composer view state — never persisted, never part of the session
 /// record — and it is cleared by the same two events that end navigation:
 /// `push` (a submit) and `reset` (any edit or cursor move after a key).
-#[allow(dead_code)]
+#[derive(Debug)]
 pub(crate) struct History {
     entries: Vec<String>,
     cursor: Option<usize>,
@@ -22,7 +22,15 @@ pub(crate) struct History {
     disabled: bool,
     omitted: usize,
 }
-#[allow(dead_code)]
+impl Default for History {
+    /// A ring with nothing behind it and nothing to save: no path, so a push
+    /// records in memory and never writes. The front's model opens on one,
+    /// and the launch loads the persisted ring over it ([`History::load`]).
+    fn default() -> Self {
+        Self::in_memory()
+    }
+}
+
 impl History {
     pub(crate) fn load() -> Self {
         let path = crate::interactive::session::lifecycle::paths::default_history_file();
@@ -30,6 +38,21 @@ impl History {
         Self::from_path(path, disabled)
     }
 
+    /// A ring that records what it is given and never touches the disk: the
+    /// model's own, replaced by [`History::load`] at launch.
+    pub(crate) fn in_memory() -> Self {
+        Self {
+            entries: Vec::new(),
+            cursor: None,
+            stash: None,
+            path: PathBuf::new(),
+            limit: MAX_ENTRIES,
+            disabled: false,
+            omitted: 0,
+        }
+    }
+
+    #[allow(dead_code)] // no production caller: launch loads the persisted ring through `load`
     pub(crate) fn with_path(path: PathBuf) -> Self {
         Self {
             entries: Vec::new(),
@@ -56,24 +79,9 @@ impl History {
     }
 
     /// Number of entries omitted by the safety bounds since this history was loaded.
+    #[allow(dead_code)] // read only by the history tests
     pub(crate) fn omitted_count(&self) -> usize {
         self.omitted
-    }
-
-    /// Test seam: a history pre-seeded with `entries` and persistence off.
-    /// Pushes are no-ops (like a disabled history); navigation walks the
-    /// seeded entries, so recall is exercisable without touching the disk.
-    #[cfg(test)]
-    pub(crate) fn with_entries(entries: &[&str]) -> Self {
-        Self {
-            entries: entries.iter().map(|entry| entry.to_string()).collect(),
-            cursor: None,
-            stash: None,
-            path: PathBuf::new(),
-            limit: MAX_ENTRIES,
-            disabled: true,
-            omitted: 0,
-        }
     }
 }
 

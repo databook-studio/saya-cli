@@ -1,4 +1,4 @@
-use super::{BudgetLimit, LimitsFile, ResolvedJobLimits, ResolvedRunLimits, job, run};
+use super::{BudgetLimit, LimitsFile, ResolvedJobLimits, ResolvedRunLimits, database, job, run};
 use crate::ConfigError;
 
 /// One answering surface's resolved ceilings.
@@ -25,6 +25,12 @@ impl Default for ResolvedAnsweringLimits {
 /// are the values it projects into that engine.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolvedLimits {
+    /// The database work a turn may spend: `[limits.database]`, or the retired
+    /// `[limits.session]` mapped onto it for one release.
+    pub database: ResolvedAnsweringLimits,
+    /// The one-shot `ask` surface's override of [`Self::database`]: every key
+    /// `[limits.ask]` leaves unset keeps the database value.
+    pub ask_override: ResolvedAnsweringLimits,
     /// The interactive session's ceilings.
     pub session: ResolvedAnsweringLimits,
     /// The one-shot `ask` surface's ceilings, every unset key already fallen
@@ -36,6 +42,10 @@ pub struct ResolvedLimits {
     pub run: ResolvedRunLimits,
     /// The coding surface's ceilings and its budget mode.
     pub job: ResolvedJobLimits,
+    /// One message per retired `[limits.session]`/`[limits.ask]` table this
+    /// config states, naming what to write instead. Empty when it states
+    /// neither, which is the case an unchanged config is in.
+    pub diagnostics: Vec<String>,
 }
 
 /// Resolves `[limits]`. The keys are spelled out rather than assembled from the
@@ -86,10 +96,14 @@ pub(crate) fn resolve(file: &LimitsFile) -> Result<ResolvedLimits, ConfigError> 
             session.known_tokens,
         )?,
     };
+    let resolved_database = database::resolve(file, session)?;
     Ok(ResolvedLimits {
+        database: resolved_database.database,
+        ask_override: resolved_database.ask_override,
         session,
         ask,
         run: run::resolve(&file.run)?,
         job: job::resolve(&file.job)?,
+        diagnostics: resolved_database.diagnostics,
     })
 }

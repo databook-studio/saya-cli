@@ -23,9 +23,11 @@ pub struct NativeCodingJob {
     pub(super) before_images:
         Option<Arc<saya_harness::coding::local::before_image::BeforeImageStore>>,
     /// The one-live-job lease over an in-place root. Held for the job's
-    /// lifetime; `None` for a managed checkout. The leading underscore says
-    /// the field is held for its drop, not read.
-    pub(super) _in_place_lease: Option<super::in_place_lease::InPlaceLease>,
+    /// lifetime; `None` for a managed checkout, and for a run that states no
+    /// write scope. Behind a lock so a run's end can give it back on the spot:
+    /// the lease a job holds is released when the job goes, and a prepared run
+    /// no line adopted is given up while its own handles are still alive.
+    pub(super) in_place_lease: std::sync::Mutex<Option<super::in_place_lease::InPlaceLease>>,
     /// The one `[tools] allow` list this job runs under: what its request
     /// stated, or — when it stated none — the default that narrows nothing.
     /// Resolved once here from the persisted request, so a resume runs the set
@@ -33,6 +35,12 @@ pub struct NativeCodingJob {
     pub(super) tools: saya_config::ResolvedTools,
     pub(super) root_steering: saya_agent::AgentSteering,
     pub(super) root_mailbox: tokio::sync::Mutex<Option<saya_agent::AgentMailbox>>,
+    /// The job's open root run: the one-time composition a turn runs on. It
+    /// is present from the first turn until the run is closed, so a message
+    /// after the previous turn ended normally is another turn of this same
+    /// run — same epoch, ledger, lease and cancellation token — rather than a
+    /// resumed one.
+    pub(super) root_run: super::parent::RootRun,
     pub(super) observation_sequence: std::sync::atomic::AtomicU64,
     pub(super) observation_failed: std::sync::atomic::AtomicBool,
     /// How much tool-call transcript this job's journal has recorded, and
@@ -66,6 +74,11 @@ pub struct NativeCodingJob {
     pub(super) active: tokio::sync::Mutex<Option<super::controls::LiveSession>>,
     pub(super) progress:
         tokio::sync::broadcast::Sender<saya_harness::coding::coordinator::ChildEvent>,
+    /// The stream a helper's own tool calls are forwarded into while a turn
+    /// runs: the front's sink for that turn, stated by the surface that runs it
+    /// and cleared when the turn ends. `None` — every job surface, and the gaps
+    /// between a chat's turns — forwards nothing.
+    pub(super) forward: std::sync::Mutex<Option<Arc<dyn saya_agent::AgentEventSink>>>,
     pub(super) cancellation: CancellationToken,
     /// The operator's approver for every egressing call this job makes — a
     /// `shell` run outside the sandbox, and a `web_fetch` — serialised so one
@@ -108,12 +121,57 @@ impl NativeCodingJob {
     pub fn job_id(&self) -> &saya_types::JobId {
         self.request.job_id()
     }
+    /// The epoch this run opened: one per run of the job, so a surface can tell
+    /// a further turn of this run from a rolled-over one.
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// Whether this run still holds its one folder lease, as a run that ended
+    /// no longer does: the lease is the run's, never a turn's.
+    #[allow(dead_code)] // read only by the lease tests: no surface asks it yet
+    pub(crate) fn holds_folder_lease(&self) -> bool {
+        self.in_place_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+    }
+    /// Gives the folder's lease back now, rather than when the job object goes:
+    /// dropping the lease closes its descriptor and clears this process's own
+    /// record of it, so the folder is free for the next job over it.
+    pub(super) fn release_folder_lease(&self) {
+        let lease = self
+            .in_place_lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(lease);
+    }
     pub fn cancel(&self) {
         self.cancellation.cancel();
     }
+
     pub fn cancellation(&self) -> CancellationToken {
         self.cancellation.clone()
     }
+    /// The stream a helper's tool calls join right now, or `None` when the
+    /// surface running this job forwards nothing.
+    pub(crate) fn helper_forward(&self) -> Option<Arc<dyn saya_agent::AgentEventSink>> {
+        self.forward
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// States the stream a helper's tool calls join — the front's sink for the
+    /// turn about to run — or clears it. A surface that draws a helper's work
+    /// by its caller states one for the turn and clears it when the turn ends.
+    pub(crate) fn set_helper_forward(&self, sink: Option<Arc<dyn saya_agent::AgentEventSink>>) {
+        *self
+            .forward
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = sink;
+    }
+
     /// The job's private state directory: where the job's records live, and
     /// where a shell result too large for the model's inline bound saves its
     /// full captured output.
@@ -143,17 +201,19 @@ impl NativeCodingJob {
     pub(crate) fn helper_agents(&self) -> &saya_config::HelperAgents {
         &self.application.runtime.resolved.agents.types
     }
-    /// The approval mode the root's `shell` reads when it decides whether a
-    /// run outside the sandbox must be put to the operator. Carried from the
-    /// application, so the job answers with the mode its surface was built in.
-    pub(crate) fn approval_policy(&self) -> saya_agent::ApprovalPolicy {
-        self.application.approval_policy
-    }
     /// The composed runtime the job was built over: the resolved config and
     /// the secret values saya already holds, read where the host policy for a
     /// host shell run is built.
     pub(crate) fn runtime_config(&self) -> &crate::config::runtime::RuntimeConfig {
         &self.application.runtime
+    }
+    /// The host this job was composed over. A surface that builds a run states
+    /// facts on that host (the operator its calls are put to), and a state that
+    /// can only be made on the host's one handle is read back here: composing a
+    /// run therefore hands the host over rather than keeping a second handle to
+    /// it.
+    pub(crate) fn application(&self) -> Arc<CodingApplication> {
+        Arc::clone(&self.application)
     }
     /// The operator's approver for an egressing call — a `shell` run outside
     /// the sandbox, or a `web_fetch` — when one is present. Without it such a

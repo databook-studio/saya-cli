@@ -206,6 +206,12 @@ impl NativeCodingJob {
                 object.insert(key, value);
             }
         }
+        // The job's own diagnostics could not be written: its audit trail is
+        // incomplete, and its outcome says so. Additive, and absent from every
+        // run that kept its diagnostics.
+        if self.diagnostics_incomplete() {
+            outcome["diagnostics_incomplete"] = json!(true);
+        }
         let mut bytes = serde_json::to_vec(&outcome).map_err(CodingError::owner)?;
         if bytes.len() > MAX_OUTCOME_BYTES {
             outcome["changed_paths"] = json!([]);

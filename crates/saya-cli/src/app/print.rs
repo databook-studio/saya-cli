@@ -42,7 +42,10 @@ pub(super) fn dispatch(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
     let format = config::runtime::format_name(&options, &runtime.resolved);
 
     let mode = match resolve_mode(
-        options.permission_mode.as_deref(),
+        options
+            .mode
+            .as_deref()
+            .or(options.permission_mode.as_deref()),
         options.approval_mode.as_deref(),
         false,
     ) {

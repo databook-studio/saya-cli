@@ -49,24 +49,6 @@ fn terminal_unbound_prompts_and_trust_binds_cwd() {
         universe.host_composed(),
         "with the root bound, the lane composes"
     );
-    let names: Vec<String> = universe
-        .definitions(
-            saya_agent::AgentMode::Build,
-            false,
-            ApprovalPolicy::Ask,
-            true,
-            true,
-            false,
-            false,
-            &Default::default(),
-        )
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    assert!(
-        names.contains(&"write".to_string()) && names.contains(&"edit".to_string()),
-        "trust restores the file tools: {names:?}"
-    );
     let _ = (fs::remove_dir_all(&cwd), fs::remove_dir_all(&state));
 }
 

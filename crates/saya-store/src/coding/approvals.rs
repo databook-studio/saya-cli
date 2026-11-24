@@ -45,24 +45,11 @@ impl SqliteStateStore {
         &self,
         event: CodingEventV1,
     ) -> Result<CodingEventAppend, StoreError> {
-        let CodingEventKind::ApprovalRequested { request } = event.event() else {
+        if !matches!(event.event(), CodingEventKind::ApprovalRequested { .. }) {
             return Err(StoreError::Invalid);
-        };
-        let request = request.clone();
-        let pool = self.pool().await?;
-        let mut transaction = pool
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(|_| StoreError::Unavailable)?;
-        let outcome = match append_event_in_tx(&mut transaction, event).await {
-            Ok(CodingEventAppend::AlreadyPresent(sequence)) => {
-                Ok(CodingEventAppend::AlreadyPresent(sequence))
-            }
-            Ok(CodingEventAppend::Appended(sequence)) => admit_request(&mut transaction, &request)
-                .await
-                .map(|()| CodingEventAppend::Appended(sequence)),
-            Err(error) => Err(error),
-        };
+        }
+        let mut transaction = begin_immediate(self).await?;
+        let outcome = record_request_in_tx(&mut transaction, Ok(event)).await;
         finish(transaction, outcome).await
     }
 
@@ -70,38 +57,81 @@ impl SqliteStateStore {
         &self,
         event: CodingEventV1,
     ) -> Result<CodingEventAppend, StoreError> {
-        let CodingEventKind::ApprovalClosed {
-            request_sequence,
-            disposition,
-        } = event.event()
-        else {
+        let CodingEventKind::ApprovalClosed { disposition, .. } = event.event() else {
             return Err(StoreError::Invalid);
         };
         if matches!(disposition, ApprovalDisposition::Consumed { .. }) {
             return Err(StoreError::Invalid);
         }
-        let request_sequence = *request_sequence;
-        let pool = self.pool().await?;
-        let mut transaction = pool
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(|_| StoreError::Unavailable)?;
-        let outcome = match append_event_in_tx(&mut transaction, event.clone()).await {
-            Ok(CodingEventAppend::AlreadyPresent(sequence)) => {
-                Ok(CodingEventAppend::AlreadyPresent(sequence))
-            }
-            Ok(CodingEventAppend::Appended(sequence)) => {
-                close_pending_request(&mut transaction, &event, request_sequence, sequence)
-                    .await
-                    .map(|()| CodingEventAppend::Appended(sequence))
-            }
-            Err(error) => Err(error),
-        };
+        let mut transaction = begin_immediate(self).await?;
+        let outcome = close_request_in_tx(&mut transaction, Ok(event)).await;
         finish(transaction, outcome).await
     }
 }
 
-async fn finish(
+pub(super) async fn begin_immediate(
+    store: &SqliteStateStore,
+) -> Result<Transaction<'_, Sqlite>, StoreError> {
+    store
+        .pool()
+        .await?
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(|_| StoreError::Unavailable)
+}
+
+/// Records one approval request whose event was built — or refused — by the
+/// caller, inside the caller's transaction. Nothing is written when it fails,
+/// so a refusal consumes no sequence.
+pub(super) async fn record_request_in_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    built: Result<CodingEventV1, StoreError>,
+) -> Result<CodingEventAppend, StoreError> {
+    let event = built?;
+    let CodingEventKind::ApprovalRequested { request } = event.event() else {
+        return Err(StoreError::Invalid);
+    };
+    let request = request.clone();
+    match append_event_in_tx(transaction, event).await? {
+        CodingEventAppend::AlreadyPresent(sequence) => {
+            Ok(CodingEventAppend::AlreadyPresent(sequence))
+        }
+        CodingEventAppend::Appended(sequence) => {
+            admit_request(transaction, &request).await?;
+            Ok(CodingEventAppend::Appended(sequence))
+        }
+    }
+}
+
+/// The closure side of [`close_coding_approval`], with the same contract.
+pub(super) async fn close_request_in_tx(
+    transaction: &mut Transaction<'_, Sqlite>,
+    built: Result<CodingEventV1, StoreError>,
+) -> Result<CodingEventAppend, StoreError> {
+    let event = built?;
+    let CodingEventKind::ApprovalClosed {
+        request_sequence,
+        disposition,
+    } = event.event()
+    else {
+        return Err(StoreError::Invalid);
+    };
+    if matches!(disposition, ApprovalDisposition::Consumed { .. }) {
+        return Err(StoreError::Invalid);
+    }
+    let request_sequence = *request_sequence;
+    match append_event_in_tx(transaction, event.clone()).await? {
+        CodingEventAppend::AlreadyPresent(sequence) => {
+            Ok(CodingEventAppend::AlreadyPresent(sequence))
+        }
+        CodingEventAppend::Appended(sequence) => {
+            close_pending_request(transaction, &event, request_sequence, sequence).await?;
+            Ok(CodingEventAppend::Appended(sequence))
+        }
+    }
+}
+
+pub(super) async fn finish(
     transaction: Transaction<'_, Sqlite>,
     outcome: Result<CodingEventAppend, StoreError>,
 ) -> Result<CodingEventAppend, StoreError> {

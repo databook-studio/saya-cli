@@ -6,8 +6,8 @@
 //! text only — no UI.
 
 mod diff;
-mod hunks;
-mod line_diff;
+pub(crate) mod hunks;
+pub(crate) mod line_diff;
 mod ops;
 mod render;
 mod render_outcome;

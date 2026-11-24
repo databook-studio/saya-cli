@@ -21,9 +21,10 @@ mod resolve;
 
 pub use allow::{ToolsAllow, ToolsAllowError, database_tool_names, governed_tool_names};
 pub use catalog::{
-    DATABASE_TOOLS, GOVERNED_TOOLS, MAX_MCP_TOOL_NAME_CHARS, MCP_TOOL_PREFIX, allow_list_name,
-    canonical_tool_name, is_database_tool, is_governed_tool, is_mcp_allow_name,
-    is_mcp_tool_call_name, is_valid_mcp_tool_segment, mcp_server_of,
+    DATABASE_TOOLS, DEPRECATED_TOOL_ALIASES, GOVERNED_TOOLS, MAX_MCP_TOOL_NAME_CHARS,
+    MCP_TOOL_PREFIX, allow_list_name, canonical_tool_name, deprecation_note, is_database_tool,
+    is_governed_tool, is_mcp_allow_name, is_mcp_tool_call_name, is_valid_mcp_tool_segment,
+    mcp_server_of, tool_successor,
 };
 pub use resolve::ResolvedTools;
 

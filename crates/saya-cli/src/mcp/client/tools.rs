@@ -34,7 +34,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use saya_agent::{ApprovalDecider, ApprovalPolicy, CancellationToken, ToolDefinition};
+use saya_agent::{ApprovalPolicy, CancellationToken, ToolDefinition};
 use saya_config::{ResolvedMcpServers, SecretResolver};
 
 use super::bounds::MAX_CONNECT_TOTAL;
@@ -85,8 +85,6 @@ pub(crate) enum Consent {
     Absent,
     /// A human, addressed by the tool's own prompt line.
     Operator(Arc<dyn Operator>),
-    /// A surface's own decider, addressed with the tool's own definition.
-    Decider(Arc<dyn ApprovalDecider>),
 }
 
 /// The MCP client one surface holds.
@@ -176,33 +174,6 @@ impl McpTools {
             caller: caller.clone(),
             cancellation,
         }))
-    }
-
-    /// The same started servers under one turn's consent: the session
-    /// composes its servers once and hands every turn its own mode, consent,
-    /// and cancellation. No server is started and no request is made — this
-    /// is the second half of the value above, not a second connection.
-    pub(crate) fn with_consent(
-        &self,
-        policy: ApprovalPolicy,
-        consent: Consent,
-        caller: Caller,
-        cancellation: CancellationToken,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            servers: Arc::clone(&self.servers),
-            reports: Arc::clone(&self.reports),
-            policy,
-            consent,
-            caller,
-            cancellation,
-        })
-    }
-
-    /// Whether this client started no server at all. A client with none is still
-    /// a client — the reports say why — but it advertises nothing.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.servers.is_empty()
     }
 
     /// The connection pass off the async runtime's worker: starting a process

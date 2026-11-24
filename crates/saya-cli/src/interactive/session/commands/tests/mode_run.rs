@@ -1,6 +1,6 @@
-/// `/mode` mirrors `/approvals`: bare reports without changing, a mode name
-/// is handed to the loop as a switch, and the bare answer always names the
-/// current posture. Both answers state the bypass composition verbatim —
+/// `/mode` bare reports without changing, a mode name is handed to the loop as
+/// a switch, and the bare answer always names the current posture. `/approvals`
+/// is the same command, so the same tests would read identically for it. Both answers state the bypass composition verbatim —
 /// under `bypass`, Plan still denies writes.
 #[test]
 fn mode_reports_and_hands_a_switch_to_the_loop() {
@@ -8,7 +8,7 @@ fn mode_reports_and_hands_a_switch_to_the_loop() {
     use saya_agent::PermissionMode;
     let mut state = SessionState::new("test", None, "gpt-4o");
     // Bare reports the default without changing it.
-    let SessionAction::Message(report) = state.apply(SlashCommand::Mode(None), &[]) else {
+    let SessionAction::Message(report) = state.apply(SlashCommand::Mode(crate::slash::ModeRequest::default()), &[]) else {
         panic!("expected SessionAction::Message");
     };
     assert_eq!(
@@ -22,8 +22,11 @@ fn mode_reports_and_hands_a_switch_to_the_loop() {
     // A named mode is a switch, not a state edit here: the loops run the one
     // shared `permissions::mode::switch` over the session's policy.
     assert_eq!(
-        state.apply(SlashCommand::Mode(Some(PermissionMode::Plan)), &[]),
-        SessionAction::Mode(PermissionMode::Plan)
+        state.apply(
+            SlashCommand::Mode(crate::slash::ModeRequest::mode(Some(PermissionMode::Plan))),
+            &[]
+        ),
+        SessionAction::Mode(crate::slash::ModeRequest::mode(Some(PermissionMode::Plan)))
     );
     assert_eq!(
         state.agent_mode, "build",
@@ -32,7 +35,7 @@ fn mode_reports_and_hands_a_switch_to_the_loop() {
     assert_eq!(state.approval_mode, "ask");
     // With the pair set the way the loop's switch sets it, bare reports plan.
     state.agent_mode = "plan".into();
-    let SessionAction::Message(again) = state.apply(SlashCommand::Mode(None), &[]) else {
+    let SessionAction::Message(again) = state.apply(SlashCommand::Mode(crate::slash::ModeRequest::default()), &[]) else {
         panic!("expected SessionAction::Message");
     };
     assert!(
@@ -63,7 +66,7 @@ fn mode_answers_state_the_bypass_composition_verbatim() {
             PermissionMode::Plan => "plan".into(),
             _ => "build".into(),
         };
-        let SessionAction::Message(answer) = state.apply(SlashCommand::Mode(None), &[]) else {
+        let SessionAction::Message(answer) = state.apply(SlashCommand::Mode(crate::slash::ModeRequest::default()), &[]) else {
             panic!("expected SessionAction::Message");
         };
         assert!(
@@ -73,18 +76,34 @@ fn mode_answers_state_the_bypass_composition_verbatim() {
     }
 }
 
-/// A consent posture with no mode of its own — `/approvals read-only` — is
-/// reported as the pair it is, never rounded to one of the four modes.
+/// One axis: a posture that used to have no mode of its own — `read-only`,
+/// set by `/approvals` — is reported as the mode it is, in the mode's own
+/// words, not as a second vocabulary the switch cannot name.
 #[test]
-fn a_non_switchable_consent_posture_is_reported_as_the_pair() {
+fn a_read_only_posture_is_reported_as_its_mode() {
     let mut state = SessionState::new("test", None, "gpt-4o");
     state.approval_mode = "read-only".into();
-    let SessionAction::Message(report) = state.apply(SlashCommand::Mode(None), &[]) else {
+    let SessionAction::Message(report) = state.apply(
+        SlashCommand::Mode(crate::slash::ModeRequest::default()),
+        &[],
+    ) else {
         panic!("expected SessionAction::Message");
     };
     assert!(
-        report.contains("read-only") && report.contains("not one of the switchable modes"),
-        "the report states the pair rather than inventing a mode: {report}"
+        report.starts_with("Mode: read-only — read-shaped calls run"),
+        "the report names the mode it is: {report}"
+    );
+
+    state.approval_mode = "never".into();
+    let SessionAction::Message(report) = state.apply(
+        SlashCommand::Mode(crate::slash::ModeRequest::default()),
+        &[],
+    ) else {
+        panic!("expected SessionAction::Message");
+    };
+    assert!(
+        report.starts_with("Mode: never — nothing is put to you"),
+        "the report names the mode it is: {report}"
     );
 }
 

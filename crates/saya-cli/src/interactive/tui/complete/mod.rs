@@ -2,14 +2,10 @@ mod arguments;
 mod commands;
 
 #[cfg(test)]
-use commands::description_for;
-
-#[cfg(test)]
 #[path = "complete_tests.rs"]
 mod tests;
 
 /// A single completion candidate for the slash popup.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Candidate {
     pub(crate) value: String,
@@ -20,7 +16,6 @@ pub(crate) struct Candidate {
 /// the half-open CHAR range [start, end) in `line` that accepting a candidate
 /// replaces. Returns None when the popup should not be shown (line does not
 /// start with '/', or the command takes no completable argument).
-#[allow(dead_code)]
 pub(crate) fn slash_candidates(
     line: &str,
     profiles: &[String],

@@ -1,47 +1,155 @@
 fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
     let LaunchContext {
-        cli,
         runtime,
         store,
         state_db,
         format,
-        mut state,
-        mut session,
+        state,
+        session,
         fresh,
-        trusted_echo,
         tui_trust_pending,
         launch,
+        cli,
         ..
     } = ctx;
-    let trusted_echo_for_tui = trusted_echo.clone();
-    // Interactive terminals get the full-screen TUI. Chart temp files are
-    // removed when the session ends, on the clean path and on error alike.
-    // The startup trust question rides the TUI's modal when it is still
-    // open — asked inside the interface after the splash paints, never
-    // as a raw stdin read in front of it. The modal binds through the
-    // live runtime when answered; the pin and the header facts below
-    // refresh from the rebound session when the TUI returns them.
-    let outcome = super::super::tui::run(super::super::tui::TuiSession {
-        runtime: &runtime,
-        store: &store,
-        state_db: &state_db,
+    let entered = std::time::Instant::now();
+    // The startup trust question rides the surface's own pane (`02` §9.4): the
+    // session an answer binds through is handed to the store, and taken back
+    // when the surface ends. A raw stdin read in front of the interface would
+    // pre-empt the alternate screen and leave the terminal broken.
+    let runtime = std::sync::Arc::new(runtime);
+    // The ground the surface paints with, resolved once here — before the guard
+    // takes the terminal, because `auto` may ask it over OSC 11 and that reply
+    // must land before any key is read. `[ui] theme`/`--theme` select light or
+    // dark through the kept theme leaf; `output.color` and `NO_COLOR` switch
+    // colour off for the same leaf, which paints the answer body's markdown.
+    use std::io::IsTerminal as _;
+    let is_terminal = std::io::stdout().is_terminal();
+    let colour_on = crate::interactive::tui::decide_public(
+        runtime.resolved.output_color,
+        is_terminal,
+        std::env::var_os("NO_COLOR").is_some(),
+    );
+    crate::interactive::tui::set_color_enabled(colour_on);
+    let ground = crate::interactive::tui::resolve_startup_theme(
+        runtime.resolved.ui_theme,
+        colour_on,
+        is_terminal,
+        crate::interactive::tui::probe_terminal_theme,
+        std::env::var("COLORFGBG").ok().as_deref(),
+    );
+    crate::interactive::tui::set_theme(ground);
+    // The session's facts, and the record this launch resumed: the one opener
+    // reads its link exactly as the plain loop's first message does, so an
+    // attach, a next epoch, a read-only record and a refusal all open the same
+    // way on both surfaces.
+    let composed = surface_parts(
+        &state,
+        &session,
+        runtime.as_ref(),
+        &state_db,
         format,
-        state: &mut state,
-        session: &mut session,
-        trusted_echo: trusted_echo_for_tui.as_deref(),
-        trust_pending: tui_trust_pending,
-        launch: &launch,
-        // The CLI options ride along so `/setup` can build the wizard's
-        // real flow options (`FlowOptions::real`) at invocation time.
-        options: &cli.options,
+    );
+    let model = surface_model(&state, fresh, &runtime.resolved);
+    // `NO_COLOR` is read here, once, and handed to the pure resolver: any
+    // non-empty value selects the no-colour column (02 §12 rule 4, no-color.org),
+    // and nothing later in the process reads it again.
+    let colour_env: std::collections::BTreeMap<String, String> =
+        std::env::var(crate::front::tui::theme::NO_COLOR)
+            .ok()
+            .map(|value| {
+                [(
+                    String::from(crate::front::tui::theme::NO_COLOR),
+                    value,
+                )]
+                .into_iter()
+                .collect()
+            })
+            .unwrap_or_default();
+    let facts = surface_facts(
+        &state,
+        tui_trust_pending,
+        crate::front::tui::theme::scheme_for(ground, &colour_env),
+    );
+    let commands = state.user_commands.clone();
+    let metrics = session.session_metrics();
+    // The configuration in force from here on: a `/reload` (or the apply a
+    // closed guided setup runs) swaps what the next read sees, and the direct
+    // commands share the same handle. The session's state is shared the same
+    // way, so a reload's re-seed reaches the record this launch saves.
+    let live = std::sync::Arc::new(crate::front::tui::LiveRuntime::new(std::sync::Arc::clone(
+        &runtime,
+    )));
+    // A job this surface opens runs as the old surface ran one: over the same
+    // runtime, the same store, this session's folder, and the mode in force at
+    // the moment the surface took the terminal — the session itself is handed
+    // to the trust store below, so its policy is read here, once. The runtime is
+    // the launch's live one, so a job opened after a `/reload` composes over the
+    // configuration then in force, exactly as a direct command reads it.
+    let jobs = std::sync::Arc::new(crate::front::tui::JobDeps::new(
+        std::sync::Arc::clone(&live),
+        state_db.clone(),
+        session.root(),
+        &state.id,
+        session.policy().mode(),
+    ));
+    // What the surface's command table reads: the session's own stores, its
+    // policy and journal, its universe and its recovery handle, and the folder
+    // it bound. Taken before the session is handed to the trust store, because
+    // the table outlives that hand-over and never holds the session itself.
+    let ops = crate::front::tui::ops::OpsParts {
+        store: store.clone(),
+        state_db: state_db.clone(),
+        format,
+        root: session.root().map(std::path::Path::to_path_buf),
+        policy: session.policy(),
+        journal: session.journal(),
+        universe: session.universe(),
+        recovery: session.recovery().clone(),
+    };
+    let trust = std::sync::Arc::new(crate::front::tui::direct_trust::SessionTrust::new(
+        session,
+        std::sync::Arc::clone(&runtime),
+        launch,
+    ));
+    let state = std::sync::Arc::new(std::sync::Mutex::new(state));
+    let direct = std::sync::Arc::new(crate::front::tui::direct_run::DirectDeps {
+        runtime: std::sync::Arc::clone(&live),
+        state_db: state_db.clone(),
+        format,
+        trust: std::sync::Arc::clone(&trust)
+            as std::sync::Arc<dyn crate::front::tui::direct_trust::TrustStore>,
     });
-    // The session has ended — cleanly or by cancel. The end hooks observe it,
+    let outcome = run_surface(SurfaceLaunch {
+        composed,
+        model,
+        facts,
+        direct,
+        jobs,
+        commands,
+        metrics,
+        entered,
+        options: cli.options.clone(),
+        runtime: live,
+        state: std::sync::Arc::clone(&state),
+        ops,
+    });
+    // The surface is done with the state: a reload's re-seed is already in it,
+    // and what the launch saves below reads that.
+    let mut state = state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let mut session = trust
+        .release()
+        .ok_or("the surface ended without giving its session back")?;
+    // The surface has ended — cleanly or by cancel. The end hooks observe it,
     // each still bounded by its own timeout; a failing hook cannot change the
     // exit code.
     session.end_hooks(&runtime);
-    // The terminal is restored — the TUI's guard dropped when `run`
-    // returned — so the last settled question's metrics section can go
-    // to stderr now, never while the TUI owned the screen.
+    // The terminal is restored — the surface's guard dropped when its loop
+    // returned — so the last settled question's metrics section can go to
+    // stderr now, never while the surface owned the screen.
     if let Some(snapshot) = session.take_question_metrics() {
         eprintln!(
             "{}",
@@ -49,18 +157,18 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
         );
     }
     crate::local_metrics_format::print_metrics_section(&session.session_metrics());
-    if let Ok(super::super::tui::TrustOutcome::Answered(dir)) = &outcome {
-        let _ = dir;
-    }
     crate::chart::cleanup_session_charts();
-    let code = outcome.map(|outcome| outcome.exit_code())?;
+    // The surface's own exit code: a session that ended because the operator
+    // left is a clean exit, exactly as the surface this one replaces was.
+    outcome?;
+    let code = 0;
     if let Some(root) = session.record_root(fresh) {
         state.workspace_root = Some(root);
     }
     state.sync_host_posture(&session.universe());
-    // The last save of a TUI session: a refusal at the record cap says
-    // its sentence through the Error event once the terminal is
-    // restored, and keeps the TUI's own exit code.
+    // The last save of a terminal session: a refusal at the record cap says its
+    // sentence through the Error event once the terminal is restored, and keeps
+    // the surface's own exit code.
     match save_with_explanation(&store, &state) {
         Err(SaveFailure::LimitReached(text)) => {
             session_emit::emit_action(SessionAction::Error(text), format, &mut state, &store)?

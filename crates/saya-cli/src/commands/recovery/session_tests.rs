@@ -1,37 +1,26 @@
-//! Tests for the `/recovery` surface operation: the one `run_recovery`
-//! every surface runs (status, on, off, list, diff, restore), the
-//! id-prefix resolution, and the end-to-end path — a real composed
-//! universe whose executor records through the session's own handle,
-//! flipped by `run_recovery(On)` and undone by `run_recovery(Restore)`.
+//! Twin of `commands/recovery/session_tests/*`, deleted with the old turn
+//! body: the `/recovery` operation layer and the record-id resolver.
+//!
+//! `slash/tests/notes_recovery.rs` pins the *parsing* of every sub-word; these
+//! pin what the parsed command does to the session's own handle and store, and
+//! what a typed id resolves to before the store is asked.
 
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Arc;
-
-use saya_agent::CancellationToken;
-use saya_types::{CheckpointState, EditSource, RestoreEligibility};
+use saya_types::{CheckpointState, EditSource};
 
 use super::session::resolve_id;
 use super::testing::{SESSION, Sandbox, record_commit};
-use super::{BeforeSummary, ChangeItem, RecoveryCommand, StatusNow, run_recovery};
-use crate::agent::session_recovery_attach::attach_recovery;
-use crate::agent::tools::DatabaseTools;
-use crate::commands::recovery::sha256_hex;
+use super::*;
 use crate::interactive::session::lifecycle::recovery::RecoveryHandle;
-use crate::interactive::session::universe::{SessionComposition, SessionUniverse};
 
-const NOW: i64 = 1_700_000_000_000;
+/// The status line of an untouched session, byte for byte.
+const STATUS_OFF: &str =
+    "Recovery is off. 0 recorded edit(s) this session (0 KiB of 64 MiB, 0 of 128).";
 
-/// The retention text `/recovery on` must say, byte for byte, on every
-/// surface. Written out here so production can never drift from it.
-const ON_TEXT: &str = "Recovery is on. From the next file edit, write and edit keep the file's previous contents so you can undo an edit. The copies are private to you (owner-only files under the saya sessions directory, outside your project), limited to 128 edits, 64 MiB and 8 MiB per file, and are deleted with the session (/sessions delete). Recovery covers direct file-tool edits only — never commands, downloads, or database effects — and files that look like credentials or secrets are edited without a copy. Edits made before this point were not recorded. Use /recovery list to see them and /recovery restore <id> to undo one.";
+/// The unbound refusal, byte for byte.
+const NO_WORKSPACE: &str = "No workspace is bound, so there are no file edits to record. Launch \
+                            inside a git worktree or pass --workspace <dir>.";
 
-fn handle_for(sandbox: &Sandbox) -> RecoveryHandle {
-    RecoveryHandle::new(&sandbox.outer.join("sessions"), SESSION)
-}
-
-include!("session_tests/status_and_flags.rs");
-
+/// One recorded edit as `resolve_id` sees it.
 fn item(id: &str) -> ChangeItem {
     ChangeItem {
         id: id.to_owned(),
@@ -40,121 +29,152 @@ fn item(id: &str) -> ChangeItem {
         state: CheckpointState::Committed,
         before: BeforeSummary::Absent,
         after: None,
-        created_unix_ms: NOW,
-        restore: StatusNow::Known(RestoreEligibility::Eligible),
+        created_unix_ms: 0,
+        restore: StatusNow::Unreadable,
     }
 }
 
-include!("session_tests/record_id_resolution.rs");
-
-include!("session_tests/session_surface.rs");
-
-async fn write_through(universe: &SessionUniverse, args: serde_json::Value) -> serde_json::Value {
-    let tools = Arc::new(attached_tools(universe));
-    universe
-        .executor(
-            Arc::clone(&tools),
-            &CancellationToken::new(),
-            None,
-            None,
-            None,
-            Default::default(),
-        )
-        .execute("write", args)
-        .await
-        .expect("the write succeeds")
+/// The session's own handle over the sandbox's session store.
+fn handle(sandbox: &Sandbox) -> RecoveryHandle {
+    RecoveryHandle::new(&sandbox.outer.join("sessions"), SESSION)
 }
 
-/// The per-turn shape: fresh tools over the session's workspace, then the
-/// attach — exactly what `run_prompt` builds per turn.
-fn attached_tools(universe: &SessionUniverse) -> DatabaseTools {
-    attach_recovery(
-        DatabaseTools::new(None, 100, true).with_workspace(universe.workspace()),
-        Some(universe),
-    )
+#[test]
+fn the_full_id_and_a_unique_prefix_resolve_to_the_one_edit() {
+    let items = [item("ck-aaaaaa1111"), item("ck-bbbbbb2222")];
+    let full = "ck-aaaaaa1111";
+    assert_eq!(resolve_id(&items, full).expect("full id"), full);
+    assert_eq!(
+        resolve_id(&items, "ck-aaaaaa").expect("unique prefix"),
+        full,
+        "a unique prefix names the one edit"
+    );
+    let prefixed = [item("ck-aaaaaa1111"), item("ck-bbbbbb2222")];
+    assert_eq!(
+        resolve_id(&prefixed, "ck-bbbbbb").expect("unique prefix"),
+        "ck-bbbbbb2222"
+    );
 }
 
-fn temp_dir(label: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!(
-        "saya-recovery-session-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("the temp root");
-    root
+#[test]
+fn an_ambiguous_prefix_names_the_problem() {
+    let items = [item("ck-aaaaaa1111"), item("ck-aaaaaa2222")];
+    let error = resolve_id(&items, "ck-aaaaaa").expect_err("two matches cannot resolve");
+    assert!(
+        error.contains("matches 2 recorded edits"),
+        "the ambiguity is named: {error}"
+    );
 }
 
-/// A minimal resolved runtime for the composed universe: no profile, no
-/// secrets, temp-rooted investigations root — the shape the attach tests
-/// build, inlined here because the TUI's test-support module is private
-/// to its tree.
-fn test_runtime() -> crate::config::runtime::RuntimeConfig {
-    use saya_config::{
-        AiProvider, ColorChoice, ConnectionsFile, MemoryMode, OutputFormat, ResolvedAi,
-        ResolvedConfig, ResolvedHostCommands, ResolvedJobs, ResolvedMemory, ThemeChoice,
-    };
-    crate::config::runtime::RuntimeConfig {
-        resolved: ResolvedConfig {
-            hooks: Default::default(),
-            web_search: Default::default(),
-            mcp_servers: Default::default(),
-            permissions: Default::default(),
-            tools: Default::default(),
-            coding: Default::default(),
-            agents: Default::default(),
-            instructions: Default::default(),
-            profile_name: None,
-            profile: None,
-            limits: Default::default(),
-            ai: ResolvedAi {
-                app_attribution: true,
-                provider: AiProvider::Ollama,
-                model: "test-model".into(),
-                base_url: None,
-                api_key: None,
-                allow_data_sharing: true,
-                temperature: 0.0,
-                timeout_seconds: 60,
-                idle_timeout_seconds: 90,
-                request_timeout_seconds: 180,
-                max_output_tokens: None,
-                reasoning_effort: None,
-                context_byte_budget: 256 * 1024,
-                context_window_tokens: None,
-                show_thinking: false,
-                compaction: saya_config::CompactionMode::Auto,
-                compaction_trigger_percent: 50,
-                retry_delays_ms: vec![250, 500, 1000],
-            },
-            max_rows: 100,
-            read_only: true,
-            candidates: 1,
-            jobs: ResolvedJobs::default(),
-            query_timeout_seconds: 5,
-            output_format: OutputFormat::Text,
-            output_color: ColorChoice::Auto,
-            ui_theme: ThemeChoice::Auto,
-            memory: ResolvedMemory {
-                mode: MemoryMode::Off,
-                max_contracts: 5,
-                max_claims_per_contract: 12,
-                max_context_bytes: 16384,
-            },
-            host_commands: ResolvedHostCommands::default(),
-            session_deny: Default::default(),
-            ignored_project_overrides: Vec::new(),
-            provenance: Default::default(),
-            endpoints: Default::default(),
-        },
-        connections: ConnectionsFile::default(),
-        config_path: None,
-        connections_path: None,
-        cache_scope: temp_dir("recovery-cache"),
-        investigations_root: crate::config::runtime::temp_investigations_root(),
-        secret_values: Default::default(),
+#[test]
+fn a_too_short_prefix_is_refused() {
+    let items = [item("ck-aaaaaa1111")];
+    let error = resolve_id(&items, "ck-abc").expect_err("a short prefix cannot identify one");
+    assert!(
+        error.contains("too short"),
+        "the short prefix is named: {error}"
+    );
+}
+
+#[test]
+fn an_unknown_or_malformed_id_is_refused_without_reaching_the_store() {
+    let items = [item("ck-aaaaaa1111")];
+    let unknown = resolve_id(&items, "ck-zzzzzz").expect_err("no match cannot resolve");
+    assert!(
+        unknown.contains("matches no recorded edit"),
+        "the unknown prefix is named: {unknown}"
+    );
+    let malformed = resolve_id(&items, "not-a-checkpoint").expect_err("no ck- shape");
+    assert!(
+        malformed.contains("ck-"),
+        "the malformed id names the id shape: {malformed}"
+    );
+    // The resolver is pure over the listing: refusing never touches the items.
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "ck-aaaaaa1111");
+}
+
+#[test]
+fn status_reports_the_flag_and_the_quota_usage() {
+    let sandbox = Sandbox::new("status");
+    let handle = handle(&sandbox);
+    let (ok, text) = run_recovery(RecoveryCommand::Status, &handle, Some(&sandbox.ws), 0);
+    assert!(ok, "{text}");
+    assert_eq!(text, STATUS_OFF, "{text}");
+}
+
+#[test]
+fn status_without_a_workspace_says_so() {
+    let sandbox = Sandbox::new("status-unbound");
+    let handle = handle(&sandbox);
+    let (ok, text) = run_recovery(RecoveryCommand::Status, &handle, None, 0);
+    assert!(ok, "{text}");
+    assert!(
+        text.contains("Recovery is off. 0 recorded edit(s)"),
+        "{text}"
+    );
+    assert!(text.contains("No workspace is bound."), "{text}");
+}
+
+#[test]
+fn on_pins_the_retention_text_and_flips_the_session_flag() {
+    let sandbox = Sandbox::new("on");
+    let handle = handle(&sandbox);
+    assert!(
+        !handle.is_enabled(),
+        "recovery is opt-in: off at acquisition"
+    );
+    let (ok, text) = run_recovery(RecoveryCommand::On, &handle, Some(&sandbox.ws), 0);
+    assert!(ok, "{text}");
+    assert!(text.contains("Recovery is on."), "{text}");
+    for retention in ["128 edits, 64 MiB and 8 MiB per file", "/sessions delete"] {
+        assert!(
+            text.contains(retention),
+            "the retention text states {retention}: {text}"
+        );
     }
+    assert!(handle.is_enabled(), "the session flag flips on");
+}
+
+#[test]
+fn on_twice_says_already_on() {
+    let sandbox = Sandbox::new("on-twice");
+    let handle = handle(&sandbox);
+    let (ok, _) = run_recovery(RecoveryCommand::On, &handle, Some(&sandbox.ws), 0);
+    assert!(ok);
+    let (ok, text) = run_recovery(RecoveryCommand::On, &handle, Some(&sandbox.ws), 0);
+    assert!(ok, "{text}");
+    assert_eq!(text, "Recovery is already on.", "{text}");
+}
+
+#[test]
+fn on_without_a_workspace_refuses_and_the_flag_stays_off() {
+    let sandbox = Sandbox::new("on-unbound");
+    let handle = handle(&sandbox);
+    let (ok, text) = run_recovery(RecoveryCommand::On, &handle, None, 0);
+    assert!(!ok, "{text}");
+    assert_eq!(text, NO_WORKSPACE, "{text}");
+    assert!(!handle.is_enabled(), "a refused on leaves the flag off");
+}
+
+#[test]
+fn off_flips_the_flag_and_keeps_what_was_recorded() {
+    let sandbox = Sandbox::new("off");
+    let _record = record_commit(
+        &sandbox,
+        "notes.txt",
+        EditSource::WorkspaceEdit,
+        None,
+        b"written\n",
+        1_000,
+    );
+    let handle = handle(&sandbox);
+    let (ok, _) = run_recovery(RecoveryCommand::On, &handle, Some(&sandbox.ws), 0);
+    assert!(ok);
+    let (ok, text) = run_recovery(RecoveryCommand::Off, &handle, Some(&sandbox.ws), 0);
+    assert!(ok, "{text}");
+    assert_eq!(text, "Recovery is off.", "{text}");
+    assert!(!handle.is_enabled(), "the session flag flips off");
+    let view = list_changes(&sandbox.store, SESSION, Some(&sandbox.ws)).expect("list");
+    assert_eq!(view.items.len(), 1, "turning off keeps what was recorded");
 }

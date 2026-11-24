@@ -6,23 +6,19 @@
 use serde::{Deserialize, Serialize};
 
 /// At most 10 distinct database objects are tracked per turn record.
-#[allow(dead_code)]
 pub const MAX_TURN_OBJECTS: usize = 10;
 
 /// A turn-scoped object identifier (`T0`, `T1`,...) presented to the extractor.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct TurnObjectId(String);
 
 impl TurnObjectId {
     /// Creates a new `TurnObjectId` from a numeric index.
-    #[allow(dead_code)]
     pub fn new(index: usize) -> Self {
         Self(format!("T{index}"))
     }
 
     /// Parses a string into a `TurnObjectId` if it matches `T\d+` (case-insensitive).
-    #[allow(dead_code)]
     pub fn parse(s: &str) -> Option<Self> {
         let trimmed = s.trim();
         if trimmed.len() < 2 {
@@ -42,13 +38,13 @@ impl TurnObjectId {
     }
 
     /// Returns the string representation (e.g. `"T0"`).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // read only by this module's own tests
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Returns the underlying numeric index.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // read only by this module's own tests
     pub fn index(&self) -> usize {
         self.0[1..].parse::<usize>().unwrap_or(0)
     }
@@ -62,7 +58,6 @@ impl std::fmt::Display for TurnObjectId {
 
 /// An entry in the turn-scoped object table.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct TurnObjectEntry {
     pub id: TurnObjectId,
     pub profile: String,
@@ -72,43 +67,37 @@ pub struct TurnObjectEntry {
 
 /// A bidirectional mapping between turn-scoped object IDs (`T0..Tn`) and concrete database objects.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub struct TurnObjectTable {
     entries: Vec<TurnObjectEntry>,
 }
 
 impl TurnObjectTable {
     /// Creates an empty table.
-    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
         }
     }
 
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    #[allow(dead_code)]
     pub fn entries(&self) -> &[TurnObjectEntry] {
         &self.entries
     }
 
     /// Looks up an entry by its turn-scoped ID.
-    #[allow(dead_code)]
     pub fn get_by_id(&self, id: &TurnObjectId) -> Option<&TurnObjectEntry> {
         self.entries.iter().find(|e| &e.id == id)
     }
 
     /// Looks up an entry by profile and qualified object name (case-insensitive).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // read only by this module's own tests
     pub fn get_by_name(&self, profile: &str, qualified_name: &str) -> Option<&TurnObjectEntry> {
         self.entries.iter().find(|e| {
             e.profile.eq_ignore_ascii_case(profile)
@@ -118,7 +107,6 @@ impl TurnObjectTable {
 
     /// Drops the last column from the last object, then removes empty objects.
     /// The turn record uses this as its deterministic lowest-priority eviction.
-    #[allow(dead_code)]
     pub fn drop_last_detail(&mut self) -> bool {
         if let Some(entry) = self.entries.last_mut()
             && entry.columns.pop().is_some()
@@ -130,7 +118,6 @@ impl TurnObjectTable {
 
     /// Registers an object. If already present, merges new columns.
     /// If absent and within capacity, assigns the next `TurnObjectId`.
-    #[allow(dead_code)]
     pub fn register(
         &mut self,
         profile: &str,

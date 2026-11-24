@@ -36,3 +36,12 @@ cargo audit --deny warnings                 # when dependencies changed
 - **Conventional commits**; document new flags/config and note alpha limitations
   in user-facing changes. Do not add Tauri, React, licensing, or desktop app
   state.
+- **Performance budgets.** A tool is advertised on demand, its description stays
+  short, and a tool added later is appended at the end of the list — unused tool
+  text and long prompts slow every turn and cost correctness. The ceilings are
+  tests, not suggestions: request budgets per surface in
+  `crates/saya-cli/tests/run_core_parity/budget.json`, the always-on tool lists
+  and description/section caps in `crates/saya-cli/src/perf_guard.rs`, and the
+  timing bars (first message, steady overhead, idle CPU, draws) in
+  `scripts/perf-compare.sh`, run by the `perf-compare` CI job. Raising one is a
+  reviewed change, with the reason recorded beside it.
