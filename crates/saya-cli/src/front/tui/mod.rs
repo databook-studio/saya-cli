@@ -366,6 +366,19 @@ mod ops_catalog_tests;
 #[path = "surface_fixture.rs"]
 pub(crate) mod surface_fixture;
 
+// The launch that builds one: the throwaway tree, the scripted endpoint and the
+// port.
+#[cfg(all(test, unix))]
+#[path = "surface_fixture_launch.rs"]
+pub(crate) mod surface_fixture_launch;
+
+// Saves a record into the fixture's own store, lists what the picker offers,
+// and resumes a record the way the picker's `↵` does. The fixture's callers
+// reach it as `surface_fixture::surface`.
+#[cfg(all(test, unix))]
+#[path = "surface_fixture_resume.rs"]
+pub(crate) mod surface_fixture_resume;
+
 #[cfg(all(test, unix))]
 #[path = "surface_tests.rs"]
 mod surface_tests;

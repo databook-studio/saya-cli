@@ -1,45 +1,34 @@
 //! The surface a scripted test drives: a real run over a throwaway folder,
-//! against a scripted provider, opened by the launch's own opener
-//! ([`open_surface`]) and driven through the port its commands are performed on.
+//! against a scripted provider, opened by the launch's own opener and driven
+//! through the port its commands are performed on.
 //!
 //! Nothing here fakes the session: the run is composed, opened and prepared by
 //! the same code the launch runs, the turns are the engine's own, and the words
 //! read back are the ones the provider actually received. What the fixture adds
 //! is the throwaway tree, the scripted endpoint, and the port.
+//!
+//! The launch that builds one is [`super::surface_fixture_launch`], and what its
+//! saved sessions offer is [`super::surface_fixture_resume`].
 
 #![cfg(unix)]
 
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use saya_agent::ApprovalPolicy;
-use saya_store::{FsSessionStore, SqliteStateStore};
 use tokio::sync::mpsc;
 
-use super::direct_run::DirectDeps;
-use super::direct_trust::TrustStore;
-use super::jobs_open::JobDeps;
 use super::line_surface::SurfaceLine;
-use super::live::LiveRuntime;
 use super::msg::Msg;
-use super::ops::OpsParts;
-use super::ops_deps::OpsDeps;
 use super::run_cmd::CmdPort;
-use super::run_cmd_port::{PortParts, SessionPort};
+use super::run_cmd_port::SessionPort;
 use super::run_front::Forward;
-use crate::GlobalOptions;
-use crate::chat::ChatOps;
 use crate::commands::coding::parent_turn_provider::Scripted;
 use crate::interactive::SessionState;
-use crate::interactive::session::line_chat::open_surface;
 use crate::interactive::session::runtime::SessionRuntime;
-use crate::interactive::session::turn_loop::surface_parts;
-use crate::load_with_sources;
-use crate::render::RenderFormat;
-use crate::slash::user_commands::UserCommands;
+
+#[allow(unused_imports)]
+pub(crate) use super::surface_fixture_launch::surface;
 
 /// The model the session opens on.
 pub(crate) const MODEL: &str = "surface-model";
@@ -54,19 +43,19 @@ pub(crate) struct Fixture {
     /// its rollover.
     pub(crate) line: Arc<SurfaceLine>,
     /// The front the session talks to: a command's words are said through it.
-    front: Arc<Forward>,
+    pub(super) front: Arc<Forward>,
     /// The folder this fixture's session worked in: the folder a record it saves
     /// pins.
-    folder: PathBuf,
+    pub(super) folder: PathBuf,
     /// What the surface has said, in order: the notices a test reads back.
-    words: Arc<Mutex<Vec<String>>>,
+    pub(super) words: Arc<Mutex<Vec<String>>>,
     /// The rows the last `/sessions` (or bare `/resume`) opened the picker with,
     /// so a test reads what the surface offered rather than rebuilding it.
-    picked: Arc<Mutex<Option<Vec<super::view::SessionRow>>>>,
+    pub(super) picked: Arc<Mutex<Option<Vec<super::view::SessionRow>>>>,
     /// Held for its drop, after everything else: the session's own directory
     /// lock, and the folder the run leased.
-    _session: SessionRuntime,
-    _root: RootGuard,
+    pub(super) _session: SessionRuntime,
+    pub(super) _root: RootGuard,
 }
 
 impl Fixture {
@@ -108,7 +97,7 @@ impl Fixture {
         }
     }
 
-    fn drain(&self, mut queue: mpsc::UnboundedReceiver<Msg>) {
+    pub(super) fn drain(&self, mut queue: mpsc::UnboundedReceiver<Msg>) {
         let words = Arc::clone(&self.words);
         let picked = Arc::clone(&self.picked);
         tokio::spawn(async move {
@@ -180,7 +169,7 @@ impl Fixture {
 
     /// Whether an operation is still queued for the line's thread: the command
     /// just sent has been accepted but not yet started.
-    fn pending(&self) -> bool {
+    pub(super) fn pending(&self) -> bool {
         self.line.queued()
     }
 
@@ -191,238 +180,16 @@ impl Fixture {
 
     /// The port's own dependencies: the store the saved sessions live in, and the
     /// state the operation reads.
-    pub(crate) fn deps(&self) -> Arc<OpsDeps> {
+    pub(crate) fn deps(&self) -> Arc<super::ops_deps::OpsDeps> {
         Arc::clone(&self.port.deps)
-    }
-
-    /// Saves a record of `turns` in this fixture's own store, pinned to `folder`:
-    /// the fixture's own when the case names none.
-    pub(crate) async fn save_session(
-        &self,
-        id: &str,
-        turns: &[(&str, &str)],
-        folder: Option<PathBuf>,
-    ) {
-        use saya_store::SessionStore as _;
-        let mut state = SessionState::new(id, None, MODEL);
-        state.workspace_root = Some(
-            folder
-                .unwrap_or_else(|| self.folder())
-                .to_string_lossy()
-                .into_owned(),
-        );
-        for (user, assistant) in turns {
-            state.record_turn(*user, *assistant, false, Vec::new());
-        }
-        self.deps()
-            .store
-            .save(state.redacted())
-            .await
-            .expect("the fixture's record saves");
-    }
-
-    /// The rows the picker opens on, as the surface itself lists them.
-    pub(crate) async fn picker(&self) -> Vec<super::view::SessionRow> {
-        super::sessions_picker::listed(&self.deps())
-            .await
-            .expect("the fixture's sessions list")
-    }
-
-    /// The rows the last `/sessions`-shaped command opened the picker with,
-    /// waited for: the store's listing lands off the loop's thread.
-    pub(crate) async fn picked(&self) -> Vec<super::view::SessionRow> {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Some(rows) = self
-                .picked
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone()
-            {
-                return rows;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the surface never offered its saved sessions"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
-
-    /// Resumes `id` the way the picker's `↵` does — the port's own operation —
-    /// and waits for the line to land on the record.
-    pub(crate) async fn resume(&self, id: &str) {
-        self.port.resume_session(id.to_owned());
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while self.line.busy() || self.pending() {
-            assert!(
-                Instant::now() < deadline,
-                "the resume the surface was given never landed"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
-}
-
-/// A surface over a throwaway folder, answering from a scripted provider.
-pub(crate) async fn surface(label: &str) -> Fixture {
-    let provider = Scripted::start();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target")
-        .join(format!("tmp-surface-{label}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(&root).expect("the fixture root creates");
-    let root = root.canonicalize().expect("the fixture root resolves");
-    let folder = root.join("repo");
-    fs::create_dir(&folder).expect("the fixture folder creates");
-    let programs = root.join("programs");
-    fs::create_dir(&programs).expect("the fixture program directory creates");
-    let config_home = root.join("config");
-    fs::create_dir_all(&config_home).expect("the fixture config directory creates");
-    let mut runtime = load_with_sources(
-        &GlobalOptions::default(),
-        &folder,
-        &config_home,
-        BTreeMap::new(),
-    )
-    .expect("the fixture resolves a runtime");
-    runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
-    runtime.resolved.ai.model = MODEL.into();
-    runtime.resolved.ai.base_url = Some(provider.endpoint.clone());
-    runtime.resolved.ai.api_key = None;
-    runtime.resolved.ai.retry_delays_ms.clear();
-    runtime.resolved.ai.timeout_seconds = 10;
-    runtime.resolved.ai.idle_timeout_seconds = 10;
-    runtime.resolved.ai.max_output_tokens = Some(4096);
-    runtime.resolved.ai.context_window_tokens = Some(128_000);
-    let effective = runtime
-        .resolved
-        .endpoints
-        .get_mut(saya_config::ORCHESTRATOR_ROLE)
-        .expect("the runtime resolves an orchestrator endpoint");
-    // The endpoint an orchestrating turn reaches: the same scripted server, and
-    // no model of its own — the session's own model is the one a request names,
-    // which is what a `/model` change moves.
-    effective.provider = saya_config::AiProvider::OpenaiCompatible;
-    effective.base_url = Some(provider.endpoint.clone());
-    effective.api_key = None;
-    let runtime = Arc::new(runtime);
-    let state_db = SqliteStateStore::new(root.join("state.sqlite3"));
-    // One session id per fixture: the job's own name, and the record's.
-    let id = format!("surface-{label}");
-    let session = SessionRuntime::acquire(
-        &runtime,
-        Some(&folder),
-        true,
-        None,
-        &id,
-        ApprovalPolicy::Ask,
-        &root.join("session-dirs"),
-    )
-    .expect("the fixture's session acquires");
-    // The session's own state, on the provider the scripted endpoint serves: a
-    // state change re-resolves the provider and the endpoint through it, so the
-    // two must agree with the runtime's own composition.
-    let mut opening = SessionState::new(&id, None, MODEL);
-    opening.provider = "openai_compatible".to_owned();
-    opening.provider_endpoint = Some(provider.endpoint.clone());
-    opening.provider_endpoint_bound = true;
-    let state = Arc::new(Mutex::new(opening));
-    let live = Arc::new(LiveRuntime::new(Arc::clone(&runtime)));
-    let mut composed = surface_parts(
-        &state.lock().unwrap_or_else(PoisonError::into_inner).clone(),
-        &session,
-        &runtime,
-        &state_db,
-        RenderFormat::Text,
-    );
-    // The job's records go to this fixture's own root, never the operator's.
-    composed.parts.state_root = Some(root.join("coding"));
-    let (msgs, queue) = mpsc::unbounded_channel::<Msg>();
-    let front = Arc::new(Forward::new(msgs));
-    let opened = open_surface(
-        composed.parts,
-        &composed.record,
-        Arc::clone(&front) as Arc<dyn crate::chat::ChatFront>,
-    )
-    .await
-    .expect("the launch's run opens");
-    let line = Arc::new(SurfaceLine::new(opened.into_line(), Arc::clone(&front)));
-    let deps = Arc::new(OpsDeps::new(
-        ChatOps::new(
-            line.run_port().expect("the launch's run has a port"),
-            line.context(true)
-                .expect("the launch's run has a mode cell"),
-        ),
-        UserCommands::default(),
-        Arc::clone(&live),
-        Arc::clone(&state),
-        OpsParts {
-            store: FsSessionStore::new(root.join("session-store")),
-            state_db: state_db.clone(),
-            format: RenderFormat::Text,
-            root: Some(folder.clone()),
-            policy: session.policy(),
-            journal: session.journal(),
-            universe: session.universe(),
-            recovery: session.recovery().clone(),
-        },
-    ));
-    let jobs = Arc::new(JobDeps::new(
-        Arc::clone(&live),
-        state_db.clone(),
-        Some(&folder),
-        &id,
-        session.policy().mode(),
-    ));
-    let direct = Arc::new(DirectDeps {
-        runtime: Arc::clone(&live),
-        state_db,
-        format: RenderFormat::Text,
-        trust: Arc::new(NoTrust) as Arc<dyn TrustStore>,
-    });
-    let port = Arc::new(SessionPort::new(PortParts {
-        line: Arc::clone(&line),
-        front: Arc::clone(&front),
-        allow_bypass: true,
-        direct,
-        deps,
-        options: GlobalOptions::default(),
-        runtime: live,
-        state: Arc::clone(&state),
-        jobs,
-        state_root: Some(root.join("coding")),
-    }));
-    let fixture = Fixture {
-        words: Arc::new(Mutex::new(Vec::new())),
-        picked: Arc::new(Mutex::new(None)),
-        folder,
-        front: Arc::clone(&front),
-        port,
-        provider,
-        state,
-        line,
-        _session: session,
-        _root: RootGuard(root),
-    };
-    fixture.drain(queue);
-    fixture
-}
-
-/// A trust store that binds nothing: these tests ask no trust question.
-struct NoTrust;
-
-impl TrustStore for NoTrust {
-    fn bind(&self, _dir: &Path) -> Result<(), String> {
-        Ok(())
     }
 }
 
 /// Removes the throwaway root when it drops, once the session is gone.
-struct RootGuard(PathBuf);
+pub(super) struct RootGuard(pub(super) PathBuf);
 
 impl Drop for RootGuard {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
