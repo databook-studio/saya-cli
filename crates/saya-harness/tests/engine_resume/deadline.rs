@@ -1,11 +1,43 @@
 use super::*;
 
+/// The ceilings an attempt may arm, shortest first. The elapsed clock is armed
+/// into the crashed run's journal and read back when resume starts, so the
+/// setup in between spends part of the ceiling — on a loaded host enough of it
+/// that a short ceiling expires before the held source starts, which says
+/// nothing about the settlement under test. An attempt that ends that way
+/// returns `false` and the test arms the next, longer ceiling; every assertion
+/// of an attempt whose source did start holds at full strength.
+const CEILINGS: [Duration; 4] = [
+    Duration::from_millis(250),
+    Duration::from_secs(1),
+    Duration::from_secs(4),
+    Duration::from_secs(16),
+];
+
+/// How long a wait between two events that follow within milliseconds may take
+/// before a test calls it a hang. The slowest of these gaps, the resume's setup
+/// before its source starts, took a second on a host running several build
+/// paths; only a hang takes ten.
+const HANG_BOUND: Duration = Duration::from_secs(10);
+
 #[tokio::test]
 async fn resume_deadline_waits_for_context_tool_settlement_before_its_pause() {
-    let clock = saya_harness::engine::ElapsedClock::arm_now(Duration::from_secs(1)).unwrap();
+    for ceiling in CEILINGS {
+        if held_source_attempt(ceiling).await {
+            return;
+        }
+    }
+    panic!("the resumed source did not start within any of {CEILINGS:?}");
+}
+
+/// One attempt at the property with `ceiling` armed on the resumed run's
+/// elapsed clock. `false` means the ceiling expired before the held source
+/// started; every other outcome asserts the settlement property in full.
+async fn held_source_attempt(ceiling: Duration) -> bool {
+    let clock = saya_harness::engine::ElapsedClock::arm_now(ceiling).unwrap();
     let plan = RunPlan::new(vec![step("hold until the resumed source stops")]).unwrap();
     let run = crashed_run(
-        "held-resume-deadline",
+        &format!("held-resume-deadline-{}", ceiling.as_millis()),
         &[
             RunEvent::RunStarted,
             RunEvent::PlanApproved { scopes: None },
@@ -50,18 +82,30 @@ async fn resume_deadline_waits_for_context_tool_settlement_before_its_pause() {
     inputs.collaborators.provider = &provider;
     inputs.collaborators.cancellation = cancellation.clone();
     inputs.collaborators.toolsets = &toolsets;
-    inputs.wall_clock = Some(Duration::from_secs(1));
+    inputs.wall_clock = Some(ceiling);
     let active = resume(&run.run_dir, inputs);
     tokio::pin!(active);
 
-    let source_token = tokio::time::timeout(Duration::from_secs(2), async {
+    let source_token = tokio::time::timeout(ceiling + HANG_BOUND, async {
         tokio::select! {
-            started = started_rx => started.unwrap(),
-            result = &mut active => panic!("resume ended before the held source started: {result:?}"),
+            started = started_rx => Some(started.unwrap()),
+            result = &mut active => {
+                if expired_before_start(&result) {
+                    None
+                } else {
+                    panic!("the resumed run ended before the held source started: {result:?}")
+                }
+            }
         }
     })
     .await
-    .expect("the resumed context-aware tool starts");
+    .expect("the resumed source starts");
+    let Some(source_token) = source_token else {
+        // Windows cannot delete an open database file; close the store first
+        // so the abandoned attempt leaves nothing behind for the next one.
+        run.store.close().await;
+        return false;
+    };
     let baseline = run.journal();
     assert!(!matches!(
         baseline.last(),
@@ -71,7 +115,7 @@ async fn resume_deadline_waits_for_context_tool_settlement_before_its_pause() {
             } | RunEvent::Cancelled
         )
     ));
-    let observed = tokio::time::timeout(Duration::from_secs(2), async {
+    let observed = tokio::time::timeout(ceiling + HANG_BOUND, async {
         tokio::select! {
             stopped = stopped_rx => stopped.unwrap(),
             result = &mut active => panic!("resume returned before the held source saw stop: {result:?}"),
@@ -91,7 +135,7 @@ async fn resume_deadline_waits_for_context_tool_settlement_before_its_pause() {
     );
 
     release_tx.send(()).unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(2), &mut active)
+    let result = tokio::time::timeout(HANG_BOUND, &mut active)
         .await
         .expect("resume awaits the same source before recording its stop")
         .unwrap_err();
@@ -116,4 +160,29 @@ async fn resume_deadline_waits_for_context_tool_settlement_before_its_pause() {
             .count(),
         0
     );
+    true
+}
+
+/// Whether the resume ended because its ceiling was already spent before the
+/// held source could start: the runner's setup time, not the settlement under
+/// test. The attempt then retries with a longer ceiling, as its sibling in
+/// `tests/engine_episode/deadline/` does.
+fn expired_before_start(result: &Result<ResumeOutcome, ResumeError>) -> bool {
+    match result {
+        // The ceiling was spent by the time resume armed its clock, so the run
+        // paused before any step work.
+        Ok(ResumeOutcome::Resumed {
+            state: RunState::Paused,
+            ..
+        }) => true,
+        // The deadline tripped in the driver, before the source started.
+        Err(ResumeError::Episode {
+            source:
+                EpisodeError::BudgetStopped {
+                    reason: PauseReason::WallClockExceeded,
+                    ..
+                },
+        }) => true,
+        _ => false,
+    }
 }
