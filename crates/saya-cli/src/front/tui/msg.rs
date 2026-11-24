@@ -80,6 +80,28 @@ pub(crate) enum Msg {
     /// request used, and what the session has cost so far. Both are reported
     /// figures, never estimates, and either may be absent.
     Meters(super::view::Meters),
+    /// The saved sessions a pane offers (`/sessions`, bare `/resume`), newest
+    /// first, as the store and their records listed them. The answer arrives on
+    /// the queue like every other one, so a slow store never holds a frame.
+    Sessions(Vec<super::view::SessionRow>),
+    /// The session a `/resume` opened in place of this one: the words the surface
+    /// says, the turns the record carries, and the facts the status row names.
+    Resumed(ResumedView),
+}
+
+/// What a `/resume` opened, as the surface paints it: the one notice, the turns
+/// the record carries, and the model and database the resumed session is on.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct ResumedView {
+    /// `resumed <title> — N turns`, and the read-only reason when the record
+    /// stated one.
+    pub(crate) notice: String,
+    /// The record's turns, oldest first: as many as the transcript shows.
+    pub(crate) turns: Vec<(String, String)>,
+    /// The model the resumed session is on.
+    pub(crate) model: String,
+    /// The database its record names, if it named one.
+    pub(crate) database: Option<String>,
 }
 
 /// One side effect the runtime performs after an [`update`](super::update).
@@ -126,6 +148,9 @@ pub(crate) enum Cmd {
     /// One line the surface does not answer itself: a session operation, which
     /// the chat layer's own table names ([`super::ops`]).
     Op(crate::slash::SlashCommand),
+    /// Open the saved session this id names: the operation `/resume <id>` and
+    /// the picker's `↵` both state, performed on the live session.
+    ResumeSession(String),
     /// Gather the paths the `@` list offers: the run's workspace, walked the
     /// way the file tools walk it, off the loop's thread. The answer comes back
     /// as [`Msg::Mentions`].

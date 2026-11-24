@@ -89,24 +89,8 @@ pub(crate) fn facts(state_root: &Path, job: &JobId, finished: bool) -> Facts {
 /// it recorded no terminal state, and it works in place. Anything else cannot
 /// be attached to, and the table's own rows decide the rest.
 pub(crate) fn opening(record: &RedactedSession, facts: Facts) -> Opening {
-    // A folded conversation is the one thing a run cannot carry: the turns a
-    // compaction replaced are still in the job's own history, and continuing
-    // that run would replay what the session has already forgotten. Such a
-    // record opens read-only like any other link this process cannot take, and
-    // its next line prepares a run seeded from the record alone.
-    let folded = record.compaction_summary.is_some();
-    let usable = !facts.finished && !facts.job_dir_missing && !facts.managed_checkout && !folded;
-    let decision = decide(
-        &Transcript::from_record(record.clone()),
-        RunFacts {
-            open_in_this_process: usable,
-            finished: facts.finished,
-            job_dir_missing: facts.job_dir_missing,
-            managed_checkout: facts.managed_checkout,
-        },
-    );
     let linked = record.run.as_ref().map(|link| link.job.clone());
-    match decision {
+    match decision(record, facts) {
         Resume::Attach { job, .. } => Opening::Attach { job },
         Resume::PrepareNewEpoch { seed } => Opening::NewEpoch {
             // `decide` reaches this row only for a record that carries a link:
@@ -119,4 +103,26 @@ pub(crate) fn opening(record: &RedactedSession, facts: Facts) -> Opening {
             sentence: format!("job {job} {detail}"),
         },
     }
+}
+
+/// A6's own decision for `record` over `facts`: the one answer this process's
+/// fronts read — the run a session opens, and the mark a row of the sessions
+/// picker carries (`crate::front::tui::sessions_picker`).
+pub(crate) fn decision(record: &RedactedSession, facts: Facts) -> Resume {
+    // A folded conversation is the one thing a run cannot carry: the turns a
+    // compaction replaced are still in the job's own history, and continuing
+    // that run would replay what the session has already forgotten. Such a
+    // record opens read-only like any other link this process cannot take, and
+    // its next line prepares a run seeded from the record alone.
+    let folded = record.compaction_summary.is_some();
+    let usable = !facts.finished && !facts.job_dir_missing && !facts.managed_checkout && !folded;
+    decide(
+        &Transcript::from_record(record.clone()),
+        RunFacts {
+            open_in_this_process: usable,
+            finished: facts.finished,
+            job_dir_missing: facts.job_dir_missing,
+            managed_checkout: facts.managed_checkout,
+        },
+    )
 }

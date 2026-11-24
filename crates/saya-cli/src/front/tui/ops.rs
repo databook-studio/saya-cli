@@ -65,6 +65,13 @@ pub(crate) enum Asked {
     /// One shared operation the port runs off the loop's thread
     /// ([`super::ops_work`]) and lands as a transcript entry.
     Work(Work),
+    /// Open the saved sessions in the picker (`/sessions`, bare `/resume`): the
+    /// port lists them off the loop's thread and the pane opens on the answer.
+    Sessions,
+    /// Resume the saved session this id names: `/resume <id>`, performed on the
+    /// live session the way `/clear` is — behind the turn in flight, never under
+    /// it. An empty id opens the picker instead.
+    Resume(String),
 }
 
 /// Performs one submitted command as the operation the chat layer states.

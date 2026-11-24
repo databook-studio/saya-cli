@@ -21,6 +21,7 @@ use std::thread::JoinHandle;
 
 use tokio::sync::mpsc;
 
+use super::line_resume::ResumeAsk;
 use super::run_cmd_ops::settle;
 use super::run_front::Forward;
 use crate::agent::turn_config::PromptOverrides;
@@ -84,6 +85,10 @@ enum Op {
     Compact,
     /// A command that changed the facts a run is composed from.
     Restate(PromptOverrides),
+    /// `/resume <id>` and the picker's `↵`: the record this ask names is opened
+    /// in place of the session's own, and the run that record states becomes the
+    /// one the surface drives.
+    Resume(ResumeAsk),
 }
 
 /// The session one surface drives: the line's own thread, and what it is on now.
@@ -218,6 +223,13 @@ impl SurfaceLine {
         self.hand(Op::Restate(overrides));
     }
 
+    /// `/resume`: the record this ask names, opened in place of the session's
+    /// own. The operation is the line's, so it waits for a turn in flight rather
+    /// than swapping the run under one.
+    pub(crate) fn resume(&self, ask: ResumeAsk) {
+        self.hand(Op::Resume(ask));
+    }
+
     /// Hands one operation to the line's thread, in the order it was asked for.
     fn hand(&self, op: Op) {
         self.queued.fetch_add(1, Ordering::AcqRel);
@@ -313,6 +325,9 @@ async fn drive(line: Line, front: &Forward, worker: Worker) {
             Op::Restate(overrides) => {
                 let said = line.restate(overrides).await;
                 settle(front, said);
+            }
+            Op::Resume(ask) => {
+                line = super::line_resume::resume(line, front, ask).await;
             }
         }
         current

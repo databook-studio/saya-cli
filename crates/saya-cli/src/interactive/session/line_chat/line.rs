@@ -107,6 +107,11 @@ impl Line {
     /// states how it settled ([`Line::settled`]), so no terminal front is read
     /// here; everything else — the transcript, the compaction, the rollover — is
     /// the line loop's own.
+    ///
+    /// `record` is the record the run was opened for, so the transcript a
+    /// compaction plans over is the conversation the session already holds and
+    /// not an empty one: a resumed session's turns are its own from the first
+    /// frame.
     pub(crate) fn surface(
         application: Arc<CodingApplication>,
         parts: LineSession,
@@ -114,12 +119,9 @@ impl Line {
         shape: WorkspaceShape,
         metrics: Option<Arc<LocalMetrics>>,
         run: Run,
+        record: &saya_store::RedactedSession,
     ) -> Self {
-        let transcript = Transcript::from_record(RedactedSession {
-            id: parts.session.clone(),
-            model: run.model(),
-            ..RedactedSession::default()
-        });
+        let transcript = Transcript::from_record(record.clone());
         let compaction = Compaction::new().stating(parts.facts.clone());
         Self {
             rollover: Rollover::new(application),

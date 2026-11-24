@@ -53,8 +53,16 @@ pub(crate) struct Fixture {
     /// The line the surface drives: the run it is on now, its transcript and
     /// its rollover.
     pub(crate) line: Arc<SurfaceLine>,
+    /// The front the session talks to: a command's words are said through it.
+    front: Arc<Forward>,
+    /// The folder this fixture's session worked in: the folder a record it saves
+    /// pins.
+    folder: PathBuf,
     /// What the surface has said, in order: the notices a test reads back.
     words: Arc<Mutex<Vec<String>>>,
+    /// The rows the last `/sessions` (or bare `/resume`) opened the picker with,
+    /// so a test reads what the surface offered rather than rebuilding it.
+    picked: Arc<Mutex<Option<Vec<super::view::SessionRow>>>>,
     /// Held for its drop, after everything else: the session's own directory
     /// lock, and the folder the run leased.
     _session: SessionRuntime,
@@ -63,14 +71,46 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     /// The words the surface has said so far, drained: what a test asserts the
-    /// transcript names.
-    pub(crate) fn said(&self) -> Vec<String> {
+    /// transcript names. The read is synchronised first, so a sentence the queue
+    /// still holds is never read as a sentence never said.
+    pub(crate) async fn said(&self) -> Vec<String> {
+        self.sync().await;
         let mut said = self.words.lock().unwrap_or_else(PoisonError::into_inner);
         std::mem::take(&mut *said)
     }
 
+    /// Waits until the surface's own queue has been read up to this instant: a
+    /// sentinel is handed to the same queue the drain reads, so everything said
+    /// before it has landed when it comes back.
+    async fn sync(&self) {
+        const SENTINEL: &str = "\u{0}saya-fixture-sync";
+        self.front.note(SENTINEL.to_owned());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let landed = self
+                .words
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .last()
+                .is_some_and(|word| word == SENTINEL);
+            if landed {
+                self.words
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .pop();
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the surface's own queue was never read"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
     fn drain(&self, mut queue: mpsc::UnboundedReceiver<Msg>) {
         let words = Arc::clone(&self.words);
+        let picked = Arc::clone(&self.picked);
         tokio::spawn(async move {
             while let Some(msg) = queue.recv().await {
                 let said = match msg {
@@ -79,6 +119,14 @@ impl Fixture {
                         Some(super::direct::DirectOutcome::Error(words)) => words,
                         _ => worker.message,
                     },
+                    // The picker's rows are not words: they are what the surface
+                    // offered, kept where a test reads them.
+                    Msg::Sessions(rows) => {
+                        *picked.lock().unwrap_or_else(PoisonError::into_inner) = Some(rows);
+                        String::new()
+                    }
+                    // A resume says one line, and it is the surface's own.
+                    Msg::Resumed(view) => view.notice,
                     _ => String::new(),
                 };
                 if !said.is_empty() {
@@ -134,6 +182,85 @@ impl Fixture {
     /// just sent has been accepted but not yet started.
     fn pending(&self) -> bool {
         self.line.queued()
+    }
+
+    /// The folder this fixture's session works in.
+    pub(crate) fn folder(&self) -> PathBuf {
+        self.folder.clone()
+    }
+
+    /// The port's own dependencies: the store the saved sessions live in, and the
+    /// state the operation reads.
+    pub(crate) fn deps(&self) -> Arc<OpsDeps> {
+        Arc::clone(&self.port.deps)
+    }
+
+    /// Saves a record of `turns` in this fixture's own store, pinned to `folder`:
+    /// the fixture's own when the case names none.
+    pub(crate) async fn save_session(
+        &self,
+        id: &str,
+        turns: &[(&str, &str)],
+        folder: Option<PathBuf>,
+    ) {
+        use saya_store::SessionStore as _;
+        let mut state = SessionState::new(id, None, MODEL);
+        state.workspace_root = Some(
+            folder
+                .unwrap_or_else(|| self.folder())
+                .to_string_lossy()
+                .into_owned(),
+        );
+        for (user, assistant) in turns {
+            state.record_turn(*user, *assistant, false, Vec::new());
+        }
+        self.deps()
+            .store
+            .save(state.redacted())
+            .await
+            .expect("the fixture's record saves");
+    }
+
+    /// The rows the picker opens on, as the surface itself lists them.
+    pub(crate) async fn picker(&self) -> Vec<super::view::SessionRow> {
+        super::sessions_picker::listed(&self.deps())
+            .await
+            .expect("the fixture's sessions list")
+    }
+
+    /// The rows the last `/sessions`-shaped command opened the picker with,
+    /// waited for: the store's listing lands off the loop's thread.
+    pub(crate) async fn picked(&self) -> Vec<super::view::SessionRow> {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            if let Some(rows) = self
+                .picked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+            {
+                return rows;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the surface never offered its saved sessions"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Resumes `id` the way the picker's `↵` does — the port's own operation —
+    /// and waits for the line to land on the record.
+    pub(crate) async fn resume(&self, id: &str) {
+        self.port.resume_session(id.to_owned());
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self.line.busy() || self.pending() {
+            assert!(
+                Instant::now() < deadline,
+                "the resume the surface was given never landed"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 }
 
@@ -264,9 +391,13 @@ pub(crate) async fn surface(label: &str) -> Fixture {
         runtime: live,
         state: Arc::clone(&state),
         jobs,
+        state_root: Some(root.join("coding")),
     }));
     let fixture = Fixture {
         words: Arc::new(Mutex::new(Vec::new())),
+        picked: Arc::new(Mutex::new(None)),
+        folder,
+        front: Arc::clone(&front),
         port,
         provider,
         state,

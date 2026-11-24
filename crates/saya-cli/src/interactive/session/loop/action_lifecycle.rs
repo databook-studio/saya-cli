@@ -12,15 +12,38 @@ fn handle_resume(
         ..
     } = action_parts(ctx);
     let runtime: &RuntimeConfig = &runtime;
-    let defaults = crate::interactive::session::lifecycle::resume::SessionDefaults {
-        provider: state.provider.clone(),
-        model: state.model.clone(),
-        allow_data_sharing: state.allow_data_sharing,
-        approval_mode: state.approval_mode.clone(),
-    };
+    // Bare `/resume` names the records to resume from, in the shared listing's
+    // own words: the same listing `/sessions list` prints.
+    if id.trim().is_empty() {
+        let listed = crate::interactive::session::commands::sessions_list_text(
+            store,
+            &crate::interactive::session::lifecycle::paths::default_session_dir(),
+        );
+        let action = match listed {
+            Ok(text) => SessionAction::Message(text),
+            Err(text) => SessionAction::Error(text),
+        };
+        session_emit::emit_action(action, format, state, store)?;
+        return Ok(TurnOutcome::Completed);
+    }
+    // The record, loaded and checked by the one operation both surfaces ask
+    // ([`resume_mid`]): the current session saved first, and a record whose
+    // folder another live session owns — or one that is gone — refused in one
+    // sentence.
+    let state_root = crate::commands::coding::root_mode::session_state_root(runtime)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let loaded = crate::interactive::session::lifecycle::resume_mid::resume_mid_session_blocking(
+        crate::interactive::session::lifecycle::resume_mid::ResumeMid {
+            store,
+            current: state,
+            id: &id,
+            state_root: &state_root,
+        },
+    );
     let mut outcome = TurnOutcome::Errored;
-    match crate::interactive::session::lifecycle::resume::resume_session(store, &id, &defaults) {
-        Ok(Some(loaded)) => {
+    match loaded {
+        crate::interactive::session::lifecycle::resume_mid::MidResume::Loaded(loaded) => {
+            let loaded = *loaded;
             // The resumed session's own state must ride the swap: the new
             // state directory claimed and composed before the old lock
             // releases; a refused swap keeps this session. The resumed
@@ -81,18 +104,9 @@ fn handle_resume(
                 }
             }
         }
-        Ok(None) => session_emit::emit_action(
-            SessionAction::Error(format!("Session not found: {id}")),
-            format,
-            state,
-            store,
-        )?,
-        Err(error) => session_emit::emit_action(
-            SessionAction::Error(error.to_string()),
-            format,
-            state,
-            store,
-        )?,
+        crate::interactive::session::lifecycle::resume_mid::MidResume::Refused(sentence) => {
+            session_emit::emit_action(SessionAction::Error(sentence), format, state, store)?;
+        }
     }
     // The resumed session's save: a near-limit notice fires here for a
     // large record the resume just re-opened — the per-process flag is

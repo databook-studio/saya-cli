@@ -22,6 +22,7 @@ use super::cards_keys::{self, CardIntent};
 use super::history_keys::{self, HistoryIntent};
 use super::model::Model;
 use super::overlay_keys;
+use super::sessions_keys;
 use crate::agent::tools::consent::Answer;
 
 /// What the surface says when a mode switch is asked for over an open card.
@@ -144,6 +145,10 @@ pub(crate) enum Intent {
     TrustAccept,
     /// Answer it by continuing without a workspace (`02` §9.4's `n`).
     TrustDecline,
+    /// Walk, choose or leave the saved-session picker (`/sessions`, bare
+    /// `/resume`): the picker's own keys, read by
+    /// [`super::sessions_keys`].
+    Sessions(sessions_keys::SessionsIntent),
     /// Say this instead of doing anything: the state the press met refuses it.
     Refused(&'static str),
     /// Open the background jobs drawer (`02` §8's `Ctrl+J`).

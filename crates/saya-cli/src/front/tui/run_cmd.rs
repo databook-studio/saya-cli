@@ -48,6 +48,10 @@ pub(crate) trait CmdPort: Send + Sync {
     /// Perform one line the surface does not answer itself: a session
     /// operation, named by the chat layer's table ([`super::ops`]).
     fn op(&self, command: SlashCommand);
+    /// Open the saved session this id names, in place of the one the surface is
+    /// on: `/resume <id>`, and the `↵` the picker's row states. The operation
+    /// waits behind a turn in flight, exactly as `/clear` does.
+    fn resume_session(&self, id: String);
     /// Re-read the configuration and swap the runtime this surface runs on:
     /// `/reload`, and the apply a closed guided setup runs ([`super::reload`]).
     fn reload(&self);
@@ -76,6 +80,7 @@ pub(crate) fn perform(port: &dyn CmdPort, cmd: Cmd) {
         Cmd::CancelJob(id) => port.cancel_job(id),
         Cmd::Job(request) => port.job(request),
         Cmd::Op(command) => port.op(command),
+        Cmd::ResumeSession(id) => port.resume_session(id),
         Cmd::Mentions => port.mentions(),
         // The bell is the terminal's, not the session's: the loop rings it on
         // the screen it owns ([`super::run::Runtime::fold`]), so a port has

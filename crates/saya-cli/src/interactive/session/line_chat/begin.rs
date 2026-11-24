@@ -215,7 +215,11 @@ async fn resume_run(
 /// The facts the record's link states, with the engine's own answer about
 /// whether the job finished. Read on the session's own runtime: the store's
 /// answer is a future, and a nested runtime here would be a second one.
-async fn facts(root: &Path, record: &RedactedSession, store: &SqliteStateStore) -> Facts {
+pub(crate) async fn facts(
+    root: &Path,
+    record: &RedactedSession,
+    store: &SqliteStateStore,
+) -> Facts {
     let Some(link) = record.run.as_ref() else {
         return Facts::default();
     };

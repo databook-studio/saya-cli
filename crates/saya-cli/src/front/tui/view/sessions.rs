@@ -48,7 +48,7 @@ pub(crate) enum Command {
 
 /// The picker: the rows it lists, the filter typed into it, the row selected in
 /// what the filter leaves, and whether `d` is waiting for an answer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Picker {
     /// Every saved session, newest first, as the store listed them.
     pub(crate) rows: Vec<SessionRow>,

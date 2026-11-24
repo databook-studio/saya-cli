@@ -20,11 +20,6 @@ use super::run_front::Forward;
 use crate::chat::{ContextChange, RolloverRequest};
 use crate::interactive::session::line_chat::Said;
 
-/// The answer a saved-session id gets in a running session: a record is opened
-/// at launch, and the surface names the flag that opens one.
-pub(crate) const RESUME_AT_LAUNCH: &str = "a saved session is resumed at launch — `/resume` cannot swap the run under a live session: \
-     quit and start `saya --resume <id>`";
-
 /// Says what the line said after a turn crossed its boundary, in the surface's
 /// own voice: the compaction's line, the failure that latched it, or nothing.
 pub(crate) fn settle(front: &Forward, said: Said) {
@@ -51,9 +46,10 @@ impl SessionPort {
         match request.change {
             ContextChange::Clear => self.line.clear(),
             ContextChange::Compact | ContextChange::Rotate => self.line.compact(),
-            // A record is opened at launch, never swapped under a live run: the
-            // sentence names the flag that does it.
-            ContextChange::Resume => self.front.say(RESUME_AT_LAUNCH),
+            // A record is opened by the resume operation both surfaces share; the
+            // rollover table states it as `Asked::Resume` before this arm, so this
+            // one only keeps the match total.
+            ContextChange::Resume => self.resume(request.value.unwrap_or_default()),
             // The run already open cannot absorb one: its request, its prompt
             // prefix and its provider were composed once, at open
             // (`chat::rollover`).

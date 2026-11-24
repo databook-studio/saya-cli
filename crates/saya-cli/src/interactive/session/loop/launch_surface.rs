@@ -88,6 +88,9 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
         .enable_all()
         .build()?;
     runtime.block_on(async move {
+        // The root this session's job records live under, when the launch stated
+        // one of its own: a resume looks for a record's folder lease there.
+        let state_root = parts.state_root.clone();
         // The profile the launch configured and the run could not open: the
         // session opened anyway, with no database attached, and said so in the
         // transcript (`session_run`'s notice). The status line names what the
@@ -143,6 +146,7 @@ pub(super) fn run_surface(launch: SurfaceLaunch) -> Result<(), Box<dyn std::erro
             facts,
             metrics,
             entered,
+            state_root,
         })
         .await
         .map_err(|error| -> Box<dyn std::error::Error> { error.into() })

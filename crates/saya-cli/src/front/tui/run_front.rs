@@ -147,6 +147,18 @@ impl Forward {
         let _ = self.msgs.send(Msg::Restated { model, database });
     }
 
+    /// The saved sessions a command offers: the pane opens on what the store
+    /// listed, read off the loop's thread, so a slow store holds no frame.
+    pub(crate) fn sessions(&self, rows: Vec<super::view::SessionRow>) {
+        let _ = self.msgs.send(Msg::Sessions(rows));
+    }
+
+    /// The session a `/resume` opened: the transcript is that conversation from
+    /// the next frame on, and the row names what it is on.
+    pub(crate) fn resumed(&self, view: super::msg::ResumedView) {
+        let _ = self.msgs.send(Msg::Resumed(view));
+    }
+
     /// Asks the loop to leave: the one message that ends it (`/exit`). A job of
     /// this run is not orphaned by a quit: the surface says what the old one
     /// said (`interactive::tui::JOB_RUNNING`) and leaves the job to settle, so a

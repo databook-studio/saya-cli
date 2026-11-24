@@ -211,10 +211,11 @@ pub(crate) async fn open_surface(
                 run,
                 application,
                 shape,
-                ..
+                said,
             } = *open;
             Ok(Opened {
-                line: Line::surface(application, parts, composing, shape, None, run),
+                line: Line::surface(application, parts, composing, shape, None, run, record),
+                said,
             })
         }
         // A job this release takes no further turn on states its one sentence;
@@ -228,6 +229,9 @@ pub(crate) async fn open_surface(
 /// handle taken from it.
 pub(crate) struct Opened {
     line: Line,
+    /// The one sentence the record itself stated first — why it opened
+    /// read-only — when it stated one.
+    said: Option<String>,
 }
 
 impl Opened {
@@ -235,6 +239,12 @@ impl Opened {
     /// long as it drives the run.
     pub(crate) fn into_line(self) -> Line {
         self.line
+    }
+
+    /// The line, and the sentence the record stated about itself: what a
+    /// surface that reports it (`/resume`) says before the run's own words.
+    pub(crate) fn into_parts(self) -> (Line, Option<String>) {
+        (self.line, self.said)
     }
 }
 
