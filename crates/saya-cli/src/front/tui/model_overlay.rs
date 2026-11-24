@@ -16,6 +16,7 @@ use saya_agent::PermissionMode;
 use super::model::Model;
 use super::view::ModePicker;
 use super::view::Palette;
+use super::view::Picker;
 use super::view::changes::Changes;
 use super::view::mode_words;
 
@@ -40,6 +41,9 @@ pub(crate) enum Overlay {
     /// The startup workspace-trust question (`02` §9.4, T16): opened once when
     /// the session bound no workspace, answered `y`/`n`.
     Trust,
+    /// The saved sessions (`/sessions`, bare `/resume`): the records this
+    /// process can open, newest first, and the `↵` that resumes one.
+    Sessions(Picker),
 }
 
 impl Model {
@@ -158,6 +162,28 @@ impl Model {
     /// Opens `/mode`'s picker on the mode in force (`02` §8).
     pub(crate) fn open_mode_picker(&mut self) {
         self.overlay = Some(Overlay::Mode(ModePicker::on(self.mode)));
+    }
+
+    /// Opens the saved-session picker over `rows`: the store's listing, read
+    /// where the command was performed, so the pane opens with what was there.
+    pub(crate) fn open_sessions(&mut self, rows: Vec<super::view::SessionRow>) {
+        self.overlay = Some(Overlay::Sessions(Picker::new(rows)));
+    }
+
+    /// The saved-session picker, while it is the pane that is open.
+    pub(crate) fn sessions_picker(&self) -> Option<&Picker> {
+        match self.overlay.as_ref()? {
+            Overlay::Sessions(picker) => Some(picker),
+            _ => None,
+        }
+    }
+
+    /// The saved-session picker, while it is the pane that is open, to be walked.
+    pub(crate) fn sessions_picker_mut(&mut self) -> Option<&mut Picker> {
+        match self.overlay.as_mut()? {
+            Overlay::Sessions(picker) => Some(picker),
+            _ => None,
+        }
     }
 
     /// Closes the open pane, whatever it was: the transcript is the screen

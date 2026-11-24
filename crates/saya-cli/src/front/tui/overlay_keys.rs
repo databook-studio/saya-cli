@@ -23,6 +23,7 @@ pub(crate) fn key(model: &Model, overlay: &Overlay, key: KeyEvent) -> Option<Int
         Overlay::Palette(_) => palette(key),
         Overlay::Help => help(key),
         Overlay::Jobs => jobs(model.jobs().is_confirming(), key),
+        Overlay::Sessions(picker) => super::sessions_keys::key(picker.is_confirming(), key),
         Overlay::Changes(_) => changes(key),
         Overlay::Trust => trust(key),
     }

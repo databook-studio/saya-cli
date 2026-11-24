@@ -59,9 +59,10 @@ fn test_parse_sessions_and_resume() {
         parse_slash_command("/resume 12345"),
         Ok(Some(SlashCommand::Resume("12345".into())))
     );
+    // Bare `/resume` opens the saved sessions to choose from, on both surfaces.
     assert_eq!(
         parse_slash_command("/resume"),
-        Err(SlashParseError("command requires an argument".into()))
+        Ok(Some(SlashCommand::Resume(String::new())))
     );
 }
 

@@ -14,6 +14,8 @@ pub(crate) mod recovery;
 // is X2/X3's to remove, kept compiled rather than deleted twice.
 #[allow(dead_code)]
 pub(crate) mod resume;
+#[path = "session_resume_mid.rs"]
+pub(crate) mod resume_mid;
 #[path = "session_rotate.rs"]
 pub(crate) mod rotate;
 #[path = "session_rotate_run.rs"]

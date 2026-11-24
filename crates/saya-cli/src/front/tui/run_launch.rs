@@ -69,6 +69,9 @@ pub(crate) struct Surface {
     /// The instant the launch began: the first paint's sample is measured from
     /// it, as the surface this one replaces measured it.
     pub(crate) entered: Instant,
+    /// The root this session's job records live under, when the launch stated one
+    /// of its own: a resume reads a record's folder lease where the run took it.
+    pub(crate) state_root: Option<std::path::PathBuf>,
 }
 
 /// Runs the surface on the real terminal: its producers, its loop, and the
@@ -89,6 +92,7 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         facts,
         metrics,
         entered,
+        state_root,
     } = surface;
     let allow_bypass = model.allow_bypass;
     let port = Arc::new(SessionPort::new(PortParts {
@@ -101,6 +105,7 @@ pub(crate) async fn run(surface: Surface) -> io::Result<()> {
         state,
         jobs,
         allow_bypass,
+        state_root,
     }));
     let input = Arc::new(InputGate::new());
     let runtime = Runtime::new(model, queue, TtyScreen::new(), SystemClock, port)

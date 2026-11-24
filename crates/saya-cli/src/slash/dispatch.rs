@@ -125,7 +125,10 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
                 }
             }
         }
-        "resume" => SlashCommand::Resume(required()?),
+        // `/resume <id>` opens a saved session; bare `/resume` opens the saved
+        // sessions to choose from — the picker on the full-screen surface, the
+        // recent ids on the line front.
+        "resume" => SlashCommand::Resume(arg),
         "rotate" => {
             // `/rotate` takes no argument, and it is `/compact --new-session`'s
             // one-release alias: the same variant, carrying the spelling so

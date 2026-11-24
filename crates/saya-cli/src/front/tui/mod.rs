@@ -69,6 +69,8 @@ pub(crate) mod run_input;
 pub(crate) mod run_launch;
 pub(crate) mod run_panic;
 pub(crate) mod run_screen;
+pub(crate) mod sessions_keys;
+pub(crate) mod sessions_picker;
 pub(crate) mod setup;
 pub(crate) mod theme;
 pub(crate) mod update;
@@ -347,6 +349,9 @@ pub(crate) mod ops_fixture;
 #[path = "line_surface.rs"]
 pub(crate) mod line_surface;
 
+// `/resume` on the same line: the record opened in place of the session's own.
+pub(crate) mod line_resume;
+
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod ops_tests;
@@ -364,3 +369,12 @@ pub(crate) mod surface_fixture;
 #[cfg(all(test, unix))]
 #[path = "surface_tests.rs"]
 mod surface_tests;
+
+// The saved-session picker and `/resume` on the live run.
+#[cfg(all(test, unix))]
+#[path = "surface_resume_tests.rs"]
+mod surface_resume_tests;
+
+#[cfg(test)]
+#[path = "update_sessions_tests.rs"]
+mod update_sessions_tests;

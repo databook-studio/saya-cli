@@ -155,7 +155,7 @@ pub(crate) use result_table::{Key as TableKey, PREVIEW_ROWS, TableView, full_row
 #[allow(unused_imports)]
 pub(crate) use sessions::{Command as SessionCommand, Picker};
 #[allow(unused_imports)]
-pub(crate) use sessions_row::{SessionRow, State as SessionState};
+pub(crate) use sessions_row::{Facts as RowFacts, SessionRow, State as SessionState};
 #[allow(unused_imports)]
 pub(crate) use sessions_rows::rows as sessions_rows;
 #[allow(unused_imports)]

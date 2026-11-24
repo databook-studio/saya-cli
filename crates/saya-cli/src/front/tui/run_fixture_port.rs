@@ -62,6 +62,9 @@ pub(crate) enum Call {
     Job(crate::slash::JobRequest),
     /// One line the surface does not answer itself: a session operation.
     Op(crate::slash::SlashCommand),
+    /// The saved session this id names, resumed in place of the one the surface
+    /// is on.
+    ResumeSession(String),
     /// The configuration re-read (`/reload`, and the apply a closed guided setup
     /// runs).
     Reload,
@@ -150,6 +153,10 @@ impl CmdPort for FakePort {
 
     fn op(&self, command: crate::slash::SlashCommand) {
         self.record(Call::Op(command));
+    }
+
+    fn resume_session(&self, id: String) {
+        self.record(Call::ResumeSession(id));
     }
 
     fn reload(&self) {

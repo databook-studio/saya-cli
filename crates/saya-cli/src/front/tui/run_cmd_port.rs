@@ -52,6 +52,10 @@ pub(crate) struct PortParts {
     /// Whether `bypass` is reachable at all in this launch: the answer the mode
     /// switch is stated with.
     pub(crate) allow_bypass: bool,
+    /// Where this session's job records live, when the launch stated a root of
+    /// its own: a resume looks for a folder's lease there, exactly where the run
+    /// took it. `None` is the configured root, read when a resume asks.
+    pub(crate) state_root: Option<std::path::PathBuf>,
 }
 
 /// The real port.
@@ -74,6 +78,9 @@ pub(crate) struct SessionPort {
     /// The one-release notes the job spellings have already said in this
     /// session (`chat::ops_job`).
     pub(super) notes: Mutex<crate::chat::JobNotes>,
+    /// Where the run's job records live: a resume reads a record's folder lease
+    /// where the run took it ([`super::ops::Asked::Resume`]).
+    state_root: Option<std::path::PathBuf>,
 }
 
 impl SessionPort {
@@ -89,6 +96,7 @@ impl SessionPort {
             state,
             jobs,
             allow_bypass,
+            state_root,
         } = parts;
         Self {
             line,
@@ -100,6 +108,7 @@ impl SessionPort {
             runtime,
             state,
             jobs,
+            state_root,
             notes: Mutex::new(crate::chat::JobNotes::default()),
         }
     }
@@ -143,6 +152,13 @@ impl SessionPort {
             // as it takes, so it runs off the loop's thread and comes back as an
             // entry in the transcript.
             Asked::Work(work) => self.work(work),
+            // The saved sessions (`/sessions`, bare `/resume`): the store's
+            // listing, read off the loop's thread, opens the picker.
+            Asked::Sessions => self.list_sessions(),
+            // `/resume <id>`: the one operation both surfaces share, performed on
+            // the line's thread, so it waits behind a turn in flight rather than
+            // swapping the run under one.
+            Asked::Resume(id) => self.resume(id),
         }
     }
 
@@ -150,6 +166,54 @@ impl SessionPort {
     /// held: a panicking reader must not take the session's own state with it.
     pub(super) fn state(&self) -> MutexGuard<'_, SessionState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The saved sessions, listed where a resume would read them: the store's
+    /// listing, each record's own facts, and the decision the picker's row
+    /// carries. Off the loop's thread, and handed back as the pane's rows.
+    fn list_sessions(&self) {
+        let deps = Arc::clone(&self.deps);
+        let front = Arc::clone(&self.front);
+        tokio::task::spawn_blocking(move || {
+            let rows = crate::interactive::session::lifecycle::resume::block_on(
+                super::sessions_picker::listed(&deps),
+            );
+            match rows {
+                Ok(rows) => front.sessions(rows),
+                Err(sentence) => front.deliver(Worker {
+                    direct: Some(super::direct::DirectOutcome::Error(sentence)),
+                    ..Worker::default()
+                }),
+            }
+        });
+    }
+
+    /// `/resume`: an id opens that record in place of this session, and an empty
+    /// one opens the picker that names the records. The operation is the line's
+    /// own, so it is queued behind whatever the line is doing.
+    pub(super) fn resume(&self, id: String) {
+        if id.trim().is_empty() {
+            self.list_sessions();
+            return;
+        }
+        let state_root = match &self.state_root {
+            Some(root) => root.clone(),
+            None => match crate::commands::coding::root_mode::session_state_root(
+                &self.runtime.current(),
+            ) {
+                Ok(root) => root,
+                Err(error) => {
+                    self.front.say(error.to_string());
+                    return;
+                }
+            },
+        };
+        self.line.resume(super::line_resume::ResumeAsk {
+            id,
+            store: self.deps.store.clone(),
+            state: Arc::clone(&self.state),
+            state_root,
+        });
     }
 }
 
@@ -280,6 +344,12 @@ impl CmdPort for SessionPort {
         // the configuration in force.
         let asked = self.reload_asked();
         self.say(asked);
+    }
+
+    /// The picker's `↵`: the row's id, resumed by the same operation `/resume
+    /// <id>` states.
+    fn resume_session(&self, id: String) {
+        self.resume(id);
     }
 
     fn guided_setup(&self, modes: &mut (dyn TerminalModes + Send)) -> io::Result<()> {

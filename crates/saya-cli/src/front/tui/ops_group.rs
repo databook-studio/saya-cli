@@ -14,11 +14,6 @@ use crate::slash::SlashCommand;
 pub(crate) const NO_PROFILES: &str = "No configured connection profiles. Add one to \
      .saya/connections.toml (see `saya config init`) or pass --connections.";
 
-/// The answer a saved-session id gets in a running session: a record is opened
-/// at launch, and the surface says which command does it.
-const RESUME_AT_LAUNCH: &str = "a saved session is resumed at launch — `/resume` cannot swap the \
-     run under a live session: run `saya --resume <id>`";
-
 /// A read of something other than the run: the session-command layer's, or the
 /// shared operation that owns it.
 pub(super) fn read(deps: &OpsDeps, command: SlashCommand, read: ReadOp) -> Asked {
@@ -34,7 +29,10 @@ pub(super) fn read(deps: &OpsDeps, command: SlashCommand, read: ReadOp) -> Asked
         ReadOp::StatusSection(section) => Asked::Work(Work::Status(Some(section))),
         ReadOp::Schema { refresh } => Asked::Work(Work::Schema { refresh }),
         ReadOp::Explain(sql) => Asked::Work(Work::Explain(sql)),
-        ReadOp::Sessions | ReadOp::SessionsList => Asked::Work(Work::SessionsList),
+        // Bare `/sessions` opens the picker a saved session is chosen from, and
+        // `list` keeps printing the same rows as words.
+        ReadOp::Sessions => Asked::Sessions,
+        ReadOp::SessionsList => Asked::Work(Work::SessionsList),
         ReadOp::SessionsDelete(id) => Asked::Work(Work::SessionsDelete(id)),
         ReadOp::Preferences(request) => Asked::Work(Work::Preferences(request)),
         ReadOp::Contracts(request) => Asked::Work(Work::Contracts(request)),
@@ -82,8 +80,10 @@ pub(super) fn roll(deps: &OpsDeps, command: SlashCommand, request: RolloverReque
             said: apply(deps, command).into_words(),
             request,
         },
-        // A record is opened at launch, never swapped under a live run.
-        ContextChange::Resume => Asked::Error(RESUME_AT_LAUNCH.to_owned()),
+        // A saved session's record is opened in place of this one, by the
+        // operation both surfaces share (`Asked::Resume`); bare names the
+        // records to choose from.
+        ContextChange::Resume => Asked::Resume(request.value.unwrap_or_default()),
     }
 }
 
@@ -103,10 +103,9 @@ pub(super) fn apply(deps: &OpsDeps, command: SlashCommand) -> Asked {
     match state.apply(command, &available) {
         SessionAction::Message(words) => Asked::Notice(words),
         SessionAction::Error(words) => Asked::Error(words),
-        // `/resume` is the one command the state layer hands to a loop: a
-        // running session cannot swap its record, so the answer names the
-        // launch that can.
-        SessionAction::Resume(_) => Asked::Error(RESUME_AT_LAUNCH.to_owned()),
+        // `/resume` opens the record it names — the same operation the chat
+        // layer's rollover states — and bare opens the picker.
+        SessionAction::Resume(id) => Asked::Resume(id),
         // A command whose behaviour is a turn's or a job's never reaches this
         // arm: the chat layer states it as its own operation above.
         other => Asked::Error(format!(

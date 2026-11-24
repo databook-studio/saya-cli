@@ -23,11 +23,13 @@ use super::keys::{Intent, intent};
 use super::model::Model;
 use super::msg::{Cmd, Msg};
 use super::overlay_press;
+use super::sessions_keys;
 use super::update_answer::{answer_at, answer_card};
 use super::update_keys;
 use super::update_submit::{send, submit};
 use crate::chat::ChatEvent;
 use crate::front::apply;
+use crate::front::{Answer, Entry};
 
 /// Folds one message into the model, and answers what the runtime must do.
 pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
@@ -84,6 +86,12 @@ pub(crate) fn update(model: &mut Model, msg: Msg) -> Vec<Cmd> {
         // The settled turn said what it measured: the row's meter segment is
         // those figures from the next frame on.
         Msg::Meters(meters) => model.metered(meters),
+        // The saved sessions the command asked for: the pane opens on them, and
+        // `↵` is the resume it states.
+        Msg::Sessions(rows) => model.open_sessions(rows),
+        // A session was resumed: the transcript is that conversation from here
+        // on, and the row names the model and database it is on.
+        Msg::Resumed(view) => resumed(model, view),
     }
     cmds
 }
@@ -203,6 +211,9 @@ fn press(model: &mut Model, key: KeyEvent, cmds: &mut Vec<Cmd>) {
         }
         Some(Intent::TrustDecline) => model.close_overlay(),
         Some(Intent::OpenJobs) => model.open_jobs(),
+        // The saved-session picker's own keys: walking it, the filter, `↵` to
+        // resume the row and Esc to close it (`02` §10).
+        Some(Intent::Sessions(action)) => sessions_keys::press(model, action, cmds),
         // The drawer's own keys: walking it, opening a job's call on the card,
         // asking before a cancel, and closing it (`02` §8).
         Some(
@@ -228,6 +239,23 @@ fn ring(model: &Model, cmds: &mut Vec<Cmd>) {
     if model.notifications_enabled() {
         cmds.push(Cmd::Bell);
     }
+}
+
+/// A session was resumed: the transcript becomes the conversation the record
+/// carries — its last turns, oldest first — under the one line the surface says
+/// about it, and the status row names the model and database the resumed session
+/// is on, never the ones the launch resolved.
+fn resumed(model: &mut Model, view: super::msg::ResumedView) {
+    model.transcript = crate::front::TranscriptView::new();
+    for (asked, answered) in view.turns {
+        model.transcript.begin_turn(asked);
+        model
+            .transcript
+            .current()
+            .push(Entry::Answer(Answer { text: answered }));
+    }
+    super::direct::land(model, super::direct::DirectOutcome::Notice(view.notice));
+    model.restated(view.model, view.database);
 }
 
 /// The first Esc on an empty, settled composer arms an edit; the second puts

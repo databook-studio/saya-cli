@@ -16,7 +16,7 @@ use super::run_draw::{Facts, lines};
 use super::view::jobs_rows::{Placement, SHEET_ROWS, placement, side_width};
 use super::view::{
     Context, MODE_PICKER_ROWS, PALETTE_ROWS, TRUST_ROWS, changes_rows, help_scrolled, jobs_rows,
-    mode_picker, palette_rows, trust,
+    mode_picker, palette_rows, sessions_rows, trust,
 };
 
 /// The overlay the model has open, as the rows it covers and the lines it
@@ -117,9 +117,24 @@ pub(crate) fn overlay(
                 )
             }
         },
+        // The saved-session picker sits where `/mode`'s pane does, for the same
+        // reason: a list read on the way out.
+        Overlay::Sessions(picker) => {
+            let height = (SESSIONS_ROWS as u16).min(area.height);
+            let mut pane = picker.clone();
+            pane.charset = facts.charset;
+            (
+                anchored(area, height),
+                sessions_rows(&pane, width, height as usize),
+            )
+        }
     };
     Some((at, lines(rows, facts.scheme)))
 }
+
+/// The rows the saved-session picker takes at most: a list of sessions, a filter
+/// and its own borders.
+pub(crate) const SESSIONS_ROWS: usize = 14;
 
 /// A pane that sits at the bottom of the region it covers, nearest the composer:
 /// it is opened by a key press and read on the way out.

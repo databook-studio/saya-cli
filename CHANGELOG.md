@@ -71,6 +71,8 @@ session starts answering sooner and sends less on every turn.
 - **A message is the default.** The TUI placeholder and welcome invite a plain
   message ("Ask a question or describe a change"); `/start` for long or
   background work is listed in `/help`.
+- Choosing a saved session from `/sessions` or `/resume` resumes it in the
+  full-screen UI.
 
 ### Fixed
 

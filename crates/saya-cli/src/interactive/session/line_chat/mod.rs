@@ -56,6 +56,19 @@ pub(crate) use self::session_host::open_host;
 
 pub(crate) use self::begin::Begun;
 
+/// The facts about a saved record's linked job, as the line front reads them:
+/// what a picker's row is decided from, so the row cannot disagree with the
+/// resume that follows it.
+#[allow(unused_imports)]
+pub(crate) use self::begin::facts as record_facts;
+
+/// The line front's own resume decision, and what it is read over: the one
+/// answer the run this process opens and a picker's row both come from.
+#[allow(unused_imports)]
+pub(crate) use self::resume::{
+    Facts as ResumeFacts, decision as resume_decision, facts as resume_facts,
+};
+
 #[allow(unused_imports)]
 pub(crate) use self::boundary::{Said, nothing_to_compact};
 
