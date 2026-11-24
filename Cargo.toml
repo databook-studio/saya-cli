@@ -41,8 +41,8 @@ toml = "1.1"
 futures-util = "0.3"
 # Bounded workspace search: typed Git rules and explicitly limited regex compilation.
 gix-ignore = "=0.22.1"
-globset = "=0.4.20"
-regex = "=1.13.1"
+globset = "=0.4.21"
+regex = "=1.13.2"
 sqlparser = { version = "0.53", features = ["visitor"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "sqlite", "json", "chrono", "uuid", "bigdecimal"] }
 chrono = { version = "0.4", default-features = false, features = ["serde"] }
@@ -51,7 +51,7 @@ bigdecimal = { version = "0.4", features = ["serde"] }
 bytes = "1"
 ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "gzip", "rustls-tls"] }
-rmcp = { version = "=3.10.0", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "=3.11.0", default-features = false, features = ["server", "transport-io"] }
 base64 = "0.23"
 rsa = { version = "0.9", features = ["pem", "pkcs5"] }
 sha2 = { version = "0.10", features = ["oid"] }
