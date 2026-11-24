@@ -58,6 +58,7 @@ mod cards_body;
 mod cards_choices;
 mod cards_diff;
 mod cards_family;
+mod cards_place;
 pub(crate) mod changes;
 mod composer;
 mod composer_frame;
@@ -195,6 +196,10 @@ mod cards_tests;
 #[cfg(test)]
 #[path = "cards_panel_tests.rs"]
 mod cards_panel_tests;
+
+#[cfg(test)]
+#[path = "cards_place_tests.rs"]
+mod cards_place_tests;
 
 #[cfg(test)]
 #[path = "cards_diff_tests.rs"]

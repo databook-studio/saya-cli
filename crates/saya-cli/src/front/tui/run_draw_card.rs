@@ -97,10 +97,13 @@ fn panel(
     // What the budget leaves the body: the answers and both rules are not
     // negotiable, so everything else gives way to them.
     let mut spare = budget.saturating_sub(2 + card.choices().len());
-    if let Some(place) = card.place().filter(|_| spare >= 3) {
-        out.push(inside(place, Token::Dim, width, charset));
+    let place = card.place_rows(room);
+    if !place.is_empty() && spare >= place.len() + 2 {
+        for row in &place {
+            out.push(inside(row, Token::Dim, width, charset));
+        }
         out.push(inside("", Token::Fg, width, charset));
-        spare -= 2;
+        spare -= place.len() + 1;
     }
     let shown = card.shown_rows(model.card_full(), room);
     let take = shown.len().min(spare.max(1));

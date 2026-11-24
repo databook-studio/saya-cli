@@ -13,6 +13,7 @@
 use super::cards_body::{self, Parts};
 use super::cards_choices;
 use super::cards_family;
+use super::cards_place::Place;
 use crate::chat::Question;
 
 use crate::interactive::tui::wrap::cell_width;
@@ -97,7 +98,7 @@ pub(crate) struct Card {
     /// The call's exact machine bytes — a job's proposal line — which belong
     /// behind `v`, not in the body an operator reads at a glance.
     pub(super) details: Vec<String>,
-    place: Option<String>,
+    place: Option<Place>,
     choices: Vec<Choice>,
     /// The body rows this card may show before `v` opens the rest.
     pub(super) cap: usize,
@@ -137,9 +138,19 @@ impl Card {
         &self.details
     }
 
-    /// Where the call runs, when the panel can say.
-    pub(crate) fn place(&self) -> Option<&str> {
-        self.place.as_deref()
+    /// Where the call runs, when the panel can say: the folder it runs in and
+    /// the safety fact that travels with it.
+    pub(crate) fn place(&self) -> Option<&Place> {
+        self.place.as_ref()
+    }
+
+    /// Where the call runs, as the rows the panel paints at `room` cells: the
+    /// folder shortened from the front so its own name is whole, and the
+    /// safety fact beside it — or on a row of its own — never dropped.
+    pub(crate) fn place_rows(&self, room: usize) -> Vec<String> {
+        self.place
+            .as_ref()
+            .map_or_else(Vec::new, |place| place.rows(room))
     }
 
     /// The answers the card offers, in the order it offers them.

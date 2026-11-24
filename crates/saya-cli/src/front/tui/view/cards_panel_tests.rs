@@ -40,7 +40,7 @@ fn a_shell_call_asks_about_a_command_and_shows_it_whole() {
         ["$ python3 -m unittest"],
         "the command is a block of its own, exactly as the call states it"
     );
-    let place = card.place().expect("a command says where it runs");
+    let place = card.place().expect("a command says where it runs").line();
     assert!(place.contains("~/shop"), "the folder is named: {place}");
     assert!(
         place.contains("on your machine, not sandboxed"),
@@ -60,7 +60,7 @@ fn a_write_asks_about_a_file_change_and_shows_the_path_whole() {
     assert_eq!(card.family(), Family::FileChange);
     assert_eq!(card.title(), "Allow this file change?");
     assert_eq!(card.target(), ["src/pricing.py"]);
-    let place = card.place().expect("a write says where it lands");
+    let place = card.place().expect("a write says where it lands").line();
     assert!(place.contains("~/shop"), "the folder is named: {place}");
     assert_eq!(
         labels(&card),
@@ -84,8 +84,8 @@ fn a_query_asks_about_a_query_and_shows_the_statement_whole() {
         "the statement is stated line for line, never folded"
     );
     assert_eq!(
-        card.place(),
-        Some("on connection demo"),
+        card.place().map(|place| place.line()),
+        Some(String::from("on connection demo")),
         "a query says the connection it runs on"
     );
     assert!(
@@ -102,7 +102,8 @@ fn a_fetch_asks_about_a_web_request_and_shows_the_url_whole() {
     assert_eq!(card.family(), Family::Web);
     assert_eq!(card.title(), "Allow this web request?");
     assert_eq!(card.target(), ["GET https://example.invalid/pricing"]);
-    assert_eq!(card.place(), Some("from this machine"));
+    let shown = card.place().map(|place| place.line());
+    assert_eq!(shown.as_deref(), Some("from this machine"));
     assert!(
         labels(&card).contains("fetch:example.invalid"),
         "the session answer names the destination: {}",
@@ -121,7 +122,8 @@ fn a_jobs_consent_keeps_its_own_title_and_states_the_scope_whole() {
         "Approve job pty-job with this exact scope:",
         "the consent's first row is untouched"
     );
-    assert_eq!(card.place(), Some("in ~/shop"));
+    let shown = card.place().map(|place| place.line());
+    assert_eq!(shown.as_deref(), Some("in ~/shop"));
     assert_eq!(
         keys(&card),
         ["y", "n", "Esc"],
@@ -275,8 +277,8 @@ fn a_call_with_no_bound_folder_names_only_what_it_has() {
     let card = approval(&write_question(), NO_FOLDER, SCREEN_ROWS);
 
     assert_eq!(
-        card.place(),
-        Some("inside the workspace"),
+        card.place().map(|place| place.line()),
+        Some(String::from("inside the workspace")),
         "an unbound launch names no folder it does not have"
     );
     assert_eq!(card.title(), "Allow this file change?");
@@ -294,8 +296,8 @@ fn a_command_in_the_launch_folder_names_that_folder_and_never_a_dot() {
     let card = approval(&question, Some("/home/me/demo"), SCREEN_ROWS);
 
     assert_eq!(
-        card.place(),
-        Some("in demo · on your machine, not sandboxed"),
+        card.place().map(|place| place.line()),
+        Some(String::from("in demo · on your machine, not sandboxed")),
         "the place line names the folder, never `.`"
     );
 }

@@ -1,4 +1,5 @@
-//! Which family a call belongs to, and the line the panel opens with.
+//! Which family a call belongs to, the title the panel puts up, and the place
+//! line it opens with.
 //!
 //! A family is read from the call's own facts — the shape the one operator
 //! builds for every caller (`chat::operator`) — never from a tool name spelled
@@ -6,8 +7,12 @@
 //! query's with the connection, a write's with the path, a fetch's with the
 //! request. The plan gate's ask is the one body that is free text, so it is the
 //! one the caller's line identifies.
+//!
+//! How a place is shortened for the panel's width is [`super::cards_place`]'s;
+//! this module says what each family's place is.
 
 use super::cards::Family;
+use super::cards_place::Place;
 use crate::agent::tools::coding::plan_gate;
 use crate::agent::tools::consent::Caller;
 use crate::chat::Question;
@@ -20,6 +25,15 @@ const WEB: &str = "Allow this web request?";
 const PLAN: &str = "Approve this plan?";
 const SCOPE: &str = "Approve this job?";
 const OTHER: &str = "Allow this call?";
+
+/// The lane fact a command's place states: a host command runs outside the
+/// sandbox, and the operator deciding on it has to know. It is a safety fact,
+/// so it is never dropped from the place — it moves to a row of its own when
+/// the line has no room for it.
+const NOT_SANDBOXED: &str = "on your machine, not sandboxed";
+
+/// What a workspace write's place states beside the folder it lands in.
+const IN_WORKSPACE: &str = "inside the workspace";
 
 /// The family `question` belongs to.
 pub(crate) fn family(question: &Question) -> Family {
@@ -72,19 +86,19 @@ pub(crate) fn place(
     family: Family,
     in_facts: Option<String>,
     folder: Option<&str>,
-) -> Option<String> {
+) -> Option<Place> {
     match family {
         Family::Command => {
-            let where_ = command_place(in_facts.as_deref(), folder)?;
-            Some(format!("{where_} · on your machine, not sandboxed"))
+            let place = command_place(in_facts.as_deref(), folder)?;
+            Some(place.noting(NOT_SANDBOXED))
         }
         Family::FileChange => Some(match folder {
-            Some(folder) => format!("in {folder} · inside the workspace"),
-            None => String::from("inside the workspace"),
+            Some(folder) => Place::in_folder(folder, Some(IN_WORKSPACE)),
+            None => Place::words(IN_WORKSPACE),
         }),
-        Family::Query => in_facts,
-        Family::Web => Some(String::from("from this machine")),
-        Family::Scope => folder.map(|folder| format!("in {folder}")),
+        Family::Query => in_facts.map(Place::words),
+        Family::Web => Some(Place::words("from this machine")),
+        Family::Scope => folder.map(|folder| Place::in_folder(folder, None)),
         Family::Plan | Family::Other => None,
     }
 }
@@ -93,10 +107,13 @@ pub(crate) fn place(
 /// own facts state, or — when it states the default one (`.`) or none — the
 /// launch's folder. The line names the folder, never the spelling the call used,
 /// and `.` names nothing at all.
-fn command_place(in_facts: Option<&str>, folder: Option<&str>) -> Option<String> {
+fn command_place(in_facts: Option<&str>, folder: Option<&str>) -> Option<Place> {
     match in_facts {
-        Some(statement) if !is_bare(statement) => Some(statement.to_owned()),
-        _ => folder.map(|folder| format!("in {}", folder_name(folder))),
+        Some(statement) if !is_bare(statement) => Some(Place::in_folder(
+            statement.strip_prefix("in ").unwrap_or(statement),
+            None,
+        )),
+        _ => folder.map(|folder| Place::in_folder(folder_name(folder), None)),
     }
 }
 
