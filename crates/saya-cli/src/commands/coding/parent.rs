@@ -106,7 +106,13 @@ impl NativeCodingJob {
         use saya_agent::{BudgetDimension, CancellationReason};
         let owner = self.ledger.cancellation_token();
         let remaining = self.ledger.remaining().await;
-        let durable = super::cancel_poll::watch(&self.application.store, self.job_id());
+        // The durable poll is its own task, not one arm of the wait below: a
+        // read an owner has in flight is held until that owner is polled again,
+        // and parked here — the state a second surface reads a status in — the
+        // read would keep the store's ONE connection while the surface that
+        // needs it waits out the pool's acquisition timeout.
+        let mut durable =
+            super::cancel_poll::Poll::start(self.application.store.clone(), self.job_id().clone());
         let reason = tokio::select! {
             biased;
             _=owner.cancelled()=>owner.reason().unwrap_or(CancellationReason::OwnerFailure),
@@ -115,7 +121,7 @@ impl NativeCodingJob {
                 owner.reason().unwrap_or(CancellationReason::Budget(BudgetDimension::ElapsedTime))
             },
             _=stop.cancelled()=>return,
-            reason=durable=>reason,
+            reason=durable.reason()=>reason,
         };
         self.cancellation.cancel_with_reason(reason);
     }

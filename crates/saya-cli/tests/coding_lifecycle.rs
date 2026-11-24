@@ -34,6 +34,8 @@ mod managed_fallback;
 mod native;
 #[path = "coding_lifecycle/oneshot.rs"]
 mod oneshot;
+#[path = "coding_lifecycle/parked_reads.rs"]
+mod parked_reads;
 #[path = "coding_lifecycle/post_edit_workspace.rs"]
 mod post_edit_workspace;
 #[path = "coding_lifecycle/provider.rs"]
