@@ -3,7 +3,7 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## 0.5.1 — 2026-11-23
+## 0.5.1 — 2026-11-24
 
 Chat now runs on the job engine behind a new full-screen terminal UI, and a
 session starts answering sooner and sends less on every turn.
@@ -21,10 +21,9 @@ session starts answering sooner and sends less on every turn.
 - **A new full-screen session.** A command palette (`Ctrl+K`, or `/` on an
   empty line) and a key sheet (`?`), input history with `Up`/`Down` recall and
   `Ctrl+R` search (persisted, `--param` values redacted), a background jobs
-  drawer (`Ctrl+J`), approval cards that state where a job runs, `/setup`
-  handed to the guided wizard, `/reload` without a restart, and colour-free
-  (`NO_COLOR`) and `--ascii` rendering. The keys are listed in
-  `docs/commands.md`.
+  drawer (`Ctrl+J`), `/setup` handed to the guided wizard, `/reload` without a
+  restart, and colour-free (`NO_COLOR`) and `--ascii` rendering. The keys are
+  listed in `docs/commands.md`.
 - **One engine for chat and jobs.** A chat session is a run on the job engine:
   the same tools, limits and approvals as `saya start`, and `saya ask` answers
   through the same session.
@@ -46,7 +45,34 @@ session starts answering sooner and sends less on every turn.
   resumes a paused turn; `/job` owns the job controls (`/approve`, `/deny`,
   `/message`, `/pause`, `/cancel-child`, `/follow-up` keep working with a
   once-per-session note). `/run`, `/runs` and `/recovery` still run but are
-  no longer listed.
+  no longer listed. In the full-screen UI every catalogue command works:
+  `/clear`, `/compact` and `/rotate` act on the open conversation, and the
+  status row names the current model and database after `/model`, `/provider`
+  or `/connect`.
+- **The approval is a panel above the composer.** It shows the exact command,
+  the file change as a diff or the query, and where it runs ("on your machine,
+  not sandboxed"), and takes one answer per line; typing never answers it —
+  the panel answers only while it holds the keyboard, and `Tab` moves the
+  keyboard. "1 of N" appears while calls wait, and a long folder keeps its
+  name.
+- **Every step of a turn is listed with what it ran.** `Ctrl+O` shows each
+  step's outcome, and a turn that changed files ends with "Changed: …", whose
+  diffs `Ctrl+D` opens.
+- **A quieter screen.** The status row is mode · model · database, with a
+  context and cost meter when both are known; toasts get their own row; the
+  welcome suggests what the workspace holds; one key sheet lists every key by
+  group; the palette lists everyday commands first.
+- **The first request carries the workspace.** A bounded summary of the
+  workspace is gathered in the background at launch and rides that request.
+- **`@path` mentions in the composer** (and in the line REPL): a completion
+  list of the workspace's files, and the files mentioned are attached, bounded.
+  Private and ignored files are never offered or attached, and the read tool
+  refuses a private path.
+- **Fenced code blocks are highlighted**, and `/status` states context use and
+  cost.
+- **`Esc` twice on an empty line edits the last message**, its file edits
+  rewound first; a bell and a desktop notification mark a waiting approval or
+  the end of a long turn (`[ui] notifications`, `[ui] notify_after_seconds`).
 - **Helpers in chat.** A session can use helpers; their tool steps fold under
   the helper that made them, and `Esc` stops them.
 - **`--deny` follows the real program** through `command`, paths, `env`,
@@ -57,8 +83,10 @@ session starts answering sooner and sends less on every turn.
   `git status`, a pipeline of such commands) no longer puts a question to the
   operator. The set is decided by the same reading `--deny` uses, so a write, a
   substitution, a wrapper, an environment assignment, a path or an unknown
-  program still asks; `--deny` still refuses first, and
-  `[permissions] read_only_commands = false` turns the set off.
+  program still asks. A path outside the workspace or a private file, a
+  `$VAR` or `~` expansion or a glob, a recursive grep, or git in a repository
+  whose configuration names a program still asks too; `--deny` still refuses
+  first, and `[permissions] read_only_commands = false` turns the set off.
 - `run_command` in `[tools] allow` is a one-release alias of `shell`, and a
   `command:<program>` grant keeps authorising that program through `shell`.
 - Deleting a session also removes its finished job; `saya job list` hides

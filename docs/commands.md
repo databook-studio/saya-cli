@@ -285,6 +285,9 @@ where editing is the reader's `Up`/`Down` recall and no key below applies.
 | `Ctrl+R` | Search the input history: type to narrow, `Ctrl+R` again steps one match older, `Enter` takes it, `Esc` closes the search |
 | `Ctrl+K`, or `/` on an empty line | Open the command palette over the catalogue below: `↑`/`↓` choose, `Enter` runs or fills the selected command, `Esc` closes. A non-empty line keeps its `/` |
 | `Ctrl+O` | Show every step of every turn in full — its whole command and the outcome it reported — or fold the transcript back to one line per step. A turn's steps are visible either way: a settled turn no longer hides what it ran |
+| `Ctrl+D` | Show the diff of every file the last turn that wrote changed: `↑`/`↓` walk the files, `PgUp`/`PgDn` a screen at a time, `Esc` closes it. With nothing changed the key does nothing |
+| `Tab` | Move the keyboard between the composer and the open approval panel: the panel answers only while it holds it |
+| `Tab`/`Enter`, `↑`/`↓`, `Esc` in the `@` list | Take the path the `@` list points at into the composer, choose among the listed paths, or close the list without taking one |
 | `?` on an empty line | Open the key sheet; `Esc` closes it |
 | `Shift+Tab` | Walk the mode cycle: `ask → accept-edits → plan → bypass`, skipping `bypass` when it is withheld. `read-only` and `never` are reachable only by naming them. Refused with a note while an approval card is open |
 | `Esc` while a turn runs | Stop that turn: the run stays open, and a helper the turn launched is stopped with it |
