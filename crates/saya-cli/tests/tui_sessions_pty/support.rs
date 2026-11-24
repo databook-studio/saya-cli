@@ -31,6 +31,8 @@ pub(crate) struct Session {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     rx: Receiver<std::io::Result<Vec<u8>>>,
     parser: vt100::Parser,
+    /// The width the frame is read at: the pty's own, stated when it was made.
+    cols: u16,
 }
 
 impl Drop for Session {
@@ -83,10 +85,24 @@ impl Session {
         }
     }
 
+    /// Reads whatever the surface has painted for `for_`, and answers nothing:
+    /// the frame a caller reads next is the one that settled in that time.
+    pub(crate) fn settle(&mut self, for_: Duration) {
+        let start = Instant::now();
+        while start.elapsed() < for_ {
+            match self.rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(Ok(bytes)) if !bytes.is_empty() => self.parser.process(&bytes),
+                Ok(Ok(_)) => {}
+                Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+
     /// The settled frame, one line per terminal row.
     pub(crate) fn screen(&self) -> String {
         let mut out = String::new();
-        for row in self.parser.screen().rows(0, COLS) {
+        for row in self.parser.screen().rows(0, self.cols) {
             out.push_str(row.trim_end());
             out.push('\n');
         }
@@ -102,10 +118,7 @@ impl Session {
 /// keeps its home outside for the same reason). The home is removed when the case
 /// ends.
 pub(crate) fn fixture(tag: &str) -> PathBuf {
-    let home = std::env::temp_dir().join(format!(
-        "saya-tui-sessions-{}-{tag}",
-        std::process::id()
-    ));
+    let home = std::env::temp_dir().join(format!("saya-tui-sessions-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).expect("the scratch home builds");
 
@@ -140,12 +153,19 @@ fn seed(home: &Path, id: &str, question: &str, answer: &str) {
         .expect("the record saves");
 }
 
-/// Launches the real binary over `home`, in a launch folder of its own.
+/// Launches the real binary over `home`, in a launch folder of its own, on the
+/// size the picker cases read.
 pub(crate) fn launch(home: &Path) -> Session {
+    launch_at(home, COLS, ROWS)
+}
+
+/// The same launch at a size a caller states: a pane is read as the width it
+/// covers, so a case about a narrow terminal states its own.
+pub(crate) fn launch_at(home: &Path, cols: u16, rows: u16) -> Session {
     let pty_system = native_pty_system();
     let pair = match pty_system.openpty(PtySize {
-        rows: ROWS,
-        cols: COLS,
+        rows,
+        cols,
         pixel_width: 0,
         pixel_height: 0,
     }) {
@@ -177,7 +197,8 @@ pub(crate) fn launch(home: &Path) -> Session {
         writer,
         child,
         rx: reader_channel(reader),
-        parser: vt100::Parser::new(ROWS, COLS, 0),
+        parser: vt100::Parser::new(rows, cols, 0),
+        cols,
     }
 }
 

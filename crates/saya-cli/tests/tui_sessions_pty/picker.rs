@@ -12,7 +12,7 @@ const PANE: &str = "Sessions";
 fn choosing_a_saved_session_from_the_picker_resumes_it() {
     let home = fixture("picker");
     let mut session = launch(&home);
-    session.wait_for("saya");
+    session.wait_for("Describe a change");
 
     session.send_line("/sessions");
     let screen = session.wait_for(PANE);
@@ -52,13 +52,13 @@ fn choosing_a_saved_session_from_the_picker_resumes_it() {
 fn escape_closes_the_picker_without_resuming() {
     let home = fixture("escape");
     let mut session = launch(&home);
-    session.wait_for("saya");
+    session.wait_for("Describe a change");
 
     session.send_line("/sessions");
     session.wait_for(PANE);
 
     session.press(b"\x1b");
-    let screen = session.wait_for("saya");
+    let screen = session.wait_for("Describe a change");
     assert!(
         !screen.contains("resumed the newer question"),
         "nothing was resumed:\n{screen}"
