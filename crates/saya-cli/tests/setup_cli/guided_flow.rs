@@ -32,6 +32,10 @@ fn drive_setup_pty(root: &Path, lines: &[&str]) -> String {
     cmd.env_remove("XDG_CONFIG_HOME");
     cmd.env_remove("XDG_DATA_HOME");
     cmd.env_remove("APPDATA");
+    // The fixture starts from no provider: no key from the host may choose one.
+    for name in super::PROVIDER_ENV {
+        cmd.env_remove(name);
+    }
     cmd.cwd(root);
     cmd.arg("setup");
     let mut child = pair

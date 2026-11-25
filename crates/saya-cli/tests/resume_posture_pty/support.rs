@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+include!("../support/provider_env.rs");
+
 /// The session both cases resume: a 0.5.0 record, saved with no run link.
 pub(crate) const RESUMED_ID: &str = "20260101-000000-pty0";
 const COLS: u16 = 80;
@@ -169,6 +171,10 @@ pub(crate) fn launch(home: &Path, args: &[&str]) -> Session {
     cmd.env_remove("APPDATA");
     cmd.env_remove("SAYA_API_KEY");
     cmd.env_remove("SAYA_AI_API_KEY");
+    // The fixture states no provider: no key from the host may choose one.
+    for name in PROVIDER_ENV {
+        cmd.env_remove(name);
+    }
     let launch_dir = home.join("launch-dir");
     std::fs::create_dir_all(&launch_dir).expect("the launch dir builds");
     cmd.cwd(launch_dir);

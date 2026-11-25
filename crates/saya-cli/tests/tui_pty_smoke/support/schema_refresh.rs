@@ -12,7 +12,8 @@ struct SchemaRefreshResult {
 /// against the live pagila database. Sets the docker postgres password in the
 /// child env (never inlined in config); never reads or logs it back.
 fn run_saya_schema_refresh(home: &Path, config: &ScratchConfig) -> SchemaRefreshResult {
-    let output = std::process::Command::new(saya_bin())
+    let mut command = std::process::Command::new(saya_bin());
+    command
         .env("HOME", home)
         .env("SAYA_CONFIG_HOME", home.join("config-home"))
         .env("SAYA_SESSION_DIR", home.join("sessions"))
@@ -22,7 +23,11 @@ fn run_saya_schema_refresh(home: &Path, config: &ScratchConfig) -> SchemaRefresh
         .env_remove("APPDATA")
         .env_remove("SAYA_API_KEY")
         .env_remove("SAYA_AI_API_KEY")
-        .env(DOCKER_POSTGRES_PASSWORD_ENV, "databook")
+        .env(DOCKER_POSTGRES_PASSWORD_ENV, "databook");
+    for name in PROVIDER_ENV {
+        command.env_remove(name);
+    }
+    let output = command
         .args([
             "--config",
             config.config.to_str().unwrap(),

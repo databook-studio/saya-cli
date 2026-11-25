@@ -39,7 +39,8 @@ fn seed_sentinel(database: &Path, value: &str) {
 /// beside the state DB — the investigations root the TUI's composed runtime
 /// reads too. Returns the document id (the saved file's stem).
 fn save_param_investigation(home: &Path) -> String {
-    let output = std::process::Command::new(saya_bin())
+    let mut command = std::process::Command::new(saya_bin());
+    command
         .env("HOME", home)
         .env("SAYA_CONFIG_HOME", home.join("config-home"))
         .env("SAYA_SESSION_DIR", home.join("sessions"))
@@ -48,7 +49,11 @@ fn save_param_investigation(home: &Path) -> String {
         .env_remove("XDG_DATA_HOME")
         .env_remove("APPDATA")
         .env_remove("SAYA_API_KEY")
-        .env_remove("SAYA_AI_API_KEY")
+        .env_remove("SAYA_AI_API_KEY");
+    for name in PROVIDER_ENV {
+        command.env_remove(name);
+    }
+    let output = command
         .args([
             "--non-interactive",
             "--format",
@@ -105,7 +110,7 @@ fn save_param_investigation(home: &Path) -> String {
 fn write_param_redact_config(home: &Path) {
     std::fs::write(
         home.join("config.toml"),
-        "default_profile = 'demo'\n\n[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n",
+        "default_profile = 'demo'\n\n[ai]\nprovider = 'ollama'\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n",
     )
     .expect("param-redact config writes");
     // The launch opens the configured profile's connection (T19 put the surface

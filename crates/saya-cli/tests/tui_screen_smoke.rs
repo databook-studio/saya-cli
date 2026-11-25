@@ -19,6 +19,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+include!("support/provider_env.rs");
 include!("tui_screen_smoke/support/answers.rs");
 include!("tui_screen_smoke/support/pty.rs");
 include!("tui_screen_smoke/support/spawn.rs");

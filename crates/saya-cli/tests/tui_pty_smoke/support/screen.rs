@@ -141,9 +141,14 @@ fn scratch_child(home: &Path) -> CommandBuilder {
     cmd.env_remove("XDG_CONFIG_HOME");
     cmd.env_remove("XDG_DATA_HOME");
     cmd.env_remove("APPDATA");
-    // No provider env can leak in (and we never want to log one).
+    // No provider env can leak in (and we never want to log one). The key
+    // table is the auto-choice's own; the launch's stated provider, where a
+    // case gives one, is set after this and wins.
     cmd.env_remove("SAYA_API_KEY");
     cmd.env_remove("SAYA_AI_API_KEY");
+    for name in PROVIDER_ENV {
+        cmd.env_remove(name);
+    }
     cmd
 }
 

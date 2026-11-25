@@ -76,6 +76,7 @@ const READ_TIMEOUT: Duration = Duration::from_millis(250);
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
 
+include!("support/provider_env.rs");
 include!("tui_pty_smoke/cases/splash.rs");
 include!("tui_pty_smoke/support/screen.rs");
 include!("tui_pty_smoke/support/config.rs");

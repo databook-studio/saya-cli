@@ -10,6 +10,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+include!("support/provider_env.rs");
+
 fn isolated_root(label: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("saya-cli-setup-{label}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
@@ -28,6 +30,10 @@ fn saya_command(root: &Path) -> Command {
         .env_remove("XDG_CONFIG_HOME")
         .env_remove("XDG_DATA_HOME")
         .env_remove("APPDATA");
+    // The fixture starts from no provider: no key from the host may choose one.
+    for name in PROVIDER_ENV {
+        cmd.env_remove(name);
+    }
     cmd
 }
 
