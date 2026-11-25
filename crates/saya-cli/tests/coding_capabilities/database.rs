@@ -1,4 +1,4 @@
-use super::{Fixture, Provider, results, sqlite_fixture};
+use super::{Fixture, Provider, full_result, results, sqlite_fixture};
 use saya_agent::{CancellationToken, NoopEventSink};
 use saya_cli::{CodingApplication, CodingAuthorization, CodingError, CodingJobRequest};
 use serde_json::json;
@@ -79,7 +79,7 @@ async fn selected_database_reads_and_schema_reject_writes_and_unselected_profile
     );
     for tool in ["child-read", "root-read"] {
         let reads = results(&provider, tool);
-        let read: serde_json::Value = serde_json::from_str(reads.last().unwrap()).unwrap();
+        let read = full_result(&reads);
         assert_eq!(read["rows"].as_array().unwrap().len(), 1);
         assert_eq!(read["truncated"], true);
     }

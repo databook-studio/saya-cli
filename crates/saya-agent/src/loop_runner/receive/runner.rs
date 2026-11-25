@@ -52,6 +52,10 @@ pub(in crate::loop_runner) async fn receive(
             usage: recovered_usage,
         });
     }
+    // Old tool results become bounded stubs before the request is measured, so
+    // the projection is the bytes that will actually be sent. The latest
+    // groups stay whole; see `history_stub`.
+    super::super::output::stub_old_tool_results(messages, *protected_prefix_len);
     let projection_started = std::time::Instant::now();
     let fitted = preflight::fit_request(
         model,

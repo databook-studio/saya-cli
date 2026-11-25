@@ -45,6 +45,16 @@ fn results(provider: &Provider, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// The actual result for a call. The first request that carries a result
+/// carries it whole; later requests may carry the history policy's bounded
+/// stub, so the first parseable occurrence is the one to read.
+fn full_result(results: &[String]) -> Value {
+    results
+        .iter()
+        .find_map(|result| serde_json::from_str(result).ok())
+        .unwrap_or_else(|| panic!("no actual result among {} entries", results.len()))
+}
+
 /// The candidate the owner prepared at the end of the run: the only
 /// `candidate-` managed checkout the job holds.
 async fn prepared_candidate(fixture: &Fixture, job: &JobId) -> ManagedCheckoutId {
@@ -98,7 +108,7 @@ async fn coordinator_inspects_and_reviews_owned_candidate_without_applying() {
         .unwrap()
         .unwrap();
     let reads = results(&provider, "inspect-read");
-    let read: Value = serde_json::from_str(reads.last().unwrap()).unwrap();
+    let read = full_result(&reads);
     assert!(
         read.get("error").is_none(),
         "the root reads its own working checkout: {read}"
