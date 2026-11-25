@@ -4,12 +4,36 @@
 //! Both are reported, never inferred: an unknown window and an unreported cost
 //! each keep their line's "unknown" wording, and a reported zero is a figure.
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
 use saya_agent::TokenUsage;
+use saya_config::{ConnectionsFile, ResolutionInput, resolve};
+use saya_store::FsSessionStore;
 
 use super::Section;
 use super::{StatusFacts, StatusPanel};
 use crate::chat::ops_status_facts::{context_use, cost_fact};
+use crate::config::runtime::RuntimeConfig;
 use crate::interactive::SessionUsage;
+use crate::interactive::session::state::SessionState;
+
+/// A runtime whose launch-time model is `model`, with the stated override.
+fn runtime_for(model: &str, window: Option<u64>) -> RuntimeConfig {
+    let connections = ConnectionsFile::default();
+    let mut resolved = resolve(ResolutionInput::new(connections.clone())).expect("resolves");
+    resolved.ai.model = model.to_owned();
+    resolved.ai.context_window_tokens = window;
+    RuntimeConfig {
+        resolved,
+        connections,
+        config_path: None,
+        connections_path: None,
+        cache_scope: PathBuf::from("/tmp/saya-ops-status-window-tests"),
+        investigations_root: PathBuf::from("/tmp/saya-ops-status-window-tests/investigations"),
+        secret_values: BTreeMap::new(),
+    }
+}
 
 fn usage(input: u64, cost: Option<u64>) -> SessionUsage {
     let mut usage = SessionUsage::default();
@@ -73,6 +97,24 @@ fn the_model_section_states_both_figures() {
         "{model}"
     );
     assert!(model.contains("\n  Cost: $0.0125"), "{model}");
+}
+
+/// `/status` divides by the window of the model the session is on, not the
+/// launch-time model the runtime still names.
+#[test]
+fn the_status_context_line_uses_the_session_model() {
+    let runtime = runtime_for("claude-sonnet-5", None);
+    let mut state = SessionState::new("s", None, "gpt-4o");
+    state.usage.note_request(Some(64_000), None);
+    let store = FsSessionStore::new(PathBuf::from("/tmp/saya-ops-status-window-tests/store"));
+
+    let facts = StatusFacts::of_session(&state).with_runtime(&state, &runtime, &store, None);
+
+    assert_eq!(
+        facts.context_use.as_deref(),
+        Some("50% of a 128000-token window"),
+        "the session model's window is the denominator"
+    );
 }
 
 /// A session that reported nothing names why, rather than showing a share of a

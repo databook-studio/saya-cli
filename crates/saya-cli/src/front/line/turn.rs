@@ -161,6 +161,11 @@ impl TurnTotals {
     /// counts the call it consumed even at zero — absent is not a reported
     /// zero. The extraction call is recorded only when it reported.
     pub(crate) fn fold_into(&self, session: &mut SessionUsage, outcome: &ChatOutcome) {
+        // Every settled turn is one request this session made, even when the
+        // provider completed it without reporting usage: the count is separate
+        // from the reported-usage turns, so a silent provider is not "no
+        // requests yet".
+        session.count_request();
         match outcome {
             ChatOutcome::Failed { .. } | ChatOutcome::Cancelled => {
                 if let Some(usage) = &self.answering {

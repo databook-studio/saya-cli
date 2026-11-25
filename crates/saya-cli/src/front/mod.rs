@@ -13,7 +13,7 @@ mod view;
 // consumes it. Nothing in the crate references it yet, so the re-exports read
 // as unused in a lib build — they are the boundary, not dead code.
 #[allow(unused_imports)]
-pub(crate) use line::{LineFront, SettledTurn};
+pub(crate) use line::{LineFront, SettledTurn, TurnTotals};
 #[allow(unused_imports)]
 pub(crate) use view::{
     Activity, Answer, Clarification, Command, CommandState, DiffLine, Edit, Entry, Error, Helper,

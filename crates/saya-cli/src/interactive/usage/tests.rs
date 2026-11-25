@@ -89,6 +89,7 @@ fn the_panel_states_requests_tokens_cost_and_context() {
     let mut turn = TokenUsage::new(51_200, 10);
     turn.cached_input_tokens = Some(12_800);
     usage.answering.record_call(&turn);
+    usage.count_request();
     usage.note_request(Some(51_200), Some(3_000));
 
     let panel = usage.panel(Some(200_000), Some(1_000_000));
@@ -109,6 +110,7 @@ fn the_panel_states_requests_tokens_cost_and_context() {
 fn the_panel_says_an_unreported_cost_never_trips_the_ceiling() {
     let mut usage = SessionUsage::default();
     usage.answering.record_call(&TokenUsage::new(10, 2));
+    usage.count_request();
     usage.note_request(Some(10), None);
 
     let panel = usage.panel(Some(1_000), Some(1_000_000));
@@ -153,4 +155,33 @@ fn the_ceiling_stops_at_the_boundary() {
 fn an_unreported_cost_never_stops_a_turn() {
     assert_eq!(super::ceiling_stop(None, Some(1_000_000)), None);
     assert_eq!(super::ceiling_stop(Some(1_000_000), None), None);
+}
+
+/// A provider that completes a request without reporting tokens still answered
+/// a request: the header counts requests, not reported-usage turns, and the
+/// token lines say the provider reported none rather than showing zeros.
+#[test]
+fn a_turn_without_reported_usage_is_still_a_request() {
+    use crate::chat::ChatOutcome;
+    use crate::front::TurnTotals;
+
+    let mut usage = SessionUsage::default();
+    TurnTotals::default().fold_into(&mut usage, &ChatOutcome::Answered);
+
+    let panel = usage.panel(Some(200_000), None);
+    assert!(
+        panel.contains("Session usage — 1 request"),
+        "a completed request is counted even with no usage report:\n{panel}"
+    );
+    assert!(
+        !panel.contains("no requests yet"),
+        "a completed request is not `no requests yet`:\n{panel}"
+    );
+    for line in [
+        "Prompt tokens: not reported by the provider",
+        "Completion tokens: not reported by the provider",
+        "Cost: not reported by the provider",
+    ] {
+        assert!(panel.contains(line), "missing {line:?} in:\n{panel}");
+    }
 }

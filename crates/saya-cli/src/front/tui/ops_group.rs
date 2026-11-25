@@ -27,7 +27,15 @@ pub(super) fn read(deps: &OpsDeps, command: SlashCommand, read: ReadOp) -> Asked
         | ReadOp::Notes(_) => apply(deps, command),
         ReadOp::Status => Asked::Work(Work::Status(None)),
         ReadOp::StatusSection(section) => Asked::Work(Work::Status(Some(section))),
-        ReadOp::Usage(request) => Asked::Work(Work::Usage(request)),
+        // `/usage` states this session's ceiling, and the next send is checked
+        // against it: the answer is applied here, on the surface's thread,
+        // before the command returns — a blocking task could be outrun by a
+        // message sent straight after it.
+        ReadOp::Usage(request) => {
+            let runtime = deps.runtime.current();
+            let mut state = deps.state();
+            Asked::Notice(crate::chat::usage_answer(&mut state, &runtime, request))
+        }
         ReadOp::Schema { refresh } => Asked::Work(Work::Schema { refresh }),
         ReadOp::Explain(sql) => Asked::Work(Work::Explain(sql)),
         // Bare `/sessions` opens the picker a saved session is chosen from, and
