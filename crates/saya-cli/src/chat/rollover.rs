@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use super::compose::{RunComposition, SessionRun};
 use super::link;
 use super::transcript::Transcript;
+use super::workspace_shape::decide as workspace_shape;
 use crate::commands::coding::{CodingApplication, CodingError, NativeCodingJob};
 use crate::interactive::session::continuation::compaction::manual::COMPACT_KEEP_TAIL_TURNS;
 
@@ -172,16 +173,20 @@ impl Rollover {
     /// unless the change is `/clear`, and linked into the record.
     ///
     /// **Nothing is asked.** The next run is consented to by the session's mode,
-    /// exactly as the first one was, and the in-place lease of the run that
-    /// ended is free before the next job is created.
+    /// exactly as the first one was. The folder's shape is read after the run
+    /// that ended has let it go: free, the successor writes it; held by a job
+    /// that run started, the successor reads it.
     pub(crate) async fn roll(
         &self,
         ending: Ending,
         change: RolloverCause,
-        next: SessionRun,
+        mut next: SessionRun,
         transcript: &mut Transcript,
     ) -> Result<RunComposition, RolloverError> {
         let job = ending.job();
+        // Whether this run is the folder's holder: dropping it is what frees
+        // the folder, or hands it to a job it started that still runs.
+        let held = job.holds_folder_lease();
         // A rollover prepares a new job: the run it replaces is over, and the
         // surface states the job that follows it.
         if job.job_id().as_str() == next.session {
@@ -194,9 +199,19 @@ impl Rollover {
             .await
             .map_err(RolloverError::Engine)?;
         // The job object owns the folder's lease, in place: dropping the run
-        // that ended is what frees it, and the next job is created after that
-        // and never before it.
+        // that ended frees it — or hands it to a dependent job still running —
+        // and the next job is created after that and never before it.
         drop(ending);
+        // The shape stated when the successor was planned is stale now: the run
+        // that ended has let the folder go, and the successor must read a
+        // folder a running job took rather than try to write beside it.
+        if held {
+            next.shape = workspace_shape(
+                self.application.root_path(),
+                self.application.state_root(),
+                &next.session,
+            );
+        }
         // `/clear` starts the next run with nothing; every other change carries
         // the conversation over as the run's history.
         if change.clears_transcript() {

@@ -59,15 +59,28 @@ impl Line {
         // The host the next run composes over is stated from the parts as they are
         // now — the session's own runtime and folder — before the run that ended is
         // given up, so a host that cannot be opened leaves the session's run alone.
-        let hosted = match super::open::host(&parts).await {
+        let mut hosted = match super::open::host(&parts).await {
             Ok(hosted) => hosted,
             Err(reason) => return Said::Error(Self::not_prepared(&reason)),
         };
         let Some(run) = self.run.take() else {
             return Said::Error(ENDED.to_owned());
         };
+        // Whether this run is the folder's holder: giving it up is what frees
+        // the folder, or hands it to a job it started that still runs.
+        let held = run.job().holds_folder_lease();
         run.end_prepared_run().await;
         drop(run);
+        // A holder's folder may have been handed to a job still running, so the
+        // shape stated before the run ended is stale: read it now, so the run
+        // that follows writes only a folder nobody else holds.
+        if held {
+            hosted.shape = crate::chat::workspace_shape(
+                hosted.application.root_path(),
+                hosted.application.state_root(),
+                &parts.session,
+            );
+        }
         let front = Arc::clone(&self.front);
         match open_run(&parts, hosted, front, self.metrics.clone()).await {
             Ok((run, application, shape)) => {

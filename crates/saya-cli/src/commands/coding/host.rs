@@ -272,6 +272,11 @@ impl CodingApplication {
     pub fn is_in_place(&self) -> bool {
         self.root.local().is_some()
     }
+    /// The private state root this application's runs record under, and where
+    /// an in-place folder's lease is looked for.
+    pub(crate) fn state_root(&self) -> &Path {
+        &self.state_root
+    }
     /// The root mode this application opened over, as the result and status
     /// surfaces state it.
     pub fn root_mode_name(&self) -> &'static str {
