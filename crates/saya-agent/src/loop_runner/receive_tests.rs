@@ -57,12 +57,14 @@ async fn main_loop_request_does_not_set_json_mode() {
     let cancellation = CancellationToken::new();
     let mut admission = Admission::new(AnsweringLimits::default(), false);
     let mut messages = vec![ChatMessage::text("user", "hello")];
+    let mut history_stub = Default::default();
     let mut ordinary_history_pairs = 0;
     let mut protected_prefix_len = 1;
     receive(ReceiveContext {
         provider: &provider,
         model: "m",
         messages: &mut messages,
+        history_stub: &mut history_stub,
         checkpoint: &Default::default(),
         ordinary_history_pairs: &mut ordinary_history_pairs,
         protected_prefix_len: &mut protected_prefix_len,
@@ -112,6 +114,7 @@ async fn captured_request(
     let cancellation = CancellationToken::new();
     let mut admission = Admission::new(AnsweringLimits::default(), false);
     let mut messages = messages;
+    let mut history_stub = Default::default();
     let mut ordinary_history_pairs = 0;
     let mut protected_prefix_len = messages.len();
     let reasoning_effort = super::super::reasoning_policy::decide(
@@ -125,6 +128,7 @@ async fn captured_request(
         provider,
         model: "m",
         messages: &mut messages,
+        history_stub: &mut history_stub,
         checkpoint: &Default::default(),
         ordinary_history_pairs: &mut ordinary_history_pairs,
         protected_prefix_len: &mut protected_prefix_len,

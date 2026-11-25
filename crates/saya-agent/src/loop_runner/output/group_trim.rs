@@ -104,15 +104,3 @@ pub(super) fn tool_groups(
     for_each_group(messages, protected_prefix_len, |range| groups.push(range));
     groups
 }
-
-/// How many groups [`tool_groups`] would return, counted without building the
-/// list: a caller that only needs to know whether any group has aged out does
-/// not allocate one.
-pub(super) fn count_tool_groups(
-    messages: &[crate::ChatMessage],
-    protected_prefix_len: usize,
-) -> usize {
-    let mut count = 0;
-    for_each_group(messages, protected_prefix_len, |_| count += 1);
-    count
-}

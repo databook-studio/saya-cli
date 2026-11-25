@@ -1,6 +1,11 @@
+//! The stub itself: what it keeps, what it redacts, and that it is one-way.
+
 use super::super::history_stub::*;
 use crate::{ChatMessage, ToolCall};
 use serde_json::json;
+
+const BUDGET: usize = 8_000;
+const HARD: usize = 1_000_000;
 
 fn group(
     index: usize,
@@ -28,25 +33,12 @@ fn group(
     ]
 }
 
-fn read_result(index: usize) -> serde_json::Value {
-    let content = (1..=200)
-        .map(|line| format!("line {line:03} of file {index}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    json!({
-        "path": format!("src/file_{index}.rs"),
-        "start_line": 1,
-        "lines_returned": 200,
-        "content": content,
-    })
-}
-
-fn read_group(index: usize) -> Vec<ChatMessage> {
+fn shell_group(index: usize, command: &str) -> Vec<ChatMessage> {
     group(
         index,
-        "read",
-        json!({"path": format!("src/file_{index}.rs"), "start_line": 1, "line_count": 200}),
-        read_result(index),
+        "shell",
+        json!({"command": command}),
+        json!({"command": command, "exit_code": 0, "stdout": "x".repeat(4_000)}),
     )
 }
 
@@ -56,28 +48,31 @@ fn conversation(groups: usize) -> Vec<ChatMessage> {
         ChatMessage::text("user", "ask"),
     ];
     for index in 0..groups {
-        messages.extend(read_group(index));
+        messages.extend(shell_group(index, &format!("cargo test -p module_{index}")));
     }
     messages
 }
 
-/// The tool message of group `index` in a conversation built by
-/// [`conversation`].
+/// The tool message of group `index` in a conversation whose groups start at
+/// message 2.
 fn tool_at(index: usize) -> usize {
     3 + 2 * index
 }
 
+fn apply(messages: &mut [ChatMessage]) -> usize {
+    stub_with_limits(messages, 2, BUDGET, HARD, &mut HistoryStubState::default())
+}
+
 #[test]
-fn old_tool_results_become_bounded_stubs_and_the_newest_turns_stay_whole() {
-    let mut messages = conversation(5);
-    let newest = messages[tool_at(4)].content.clone();
+fn old_non_read_results_become_bounded_stubs() {
+    let mut messages = conversation(10);
     let before = messages
         .iter()
         .map(|message| message.content.len())
         .sum::<usize>();
-    let stubbed = stub_old_tool_results(&mut messages, 2);
-    assert_eq!(stubbed, 3, "three groups are older than the last two");
-    for index in 0..3 {
+    let stubbed = apply(&mut messages);
+    assert_eq!(stubbed, 4, "the four oldest groups outside the last six");
+    for index in 0..4 {
         assert!(
             messages[tool_at(index)].content.starts_with(STUB_SENTINEL),
             "group {index} is stubbed"
@@ -87,34 +82,24 @@ fn old_tool_results_become_bounded_stubs_and_the_newest_turns_stay_whole() {
             "stub {index} is bounded"
         );
     }
-    for index in 3..5 {
-        assert!(
-            !messages[tool_at(index)].content.starts_with(STUB_SENTINEL),
-            "group {index} stays whole"
-        );
-    }
-    assert_eq!(
-        messages[tool_at(4)].content,
-        newest,
-        "the newest result is whole"
-    );
     let after = messages
         .iter()
         .map(|message| message.content.len())
         .sum::<usize>();
     assert!(
-        after < before / 2,
-        "stubbing must cut the history substantially: {before} -> {after}"
+        before.saturating_sub(after) > 4 * 3_000,
+        "each stub must cut its result substantially: {before} -> {after}"
     );
 }
 
 #[test]
 fn stubbing_is_idempotent_and_the_stubbed_prefix_stays_byte_stable() {
-    let mut messages = conversation(6);
-    assert!(stub_old_tool_results(&mut messages, 2) > 0);
+    let mut messages = conversation(10);
+    let mut state = HistoryStubState::default();
+    assert!(stub_with_limits(&mut messages, 2, BUDGET, HARD, &mut state) > 0);
     let snapshot = messages.clone();
     assert_eq!(
-        stub_old_tool_results(&mut messages, 2),
+        stub_with_limits(&mut messages, 2, BUDGET, HARD, &mut state),
         0,
         "a second pass rewrites nothing"
     );
@@ -123,31 +108,31 @@ fn stubbing_is_idempotent_and_the_stubbed_prefix_stays_byte_stable() {
 
 #[test]
 fn a_stub_keeps_tool_arguments_outcome_size_and_first_and_last_lines() {
-    let mut messages = conversation(3);
-    stub_old_tool_results(&mut messages, 2);
+    let mut messages = conversation(10);
+    apply(&mut messages);
     let stub = &messages[tool_at(0)].content;
-    assert!(stub.contains("tool: read"), "{stub}");
-    assert!(stub.contains("src/file_0.rs"), "arguments survive: {stub}");
+    assert!(stub.contains("tool: shell"), "{stub}");
+    assert!(stub.contains("module_0"), "arguments survive: {stub}");
     assert!(stub.contains("outcome: ok"), "{stub}");
     assert!(
         stub.contains("bytes"),
         "the original size is stated: {stub}"
     );
-    assert!(stub.contains("first: line 001 of file 0"), "{stub}");
-    assert!(stub.contains("last: line 200 of file 0"), "{stub}");
+    assert!(stub.contains("first: x"), "{stub}");
+    assert!(stub.contains("last: x"), "{stub}");
 }
 
 #[test]
 fn a_stub_names_the_tool_and_arguments_so_the_model_can_re_read() {
-    let mut messages = conversation(3);
-    stub_old_tool_results(&mut messages, 2);
+    let mut messages = conversation(10);
+    apply(&mut messages);
     let stub = &messages[tool_at(0)].content;
     assert!(
-        stub.contains("re-read: call read again with the same arguments"),
+        stub.contains("re-read: call shell again with the same arguments"),
         "{stub}"
     );
     assert!(
-        stub.contains("\"path\":\"src/file_0.rs\""),
+        stub.contains("cargo test -p module_0"),
         "the arguments to re-read are present: {stub}"
     );
 }
@@ -167,9 +152,10 @@ fn a_stub_carries_no_secret_shaped_value() {
             "stdout": format!("api_key=SUPERSECRETVALUE\n{}", "connection ok\n".repeat(200)),
         }),
     ));
-    messages.extend(read_group(1));
-    messages.extend(read_group(2));
-    stub_old_tool_results(&mut messages, 2);
+    for index in 1..=9 {
+        messages.extend(shell_group(index, &format!("cargo test -p module_{index}")));
+    }
+    apply(&mut messages);
     let stub = &messages[tool_at(0)].content;
     assert!(
         stub.contains("[redacted]"),
@@ -194,9 +180,10 @@ fn an_error_result_is_marked_as_an_error() {
         json!({"sql": "select 1"}),
         json!({"error": format!("relation does not exist: {}", "detail ".repeat(200))}),
     ));
-    messages.extend(read_group(1));
-    messages.extend(read_group(2));
-    stub_old_tool_results(&mut messages, 2);
+    for index in 1..=9 {
+        messages.extend(shell_group(index, &format!("cargo test -p module_{index}")));
+    }
+    apply(&mut messages);
     let stub = &messages[tool_at(0)].content;
     assert!(stub.contains("outcome: error"), "{stub}");
     assert!(
@@ -217,12 +204,11 @@ fn a_result_no_larger_than_a_stub_is_kept_whole() {
         json!({"tasks": 2}),
         json!({"tasks": 2}),
     ));
-    messages.extend(read_group(1));
-    messages.extend(read_group(2));
-    messages.extend(read_group(3));
+    for index in 1..=9 {
+        messages.extend(shell_group(index, &format!("cargo test -p module_{index}")));
+    }
     let small = messages[tool_at(0)].content.clone();
-    let stubbed = stub_old_tool_results(&mut messages, 2);
-    assert_eq!(stubbed, 1, "only the large old result is worth a stub");
+    apply(&mut messages);
     assert_eq!(
         messages[tool_at(0)].content,
         small,
@@ -232,34 +218,33 @@ fn a_result_no_larger_than_a_stub_is_kept_whole() {
 }
 
 #[test]
-fn a_short_conversation_is_left_byte_identical() {
-    let mut messages = conversation(WHOLE_TOOL_TURNS);
+fn a_history_below_its_budget_is_left_byte_identical() {
+    let mut messages = conversation(3);
     let snapshot = messages.clone();
-    assert_eq!(stub_old_tool_results(&mut messages, 2), 0);
+    assert_eq!(
+        stub_old_tool_results(&mut messages, 2, None, &mut HistoryStubState::default()),
+        0
+    );
     assert_eq!(messages, snapshot);
 }
 
 #[test]
-fn a_conversation_with_nothing_aged_out_builds_no_group_list() {
-    let mut messages = conversation(WHOLE_TOOL_TURNS);
+fn a_pass_below_the_budget_builds_no_group_list() {
+    let mut messages = conversation(8);
     work::reset();
-    assert_eq!(stub_old_tool_results(&mut messages, 2), 0);
     assert_eq!(
-        work::taken().0,
-        0,
-        "a pass with no group older than the whole turns allocates no group list"
+        stub_with_limits(
+            &mut messages,
+            2,
+            usize::MAX,
+            usize::MAX,
+            &mut HistoryStubState::default()
+        ),
+        0
     );
-}
-
-#[test]
-fn a_history_whose_old_results_are_all_stubbed_clones_no_call_set() {
-    let mut messages = conversation(6);
-    assert!(stub_old_tool_results(&mut messages, 2) > 0);
-    work::reset();
-    assert_eq!(stub_old_tool_results(&mut messages, 2), 0);
     assert_eq!(
-        work::taken().1,
+        work::taken(),
         0,
-        "a group with nothing left to rewrite copies no call set"
+        "a pass with nothing to do allocates no group list"
     );
 }

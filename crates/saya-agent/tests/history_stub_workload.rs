@@ -29,11 +29,8 @@ const REQUESTS: usize = TOOL_TURNS + 1;
 const STUB_MARKER: &str = "…[history-stub:";
 /// The bytes-per-token estimate the loop uses for its own accounting.
 const BYTES_PER_TOKEN: f64 = 3.5;
-/// Ceiling on the workload's mean request body: the measured value at
-/// introduction plus 5 % headroom, rounded up. It refuses a return to
-/// re-sending old results in full. Raising it is a reviewed change with the
-/// reason recorded here — never a silent re-record.
-const MAX_MEAN_REQUEST_BYTES: usize = 19_700;
+/// The newest groups whose results the policy keeps whole.
+const LAST_WHOLE_GROUPS: usize = 6;
 
 fn workload_call(index: usize) -> (String, serde_json::Value) {
     match index % 3 {
@@ -58,20 +55,20 @@ fn tool_output(name: &str, arguments: &serde_json::Value) -> serde_json::Value {
     match name {
         "read" => {
             let path = arguments["path"].as_str().unwrap_or("src/lib.rs");
-            let content = (1..=200)
+            let content = (1..=500)
                 .map(|line| format!("{line:03}: pub fn item_{line}() -> usize {{ {line} }}"))
                 .collect::<Vec<_>>()
                 .join("\n");
             json!({
                 "path": path,
                 "start_line": 1,
-                "lines_returned": 200,
+                "lines_returned": 500,
                 "content": content,
             })
         }
         "shell" => {
             let command = arguments["command"].as_str().unwrap_or("cargo test");
-            let stdout = (1..=150)
+            let stdout = (1..=450)
                 .map(|line| format!("test module::case_{line:03} ... ok"))
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -79,7 +76,7 @@ fn tool_output(name: &str, arguments: &serde_json::Value) -> serde_json::Value {
         }
         _ => {
             let pattern = arguments["pattern"].as_str().unwrap_or("TODO");
-            let matches = (1..=60)
+            let matches = (1..=200)
                 .map(|index| {
                     json!({
                         "path": format!("src/module_{index}.rs"),
@@ -217,7 +214,7 @@ fn mean(values: &[usize]) -> usize {
 }
 
 #[tokio::test]
-async fn a_long_job_sends_at_most_seventy_percent_of_the_untrimmed_request_bytes() {
+async fn a_long_job_stubs_only_old_non_read_output_and_keeps_reads_whole() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = ScriptedJob {
         requests: requests.clone(),
@@ -258,42 +255,66 @@ async fn a_long_job_sends_at_most_seventy_percent_of_the_untrimmed_request_bytes
     println!("request bytes: {actual:?}");
     println!("untrimmed bytes: {baseline:?}");
     assert!(
-        actual_mean * 100 <= baseline_mean * 70,
-        "mean request bytes must be at most 70% of the untrimmed mean: {actual_mean} vs {baseline_mean}"
+        actual_mean < baseline_mean,
+        "a history over its budget must send fewer bytes: {actual_mean} vs {baseline_mean}"
     );
-    assert!(
-        actual_mean <= MAX_MEAN_REQUEST_BYTES,
-        "mean request bytes {actual_mean} exceed the {MAX_MEAN_REQUEST_BYTES}-byte ceiling"
+    assert_eq!(
+        actual[0], baseline[0],
+        "a first request below the budget is byte-identical"
+    );
+    assert_eq!(
+        &actual[..10],
+        &baseline[..10],
+        "a short job below the budget sends exactly what it sent before the policy"
     );
     let last = requests.last().expect("at least one request");
-    let stubs = last
+    // Every read is the latest read of its path in this workload, so every
+    // read result stays whole. Stubbing one would make the model re-read it.
+    let read_ids = last
         .messages
         .iter()
-        .filter(|message| message.role == "tool" && message.content.starts_with(STUB_MARKER))
+        .flat_map(|message| &message.tool_calls)
+        .filter(|call| call.name == "read")
+        .map(|call| call.id.as_str())
+        .collect::<Vec<_>>();
+    for message in &last.messages {
+        let is_read = message
+            .tool_call_id
+            .as_deref()
+            .is_some_and(|id| read_ids.contains(&id));
+        if is_read {
+            assert!(
+                !message.content.starts_with(STUB_MARKER),
+                "a read result is the model's working copy: {}",
+                message.content
+            );
+        }
+    }
+    let tool_messages = last
+        .messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .collect::<Vec<_>>();
+    let stubs = tool_messages
+        .iter()
+        .filter(|message| message.content.starts_with(STUB_MARKER))
         .count();
-    assert_eq!(
-        stubs,
-        TOOL_TURNS - 2,
-        "every group older than the last two is a stub"
-    );
-    let stub = last
-        .messages
+    assert!(stubs > 0, "old non-read output is stubbed over the budget");
+    for message in &tool_messages[tool_messages.len() - LAST_WHOLE_GROUPS..] {
+        assert!(
+            !message.content.starts_with(STUB_MARKER),
+            "the newest groups stay whole: {}",
+            message.content
+        );
+    }
+    let stub = tool_messages
         .iter()
-        .find(|message| message.role == "tool" && message.content.starts_with(STUB_MARKER))
+        .find(|message| message.content.starts_with(STUB_MARKER))
         .expect("a stub is present");
     assert!(
         stub.content
-            .contains("re-read: call read again with the same arguments"),
-        "the model sees how to re-read: {}",
+            .contains("re-read: call shell again with the same arguments"),
+        "the model sees how to re-read an old non-read result: {}",
         stub.content
-    );
-    let newest = last
-        .messages
-        .iter()
-        .rfind(|message| message.role == "tool")
-        .expect("a tool result is present");
-    assert!(
-        !newest.content.starts_with(STUB_MARKER),
-        "the latest turn's result stays whole"
     );
 }

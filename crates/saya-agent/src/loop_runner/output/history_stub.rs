@@ -1,37 +1,50 @@
-//! Per-request history policy: old tool results become bounded stubs.
+//! Per-request history policy: a long history is bounded only when it must be.
 //!
-//! A provider request does not need to re-send an old file read, command
-//! output or search result in full on every later turn. The model already saw
-//! it, and those bytes dominate the prompt. Before each request, every
-//! tool-result group older than the last [`WHOLE_TOOL_TURNS`] is rewritten in
-//! place to a bounded stub that keeps the call (tool and arguments), its
-//! outcome and original size, the first and last lines, and how to re-read the
-//! full result.
+//! A provider request does not need to re-send every old tool result forever,
+//! but replacing one the model still needs is worse than sending it: the model
+//! reads a file to edit it, and a stub that says "call the tool again" turns
+//! one read into a loop. So the policy is keyed to a budget, not to age.
 //!
-//! The rewrite is one-way and idempotent: once stubbed, a message is
-//! byte-stable across every later request, so the request prefix the provider
-//! caches keeps hitting through the stubbed region and only the newest whole
-//! turns change. Arguments and excerpt lines pass through
-//! [`saya_types::redact`], and the whole stub is capped, so a secret in a tool
-//! result is never re-sent by this lane.
+//! The history is replayed whole until the tool-result bytes in it exceed
+//! [`budget_bytes`]: 40 % of a known model window at four bytes per token,
+//! bounded by [`HISTORY_BUDGET_CEILING_BYTES`], or that fixed ceiling alone
+//! when the window is unknown. A typical short job never reaches it and sends
+//! exactly the bytes it sent before this policy existed.
 //!
-//! This is not the budget trim: [`super::trim_to_budget`] never rewrites an
-//! already-sent message, while this policy deliberately replaces old results
-//! because the stub preserves how to recover them. The latest
-//! [`WHOLE_TOOL_TURNS`] groups stay whole, so the turn the model is reasoning
-//! over is never reduced.
+//! Over budget, a pass replaces results in three stages, oldest first:
 //!
-//! Only a result larger than [`MAX_STUB_BYTES`] is stubbed. A stub is capped at
-//! that size, so a smaller result is cheaper to re-send whole than to replace;
-//! stubbing it would make the request bigger.
+//! 1. **Superseded** results that can never be needed again: a read whose path
+//!    a later read covers at the same or a wider range, or that a later
+//!    successful write or edit changed; and a shell, search or database result
+//!    whose exact call ran again later. Their stub names the later call and
+//!    never tells the model to call again.
+//! 2. **Old non-read output** outside the last [`LAST_WHOLE_GROUPS`] groups.
+//! 3. **Reads** only while the history is still above the hard ceiling (80 %
+//!    of a known window, or the fixed ceiling when it is unknown). Their stub
+//!    says the file must be re-read before editing.
+//!
+//! A pass drains to the low-water mark, half the budget, in one batch, and
+//! records where the settled region ends in [`HistoryStubState`]. Later
+//! requests append without rewriting that region until the budget is exceeded
+//! again, so rewrites are rare batched events rather than one per request. A
+//! stub is one-way and idempotent: once written it is never rewritten.
+//!
+//! Arguments and excerpt lines pass through [`saya_types::redact`], and the
+//! whole stub is capped, so a secret in a tool result is never re-sent by this
+//! lane. A result no larger than a stub is kept whole: replacing it would make
+//! the request bigger.
 
-use crate::{ChatMessage, ToolCall};
-use serde_json::Value;
+#[path = "history_stub/budget.rs"]
+mod budget;
+#[path = "history_stub/calls.rs"]
+mod calls;
+#[path = "history_stub/render.rs"]
+mod render;
 
-/// How many trailing tool-result groups stay whole. The newest group is the
-/// turn just executed; one more gives the model the immediately preceding
-/// result to compare against. Older groups become stubs.
-pub(in crate::loop_runner) const WHOLE_TOOL_TURNS: usize = 2;
+pub(in crate::loop_runner) use budget::{HistoryStubState, budget_bytes, hard_ceiling_bytes};
+
+use crate::ChatMessage;
+use std::ops::Range;
 
 /// Leading sentinel on a stubbed tool result, so a later request recognises it
 /// and leaves it alone.
@@ -41,154 +54,193 @@ pub(super) const STUB_SENTINEL: &str = "…[history-stub:";
 /// summary of it; keeping it small is the point of the policy.
 pub(in crate::loop_runner) const MAX_STUB_BYTES: usize = 900;
 
-/// Per-field caps that keep one stub under [`MAX_STUB_BYTES`] without a final
-/// cut through the re-read line.
-const MAX_ARGS_BYTES: usize = 200;
-const MAX_EXCERPT_BYTES: usize = 160;
-const MAX_TOOL_NAME_BYTES: usize = 80;
+/// Ceiling on the tool-result history when the model window is unknown, and
+/// the upper bound when it is known.
+pub(in crate::loop_runner) const HISTORY_BUDGET_CEILING_BYTES: usize = 256 * 1024;
 
-/// Whether this message is a tool result the pass would rewrite: a tool
-/// message larger than a stub and not already stubbed.
+/// The newest groups whose results always stay whole. The newest group is the
+/// turn just executed; the rest give the model recent context to compare.
+const LAST_WHOLE_GROUPS: usize = 6;
+
+/// Applies the policy for a resolved model window.
+pub(in crate::loop_runner) fn stub_old_tool_results(
+    messages: &mut [ChatMessage],
+    protected_prefix_len: usize,
+    window_tokens: Option<u64>,
+    state: &mut HistoryStubState,
+) -> usize {
+    let budget = budget_bytes(window_tokens);
+    let hard_ceiling = hard_ceiling_bytes(window_tokens);
+    stub_with_limits(messages, protected_prefix_len, budget, hard_ceiling, state)
+}
+
+/// Applies the policy with explicit thresholds. The window-derived wrapper
+/// above supplies production values; tests pin the thresholds directly.
+pub(in crate::loop_runner) fn stub_with_limits(
+    messages: &mut [ChatMessage],
+    protected_prefix_len: usize,
+    budget: usize,
+    hard_ceiling: usize,
+    state: &mut HistoryStubState,
+) -> usize {
+    // The budget check is one walk and no allocation: below it, a request does
+    // exactly the work it did before this policy existed.
+    let mut total = tool_result_bytes(messages, protected_prefix_len);
+    if total <= budget {
+        return 0;
+    }
+    let start = settled_start(messages, protected_prefix_len, state);
+    let groups = super::group_trim::tool_groups(messages, start);
+    #[cfg(test)]
+    work::group_list_built();
+    if groups.is_empty() {
+        return 0;
+    }
+    let calls = calls::collect(messages, &groups);
+    let low_water = budget / 2;
+    let last_whole = groups.len().saturating_sub(LAST_WHOLE_GROUPS);
+    let mut stubbed = 0;
+    let mut last_stubbed = None;
+
+    // 1. Superseded results can never be needed again, wherever they sit.
+    for (position, call) in calls.iter().enumerate() {
+        if total <= low_water {
+            break;
+        }
+        let Some(index) = call.result_index else {
+            continue;
+        };
+        if !needs_stub(&messages[index]) {
+            continue;
+        }
+        let Some(later) = calls::superseded_by(&calls, position) else {
+            continue;
+        };
+        stubbed += rewrite(
+            messages,
+            index,
+            call,
+            render::Kind::Superseded(later),
+            &mut total,
+        );
+        last_stubbed = Some(index);
+    }
+
+    // 2. Old non-read output outside the newest groups.
+    for call in &calls {
+        if total <= low_water {
+            break;
+        }
+        if call.group >= last_whole || !call.is_old_output() {
+            continue;
+        }
+        let Some(index) = call.result_index else {
+            continue;
+        };
+        if !needs_stub(&messages[index]) {
+            continue;
+        }
+        stubbed += rewrite(messages, index, call, render::Kind::Old, &mut total);
+        last_stubbed = Some(index);
+    }
+
+    // 3. Reads only above the hard ceiling: the last resort.
+    if total > hard_ceiling {
+        for call in &calls {
+            if total <= low_water {
+                break;
+            }
+            if !call.is_read() {
+                continue;
+            }
+            let Some(index) = call.result_index else {
+                continue;
+            };
+            if !needs_stub(&messages[index]) {
+                continue;
+            }
+            stubbed += rewrite(messages, index, call, render::Kind::WorkingCopy, &mut total);
+            last_stubbed = Some(index);
+        }
+    }
+
+    if stubbed > 0
+        && let Some(index) = last_stubbed
+    {
+        state.settled_through = settled_marker(messages, &groups, index);
+    }
+    stubbed
+}
+
+/// Tool-result bytes in the history the policy may consider.
+fn tool_result_bytes(messages: &[ChatMessage], from: usize) -> usize {
+    messages[from..]
+        .iter()
+        .filter(|message| message.role == "tool")
+        .fold(0usize, |total, message| {
+            total.saturating_add(message.content.len())
+        })
+}
+
+/// Where a pass may start: just after the last message it settled. If that
+/// message is gone (a compaction removed it), the whole history is considered
+/// again — a compaction has already broken the cached prefix.
+fn settled_start(
+    messages: &[ChatMessage],
+    protected_prefix_len: usize,
+    state: &HistoryStubState,
+) -> usize {
+    state
+        .settled_through
+        .as_deref()
+        .and_then(|id| {
+            messages.iter().position(|message| {
+                message.role == "tool" && message.tool_call_id.as_deref() == Some(id)
+            })
+        })
+        .map_or(protected_prefix_len, |index| index + 1)
+}
+
+/// The id a later pass uses to find the end of this pass's settled region: the
+/// last tool message of the group that was rewritten last.
+fn settled_marker(
+    messages: &[ChatMessage],
+    groups: &[Range<usize>],
+    index: usize,
+) -> Option<String> {
+    let range = groups.iter().find(|range| range.contains(&index))?;
+    (range.start + 1..range.end)
+        .rev()
+        .find(|&i| messages[i].role == "tool")
+        .and_then(|i| messages[i].tool_call_id.clone())
+}
+
+/// Whether this message is a tool result the pass would rewrite: large enough
+/// to be worth a stub and not already stubbed.
 fn needs_stub(message: &ChatMessage) -> bool {
     message.role == "tool"
         && message.content.len() > MAX_STUB_BYTES
         && !message.content.starts_with(STUB_SENTINEL)
 }
 
-/// Replaces every tool result in a group older than the last
-/// [`WHOLE_TOOL_TURNS`] with a bounded stub, in place, and returns how many
-/// messages it rewrote. A result no larger than [`MAX_STUB_BYTES`] stays whole,
-/// and an already-stubbed message is left as is (idempotent).
-pub(in crate::loop_runner) fn stub_old_tool_results(
+/// Replaces one result and returns 1. `total` is kept in step so the pass can
+/// stop at the low-water mark without re-measuring the history.
+fn rewrite(
     messages: &mut [ChatMessage],
-    protected_prefix_len: usize,
+    index: usize,
+    call: &calls::Call,
+    kind: render::Kind<'_>,
+    total: &mut usize,
 ) -> usize {
-    // Counting first costs one walk and no allocation; a history with nothing
-    // older than the whole turns never builds a group list at all.
-    if super::group_trim::count_tool_groups(messages, protected_prefix_len) <= WHOLE_TOOL_TURNS {
-        return 0;
-    }
-    let groups = super::group_trim::tool_groups(messages, protected_prefix_len);
-    #[cfg(test)]
-    work::group_list_built();
-    let Some(older) = groups.len().checked_sub(WHOLE_TOOL_TURNS) else {
-        return 0;
-    };
-    let mut stubbed = 0;
-    for range in &groups[..older] {
-        // A group whose results are all stubbed or small is left alone, so the
-        // steady state of a long session copies no call set.
-        if !messages[range.start + 1..range.end].iter().any(needs_stub) {
-            continue;
-        }
-        // The call arguments live on the group's assistant message; copy the
-        // calls before mutating the results so a tool message can find its own.
-        let calls = messages[range.start].tool_calls.clone();
-        #[cfg(test)]
-        work::call_set_cloned();
-        for message in &mut messages[range.start + 1..range.end] {
-            if !needs_stub(message) {
-                continue;
-            }
-            let call = message
-                .tool_call_id
-                .as_deref()
-                .and_then(|id| calls.iter().find(|call| call.id == id));
-            message.content = stub(call, &message.content);
-            stubbed += 1;
-        }
-    }
-    stubbed
-}
-
-/// The bounded replacement for one old tool result.
-fn stub(call: Option<&ToolCall>, content: &str) -> String {
-    let tool = cap(
-        call.map_or("unknown tool", |call| call.name.as_str()),
-        MAX_TOOL_NAME_BYTES,
+    let replacement = render::stub(kind, call, &messages[index].content);
+    *total = total.saturating_sub(
+        messages[index]
+            .content
+            .len()
+            .saturating_sub(replacement.len()),
     );
-    let arguments = call.map_or_else(
-        || "(unavailable)".to_string(),
-        |call| {
-            let raw = serde_json::to_string(&call.arguments).unwrap_or_default();
-            cap(&saya_types::redact(&raw), MAX_ARGS_BYTES).to_string()
-        },
-    );
-    let mut stub = format!(
-        "{STUB_SENTINEL} earlier tool result reduced to bound the request]\n\
-         tool: {tool}\n\
-         arguments: {arguments}\n\
-         outcome: {} ({} bytes)\n\
-         {}\n",
-        outcome(content),
-        content.len(),
-        re_read_line(tool),
-    );
-    if let Some(first) = excerpt(content, true) {
-        stub.push_str(&format!("first: {first}\n"));
-    }
-    if let Some(last) = excerpt(content, false) {
-        stub.push_str(&format!("last: {last}\n"));
-    }
-    cap(&stub, MAX_STUB_BYTES).to_string()
-}
-
-/// The outcome class of a result: an error, a cut result, or a normal one.
-fn outcome(content: &str) -> &'static str {
-    match serde_json::from_str::<Value>(content) {
-        Ok(value) if value.get("error").is_some() => "error",
-        Ok(value) if value.get("truncated").and_then(Value::as_bool) == Some(true) => "truncated",
-        Ok(_) => "ok",
-        Err(_) if content.contains("...[truncated]") => "truncated",
-        Err(_) => "unparsed",
-    }
-}
-
-/// How the model gets the full result back. A database read is re-run as the
-/// same statement; any other tool is called again with the same arguments,
-/// subject to its own approval and safety rules.
-fn re_read_line(tool: &str) -> String {
-    match tool {
-        "bounded_sql_query" | "bounded_sql_query_all" => {
-            format!("re-read: run the same statement again with {tool}")
-        }
-        "unknown tool" => "re-read: the call is unavailable; issue it again".to_string(),
-        _ => format!("re-read: call {tool} again with the same arguments to see the full result"),
-    }
-}
-
-/// The first or last non-empty line of the result's text body, redacted and
-/// capped. A JSON result's envelope is not the body, so a known text field
-/// (`content`, `stdout`, a search match) is used when present.
-fn excerpt(content: &str, first: bool) -> Option<String> {
-    let text = text_body(content).unwrap_or_else(|| content.to_string());
-    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-    let line = if first {
-        lines.next()
-    } else {
-        lines.next_back()
-    }?;
-    let redacted = saya_types::redact(line);
-    Some(cap(&redacted, MAX_EXCERPT_BYTES).to_string())
-}
-
-/// The human-readable body of a JSON tool result, when it has one.
-fn text_body(content: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(content).ok()?;
-    for key in ["content", "stdout", "output", "text", "body", "stderr"] {
-        if let Some(text) = value.get(key).and_then(Value::as_str) {
-            return Some(text.to_string());
-        }
-    }
-    let matches = value.get("matches").and_then(Value::as_array)?;
-    let first = matches.first()?.get("text").and_then(Value::as_str)?;
-    let last = matches.last()?.get("text").and_then(Value::as_str)?;
-    Some(format!("{first}\n{last}"))
-}
-
-/// `text` truncated to at most `max` bytes on a character boundary.
-fn cap(text: &str, max: usize) -> &str {
-    &text[..super::super::tools::floor_boundary(text, max)]
+    messages[index].content = replacement;
+    1
 }
 
 /// Test-only tallies of the per-request work a pass does, so a test can assert
@@ -200,23 +252,17 @@ pub(super) mod work {
 
     thread_local! {
         static GROUP_LISTS: Cell<usize> = const { Cell::new(0) };
-        static CALL_CLONES: Cell<usize> = const { Cell::new(0) };
     }
 
     pub(crate) fn group_list_built() {
         GROUP_LISTS.with(|count| count.set(count.get() + 1));
     }
 
-    pub(crate) fn call_set_cloned() {
-        CALL_CLONES.with(|count| count.set(count.get() + 1));
-    }
-
     pub(crate) fn reset() {
         GROUP_LISTS.with(|count| count.set(0));
-        CALL_CLONES.with(|count| count.set(0));
     }
 
-    pub(crate) fn taken() -> (usize, usize) {
-        (GROUP_LISTS.with(Cell::get), CALL_CLONES.with(Cell::get))
+    pub(crate) fn taken() -> usize {
+        GROUP_LISTS.with(Cell::get)
     }
 }
