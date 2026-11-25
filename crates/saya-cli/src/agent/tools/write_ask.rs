@@ -8,7 +8,9 @@
 //! mode stated during the run decides the next call:
 //!
 //! - `bypass` and `accept-edits`: admitted without asking, which is what a
-//!   detached composition has always done;
+//!   detached composition has always done — except a write inside the
+//!   checkout's git directory, which both asking modes put to the operator
+//!   under its own question and no grant pre-answers;
 //! - `read-only` and `never`: refused, and nobody is asked — no answer could
 //!   widen the mode;
 //! - `ask`: admitted when the job's grant set already holds
