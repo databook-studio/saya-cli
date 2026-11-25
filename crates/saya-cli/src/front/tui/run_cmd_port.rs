@@ -141,8 +141,12 @@ impl SessionPort {
             // match total, and says nothing rather than saying something twice.
             Asked::Setup => {}
             // `/continue` is the one session op that states a turn: the chat
-            // session sends the paused turn's message through its own path.
-            Asked::Continue => self.continue_turn(),
+            // session sends the paused turn's message through its own path —
+            // unless the ceiling stops it first, because it is a request too.
+            Asked::Continue => match self.ceiling_stop() {
+                Some(sentence) => self.front.say(sentence),
+                None => self.line.continue_turn(),
+            },
             Asked::Job(request) => self.perform_job(request),
             // A rollover: the conversation's own two are the chat layer's
             // compaction and clear, which the session performs; the change
@@ -174,16 +178,6 @@ impl SessionPort {
     fn ceiling_stop(&self) -> Option<String> {
         let state = self.state();
         crate::interactive::ceiling_stop(state.usage.cost_micros(), state.session_cost_limit_micros)
-    }
-
-    /// Continue the paused turn, unless the session's ceiling stops it first:
-    /// the continuation is a request like any other.
-    fn continue_turn(&self) {
-        if let Some(sentence) = self.ceiling_stop() {
-            self.front.say(sentence);
-            return;
-        }
-        self.line.continue_turn();
     }
 
     /// The saved sessions, listed where a resume would read them: the store's
