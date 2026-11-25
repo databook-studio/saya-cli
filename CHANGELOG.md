@@ -14,6 +14,10 @@ All notable changes to SAYA CLI are recorded here. This project follows
   request would start with reported spend at or above it, the turn stops.
   Unreported cost never trips the ceiling.
 
+### Fixed
+
+- On Windows the full-screen interface no longer handles each key twice.
+
 ## 0.5.1 — 2026-11-24
 
 Chat now runs on the job engine behind a new full-screen terminal UI, and a

@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use ratatui::crossterm::event::{self, Event};
+use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 
@@ -31,7 +31,11 @@ const WAIT: Duration = Duration::from_millis(50);
 /// `\r` must never read as Enter.
 pub(crate) fn msg_of(event: Event) -> Option<Msg> {
     match event {
-        Event::Key(key) => Some(Msg::Key(key)),
+        // Windows reports a release for every key as well as the press; a
+        // release is not a second keystroke. Repeat stays: a held key must keep
+        // repeating on every platform. The rule is platform-independent.
+        Event::Key(key) if key.kind != KeyEventKind::Release => Some(Msg::Key(key)),
+        Event::Key(_) => None,
         Event::Paste(text) => Some(Msg::Paste(text)),
         Event::Resize(width, height) => Some(Msg::Resize { width, height }),
         // Whether the window has the operator's focus, when the terminal
