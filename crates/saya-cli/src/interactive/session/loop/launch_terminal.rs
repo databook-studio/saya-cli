@@ -66,11 +66,15 @@ fn run_terminal(ctx: LaunchContext) -> Result<i32, Box<dyn std::error::Error>> {
                 .collect()
             })
             .unwrap_or_default();
-    let facts = surface_facts(
+    let mut facts = surface_facts(
         &state,
         tui_trust_pending,
         crate::front::tui::theme::scheme_for(ground, &colour_env),
     );
+    // The first screen offers the next step only when no layer stated a
+    // provider and no environment key chose one. Once a provider exists the
+    // welcome is the ready state it always was.
+    facts.provider = runtime.resolved.provider_chosen();
     let commands = state.user_commands.clone();
     let metrics = session.session_metrics();
     // The configuration in force from here on: a `/reload` (or the apply a

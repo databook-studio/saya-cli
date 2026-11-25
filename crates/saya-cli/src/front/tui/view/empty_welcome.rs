@@ -64,6 +64,26 @@ pub(super) fn welcome_rows(facts: &EmptyFacts, width: usize) -> Vec<Line<'static
         box_width,
         left,
     ));
+    // The exact next step, both ways: a command to run, or a key to export.
+    // The first screen is never a dead end.
+    rows.push(body(
+        vec![(
+            "Next: run `saya setup` to choose a provider,".to_owned(),
+            Token::Fg,
+        )],
+        facts,
+        box_width,
+        left,
+    ));
+    rows.push(body(
+        vec![(
+            "or export OPENAI_API_KEY and run saya again.".to_owned(),
+            Token::Fg,
+        )],
+        facts,
+        box_width,
+        left,
+    ));
     rows.push(body(Vec::new(), facts, box_width, left));
     for (key, words) in KEYS {
         rows.push(body(
