@@ -221,7 +221,7 @@ async fn sigint_keeps_settled_learning_receipt_from_real_extraction() {
         "exactly two answer rounds and extraction ran"
     );
 
-    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.write_all(b"/status\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
     let deadline = Instant::now() + Duration::from_secs(5);

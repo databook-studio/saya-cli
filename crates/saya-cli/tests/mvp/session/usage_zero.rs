@@ -121,7 +121,7 @@ fn terminal_usage_distinguishes_absent_from_reported_zero() {
     stdin.flush().unwrap();
     wait_for_stream(&stdout, b"absent-marker", "absent source marker");
     release_tx.send(()).unwrap();
-    stdin.write_all(b"/usage\n").unwrap();
+    stdin.write_all(b"/status\n").unwrap();
     stdin.flush().unwrap();
     wait_for_stream(
         &stdout,
@@ -137,7 +137,7 @@ fn terminal_usage_distinguishes_absent_from_reported_zero() {
     wait_for_stream(&stdout, b"zero-marker", "zero source marker");
     release_tx.send(()).unwrap();
     server.join().unwrap();
-    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.write_all(b"/status\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
     let deadline = Instant::now() + Duration::from_secs(5);
