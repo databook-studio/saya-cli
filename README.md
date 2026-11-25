@@ -145,6 +145,23 @@ LIBSQLITE3_FLAGS=-DSQLITE_ENABLE_MATH_FUNCTIONS cargo install saya-cli
 
 From install to a first answer and a first job.
 
+**The short path: three commands, no config file.** With one provider key in
+your environment, Saya uses that provider and its default model, says which it
+chose, and keeps data sharing off:
+
+```bash
+brew install databook-studio/tap/saya   # or: cargo binstall saya-cli
+export OPENAI_API_KEY='...'
+saya ask "hello"
+```
+
+The same works for `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`OPENROUTER_API_KEY`, and `DEEPSEEK_API_KEY`. Two or more provider keys are
+never guessed between: an interactive run asks, and a headless run names every
+key and the `--provider` flag that chooses. A provider stated in
+`config.toml`, by `--provider`, or by `SAYA_PROVIDER` always wins. The numbered
+walkthrough below adds a database and a coding job.
+
 **1. Install** (any one):
 
 ```bash

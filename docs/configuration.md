@@ -304,6 +304,30 @@ always news. Set `notifications = false` to turn the bell and the desktop
 notification off entirely.
 
 The `[ai]` table tunes the provider request the agent loop assembles.
+
+### Choosing a provider from the environment
+
+With no provider stated in any layer — no `[ai] provider`, no `--provider`, no
+`SAYA_PROVIDER` — and exactly one known provider key in the environment, Saya
+uses the provider that key belongs to and its default model:
+
+| key | provider | default model | endpoint |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | `openai` | `gpt-4o-mini` | OpenAI's default |
+| `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-5` | Anthropic's default |
+| `GEMINI_API_KEY` | `gemini` | `gemini-2.5-flash` | Gemini's default |
+| `OPENROUTER_API_KEY` | `openai_compatible` | `openai/gpt-4o-mini` | `https://openrouter.ai/api/v1` |
+| `DEEPSEEK_API_KEY` | `openai_compatible` | `deepseek-chat` | `https://api.deepseek.com/v1` |
+
+Saya prints one line naming the provider, the model, and how to change them.
+The key becomes the `ai.api_key` environment reference and is never written to
+a file or printed. Data sharing stays at its default, off. A model, base URL,
+or key a layer already stated is kept; only unset fields are filled from the
+key's row. Two or more known keys are never guessed between: an interactive
+terminal is asked to choose, and a non-interactive run refuses with a message
+naming every key and the `--provider`/`SAYA_PROVIDER` ways to choose. Any
+provider a layer states always wins over the environment.
+
 `context_byte_budget` is the ceiling on the approximate byte size of the whole
 conversation sent to the provider (system prompt, user question, history, and
 the tool results the loop appends). When unset and the model's context window
