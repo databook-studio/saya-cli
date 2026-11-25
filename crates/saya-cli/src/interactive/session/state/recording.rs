@@ -24,6 +24,7 @@ impl SessionState {
             compacted_turns: 0,
             show_thinking: false,
             usage: SessionUsage::default(),
+            session_cost_limit_micros: None,
             host_composed: false,
             context_warned: default_context_warned(),
             capacity_warned: default_capacity_warned(),

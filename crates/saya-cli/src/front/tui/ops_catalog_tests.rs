@@ -65,6 +65,7 @@ fn line_for(name: &str) -> &'static str {
         "permissions" => "/permissions",
         "doctor" => "/doctor",
         "status" => "/status",
+        "usage" => "/usage",
         "thinking" => "/thinking",
         "tasks" => "/tasks",
         "recovery" => "/recovery",
@@ -169,6 +170,7 @@ fn grammar_is_bare(name: &str) -> bool {
             | "permissions"
             | "doctor"
             | "status"
+            | "usage"
             | "thinking"
             | "tasks"
             | "help"

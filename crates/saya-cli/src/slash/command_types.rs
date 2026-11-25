@@ -51,8 +51,8 @@ pub enum SlashCommand {
     Sessions(SessionsRequest),
     /// `/status` — the one panel: five sections built from the facts this
     /// session already holds, and never a probe (`/doctor` is the command that
-    /// checks). `/usage`, `/workspace` and `/context` are its one-release
-    /// aliases, each opening the one section it names.
+    /// checks). `/workspace` and `/context` are its one-release aliases, each
+    /// opening the one section it names; `/usage` has its own panel.
     Status,
     /// `/sessions list` — the saved-session listing through the shared
     /// operations the headless `saya sessions list` uses: rows newest
@@ -139,8 +139,10 @@ pub enum SlashCommand {
     Context,
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
-    /// Show session token usage totals and cache hit rate.
-    Usage,
+    /// `/usage [--limit <usd>]` — this session's requests, prompt, cached and
+    /// completion tokens, reported cost, and context share, in one bounded
+    /// panel; `--limit` also states this session's cost ceiling.
+    Usage(UsageRequest),
     /// Toggle display of the model's chain-of-thought in the transcript.
     Thinking(Option<bool>),
     /// Show the session's workspace binding: the pinned canonical root, or

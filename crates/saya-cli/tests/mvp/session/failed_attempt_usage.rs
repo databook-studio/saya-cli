@@ -164,7 +164,7 @@ fn same_question_sigint_keeps_consumed_failed_attempt_usage() {
     );
     server.join().unwrap();
 
-    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.write_all(b"/status\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
     let deadline = Instant::now() + Duration::from_secs(5);

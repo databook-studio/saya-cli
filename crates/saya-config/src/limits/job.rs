@@ -257,7 +257,10 @@ fn wall_clock(
 /// The cost guard in micro-USD. A TOML float or integer is US dollars; absent
 /// means no guard. A non-number, a non-positive value, or a value above the
 /// stated ceiling is refused naming the key.
-fn cost_micros(value: Option<&toml::Value>, key: &'static str) -> Result<Option<u64>, ConfigError> {
+pub(super) fn cost_micros(
+    value: Option<&toml::Value>,
+    key: &'static str,
+) -> Result<Option<u64>, ConfigError> {
     let Some(value) = value else {
         return Ok(None);
     };

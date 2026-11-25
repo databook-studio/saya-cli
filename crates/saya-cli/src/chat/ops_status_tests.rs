@@ -137,19 +137,17 @@ fn the_limits_section_lists_the_job_guards_and_the_database_budget_only_when_bou
 }
 
 #[test]
-fn usage_opens_the_model_section_and_says_its_note_once() {
+fn usage_is_its_own_panel_and_carries_the_ceiling_it_states() {
     let mut state = session();
-    let model = StatusPanel::build(&StatusFacts::of_session(&state)).render_section(Section::Model);
-    let first = answer(&mut state, "/usage");
     assert_eq!(
-        first,
-        format!("{model}\n{}", Note::Usage.text()),
-        "the first `/usage` is the Model section plus its one-line note"
+        state.apply(parse("/usage"), &[]),
+        SessionAction::Usage(crate::slash::UsageRequest::show()),
+        "bare `/usage` reads the session's own panel"
     );
-    let second = answer(&mut state, "/usage");
     assert_eq!(
-        second, model,
-        "`/usage` output equals the Model section once the note is said"
+        state.apply(parse("/usage --limit 2.5"), &[]),
+        SessionAction::Usage(crate::slash::UsageRequest::limit(2_500_000)),
+        "`--limit` is carried to the loop, which owns the ceiling"
     );
 }
 

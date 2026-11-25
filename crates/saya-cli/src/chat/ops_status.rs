@@ -8,10 +8,11 @@
 //! Nothing here probes a provider, a database, or the network; `/doctor` is the
 //! command that checks, and it stays separate.
 //!
-//! `/usage`, `/workspace` and `/context` are one-release aliases: each renders
-//! the one section it names, plus a one-line note the first time this session
-//! says it. `/history` and `/rotate` are aliases of `/sessions` and of
-//! `/compact --new-session`, and their notes are [`Note`]s too.
+//! `/workspace` and `/context` are one-release aliases: each renders the one
+//! section it names, plus a one-line note the first time this session says it.
+//! `/usage` has its own panel now (`chat::ops_usage`). `/history` and
+//! `/rotate` are aliases of `/sessions` and of `/compact --new-session`, and
+//! their notes are [`Note`]s too.
 
 pub(crate) use super::ops_status_facts::{StatusFacts, instructions_answer, panel_text};
 pub(crate) use super::ops_status_notes::{Note, Section, StatusNotes, with_note};

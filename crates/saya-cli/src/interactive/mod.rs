@@ -65,6 +65,7 @@ pub(crate) mod tui;
 // `/usage` reads — is the one a line turn's own stream folds into.
 mod usage;
 pub(crate) use usage::SessionUsage;
+pub(crate) use usage::ceiling_stop;
 pub(crate) use usage::cost_text;
 
 pub use session::commands::SessionAction;

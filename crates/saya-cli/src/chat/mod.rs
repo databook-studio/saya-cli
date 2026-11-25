@@ -25,6 +25,7 @@ mod ops_rewind_run;
 pub(crate) mod ops_status;
 mod ops_status_facts;
 mod ops_status_notes;
+mod ops_usage;
 mod port;
 mod queue;
 mod rollover;
@@ -70,6 +71,8 @@ pub(crate) use ops_rewind::{Checkpoint, Checkpoints, Refusal, Restored, rewind, 
 pub(crate) use ops_rewind_run::RunCheckpoints;
 #[allow(unused_imports)]
 pub(crate) use ops_status::{Note, Section, StatusFacts, StatusNotes, StatusPanel, with_note};
+#[allow(unused_imports)]
+pub(crate) use ops_usage::answer as usage_answer;
 #[allow(unused_imports)]
 pub(crate) use port::{PortError, Prepared, RunPort};
 #[allow(unused_imports)]

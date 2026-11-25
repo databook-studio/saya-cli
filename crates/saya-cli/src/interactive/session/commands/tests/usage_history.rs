@@ -1,3 +1,5 @@
+use crate::slash::UsageRequest;
+
 /// `/history` and `/sessions` are one command under two names: both map to
 /// `SessionAction::History` (saved sessions on disk), and only the flag — the
 /// one-release alias's note — tells the spellings apart. This is intentional
@@ -11,50 +13,31 @@ fn history_and_sessions_map_to_the_same_action() {
     assert_eq!(sessions, SessionAction::History(false));
 }
 
-/// `/usage` returns a `SessionAction::Message` carrying the session usage
-/// breakdown. The message is handled by the existing `Message` arm in both
-/// the TUI dispatch and the headless `emit_action`, so no dispatch-layer
-/// changes were needed.
+/// `/usage` carries its request to the loop, which holds the runtime's model
+/// window and the session's ceiling: bare reads, and `--limit <usd>` also
+/// states the ceiling for this session.
 #[test]
-fn usage_returns_breakdown_message() {
+fn usage_carries_the_panel_request_and_its_ceiling() {
     let mut state = SessionState::new("test", None, "gpt-4o");
-    state
-        .usage
-        .record(&saya_agent::TokenUsage::new(100, 50).with_cached_input(Some(80)));
-    let action = state.apply(SlashCommand::Usage, &[]);
-    let SessionAction::Message(msg) = action else {
-        panic!("expected SessionAction::Message, got {action:?}");
-    };
-    assert!(
-        msg.contains("Input tokens: 100"),
-        "breakdown must show input total, got:\n{msg}"
+    assert_eq!(
+        state.apply(SlashCommand::Usage(UsageRequest::show()), &[]),
+        SessionAction::Usage(UsageRequest::show())
     );
-    assert!(
-        msg.contains("Output tokens: 50"),
-        "breakdown must show output total, got:\n{msg}"
-    );
-    assert!(
-        msg.contains("Cache hit rate: 80%"),
-        "breakdown must show computed hit rate, got:\n{msg}"
-    );
-    assert!(
-        msg.contains("Σcached / Σinput"),
-        "breakdown must state the formula, got:\n{msg}"
+    assert_eq!(
+        state.apply(SlashCommand::Usage(UsageRequest::limit(2_500_000)), &[]),
+        SessionAction::Usage(UsageRequest::limit(2_500_000))
     );
 }
 
-/// `/usage` on an empty session (no turns with usage) reports nothing
-/// rather than a row of zeros.
+/// `/usage` on an empty session says there were no requests yet, rather than
+/// printing a row of zeros.
 #[test]
-fn usage_on_empty_session_reports_nothing() {
-    let mut state = SessionState::new("test", None, "gpt-4o");
-    let action = state.apply(SlashCommand::Usage, &[]);
-    let SessionAction::Message(msg) = action else {
-        panic!("expected SessionAction::Message, got {action:?}");
-    };
+fn usage_on_empty_session_says_no_request_yet() {
+    let state = SessionState::new("test", None, "gpt-4o");
+    let panel = state.usage.panel(None, None);
     assert!(
-        msg.contains("No token usage reported yet"),
-        "empty session must say no usage was reported, got:\n{msg}"
+        panel.contains("Session usage — no requests yet"),
+        "empty session must say no request was made, got:\n{panel}"
     );
 }
 

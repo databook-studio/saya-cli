@@ -211,3 +211,54 @@ fn an_invalid_run_progress_guard_names_its_key() {
         "{error}"
     );
 }
+
+/// The session's own cost ceiling is `[limits] session_cost_usd`: absent by
+/// default, US dollars when stated, and resolved to the same micro-USD integer
+/// the meter and the turn boundary read.
+#[test]
+fn the_session_cost_ceiling_resolves_and_defaults_to_none() {
+    let defaults =
+        resolve(ResolutionInput::new(ConnectionsFile::default())).expect("default config resolves");
+    assert_eq!(defaults.limits.session_cost_micros, None);
+    let stated = resolve_user("[limits]\nsession_cost_usd = 2.5\n");
+    assert_eq!(stated.limits.session_cost_micros, Some(2_500_000));
+    let integer = resolve_user("[limits]\nsession_cost_usd = 3\n");
+    assert_eq!(integer.limits.session_cost_micros, Some(3_000_000));
+}
+
+#[test]
+fn an_invalid_session_cost_ceiling_names_its_key() {
+    for value in ["-1.0", "'cheap'", "0"] {
+        let error = resolve_err(&format!("[limits]\nsession_cost_usd = {value}\n"));
+        assert!(
+            matches!(&error, ConfigError::InvalidLimit { key }
+                if *key == "limits.session_cost_usd"),
+            "{value}: {error}"
+        );
+    }
+    let error = resolve_err("[limits]\nsession_cost_usd = 1_000_001\n");
+    assert!(
+        matches!(&error, ConfigError::SettingOutOfRange { field, .. }
+            if *field == "limits.session_cost_usd"),
+        "{error}"
+    );
+}
+
+/// The ceiling is a spend guard the operator set, so a project layer cannot
+/// raise it: the user's value survives and the attempt is named.
+#[test]
+fn the_session_cost_ceiling_is_protected_from_a_project_layer() {
+    let user = ConfigFile::from_toml("[limits]\nsession_cost_usd = 2.5\n").unwrap();
+    let project = ConfigFile::from_toml("[limits]\nsession_cost_usd = 100.0\n").unwrap();
+    let resolved = resolve(
+        ResolutionInput::new(ConnectionsFile::default())
+            .with_user(user)
+            .with_project(project),
+    )
+    .expect("resolution succeeds");
+    assert_eq!(resolved.limits.session_cost_micros, Some(2_500_000));
+    assert_eq!(
+        resolved.ignored_project_overrides,
+        ["limits.session_cost_usd"]
+    );
+}

@@ -10,6 +10,12 @@ pub(crate) enum ScriptStep {
     NaturalWithUsage {
         input_tokens: u64,
     },
+    /// A natural answer whose usage frame reports `input_tokens` and a cost in
+    /// US dollars, the shape a gateway reports.
+    NaturalWithCost {
+        input_tokens: u64,
+        cost_usd: f64,
+    },
     /// A natural answer with NO usage frame: the numerator stays unknown.
     NaturalNoUsage,
     /// A plain text completion (the summariser's reply shape).
@@ -120,6 +126,19 @@ pub(crate) fn answer_with_usage_body(input_tokens: u64) -> String {
             "\"completion_tokens\":5}}}}\n\n"
         ),
         input_tokens
+    )
+}
+
+/// A natural answer whose usage frame also carries `cost`, in US dollars.
+pub(crate) fn answer_with_cost_body(input_tokens: u64, cost_usd: f64) -> String {
+    format!(
+        concat!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"the-final-answer\"}},",
+            "\"finish_reason\":\"stop\"}}]}}\n\n",
+            "data: {{\"choices\":[],\"usage\":{{\"prompt_tokens\":{},",
+            "\"completion_tokens\":5,\"cost\":{}}}}}\n\n"
+        ),
+        input_tokens, cost_usd
     )
 }
 

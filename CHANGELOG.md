@@ -3,6 +3,17 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## 0.5.2 — Unreleased
+
+### Added
+
+- **`/usage` and a session cost ceiling.** `/usage` shows this session's
+  requests, prompt, cached and completion tokens, the reported cost and the
+  context share in one bounded panel. `[limits] session_cost_usd` sets a cost
+  ceiling, and `/usage --limit <usd>` sets one for the session: when the next
+  request would start with reported spend at or above it, the turn stops.
+  Unreported cost never trips the ceiling.
+
 ## 0.5.1 — 2026-11-24
 
 Chat now runs on the job engine behind a new full-screen terminal UI, and a

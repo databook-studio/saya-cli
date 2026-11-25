@@ -204,3 +204,28 @@ pub enum RewindRequest {
     /// Restore the checkpoint `id` names.
     Restore(String),
 }
+
+/// One `/usage` request: bare shows the session's usage panel, and
+/// `--limit <usd>` also states this session's provider-reported cost ceiling.
+/// The ceiling is the session's alone — it is never written to config — and a
+/// later `/usage --limit` replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UsageRequest {
+    /// The ceiling the session's reported spend must stay below, in
+    /// micro-USD. `None` shows the panel without changing the ceiling.
+    pub limit_micros: Option<u64>,
+}
+
+impl UsageRequest {
+    /// Bare `/usage`: the panel, and no change to the ceiling.
+    pub(crate) const fn show() -> Self {
+        Self { limit_micros: None }
+    }
+
+    /// `/usage --limit <usd>`: the panel, with this session's ceiling stated.
+    pub(crate) const fn limit(micros: u64) -> Self {
+        Self {
+            limit_micros: Some(micros),
+        }
+    }
+}

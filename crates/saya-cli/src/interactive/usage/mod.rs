@@ -29,6 +29,37 @@ pub(crate) fn cost_text(micros: u64) -> String {
     format!("${whole}.{}", digits.trim_end_matches('0'))
 }
 
+/// The context-share line: the last request against the window it was sent
+/// to. An unmeasured request or an unknown window is said as such — never a
+/// percentage over a denominator nobody knows.
+fn context_line(input_tokens: Option<u64>, window_tokens: Option<u64>) -> String {
+    match (input_tokens, window_tokens) {
+        (None, _) => "no request yet".into(),
+        (Some(_), None) => "unknown (the model's window is not known)".into(),
+        (Some(input), Some(window)) => {
+            match saya_agent::context_utilisation_percent(Some(input), Some(window)) {
+                Some(percent) => format!("{percent}% of {window} tokens"),
+                None => "unknown (the model's window is not known)".into(),
+            }
+        }
+    }
+}
+
+/// The ceiling line: none, the ceiling and the spend, or the ceiling and why
+/// an unreported spend cannot reach it.
+fn ceiling_line(spend_micros: Option<u64>, ceiling_micros: Option<u64>) -> String {
+    let Some(ceiling) = ceiling_micros else {
+        return "none (set one with /usage --limit <usd>)".into();
+    };
+    match spend_micros {
+        Some(spent) => format!("{} — {} spent", cost_text(ceiling), cost_text(spent)),
+        None => format!(
+            "{} — spend is not reported by the provider, so the ceiling cannot stop a turn",
+            cost_text(ceiling)
+        ),
+    }
+}
+
 /// Session-wide token usage accumulator. Sums every field `TokenUsage`
 /// accounts for, kept in two labelled totals: the answering call and the
 /// post-turn extraction (learning) call. The `Option` fields are
@@ -49,7 +80,65 @@ pub(crate) struct SessionUsage {
     pub(crate) learning_reported: bool,
 }
 
+/// The one sentence a turn boundary says when the session's provider-reported
+/// spend has reached its ceiling, or `None` when the next request may start.
+///
+/// Only reported spend can trip a ceiling. A provider that reports no cost
+/// leaves the spend unknown (`None`), and an unknown spend never stops a turn:
+/// the panel says so, and this function returns nothing.
+pub(crate) fn ceiling_stop(
+    spend_micros: Option<u64>,
+    ceiling_micros: Option<u64>,
+) -> Option<String> {
+    let (spent, ceiling) = (spend_micros?, ceiling_micros?);
+    (spent >= ceiling).then(|| {
+        format!(
+            "Session cost ceiling reached: the provider reports {} spent against the {} ceiling \
+             — raise it with `/usage --limit <usd>`, or start a new session.",
+            cost_text(spent),
+            cost_text(ceiling)
+        )
+    })
+}
+
 impl SessionUsage {
+    /// The one bounded `/usage` panel: this session's requests, prompt,
+    /// cached and completion tokens, the reported cost (or that the provider
+    /// reported none), the context share, and the ceiling in force.
+    pub(crate) fn panel(&self, window_tokens: Option<u64>, ceiling_micros: Option<u64>) -> String {
+        let requests = self.answering.turns;
+        let header = if requests == 0 {
+            "Session usage — no requests yet".to_owned()
+        } else {
+            format!(
+                "Session usage — {requests} request{}",
+                if requests == 1 { "" } else { "s" }
+            )
+        };
+        let cached = if self.answering.reported_cached {
+            self.answering.cached_input_tokens.to_string()
+        } else {
+            "not reported".to_owned()
+        };
+        let cost = match self.cost_micros() {
+            Some(micros) => cost_text(micros),
+            None => "not reported by the provider".to_owned(),
+        };
+        format!(
+            "{header}\n\
+             \x20 Prompt tokens: {prompt}\n\
+             \x20 Cached tokens: {cached}\n\
+             \x20 Completion tokens: {completion}\n\
+             \x20 Cost: {cost}\n\
+             \x20 Context: {context}\n\
+             \x20 Ceiling: {ceiling}",
+            prompt = self.answering.input_tokens,
+            completion = self.answering.output_tokens,
+            context = context_line(self.last_input_tokens(), window_tokens),
+            ceiling = ceiling_line(self.cost_micros(), ceiling_micros),
+        )
+    }
+
     /// Folds one answering turn's usage into the answering total. A silent
     /// provider produces an all-zero `TokenUsage`, which the accumulator skips
     /// so a usage-less turn adds nothing.

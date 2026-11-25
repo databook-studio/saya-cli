@@ -163,7 +163,7 @@ fn active_sigint_cancels_request_without_persisting_incomplete_turn() {
     );
 
     wait_for_stream(&stderr_buf, b"Request cancelled.", "cancelled action");
-    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.write_all(b"/status\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
 

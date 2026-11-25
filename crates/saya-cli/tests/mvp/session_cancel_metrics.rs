@@ -181,7 +181,7 @@ fn a_verbose_sigint_records_one_cancellation_to_local_settlement_sample() {
         stderr_text.contains("phase cancellation_to_local_settlement samples=1"),
         "exactly one cancellation-to-local-settlement sample expected: {stderr_text}"
     );
-    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.write_all(b"/status\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
 

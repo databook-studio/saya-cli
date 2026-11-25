@@ -32,7 +32,7 @@ pub(crate) struct StatusFacts {
     /// How much of the model's window the last answering call used, already
     /// worded; `None` when no call has reported one.
     pub(crate) context_use: Option<String>,
-    /// This session's token totals, as `/usage` rendered them.
+    /// This session's token totals, as the panel's own breakdown renders them.
     pub(crate) tokens: String,
     /// What the provider reported this session has cost so far, as money;
     /// `None` when no call reported a cost.
@@ -84,12 +84,7 @@ impl StatusFacts {
             self.workspace_root = workspace_root.map(|path| path.display().to_string());
         }
         self.instructions = Some(instructions(state, runtime, workspace_root));
-        let window = runtime
-            .resolved
-            .ai
-            .context_window_tokens
-            .or_else(|| saya_config::context_window_tokens(&runtime.resolved.ai.model));
-        self.context_use = context_use(&state.usage, window);
+        self.context_use = context_use(&state.usage, super::ops_usage::window_tokens(runtime));
         self.cost = cost_fact(&state.usage);
         self.limits = crate::config::limits_report::job_guards(runtime);
         // The database budget is the plugin's, and the plugin only arms it on a

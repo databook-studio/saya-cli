@@ -57,12 +57,13 @@ fn command_help_session(name: &str) -> Option<&'static str> {
             "doctor — diagnose configuration: secrets resolve? provider endpoint? Example: /doctor",
         ),
         "usage" => Some(
-            "usage — deprecated alias of /status, removed in the next release: it opens the \
-             panel's Model section — the provider, the model, the context use, and this session's \
-             token totals: input, output, reasoning, cached input, cache creation, and the cache \
-             hit rate. The hit rate is Σcached / Σinput across all turns (a ratio of sums, not a \
-             mean of per-turn rates). Fields the provider did not report show —; the hit rate shows \
-             'unknown' when no turn reported cached tokens (absent is not zero). Example: /usage",
+            "usage [--limit <usd>] — this session's usage panel: how many requests it has made, \
+             the prompt, cached and completion tokens the provider reported, the reported cost \
+             (or that the provider reported none), the share of the model's window the last \
+             request used, and the cost ceiling in force. --limit <usd> sets this session's \
+             ceiling: when the next request would start with reported spend at or above it, the \
+             turn stops instead of running. An unreported cost never trips the ceiling. \
+             Example: /usage   or   /usage --limit 2.50",
         ),
         "workspace" => Some(
             "workspace — deprecated alias of /status, removed in the next release: it opens the \

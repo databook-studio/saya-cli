@@ -31,6 +31,7 @@ const USER_FACING_DIAGNOSTICS: &[(&str, &str)] = &[
     ("read_only", "run.read_only"),
     ("max_rows", "run.max_rows"),
     ("candidates", "run.candidates"),
+    ("limits_session_cost_usd", "limits.session_cost_usd"),
     ("limits_session_requests", "limits.session.requests"),
     ("limits_session_tool_calls", "limits.session.tool_calls"),
     (
