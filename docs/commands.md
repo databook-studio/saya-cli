@@ -116,7 +116,8 @@ alone. A provider that reports no usage emits no `usage` event at all: absence m
 "unknown", not zero, and an unreported cache figure serialises as `null` where a
 reported zero serialises as `0`. `/history` lists saved session IDs
 in recent-first order. The slash commands `/connect <profile>`, `/include <profile>`, and `/exclude <profile>` manage live database connections in interactive sessions: `/connect` sets the primary profile, `/include` adds secondary live read-only database connections (skipped if connection fails), and `/exclude` removes them. `/connect`, `/privacy`, `/model`, and
-`/provider` are per-session overrides used by the next prompt; supported
+`/provider` are per-session overrides that apply to the open conversation at
+once; supported
 providers are `ollama`, `openai`, `openai_compatible`, `anthropic`, and `gemini`.
 When attached to a terminal, each interactive prompt shows a one-line status
 header (active profile, any included databases, provider/model, approval mode,
