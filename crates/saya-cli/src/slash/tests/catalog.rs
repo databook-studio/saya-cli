@@ -155,7 +155,6 @@ fn every_alias_resolves_to_its_command() {
             ("reject", "contracts"),
             ("approve-all", "contracts"),
             ("grants", "permissions"),
-            ("usage", "status"),
             ("workspace", "status"),
             ("context", "status"),
             ("quit", "exit"),
@@ -261,7 +260,7 @@ fn the_help_listing_is_one_ranked_view_of_the_catalogue() {
         }
         ranks.push(rank);
     }
-    assert_eq!(ranks.len(), 39, "the listing shows 39 of today's 63 names");
+    assert_eq!(ranks.len(), 40, "the listing shows 40 of today's 63 names");
     assert_eq!(
         catalog::names().count(),
         63,

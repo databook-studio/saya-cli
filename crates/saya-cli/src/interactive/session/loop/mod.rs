@@ -29,6 +29,7 @@ include!("action_surface.rs");
 include!("action_runs.rs");
 include!("action_grants.rs");
 include!("action_status.rs");
+include!("action_usage.rs");
 include!("action_sessions.rs");
 include!("action_commands.rs");
 include!("action_coding.rs");

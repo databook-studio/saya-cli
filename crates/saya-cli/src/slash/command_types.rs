@@ -139,8 +139,10 @@ pub enum SlashCommand {
     Context,
     /// Run `config doctor` in-session: secrets resolve? provider endpoint?
     Doctor,
-    /// Show session token usage totals and cache hit rate.
-    Usage,
+    /// `/usage [--limit <usd>]` — this session's requests, prompt, cached and
+    /// completion tokens, reported cost, and context share, in one bounded
+    /// panel; `--limit` also states this session's cost ceiling.
+    Usage(UsageRequest),
     /// Toggle display of the model's chain-of-thought in the transcript.
     Thinking(Option<bool>),
     /// Show the session's workspace binding: the pinned canonical root, or

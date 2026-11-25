@@ -13,4 +13,5 @@ include!("tests/contracts_verbs.rs");
 include!("tests/preferences.rs");
 include!("tests/notes_recovery.rs");
 include!("tests/rewind.rs");
+include!("tests/usage.rs");
 include!("tests/continue_cmd.rs");

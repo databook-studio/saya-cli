@@ -142,7 +142,7 @@ impl SessionPort {
             Asked::Setup => {}
             // `/continue` is the one session op that states a turn: the chat
             // session sends the paused turn's message through its own path.
-            Asked::Continue => self.line.continue_turn(),
+            Asked::Continue => self.continue_turn(),
             Asked::Job(request) => self.perform_job(request),
             // A rollover: the conversation's own two are the chat layer's
             // compaction and clear, which the session performs; the change
@@ -166,6 +166,24 @@ impl SessionPort {
     /// held: a panicking reader must not take the session's own state with it.
     pub(super) fn state(&self) -> MutexGuard<'_, SessionState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The one sentence the session's ceiling owes a turn that must not start,
+    /// or `None` when the next request may go ahead. Only reported spend can
+    /// trip a ceiling; an unreported cost leaves it silent.
+    fn ceiling_stop(&self) -> Option<String> {
+        let state = self.state();
+        crate::interactive::ceiling_stop(state.usage.cost_micros(), state.session_cost_limit_micros)
+    }
+
+    /// Continue the paused turn, unless the session's ceiling stops it first:
+    /// the continuation is a request like any other.
+    fn continue_turn(&self) {
+        if let Some(sentence) = self.ceiling_stop() {
+            self.front.say(sentence);
+            return;
+        }
+        self.line.continue_turn();
     }
 
     /// The saved sessions, listed where a resume would read them: the store's
@@ -219,6 +237,13 @@ impl SessionPort {
 
 impl CmdPort for SessionPort {
     fn send(&self, message: String) {
+        // A typed line is a turn, and a turn starts only while the session's
+        // reported spend sits below its ceiling. A slash command never reaches
+        // here — it is an `op`, so `/usage --limit` can always raise it.
+        if let Some(sentence) = self.ceiling_stop() {
+            self.front.say(sentence);
+            return;
+        }
         // The turn runs on a task of its own: its events come back through the
         // front, so the loop keeps folding them and reading keys while the
         // session works. A turn that takes the loop's thread would freeze the

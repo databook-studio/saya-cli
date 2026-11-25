@@ -68,6 +68,9 @@ fn finish_action(
     if let SessionAction::Status = action {
         return handle_status(ctx);
     }
+    if let SessionAction::Usage(request) = action {
+        return handle_usage(request, ctx);
+    }
     if let SessionAction::Reload = action {
         return handle_reload(ctx);
     }

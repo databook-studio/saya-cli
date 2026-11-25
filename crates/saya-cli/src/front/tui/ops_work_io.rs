@@ -26,8 +26,8 @@ pub(super) fn statement(deps: &OpsDeps, sql: String) -> Asked {
     )
 }
 
-/// The panel's one section, plus the alias' note, exactly as `/usage`,
-/// `/workspace` and `/context` answer on the line front.
+/// The panel's one section, plus the alias' note, exactly as `/workspace`
+/// and `/context` answer on the line front.
 pub(super) fn section_answer(deps: &OpsDeps, section: Section) -> String {
     let runtime = deps.runtime.current();
     let mut state = deps.state();
@@ -48,7 +48,6 @@ pub(super) fn section_answer(deps: &OpsDeps, section: Section) -> String {
     )
     .render_section(section);
     match section {
-        Section::Model => crate::chat::ops_status::with_note(&mut state, Note::Usage, text),
         Section::Workspace => crate::chat::ops_status::with_note(&mut state, Note::Workspace, text),
         _ => text,
     }

@@ -149,6 +149,7 @@ key below.
 | Surface | Table | Defaults |
 | --- | --- | --- |
 | A turn's database work | `[limits.database]` | 24 requests, 64 tool calls, 300 s, 250,000 known tokens |
+| A chat session's reported spend | `[limits] session_cost_usd` | unset (no ceiling) |
 | `saya ask` | `[limits.ask]` | every unset key falls back to `[limits.database]` |
 | Job | `[limits.job]` | bounded: 2,000 logical requests, 6,000 transport attempts, 10,000 tool calls, a 604,800 s deadline, unlimited per-loop tokens; no job-wide token ceiling |
 | `saya run` | `[limits.run]` | `turns`, `tool_calls` and `wall_clock_seconds` unset (no ceiling); `tokens_per_endpoint` unset |
@@ -159,6 +160,20 @@ work one turn may do, counted from its first database call. Its four keys are
 positive integer or the exact string `"unlimited"`. `[limits.ask]` is the
 one-shot `ask` surface's override of the same budget: every key it leaves
 unset keeps the database value.
+
+`[limits] session_cost_usd` is a chat session's cost ceiling, in US dollars.
+Unset means no ceiling. It is compared with the spend the provider reports:
+when the next request would start with reported spend at or above the ceiling,
+the turn stops with one sentence instead of running. `/usage --limit <usd>`
+sets or raises it for the session, and `/usage` states the ceiling in force.
+A provider that reports no cost leaves the spend unknown, and an unknown spend
+never trips the ceiling — `/usage` says so. The key is protected: a project
+layer cannot raise a ceiling the user set.
+
+```toml
+[limits]
+session_cost_usd = 2.50
+```
 
 `[limits.session]` is retired: it now maps onto `[limits.database]` for one
 release, and a config that states it is read with a diagnostic naming the

@@ -65,9 +65,10 @@ Session
   /reload — Re-read the configuration between turns: applies what is safe now, says what needs a new session. Data sharing and host commands never change in a running session.
   /doctor — Diagnose config: secrets, provider endpoint
   /status — One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks
+  /usage [--limit <usd>] — This session's requests, prompt, cached and completion tokens, reported cost and context share; --limit <usd> sets a cost ceiling
   /thinking [on|off] — Toggle display of the model's chain-of-thought
-  /tasks [clear] — Show the session's task list, or clear it with /tasks clear
   /notes [set <text>|clear] — Your notes on this session's saved summary: show, set, clear; separate from /preferences and /remember
+  /tasks [clear] — Show the session's task list, or clear it with /tasks clear
   /help [command] — Show help for slash commands
   /exit  (alias /quit) — Exit the REPL
 

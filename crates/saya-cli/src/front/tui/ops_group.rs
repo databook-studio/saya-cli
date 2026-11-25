@@ -27,6 +27,7 @@ pub(super) fn read(deps: &OpsDeps, command: SlashCommand, read: ReadOp) -> Asked
         | ReadOp::Notes(_) => apply(deps, command),
         ReadOp::Status => Asked::Work(Work::Status(None)),
         ReadOp::StatusSection(section) => Asked::Work(Work::Status(Some(section))),
+        ReadOp::Usage(request) => Asked::Work(Work::Usage(request)),
         ReadOp::Schema { refresh } => Asked::Work(Work::Schema { refresh }),
         ReadOp::Explain(sql) => Asked::Work(Work::Explain(sql)),
         // Bare `/sessions` opens the picker a saved session is chosen from, and

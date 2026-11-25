@@ -260,7 +260,8 @@ is not in this table.
 | `/allow` | `<scopes…>` | Seed pre-authorised scopes into this session's grant store | — |
 | `/permissions` | — | One read-only view: the mode, the grant store, the deny list, the host lane and data sharing | `/grants` |
 | `/doctor` | — | Diagnose config: secrets, provider endpoint | — |
-| `/status` | — | One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks | `/usage`, `/workspace`, `/context` |
+| `/status` | — | One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks | `/workspace`, `/context` |
+| `/usage` | `[--limit <usd>]` | This session's requests, prompt, cached and completion tokens, reported cost and context share; --limit <usd> sets a cost ceiling | — |
 | `/thinking` | `[on\|off]` | Toggle display of the model's chain-of-thought | — |
 | `/tasks` | `[clear]` | Show the session's task list, or clear it with /tasks clear | — |
 | `/help` | `[command]` | Show help for slash commands | — |

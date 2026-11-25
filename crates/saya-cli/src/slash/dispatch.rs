@@ -202,7 +202,12 @@ pub fn parse_slash_command(input: &str) -> Result<Option<SlashCommand>, SlashPar
         }
         "doctor" => SlashCommand::Doctor,
         "status" => SlashCommand::Status,
-        "usage" => SlashCommand::Usage,
+        "usage" => {
+            // Bare shows the panel; `--limit <usd>` also states this
+            // session's ceiling. The tail is split once, here.
+            let tail = trimmed.strip_prefix("/usage").unwrap_or("").trim();
+            SlashCommand::Usage(parse_usage(tail)?)
+        }
         "thinking" => SlashCommand::Thinking(parse_bool(&arg)?),
         "workspace" => SlashCommand::Workspace,
         "contracts" | "contract" | "remember" | "forget" | "queue" | "confirm" | "reject"

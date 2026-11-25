@@ -114,6 +114,11 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
     // preference that is never persisted, so a resumed session deserializes it
     // as off and would otherwise ignore both the config setting and the flag.
     state.show_thinking = runtime.resolved.ai.show_thinking || cli.options.show_thinking;
+    // The session's spend ceiling: the configuration's, until `/usage --limit`
+    // states another for this session. Always seeded, including on a resumed
+    // session, because the ceiling is a guard for this process, not a fact of
+    // the record.
+    state.session_cost_limit_micros = runtime.resolved.limits.session_cost_micros;
     // Reflect the configured default profile so the status bar and @-references
     // match the database the agent actually queries.
     if state.profile.is_none() {
