@@ -1,9 +1,15 @@
-// A prompt cache is a prefix cache: every request's messages and tool list must
-// begin with the previous request's, byte for byte. A scripted multi-turn job
-// that reports reasoning each turn is the shape that used to break: attaching a
-// new turn's reasoning cleared every earlier turn's copy, rewriting the prefix
-// at the first assistant message and invalidating the cache for every token
-// after it.
+// A prompt cache is a prefix cache: every request's messages and tool list
+// should begin with the previous request's, byte for byte. A scripted
+// multi-turn job that reports reasoning each turn is the shape that used to
+// break: attaching a new turn's reasoning cleared every earlier turn's copy,
+// rewriting the prefix at the first assistant message and invalidating the
+// cache for every token after it.
+//
+// The one intended exception is the history policy: when a tool group ages out
+// of the whole-result window, that tool message is replaced by a stub. The
+// prefix before the first such message must still be byte-identical, and the
+// stubbed region is byte-stable from then on, so the cache keeps hitting
+// through it.
 
 /// Answers the first `turns` calls with one tool call each — every one carrying
 /// reasoning — and the last with a plain answer. Every request is recorded so
@@ -81,12 +87,48 @@ async fn every_request_body_extends_the_previous_one() {
             previous.messages.len() < next.messages.len(),
             "request {index} grows the history"
         );
+        // The messages before the first difference are the cached prefix; it
+        // must stay byte-identical. The only allowed difference is a tool
+        // message the history policy replaced with a stub, and every such
+        // message is already a stub from the next request on.
+        let first_difference = previous
+            .messages
+            .iter()
+            .zip(&next.messages)
+            .position(|(before, after)| before != after)
+            .unwrap_or(previous.messages.len());
         assert_eq!(
-            previous.messages.as_slice(),
-            &next.messages[..previous.messages.len()],
-            "request {} begins with request {index}'s messages byte for byte",
+            &previous.messages[..first_difference],
+            &next.messages[..first_difference],
+            "request {} keeps request {index}'s messages byte for byte up to the first stub",
             index + 1
         );
+        for (changed, (before, after)) in previous
+            .messages
+            .iter()
+            .zip(&next.messages)
+            .enumerate()
+            .skip(first_difference)
+        {
+            if before == after {
+                continue;
+            }
+            assert_eq!(
+                before.role, "tool",
+                "request {}: only a tool result may be stubbed, index {changed}",
+                index + 1
+            );
+            assert_eq!(after.role, "tool");
+            assert!(
+                after.content.starts_with("…[history-stub:"),
+                "the changed message is a history stub: {}",
+                after.content
+            );
+            assert!(
+                !before.content.starts_with("…[history-stub:"),
+                "a stubbed message is never rewritten again"
+            );
+        }
         assert_eq!(
             serde_json::to_vec(&previous.tools).unwrap(),
             serde_json::to_vec(&next.tools[..previous.tools.len()]).unwrap(),
