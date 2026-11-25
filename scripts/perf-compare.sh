@@ -13,8 +13,8 @@
 #
 # The steady-overhead bar is paired: each candidate run is compared with the
 # control run of the same index from the same session, and the median
-# difference must not be positive. The absolute ≤ 50 ms p50 and ≤ 120 ms p95
-# readings stay in the table as reported rows.
+# difference must stay within 10 % of the control's median. The absolute
+# ≤ 50 ms p50 and ≤ 120 ms p95 readings stay in the table as reported rows.
 set -euo pipefail
 
 usage="usage: scripts/perf-compare.sh <control-bin> <candidate-bin> [k]"

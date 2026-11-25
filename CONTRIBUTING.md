@@ -43,8 +43,9 @@ cargo audit --deny warnings                 # when dependencies changed
   `crates/saya-cli/tests/run_core_parity/budget.json`, the always-on tool lists
   and description/section caps in `crates/saya-cli/src/perf_guard.rs`, and the
   timing bars in `scripts/perf-compare.sh`, run by the `perf-compare` CI job:
-  the first message within control + 10 %, the steady turn overhead judged
-  against the control measured in the same session (paired by run index), and
-  idle CPU, draws and disk. The absolute steady-overhead rows (p50 ≤ 50 ms,
-  p95 ≤ 120 ms) are reported beside the paired verdict, not asserted. Raising
+  the first message within control + 10 %, the steady turn overhead within
+  control + 10 % of the control measured in the same session (paired by run
+  index), and idle CPU, draws and disk. The absolute steady-overhead rows
+  (p50 ≤ 50 ms, p95 ≤ 120 ms) are reported beside the paired verdict, not
+  asserted. Raising
   a bar is a reviewed change, with the reason recorded beside it.

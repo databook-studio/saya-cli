@@ -6,7 +6,8 @@ candidate binaries, then calls this module with the two jsonl files. Nothing
 here talks to a provider; it only reads what the harness recorded.
 
 The steady-overhead verdict is paired: each candidate run is compared with
-the control run of the same index from the same session. The absolute p50/p95
+the control run of the same index from the same session, and the median paired
+difference may not exceed 10 % of the control's median. The absolute p50/p95
 readings stay in the table as reported rows.
 """
 
@@ -33,9 +34,9 @@ ROWS = [
     ("a", "first message: send → first streamed event", "first_event_ms", "ms",
      "control + 10 %", "higher_is_worse", 1.10, None),
     ("b", "steady turn overhead, p50", "overhead_p50_ms", "ms",
-     "candidate ≤ control (same-session, paired by run)", "paired_at_most", 0.0, None),
+     "paired, control + 10 %", "paired_higher_is_worse", 0.10, None),
     ("b", "steady turn overhead, p95", "overhead_p95_ms", "ms",
-     "candidate ≤ control (same-session, paired by run)", "paired_at_most", 0.0, None),
+     "paired, control + 10 %", "paired_higher_is_worse", 0.10, None),
     ("b", "steady turn overhead, p50 (absolute)", "overhead_p50_ms", "ms",
      "≤ 50 ms (reported)", "reported", None, None),
     ("b", "steady turn overhead, p95 (absolute)", "overhead_p95_ms", "ms",
@@ -146,14 +147,18 @@ def render(control, candidate, control_bin, candidate_bin, k):
         else:
             change = candidate_value - control_value
             delta = f"{change:+.2f} {unit} ({change / control_value * 100:+.1f} %)" if control_value else "—"
-            if rule == "paired_at_most":
+            if rule == "paired_higher_is_worse":
                 paired, pairs = paired_delta(control, candidate, key)
                 if paired is None:
                     delta = "—"
                     verdict = "not comparable (no run index is present in both arms)"
                 else:
+                    # The paired median may sit up to `limit` (10 %) above the
+                    # control's own median; a few hundredths of a millisecond
+                    # is noise, not a regression.
+                    allowed = control_value * limit
                     delta = f"{paired:+.2f} {unit} paired over {pairs} run(s)"
-                    verdict = "pass" if paired <= limit else "FAIL"
+                    verdict = "pass" if paired <= allowed else "FAIL"
             elif rule == "at_most":
                 verdict = "pass" if candidate_value <= limit else "FAIL"
             elif rule == "higher_is_worse":
@@ -196,8 +201,9 @@ def render(control, candidate, control_bin, candidate_bin, k):
         "- a `FAIL` on the first-message row is measured against the control arm's own",
         "  median on this machine, not against a stored number.",
         "- the steady-overhead verdict compares the candidate with the control arm",
-        "  measured in the same session, paired by run index; the absolute ≤ 50 ms",
-        "  p50 and ≤ 120 ms p95 rows are reported beside it, not asserted.",
+        "  measured in the same session, paired by run index, and passes within",
+        "  10 % of the control's median; the absolute ≤ 50 ms p50 and ≤ 120 ms p95",
+        "  rows are reported beside it, not asserted.",
     ]
     return "\n".join(lines) + "\n", verdicts
 

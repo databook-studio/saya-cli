@@ -42,7 +42,7 @@ def verdict_for(verdicts, name):
 
 
 class SteadyOverheadBarTests(unittest.TestCase):
-    def test_a_candidate_slower_than_the_paired_control_fails_below_50_ms(self):
+    def test_a_candidate_beyond_the_paired_tolerance_fails(self):
         control = [record(run, p50=20.0) for run in range(3)]
         candidate = [record(run, p50=25.0) for run in range(3)]
         _, verdicts = compare(control, candidate)
@@ -55,6 +55,33 @@ class SteadyOverheadBarTests(unittest.TestCase):
         _, verdicts = compare(control, candidate)
         self.assertEqual(verdict_for(verdicts, "steady turn overhead, p50"), "pass")
         self.assertEqual(verdict_for(verdicts, "steady turn overhead, p95"), "pass")
+
+    def test_a_twentieth_of_a_millisecond_over_a_ten_ms_control_passes(self):
+        control = [record(run, p50=10.0, p95=10.0) for run in range(3)]
+        candidate = [record(run, p50=10.02, p95=10.02) for run in range(3)]
+        _, verdicts = compare(control, candidate)
+        self.assertEqual(verdict_for(verdicts, "steady turn overhead, p50"), "pass")
+        self.assertEqual(verdict_for(verdicts, "steady turn overhead, p95"), "pass")
+
+    def test_five_percent_over_the_paired_control_passes(self):
+        control = [record(run, p50=20.0, p95=20.0) for run in range(3)]
+        candidate = [record(run, p50=21.0, p95=21.0) for run in range(3)]
+        _, verdicts = compare(control, candidate)
+        self.assertEqual(verdict_for(verdicts, "steady turn overhead, p50"), "pass")
+        self.assertEqual(verdict_for(verdicts, "steady turn overhead, p95"), "pass")
+
+    def test_fifteen_percent_over_the_paired_control_fails(self):
+        control = [record(run, p50=20.0, p95=20.0) for run in range(3)]
+        candidate = [record(run, p50=23.0, p95=23.0) for run in range(3)]
+        _, verdicts = compare(control, candidate)
+        self.assertEqual(verdict_for(verdicts, "steady turn overhead, p50"), "FAIL")
+        self.assertEqual(verdict_for(verdicts, "steady turn overhead, p95"), "FAIL")
+
+    def test_the_bar_column_states_the_paired_ten_percent_rule(self):
+        control = [record(run, p50=20.0) for run in range(3)]
+        candidate = [record(run, p50=21.0) for run in range(3)]
+        markdown, _ = compare(control, candidate)
+        self.assertIn("paired, control + 10 %", markdown)
 
     def test_the_absolute_50_ms_rows_are_reported_not_asserted(self):
         control = [record(run, p50=80.0) for run in range(3)]
