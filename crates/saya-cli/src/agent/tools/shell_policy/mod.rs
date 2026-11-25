@@ -87,6 +87,10 @@ mod concurrency_tests;
 mod mode_cell_tests;
 
 #[cfg(test)]
+#[path = "git_write_tests.rs"]
+mod git_write_tests;
+
+#[cfg(test)]
 #[path = "policy_grant_tests.rs"]
 mod policy_grant_tests;
 
