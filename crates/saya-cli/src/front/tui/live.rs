@@ -49,11 +49,8 @@ impl LiveRuntime {
 /// The window a model is known to have: the operator's declared
 /// `ai.context_window_tokens` when there is one, and the built-in table's entry
 /// for `model` otherwise. `None` is an unknown window — unknown stays unknown,
-/// and the row states it by showing no meter at all.
+/// and the row states it by showing no meter at all. It is the one window
+/// function, so the meter and the two panels can never disagree.
 pub(crate) fn context_window(runtime: &RuntimeConfig, model: &str) -> Option<u64> {
-    runtime
-        .resolved
-        .ai
-        .context_window_tokens
-        .or_else(|| saya_config::context_window_tokens(model))
+    crate::chat::window_tokens(runtime, model)
 }

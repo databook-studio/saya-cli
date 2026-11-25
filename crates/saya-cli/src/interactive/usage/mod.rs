@@ -31,9 +31,11 @@ pub(crate) fn cost_text(micros: u64) -> String {
 
 /// The context-share line: the last request against the window it was sent
 /// to. An unmeasured request or an unknown window is said as such — never a
-/// percentage over a denominator nobody knows.
-fn context_line(input_tokens: Option<u64>, window_tokens: Option<u64>) -> String {
+/// percentage over a denominator nobody knows. A request whose tokens the
+/// provider did not report says so, rather than claiming none was sent.
+fn context_line(input_tokens: Option<u64>, window_tokens: Option<u64>, requested: bool) -> String {
     match (input_tokens, window_tokens) {
+        (None, _) if requested => "not reported by the provider".into(),
         (None, _) => "no request yet".into(),
         (Some(_), None) => "unknown (the model's window is not known)".into(),
         (Some(input), Some(window)) => {
@@ -73,6 +75,11 @@ fn ceiling_line(spend_micros: Option<u64>, ceiling_micros: Option<u64>) -> Strin
 pub(crate) struct SessionUsage {
     pub(crate) answering: UsageTotals,
     pub(crate) learning: UsageTotals,
+    /// Answering requests this session made, counted at each settled turn
+    /// whether or not the provider reported usage for it. The panel's header
+    /// counts these, never `answering.turns`: a provider that completes
+    /// requests without reporting tokens still answered them.
+    pub(crate) answering_requests: u32,
     /// Whether any extraction call reported usage. A provider that reported
     /// nothing (`None`) leaves this false so the learning section is omitted
     /// entirely — absent is not zero, and the section would otherwise show a
@@ -106,7 +113,7 @@ impl SessionUsage {
     /// cached and completion tokens, the reported cost (or that the provider
     /// reported none), the context share, and the ceiling in force.
     pub(crate) fn panel(&self, window_tokens: Option<u64>, ceiling_micros: Option<u64>) -> String {
-        let requests = self.answering.turns;
+        let requests = self.answering_requests;
         let header = if requests == 0 {
             "Session usage — no requests yet".to_owned()
         } else {
@@ -115,14 +122,30 @@ impl SessionUsage {
                 if requests == 1 { "" } else { "s" }
             )
         };
+        // A request the provider answered without reporting tokens is not a
+        // request of zero tokens: absent is not zero, so the line names why.
+        let reported = self.answering.turns > 0;
+        let not_reported = || "not reported by the provider".to_owned();
+        let prompt = if reported {
+            self.answering.input_tokens.to_string()
+        } else {
+            not_reported()
+        };
+        let completion = if reported {
+            self.answering.output_tokens.to_string()
+        } else {
+            not_reported()
+        };
         let cached = if self.answering.reported_cached {
             self.answering.cached_input_tokens.to_string()
-        } else {
+        } else if reported {
             "not reported".to_owned()
+        } else {
+            not_reported()
         };
         let cost = match self.cost_micros() {
             Some(micros) => cost_text(micros),
-            None => "not reported by the provider".to_owned(),
+            None => not_reported(),
         };
         format!(
             "{header}\n\
@@ -132,11 +155,16 @@ impl SessionUsage {
              \x20 Cost: {cost}\n\
              \x20 Context: {context}\n\
              \x20 Ceiling: {ceiling}",
-            prompt = self.answering.input_tokens,
-            completion = self.answering.output_tokens,
-            context = context_line(self.last_input_tokens(), window_tokens),
+            context = context_line(self.last_input_tokens(), window_tokens, requests > 0),
             ceiling = ceiling_line(self.cost_micros(), ceiling_micros),
         )
+    }
+
+    /// Counts one answering request at its settlement, whether or not the
+    /// provider reported usage for it: the panel's request count is this, not
+    /// the reported-usage turn count.
+    pub(crate) fn count_request(&mut self) {
+        self.answering_requests = self.answering_requests.saturating_add(1);
     }
 
     /// Folds one answering turn's usage into the answering total. A silent

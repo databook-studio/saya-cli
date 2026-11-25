@@ -84,7 +84,10 @@ impl StatusFacts {
             self.workspace_root = workspace_root.map(|path| path.display().to_string());
         }
         self.instructions = Some(instructions(state, runtime, workspace_root));
-        self.context_use = context_use(&state.usage, super::ops_usage::window_tokens(runtime));
+        self.context_use = context_use(
+            &state.usage,
+            super::ops_usage::window_tokens(runtime, &state.model),
+        );
         self.cost = cost_fact(&state.usage);
         self.limits = crate::config::limits_report::job_guards(runtime);
         // The database budget is the plugin's, and the plugin only arms it on a

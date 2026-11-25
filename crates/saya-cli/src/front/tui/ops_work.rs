@@ -21,8 +21,6 @@ use crate::chat::ops_status::Section;
 pub(crate) enum Work {
     /// `/status`, and the two aliases that open one of its sections.
     Status(Option<Section>),
-    /// `/usage [--limit <usd>]` — the session's usage panel and its ceiling.
-    Usage(crate::slash::UsageRequest),
     /// `/schema [refresh]` — the schema view, or a refresh of it.
     Schema { refresh: bool },
     /// `/explain [sql]` — the statement's plan.
@@ -63,11 +61,6 @@ pub(crate) fn perform(deps: &OpsDeps, work: Work) -> Asked {
             ))
         }
         Work::Status(Some(section)) => Asked::Notice(section_answer(deps, section)),
-        Work::Usage(request) => {
-            let runtime = deps.runtime.current();
-            let mut state = deps.state();
-            Asked::Notice(crate::chat::usage_answer(&mut state, &runtime, request))
-        }
         Work::Doctor => Asked::Notice(crate::config::doctor::summary(&deps.runtime.current())),
         Work::SessionsList => {
             match crate::interactive::session::commands::sessions_list_text(
