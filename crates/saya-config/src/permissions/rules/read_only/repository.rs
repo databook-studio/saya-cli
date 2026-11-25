@@ -4,10 +4,11 @@
 //! `log -p`, and `show` run an external diff (`diff.external`), a textconv
 //! driver (`*.textconv`), or a filter's process (`filter.*.process`); a pager
 //! and an ssh command are programs of the repository's choosing too. All of
-//! them come from the repository's local configuration, which is ordinary
-//! content to Saya's tools: the `write` and `edit` tools do not special-case
-//! `.git`, and the shell may write it in either lane — so the file is model
-//! writable, and a vetted `git` cannot be vetted over it without reading it.
+//! them come from the repository's local configuration, which containment
+//! treats as ordinary content: the approval layer puts a change inside `.git`
+//! to the operator in every mode but `bypass`, but an approved write — or any
+//! write under `bypass` — can change it, so a vetted `git` cannot be vetted
+//! over it without reading it.
 //!
 //! The reading is bounded and fails closed: no workspace, no repository
 //! inside it, a `.git` that is a pointer file, a configuration that cannot be

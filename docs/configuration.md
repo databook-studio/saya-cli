@@ -693,6 +693,19 @@ is unchanged by it — a denied program in the set is still refused — and
 `bypass`, `read-only` and `never` read exactly as before. Set it to `false` to
 answer every call yourself; the key can withhold the set, never state one.
 
+A change inside the repository's git directory is always yours to approve. A
+model `write`, `edit` or `delete` call whose target resolves inside `.git/` — or
+inside the gitdir a `.git` pointer file names, as in a linked worktree — is put
+to the operator under its own question in every mode but `bypass`; a
+session-wide yes records no grant, so the next such write asks again.
+`read-only` and `never` refuse it as they refuse every write. A `shell` command
+whose argument or redirect target names the git directory is put to the operator
+under `ask` and `accept-edits` even when an allow rule or a remembered answer
+would otherwise pre-answer it; the read-only set above is unchanged, since a
+read cannot change the git directory. The git configuration and hooks decide
+what the user's next `git` command runs, so no rule, grant or mode short of
+`bypass` pre-answers a change to them.
+
 `[permissions]` is protected whole, like `[tools]`: a project's
 `.saya/config.toml` cannot set it, and an attempt is reverted and reported as
 `permissions`. A repository must not be able to hand itself the one consent
