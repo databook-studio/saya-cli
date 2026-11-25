@@ -198,9 +198,9 @@ impl Rollover {
         job.run_finish(answer)
             .await
             .map_err(RolloverError::Engine)?;
-        // The job object owns the folder's lease, in place: dropping the run
-        // that ended frees it — or hands it to a dependent job still running —
-        // and the next job is created after that and never before it.
+        // The run that ended gave its folder up as it closed — `run_finish`
+        // hands it to a dependent job still running, or frees it — so the next
+        // job is created after that and never before it.
         drop(ending);
         // The shape stated when the successor was planned is stale now: the run
         // that ended has let the folder go, and the successor must read a

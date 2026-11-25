@@ -129,8 +129,9 @@ impl NativeCodingJob {
         self.epoch
     }
     /// Whether this run still holds its one folder lease, as a run that ended
-    /// no longer does: the lease is the run's, never a turn's.
-    #[allow(dead_code)] // read only by the lease tests: no surface asks it yet
+    /// no longer does: the lease is the run's, never a turn's. A rollover and a
+    /// reopened run read it before giving the run up, to know whether the folder
+    /// must be read again after it has let it go.
     pub(crate) fn holds_folder_lease(&self) -> bool {
         self.in_place_lease.as_ref().is_some_and(|cell| {
             cell.lock()

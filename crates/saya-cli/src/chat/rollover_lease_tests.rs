@@ -66,6 +66,11 @@ async fn a_rollover_while_a_dependent_job_runs_reads_the_folder() {
         "the running job holds the folder the session let go"
     );
     assert_eq!(
+        crate::commands::coding::folder_lease_owner(&root_id).as_deref(),
+        Some("roll-job-job"),
+        "the folder is held by the job the session started, not the session's ended run"
+    );
+    assert_eq!(
         decide(&folder, &state, "second-session"),
         WorkspaceShape::ReadOnlyFiles {
             reason: "another session owns this folder".to_owned()
