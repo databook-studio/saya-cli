@@ -109,3 +109,43 @@ fn a_checkout_with_no_git_names_only_a_git_component() {
     assert!(!targets_git_dir(Some(sandbox.root()), "src/lib.rs"));
     assert!(targets_git_dir(Some(sandbox.root()), ".git/config"));
 }
+
+/// A symlink into the git directory names the same files. The check resolves
+/// the path's existing prefix, so an alias spelling with no `.git` component
+/// cannot hide a write the operator would otherwise be asked about.
+#[cfg(unix)]
+#[test]
+fn a_symlink_into_the_git_directory_names_it() {
+    use std::os::unix::fs::symlink;
+
+    let sandbox = Sandbox::new("symlink");
+    fs::create_dir_all(sandbox.root().join(".git/hooks")).expect("git dir creates");
+    fs::create_dir_all(sandbox.root().join("src")).expect("ordinary dir creates");
+    symlink(
+        sandbox.root().join(".git"),
+        sandbox.root().join(".git-alias"),
+    )
+    .expect("the git alias creates");
+    symlink(sandbox.root().join("src"), sandbox.root().join("src-alias"))
+        .expect("the ordinary alias creates");
+
+    assert!(
+        targets_git_dir(Some(sandbox.root()), ".git-alias/hooks/pre-commit"),
+        "the alias resolves into the git directory"
+    );
+    assert!(
+        targets_git_dir(
+            Some(sandbox.root()),
+            &sandbox
+                .root()
+                .join(".git-alias/config")
+                .display()
+                .to_string()
+        ),
+        "an absolute alias spelling is the same file"
+    );
+    assert!(
+        !targets_git_dir(Some(sandbox.root()), "src-alias/lib.rs"),
+        "a symlink to ordinary content is not the git directory"
+    );
+}

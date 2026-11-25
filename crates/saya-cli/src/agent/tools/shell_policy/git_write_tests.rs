@@ -67,6 +67,62 @@ fn git_write() -> Value {
     json!({"command": "cp hook .git/hooks/pre-commit"})
 }
 
+/// A checkout with a real `.git` and an alias symlink pointing at it, removed
+/// on drop. Unix-only: the alias is a symlink.
+#[cfg(unix)]
+struct Sandbox {
+    root: std::path::PathBuf,
+}
+
+#[cfg(unix)]
+impl Sandbox {
+    fn with_git_alias(label: &str) -> Self {
+        let root =
+            std::env::temp_dir().join(format!("saya-shell-gitrule-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git/hooks")).expect("git dir creates");
+        // The workspace root a run hands the policy is canonical; a temp
+        // directory's spelling may cross a symlink (`/var` on macOS).
+        let root = std::fs::canonicalize(&root).expect("sandbox root resolves");
+        std::os::unix::fs::symlink(root.join(".git"), root.join(".git-alias"))
+            .expect("the git alias creates");
+        Self { root }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// A symlink into the git directory is read as the git directory: an allow
+/// rule does not pre-answer `cp hook .git-alias/hooks/pre-commit`.
+#[cfg(unix)]
+#[tokio::test]
+async fn an_allow_rule_does_not_pre_answer_a_git_write_through_a_symlink() {
+    let sandbox = Sandbox::with_git_alias("symlink");
+    let operator = Counting::new();
+    let policy = ShellPolicy::new(
+        ApprovalPolicy::AcceptEdits,
+        Some(prompt(operator.clone())),
+        true,
+        rules(&["cp"], &[]),
+        Some(sandbox.root.clone()),
+    );
+    let call = json!({"command": "cp hook .git-alias/hooks/pre-commit"});
+
+    assert_eq!(policy.lane(&call), Lane::Host(false));
+    assert!(policy.would_ask(&call));
+    assert!(!policy.approve(&call).await);
+    assert_eq!(
+        operator.calls(),
+        1,
+        "the aliased git write is put to the operator"
+    );
+}
+
 /// An allow rule that covers the command does not pre-answer a write into the
 /// git directory: `accept-edits` puts it to the operator.
 #[tokio::test]
