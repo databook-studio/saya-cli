@@ -3,7 +3,11 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## 0.5.2 — Unreleased
+## 0.5.2 — 2026-11-25
+
+A session starts from one provider key, and state commands take effect on the
+open conversation at once. Older tool results in a long conversation are sent
+as short summaries, so each request stays smaller.
 
 ### Added
 
@@ -13,9 +17,42 @@ All notable changes to SAYA CLI are recorded here. This project follows
   ceiling, and `/usage --limit <usd>` sets one for the session: when the next
   request would start with reported spend at or above it, the turn stops.
   Unreported cost never trips the ceiling.
+- **Start with one provider key.** With one known provider key in the
+  environment and no provider stated anywhere, Saya uses that provider and its
+  default model and says so in one line. Two keys make an interactive run ask
+  which to use, a provider stated in any layer wins, and data sharing stays at
+  its default, off. The first screen names the next step when a provider or a
+  workspace is missing.
+
+### Changed
+
+- **`/model`, `/provider`, `/connect` and `/privacy` apply at once.** A state
+  command now reaches the next request of the open conversation: the run is
+  recomposed from the state the command stated and seeded with the settled
+  transcript, so the change is in effect without starting a new session.
+  Before the first turn the next message composes the run the command asks
+  for; while a turn runs the change waits for it to end.
+- **Older tool results are sent as short summaries.** In a long conversation
+  every tool-result group older than the latest two is replaced in place by a
+  bounded summary that keeps the tool name, its redacted arguments, the
+  outcome and result size, the first and last lines, and how to read the full
+  result again — re-run the statement or call the tool again. The latest
+  results stay whole, and a result no larger than its summary stays whole too,
+  so each request carries less.
+- **A change inside a repository's `.git` directory always asks.** A model
+  write, edit or delete whose target is inside the checkout's git directory,
+  and a shell command that names it, is put to the operator in every mode
+  except `bypass`; plan and read-only still refuse, and a session-wide yes
+  records no grant, so a second git write asks again.
 
 ### Fixed
 
+- **A job started from a session keeps the folder's lease when its session
+  ends.** The job is handed the open folder lease, so the folder has a holder
+  at every moment and a job that outlives its session still writes it under a
+  lease.
+- **MCP `clientInfo` reports Saya's own version.** The version in the MCP
+  initialize handshake is the crate's version, not a hand-copied constant.
 - On Windows the full-screen interface no longer handles each key twice.
 
 ## 0.5.1 — 2026-11-24
