@@ -9,6 +9,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[allow(clippy::duplicate_mod)] // shared fixture: several test groups link their own copy
+#[path = "../support/exec_ready.rs"]
+mod exec_ready;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub struct TempRoot(PathBuf);
@@ -162,8 +166,7 @@ pub fn response_git(
     let script = format!(
         "#!/bin/sh\nstatus=0\nbranch=0\nworktree=0\nlist=0\nfor arg do\n  case \"$arg\" in\n    status) status=1 ;;\n    --branch) branch=1 ;;\n    worktree) worktree=1 ;;\n    list) list=1 ;;\n  esac\ndone\nif {match_test}; then\n  exec /bin/cat {response_path}\nfi\nexec {real_git} \"$@\"\n"
     );
-    fs::write(&wrapper, script).unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&wrapper, script.as_bytes());
     wrapper
 }
 
@@ -196,8 +199,7 @@ pub fn versioned_git(
          n=$#\ni=0\nwhile [ \"$i\" -lt \"$n\" ]; do\n  i=$((i+1))\n  arg=$1\n  shift\n  if [ \"$arg\" = \"--no-lazy-fetch\" ]; then continue; fi\n  set -- \"$@\" \"$arg\"\ndone\n\
          exec \"$real\" \"$@\"\n"
     );
-    fs::write(&wrapper, script).unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&wrapper, script.as_bytes());
     (wrapper, log)
 }
 
@@ -211,8 +213,7 @@ pub fn delayed_git(fixture_root: &Path, real_git: &Path) -> (PathBuf, PathBuf, P
     let script = format!(
         "#!/bin/sh\ndelay=0\nfor arg do\n  if [ \"$arg\" = \"--absolute-git-dir\" ]; then delay=1; fi\ndone\nif [ \"$delay\" -eq 1 ]; then\n  printf x >> {marker_literal}\n  /bin/sleep 3 &\n  child=$!\n  printf '%s %s\\n' \"$$\" \"$child\" >> {pids_literal}\n  wait \"$child\"\nfi\nexec {real_git} \"$@\"\n"
     );
-    fs::write(&wrapper, script).unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&wrapper, script.as_bytes());
     (wrapper, marker, pids)
 }
 
@@ -229,6 +230,17 @@ pub async fn wait_group_gone(pgid: u32) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// Writes an executable wrapper that is safe to exec immediately (see
+/// `exec_ready`). A thread that forks while the file is open for writing
+/// leaves its child holding a write descriptor until that child execs, and
+/// exec of the wrapper then fails with ETXTBSY on Linux.
+fn write_executable(path: &Path, body: &[u8]) {
+    fs::write(path, body).expect("temporary helper writes");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .expect("temporary helper is executable");
+    exec_ready::wait_until_exec_ready(path);
 }
 
 fn shell_quote(value: &str) -> String {
