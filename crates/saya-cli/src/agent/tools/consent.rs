@@ -159,6 +159,13 @@ impl Prompt {
     pub(crate) async fn answer(&self, arguments: &Value) -> Answer {
         self.operator.answer(&self.line, arguments).await
     }
+
+    /// Puts one call to the operator under a line of its own, for a call whose
+    /// question is not the family's caller line — a change inside `.git/`,
+    /// which the operator must see stated plainly.
+    pub(crate) async fn answer_as(&self, line: &str, arguments: &Value) -> Answer {
+        self.operator.answer(line, arguments).await
+    }
 }
 
 /// Serialises asks so one is pending at a time, whatever the caller:

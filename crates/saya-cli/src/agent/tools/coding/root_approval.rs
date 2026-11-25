@@ -60,7 +60,11 @@ impl ApprovalDecider for RootTools {
                 // covers a write: only an `ask` job with an operator asks. A
                 // write this surface does not offer at all is refused before
                 // the question, because the executor would refuse it too.
-                match write_ask::for_root(&direct.coordinator.job) {
+                let workspace = direct
+                    .workspace
+                    .workspace()
+                    .map(|workspace| workspace.root());
+                match write_ask::for_root(&direct.coordinator.job, workspace) {
                     Some(_) if hidden_write(tool, |name| direct.advertises(name)) => false,
                     Some(ask) => ask.approve(&direct.decider, tool, arguments).await,
                     None => direct.decider.approve(tool, arguments).await,
@@ -83,7 +87,11 @@ impl ApprovalDecider for RootTools {
                 if routes_to_root_owned(&tool.name) {
                     return Some(false);
                 }
-                match write_ask::for_root(&direct.coordinator.job) {
+                let workspace = direct
+                    .workspace
+                    .workspace()
+                    .map(|workspace| workspace.root());
+                match write_ask::for_root(&direct.coordinator.job, workspace) {
                     Some(_) if hidden_write(tool, |name| direct.advertises(name)) => Some(false),
                     Some(ask) => ask.would_ask(direct.decider_for(tool), tool, arguments),
                     None => direct.decider_for(tool).would_ask(tool, arguments),
