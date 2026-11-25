@@ -255,6 +255,8 @@ async fn a_long_job_sends_at_most_seventy_percent_of_the_untrimmed_request_bytes
         baseline_mean,
         token_estimate
     );
+    println!("request bytes: {actual:?}");
+    println!("untrimmed bytes: {baseline:?}");
     assert!(
         actual_mean * 100 <= baseline_mean * 70,
         "mean request bytes must be at most 70% of the untrimmed mean: {actual_mean} vs {baseline_mean}"
