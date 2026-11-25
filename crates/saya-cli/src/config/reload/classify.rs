@@ -72,6 +72,10 @@ pub(crate) const CLASS_TABLE: &[(&str, Class)] = &[
     ("limits_job_repeat_limit", Class::Live),
     ("limits_job_wall_clock_seconds", Class::Live),
     ("limits_job_max_cost_usd", Class::Live),
+    // The session's ceiling is seeded onto the session's own field at launch,
+    // and `/reload` does not re-seed it — a reloaded value applies to the next
+    // session, like the other launch-time fields.
+    ("limits_session_cost_usd", Class::NextSession),
     ("compaction", Class::Live),
     ("compaction_trigger_percent", Class::Live),
     ("context_byte_budget", Class::Live),
