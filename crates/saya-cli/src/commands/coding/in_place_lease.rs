@@ -3,8 +3,8 @@
 //! An in-place job writes the user's own folder, so two unrelated live jobs over
 //! the same root would interleave edits and before-images. The lease is a
 //! non-blocking `flock` on a private per-root lock file, held by the job for
-//! its lifetime; the descriptor is close-on-exec so a forked child never
-//! inherits the lock. Read verbs never take it.
+//! its lifetime; the descriptor is close-on-exec, so a child forked while the
+//! lock was held keeps it only until it execs. Read verbs never take it.
 //!
 //! A session's own run is the one owner whose children are expected: the lease
 //! names the session, and a job that session opens over the same folder is
@@ -112,6 +112,14 @@ impl InPlaceLease {
     /// Lets the lease a dependent adopted offer the folder onward when it ends.
     pub(crate) fn adopt_handover(&mut self) {
         self.handover = true;
+    }
+
+    /// The lock's descriptor, for a test that holds a copy of it the way a
+    /// child forked by another thread inherits one until it execs.
+    #[cfg(all(test, unix))]
+    pub(crate) fn lock_fd(&self) -> Option<std::os::fd::RawFd> {
+        use std::os::fd::AsRawFd;
+        self._lock.as_ref().map(AsRawFd::as_raw_fd)
     }
 
     /// The same lease with its descriptor taken out for a handover, or `None`
@@ -254,13 +262,47 @@ impl InPlaceLease {
     }
 }
 
+/// How long a read rides out a lock this process has just released: a child
+/// forked while the lock was held keeps an inherited copy of the descriptor
+/// until it execs, so the kernel can report the lock held for a few
+/// milliseconds after its owner finished.
+#[cfg(unix)]
+const RELEASE_HANDOFF_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+/// How often the read asks again while it rides out that window.
+#[cfg(unix)]
+const RELEASE_POLL: std::time::Duration = std::time::Duration::from_millis(2);
+
 /// Whether `root_id`'s lease is held by a live owner, read-only: one
 /// non-blocking attempt to take it, given straight back. Nothing is written and
 /// no owner is displaced — the attempt is how the operating system is asked
 /// whether the lock is held. A lock file no process holds, a dead owner's, and a
 /// missing one both read as free, so an ended run keeps today's recovery
 /// behaviour.
+///
+/// A read that follows this process's own release rides out a child's inherited
+/// copy of the released descriptor. The wait is bounded; a lock still held at
+/// the end of it belongs to a live owner.
 pub(crate) fn leased(state_root: &Path, root_id: &str) -> Result<bool, CodingError> {
+    #[cfg(unix)]
+    {
+        if super::live_runs::take_release(root_id) {
+            let deadline = std::time::Instant::now() + RELEASE_HANDOFF_WAIT;
+            loop {
+                if !read_lease(state_root, root_id)? {
+                    return Ok(false);
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Ok(true);
+                }
+                std::thread::sleep(RELEASE_POLL);
+            }
+        }
+    }
+    read_lease(state_root, root_id)
+}
+
+/// One non-blocking read of whether the lock file is held.
+fn read_lease(state_root: &Path, root_id: &str) -> Result<bool, CodingError> {
     #[cfg(unix)]
     {
         use std::fs::OpenOptions;

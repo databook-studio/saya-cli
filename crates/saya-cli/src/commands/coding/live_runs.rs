@@ -27,6 +27,18 @@ static LEASED: LazyLock<Mutex<BTreeMap<String, String>>> =
 /// The job ids whose root run is open in this process.
 static OPEN_RUNS: LazyLock<Mutex<BTreeSet<String>>> = LazyLock::new(|| Mutex::new(BTreeSet::new()));
 
+/// The in-place roots this process gave up and has not leased again. A read
+/// that follows such a release rides out the descriptor a child forked while
+/// the lock was held still keeps: only a fork inherits the descriptor, so the
+/// release this process made is the one a reader can know about.
+#[cfg(unix)]
+static RELEASED: LazyLock<Mutex<BTreeSet<String>>> = LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+#[cfg(unix)]
+fn lock_released() -> MutexGuard<'static, BTreeSet<String>> {
+    RELEASED.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn lock(
     set: &'static LazyLock<Mutex<BTreeMap<String, String>>>,
 ) -> std::sync::MutexGuard<'static, BTreeMap<String, String>> {
@@ -43,11 +55,24 @@ fn lock_runs(
 /// session the folder is leased for, or the job that leases it.
 pub(super) fn leased(root_id: &str, owner: &str) {
     lock(&LEASED).insert(root_id.to_owned(), owner.to_owned());
+    #[cfg(unix)]
+    lock_released().remove(root_id);
 }
 
 /// Records that this process gave `root_id`'s lease up.
 pub(super) fn released(root_id: &str) {
     lock(&LEASED).remove(root_id);
+    #[cfg(unix)]
+    lock_released().insert(root_id.to_owned());
+}
+
+/// Takes this process's record that it gave `root_id` up and has not leased it
+/// again, so the first read after a release can ride out a child's inherited
+/// copy of the descriptor. A read that still sees the lock held after the
+/// bounded wait is a live owner's, not a stale copy.
+#[cfg(unix)]
+pub(super) fn take_release(root_id: &str) -> bool {
+    lock_released().remove(root_id)
 }
 
 /// Whether this process itself holds `root_id`'s lease: the holder of a lease
