@@ -51,8 +51,8 @@ pub enum SlashCommand {
     Sessions(SessionsRequest),
     /// `/status` — the one panel: five sections built from the facts this
     /// session already holds, and never a probe (`/doctor` is the command that
-    /// checks). `/usage`, `/workspace` and `/context` are its one-release
-    /// aliases, each opening the one section it names.
+    /// checks). `/workspace` and `/context` are its one-release aliases, each
+    /// opening the one section it names; `/usage` has its own panel.
     Status,
     /// `/sessions list` — the saved-session listing through the shared
     /// operations the headless `saya sessions list` uses: rows newest

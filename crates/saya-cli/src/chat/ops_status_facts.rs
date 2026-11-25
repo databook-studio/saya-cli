@@ -32,7 +32,7 @@ pub(crate) struct StatusFacts {
     /// How much of the model's window the last answering call used, already
     /// worded; `None` when no call has reported one.
     pub(crate) context_use: Option<String>,
-    /// This session's token totals, as `/usage` rendered them.
+    /// This session's token totals, as the panel's own breakdown renders them.
     pub(crate) tokens: String,
     /// What the provider reported this session has cost so far, as money;
     /// `None` when no call reported a cost.
