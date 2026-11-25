@@ -47,6 +47,14 @@ const MAX_ARGS_BYTES: usize = 200;
 const MAX_EXCERPT_BYTES: usize = 160;
 const MAX_TOOL_NAME_BYTES: usize = 80;
 
+/// Whether this message is a tool result the pass would rewrite: a tool
+/// message larger than a stub and not already stubbed.
+fn needs_stub(message: &ChatMessage) -> bool {
+    message.role == "tool"
+        && message.content.len() > MAX_STUB_BYTES
+        && !message.content.starts_with(STUB_SENTINEL)
+}
+
 /// Replaces every tool result in a group older than the last
 /// [`WHOLE_TOOL_TURNS`] with a bounded stub, in place, and returns how many
 /// messages it rewrote. A result no larger than [`MAX_STUB_BYTES`] stays whole,
@@ -55,20 +63,31 @@ pub(in crate::loop_runner) fn stub_old_tool_results(
     messages: &mut [ChatMessage],
     protected_prefix_len: usize,
 ) -> usize {
+    // Counting first costs one walk and no allocation; a history with nothing
+    // older than the whole turns never builds a group list at all.
+    if super::group_trim::count_tool_groups(messages, protected_prefix_len) <= WHOLE_TOOL_TURNS {
+        return 0;
+    }
     let groups = super::group_trim::tool_groups(messages, protected_prefix_len);
+    #[cfg(test)]
+    work::group_list_built();
     let Some(older) = groups.len().checked_sub(WHOLE_TOOL_TURNS) else {
         return 0;
     };
     let mut stubbed = 0;
     for range in &groups[..older] {
+        // A group whose results are all stubbed or small is left alone, so the
+        // steady state of a long session copies no call set.
+        if !messages[range.start + 1..range.end].iter().any(needs_stub) {
+            continue;
+        }
         // The call arguments live on the group's assistant message; copy the
         // calls before mutating the results so a tool message can find its own.
         let calls = messages[range.start].tool_calls.clone();
+        #[cfg(test)]
+        work::call_set_cloned();
         for message in &mut messages[range.start + 1..range.end] {
-            if message.role != "tool"
-                || message.content.len() <= MAX_STUB_BYTES
-                || message.content.starts_with(STUB_SENTINEL)
-            {
+            if !needs_stub(message) {
                 continue;
             }
             let call = message
@@ -170,4 +189,34 @@ fn text_body(content: &str) -> Option<String> {
 /// `text` truncated to at most `max` bytes on a character boundary.
 fn cap(text: &str, max: usize) -> &str {
     &text[..super::super::tools::floor_boundary(text, max)]
+}
+
+/// Test-only tallies of the per-request work a pass does, so a test can assert
+/// that a pass with nothing to stub allocates nothing. Thread-local: a test
+/// reads only its own thread's counts, so the suite can run in parallel.
+#[cfg(test)]
+pub(super) mod work {
+    use std::cell::Cell;
+
+    thread_local! {
+        static GROUP_LISTS: Cell<usize> = const { Cell::new(0) };
+        static CALL_CLONES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn group_list_built() {
+        GROUP_LISTS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn call_set_cloned() {
+        CALL_CLONES.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn reset() {
+        GROUP_LISTS.with(|count| count.set(0));
+        CALL_CLONES.with(|count| count.set(0));
+    }
+
+    pub(crate) fn taken() -> (usize, usize) {
+        (GROUP_LISTS.with(Cell::get), CALL_CLONES.with(Cell::get))
+    }
 }

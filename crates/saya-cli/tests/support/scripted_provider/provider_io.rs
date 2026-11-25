@@ -84,7 +84,9 @@ pub(crate) fn accept_provider(
                 if Instant::now() >= deadline {
                     return None;
                 }
-                thread::sleep(Duration::from_millis(10));
+                // A coarse poll would quantise the perf harness's first-message
+                // interval by a whole tick; 1 ms keeps it below what it measures.
+                thread::sleep(Duration::from_millis(1));
             }
             Err(_) => return None,
         }
