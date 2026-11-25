@@ -19,14 +19,21 @@ fn tui_command(home: &Path, config: &Path, connections: &Path) -> CommandBuilder
     cmd.env("TMPDIR", &launch);
     cmd.env("TMP", &launch);
     cmd.env("TEMP", &launch);
+    // Windows profile lookups read these, not HOME; point them inside the
+    // scratch tree so nothing can reach the runner's real profile. Setting them
+    // (rather than removing them) also keeps a lookup from returning `None`.
+    let roaming = home.join("appdata-roaming");
+    let local = home.join("appdata-local");
+    std::fs::create_dir_all(&roaming).expect("scratch roaming dir builds");
+    std::fs::create_dir_all(&local).expect("scratch local dir builds");
+    cmd.env("APPDATA", &roaming);
+    cmd.env("LOCALAPPDATA", &local);
     // A real terminal name, so the Windows ANSI fallback is deterministic even
     // where the console reports VT support late; harmless on Unix.
     cmd.env("TERM", "xterm-256color");
     cmd.cwd(&launch);
     cmd.env_remove("XDG_CONFIG_HOME");
     cmd.env_remove("XDG_DATA_HOME");
-    cmd.env_remove("APPDATA");
-    cmd.env_remove("LOCALAPPDATA");
     cmd.env_remove("SAYA_API_KEY");
     cmd.env_remove("SAYA_AI_API_KEY");
     cmd.args([
