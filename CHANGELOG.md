@@ -3,6 +3,12 @@
 All notable changes to SAYA CLI are recorded here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## 0.5.2 — Unreleased
+
+### Fixed
+
+- On Windows the full-screen interface no longer handles each key twice.
+
 ## 0.5.1 — 2026-11-24
 
 Chat now runs on the job engine behind a new full-screen terminal UI, and a

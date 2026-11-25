@@ -35,7 +35,10 @@ pub(crate) async fn approval_line(token: &CancellationToken) -> io::Result<Optio
         let Event::Key(key) = event::read()? else {
             continue;
         };
-        if key.kind != KeyEventKind::Press {
+        // Windows reports a release for every key as well as the press; a
+        // release is not a keystroke. Repeat stays: a held key must keep
+        // repeating on every platform. The rule is platform-independent.
+        if key.kind == KeyEventKind::Release {
             continue;
         }
         if key.code == KeyCode::Esc && key.modifiers.is_empty() {
