@@ -6,10 +6,11 @@
 //! scripted provider, so the request bytes are the bytes the loop would send.
 //! The same workload's untrimmed request is reconstructed from the recorded
 //! requests by restoring the full tool results, which gives the baseline the
-//! ceiling is stated against.
-//!
-//! [`MAX_MEAN_REQUEST_BYTES`] is the ceiling. Raising it is a reviewed change
-//! with the reason recorded here — never a silent re-record.
+//! assertions compare against. The test asserts behaviour — below-budget
+//! requests are byte-identical, every read stays whole, old non-read output is
+//! stubbed, the newest groups stay whole — and that the mean request is
+//! strictly smaller. It does not pin a ratio: a ratio would reward stubbing
+//! results the model still needs.
 
 use async_trait::async_trait;
 use saya_agent::{
