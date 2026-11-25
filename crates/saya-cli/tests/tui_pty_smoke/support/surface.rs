@@ -229,7 +229,7 @@ fn open_surface(
     std::fs::write(
         &config,
         format!(
-            "[ai]\nmodel = 'smoke'\nallow_data_sharing = true\n\n[run]\nmax_rows = 10\n\n{memory}"
+            "[ai]\nprovider = 'ollama'\nmodel = 'smoke'\nallow_data_sharing = true\n\n[run]\nmax_rows = 10\n\n{memory}"
         ),
     )
     .expect("the surface config writes");

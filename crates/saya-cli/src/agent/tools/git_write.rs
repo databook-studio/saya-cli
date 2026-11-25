@@ -14,11 +14,15 @@
 //! - a path inside the directory a `.git` pointer file names, even when the
 //!   target's own spelling has no `.git` component.
 //!
-//! The reading is lexical and bounded: the pointer file is read up to a small
-//! cap, and an unreadable or missing git directory simply adds no second
-//! shape. The containment layer still decides whether a write may land at all
-//! — this rule only decides whether the operator is asked first.
+//! The reading is bounded: the pointer file is read up to a small cap, and an
+//! unreadable or missing git directory simply adds no second shape. A path is
+//! resolved through the filesystem's existing prefix before it is compared, so
+//! a symlink standing in for `.git` names the same directory as the spelling
+//! that says `.git`; the part that does not exist yet is kept as written. The
+//! containment layer still decides whether a write may land at all — this rule
+//! only decides whether the operator is asked first.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -48,9 +52,9 @@ pub(crate) fn targets_git_dir(root: Option<&Path>, rel: &str) -> bool {
         return false;
     };
     let target = if path.is_absolute() {
-        lexical_normalize(path)
+        resolve_existing_prefix(path)
     } else {
-        lexical_normalize(&root.join(path))
+        resolve_existing_prefix(&root.join(path))
     };
     within(&target, &git_dir)
 }
@@ -115,6 +119,36 @@ fn within(target: &Path, dir: &Path) -> bool {
     #[cfg(not(windows))]
     {
         target.starts_with(dir)
+    }
+}
+
+/// Resolves the longest existing prefix of `path` through the filesystem and
+/// keeps the rest as written. A symlink standing in for the git directory — or
+/// for one of its ancestors — is therefore seen as the directory it names,
+/// while a target that does not exist yet is still compared in the spelling the
+/// write will use. The walk is bounded by the path's own components: each
+/// attempt canonicalizes one ancestor, and it stops at the first that exists or
+/// at the filesystem root.
+fn resolve_existing_prefix(path: &Path) -> PathBuf {
+    let normalized = lexical_normalize(path);
+    let mut ancestor = normalized.as_path();
+    let mut rest: Vec<&OsStr> = Vec::new();
+    loop {
+        if let Ok(resolved) = fs::canonicalize(ancestor) {
+            let mut target = resolved;
+            for component in rest.iter().rev() {
+                target.push(component);
+            }
+            return target;
+        }
+        let Some(parent) = ancestor.parent() else {
+            return normalized;
+        };
+        let Some(name) = ancestor.file_name() else {
+            return normalized;
+        };
+        rest.push(name);
+        ancestor = parent;
     }
 }
 

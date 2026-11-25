@@ -51,8 +51,13 @@ const FIRST_PROMPT: &str = "Choose an AI provider:";
 fn setup_tui(home: &Path) -> Result<InteractiveTui, String> {
     let user_dir = home.join("config-home").join("saya");
     std::fs::create_dir_all(&user_dir).expect("the user config dir builds");
-    std::fs::write(user_dir.join("config.toml"), "[ai]\nmodel = 'smoke'\n")
-        .expect("the user config writes");
+    // The offline provider is stated so the ready screen paints whatever the
+    // host exports; the wizard's own provider menu is still `/setup`'s.
+    std::fs::write(
+        user_dir.join("config.toml"),
+        "[ai]\nprovider = 'ollama'\nmodel = 'smoke'\n",
+    )
+    .expect("the user config writes");
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {

@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+include!("../support/provider_env.rs");
+
 pub(crate) const DEADLINE: Duration = Duration::from_secs(10);
 
 pub(crate) struct ChildGuard(pub(crate) Option<Child>);
@@ -97,6 +99,11 @@ pub(crate) fn isolated(command: &mut Command, root: &std::path::Path) {
         .env("SAYA_CONFIG_HOME", root.join("cfg"))
         .env("SAYA_SESSION_DIR", root.join("sessions"))
         .env("SAYA_STATE_DB", root.join("state.sqlite3"));
+    // The provider keys are not `SAYA_`-prefixed; a host export would
+    // otherwise choose a provider these fixtures never state.
+    for name in PROVIDER_ENV {
+        command.env_remove(name);
+    }
     std::fs::create_dir_all(root.join("sessions")).unwrap();
 }
 

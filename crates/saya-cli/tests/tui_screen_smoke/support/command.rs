@@ -36,6 +36,10 @@ fn tui_command(home: &Path, config: &Path, connections: &Path) -> CommandBuilder
     cmd.env_remove("XDG_DATA_HOME");
     cmd.env_remove("SAYA_API_KEY");
     cmd.env_remove("SAYA_AI_API_KEY");
+    // The fixture states its provider, so no key from the host may choose one.
+    for name in PROVIDER_ENV {
+        cmd.env_remove(name);
+    }
     cmd.args([
         "--config",
         config.to_str().unwrap(),
@@ -47,17 +51,18 @@ fn tui_command(home: &Path, config: &Path, connections: &Path) -> CommandBuilder
     cmd
 }
 
-/// A minimal, offline config + connections file under `home`. `theme = 'dark'`
-/// skips the startup OSC background query: it would spend the first 150 ms of
-/// a test waiting for a terminal reply that a pty harness never sends, and it
-/// is not what this smoke checks. The profile points at an empty SQLite file
-/// the run never queries; the file must exist because the launch opens the
-/// configured profile.
+/// A minimal, offline config + connections file under `home`. The provider is
+/// stated (`ollama`, which needs no credentials) so the first-run choice never
+/// reads the host environment. `theme = 'dark'` skips the startup OSC
+/// background query: it would spend the first 150 ms of a test waiting for a
+/// terminal reply that a pty harness never sends, and it is not what this smoke
+/// checks. The profile points at an empty SQLite file the run never queries;
+/// the file must exist because the launch opens the configured profile.
 fn write_config(home: &Path) -> (PathBuf, PathBuf) {
     let config = home.join("config.toml");
     std::fs::write(
         &config,
-        "[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n\n[ui]\ntheme = 'dark'\n",
+        "[ai]\nprovider = 'ollama'\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n\n[ui]\ntheme = 'dark'\n",
     )
     .unwrap();
 
