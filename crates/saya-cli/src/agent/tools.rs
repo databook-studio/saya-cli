@@ -20,6 +20,9 @@ pub(crate) mod coding;
 pub(crate) mod consent;
 mod database_tools;
 mod executor;
+/// The one rule for a model write that lands in a repository's git directory:
+/// the shapes that name it, and the question such a write is put under.
+pub(crate) mod git_write;
 mod host_argv;
 #[cfg(test)]
 #[path = "tools/host_argv_tests.rs"]
@@ -52,6 +55,9 @@ pub(crate) mod workspace;
 /// The question a write-shaped call of a job with an operator attached is put
 /// to, over the mode cell every policy of that job reads.
 pub(crate) mod write_ask;
+#[cfg(test)]
+#[path = "tools/write_ask_git_tests.rs"]
+mod write_ask_git_tests;
 #[cfg(test)]
 #[path = "tools/write_ask_mode_tests.rs"]
 mod write_ask_mode_tests;

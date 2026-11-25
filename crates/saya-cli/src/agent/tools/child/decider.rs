@@ -176,7 +176,7 @@ impl ApprovalDecider for ExactWriteChildApproval {
             return None;
         }
         let ask = self.ask.as_ref()?;
-        Some(ask.asks() && (self.granted() || self.write_admission(arguments).is_ok()))
+        Some(ask.asks_for(arguments) && (self.granted() || self.write_admission(arguments).is_ok()))
     }
 
     fn refusal_detail(&self, tool: &ToolDefinition, arguments: &Value) -> Option<String> {
