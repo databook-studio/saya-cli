@@ -83,7 +83,9 @@ enum Op {
     Clear,
     /// `/compact` and `/rotate`: the line front's own compaction.
     Compact,
-    /// A command that changed the facts a run is composed from.
+    /// A command that changed the facts a run is composed from: the open run
+    /// is rolled into a successor composed from them, seeded with the
+    /// conversation so far.
     Restate(PromptOverrides),
     /// `/resume <id>` and the picker's `↵`: the record this ask names is opened
     /// in place of the session's own, and the run that record states becomes the
@@ -216,9 +218,11 @@ impl SurfaceLine {
         self.hand(Op::Compact);
     }
 
-    /// A command that changed the facts a run is composed from: the run the
-    /// launch opened is given up before its first turn, and the next message is
-    /// composed from the session as the command stated it.
+    /// A command that changed the facts a run is composed from: the next
+    /// message is a turn of a run composed from the session as the command
+    /// stated it. After a turn the open run is rolled into a successor seeded
+    /// with the conversation so far; before the first turn it is given up, and
+    /// the next message composes the run it asks for.
     pub(crate) fn restate(&self, overrides: PromptOverrides) {
         self.hand(Op::Restate(overrides));
     }

@@ -75,6 +75,9 @@ fn handle_line_verbatim(
             // operation `/compact` reports through.
             let clearing = matches!(command, crate::slash::SlashCommand::Clear);
             let before = state.context_key();
+            // The facts a run is composed from, as the command finds them: a
+            // command that changes one restates the open run below.
+            let before_overrides = state.prompt_overrides();
             let action = state.apply(
                 command,
                 &runtime
@@ -89,6 +92,22 @@ fn handle_line_verbatim(
                 && let Some(action) = chat.clear().action()
             {
                 session_emit::emit_action(action, format, state, store)?;
+            }
+            // A command that changed the model, the provider, the connection or
+            // the privacy setting restates the open run at once: the next request
+            // of this same conversation is composed from the state the command
+            // stated, with every settled turn replayed into it. Before the first
+            // turn the run holds no conversation, and is given up instead — the
+            // rule `Line::restate` states for both fronts.
+            let after_overrides = state.prompt_overrides();
+            if after_overrides != before_overrides
+                && let Some(chat) = ctx.chat.as_ref()
+            {
+                let said = chat.restate(after_overrides);
+                state.run = chat.run_link();
+                if let Some(action) = said.action() {
+                    session_emit::emit_action(action, format, state, store)?;
+                }
             }
             action
         }
