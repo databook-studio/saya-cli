@@ -29,6 +29,9 @@ struct Tui {
     _master: Box<dyn portable_pty::MasterPty + Send>,
     child: ChildGuard,
     raw: Vec<u8>,
+    /// The terminal side: ConPTY holds the child until its startup queries
+    /// are answered (`support/answers.rs`).
+    answers: Answers,
 }
 
 impl Tui {
@@ -123,6 +126,7 @@ impl Tui {
             Ok(Ok(bytes)) => {
                 self.raw.extend_from_slice(&bytes);
                 self.parser.process(&bytes);
+                self.answer_queries(&bytes)?;
                 Ok(())
             }
             Ok(Err(error)) => Err(format!("pty read failed: {error}")),
@@ -131,6 +135,22 @@ impl Tui {
                 Err("pty reader ended".to_string())
             }
         }
+    }
+
+    /// Writes the replies a terminal would send for any query in `bytes`.
+    /// ConPTY's startup `ESC [ 6 n` is the one that matters: it holds every
+    /// byte of child output until answered. The cursor reported is the
+    /// parser's own, 1-based, so it is `1;1` before anything paints.
+    fn answer_queries(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let (row, col) = self.parser.screen().cursor_position();
+        let replies = self.answers.feed(bytes, (row + 1, col + 1));
+        if replies.is_empty() {
+            return Ok(());
+        }
+        self.writer
+            .write_all(&replies)
+            .and_then(|()| self.writer.flush())
+            .map_err(|e| format!("could not answer a terminal query: {e}"))
     }
 
     /// The last [`RAW_TAIL`] bytes as printable escapes, so a CI log shows

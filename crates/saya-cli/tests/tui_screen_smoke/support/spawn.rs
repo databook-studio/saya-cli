@@ -44,6 +44,7 @@ fn launch(home: &Path) -> Result<Tui, String> {
         _master: pair.master,
         child: ChildGuard::new(child),
         raw: Vec::new(),
+        answers: Answers::default(),
     })
 }
 
