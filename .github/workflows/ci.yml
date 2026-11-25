@@ -38,8 +38,10 @@ jobs:
   # the control is the latest published linux x86_64 release binary, the
   # candidate is this pull request built in release, and `scripts/perf-compare.sh`
   # applies the bars — first message within control + 10 %, steady turn overhead
-  # p50 ≤ 50 ms and p95 ≤ 120 ms, idle TUI CPU ≤ 1 %, draws ≤ 30/s — so a
-  # request-size or overhead regression fails the pull request that causes it.
+  # against the same-session control (paired by run; the absolute p50 ≤ 50 ms
+  # and p95 ≤ 120 ms readings are reported beside it), idle TUI CPU ≤ 1 %,
+  # draws ≤ 30/s — so a request-size or overhead regression fails the pull
+  # request that causes it.
   # With no release published yet there is nothing to compare against: the job
   # says so and passes, and starts guarding from the next release.
   perf-compare:
