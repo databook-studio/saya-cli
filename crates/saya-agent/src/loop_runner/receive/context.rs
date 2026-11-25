@@ -20,6 +20,9 @@ pub(in crate::loop_runner) struct ReceiveContext<'a> {
     pub(in crate::loop_runner) model: &'a str,
     pub(in crate::loop_runner) checkpoint: &'a super::super::coding_checkpoint::CodingCheckpoint,
     pub(in crate::loop_runner) messages: &'a mut Vec<ChatMessage>,
+    /// The loop's history-policy state: where the settled region ends. It
+    /// survives across requests so a batch rewrite happens rarely.
+    pub(in crate::loop_runner) history_stub: &'a mut super::super::output::HistoryStubState,
     pub(in crate::loop_runner) ordinary_history_pairs: &'a mut usize,
     pub(in crate::loop_runner) protected_prefix_len: &'a mut usize,
     pub(in crate::loop_runner) definitions: &'a [ToolDefinition],

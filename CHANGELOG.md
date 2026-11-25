@@ -6,8 +6,8 @@ All notable changes to SAYA CLI are recorded here. This project follows
 ## 0.5.2 — 2026-11-25
 
 A session starts from one provider key, and state commands take effect on the
-open conversation at once. Older tool results in a long conversation are sent
-as short summaries, so each request stays smaller.
+open conversation at once. A long conversation keeps old tool results as short
+summaries; a short one sends them whole.
 
 ### Added
 
@@ -32,13 +32,18 @@ as short summaries, so each request stays smaller.
   transcript, so the change is in effect without starting a new session.
   Before the first turn the next message composes the run the command asks
   for; while a turn runs the change waits for it to end.
-- **Older tool results are sent as short summaries.** In a long conversation
-  every tool-result group older than the latest two is replaced in place by a
-  bounded summary that keeps the tool name, its redacted arguments, the
-  outcome and result size, the first and last lines, and how to read the full
-  result again — re-run the statement or call the tool again. The latest
-  results stay whole, and a result no larger than its summary stays whole too,
-  so each request carries less.
+- **A long conversation sends old tool results as short summaries.** Tool
+  results are replayed whole until they reach a size budget — a share of a
+  known model window, with a fixed ceiling when the window is unknown — so a
+  short job sends exactly what it did before. Past the budget, one pass
+  replaces results a later call has made unnecessary, such as a file read
+  again or a command run again, then old command and search output. A summary
+  keeps the tool name, its redacted arguments, the outcome and result size,
+  and the first and last lines; a superseded result names the later call
+  instead of asking for another call. The latest read of each file stays whole
+  unless the conversation is far past the budget, when its summary says to
+  read the file before editing it. Passes are batched, so the cached prefix is
+  not rewritten on every turn.
 - **A change inside a repository's `.git` directory always asks.** A model
   write, edit or delete whose target is inside the checkout's git directory,
   and a shell command that names it, is put to the operator in every mode

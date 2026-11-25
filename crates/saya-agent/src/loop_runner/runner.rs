@@ -122,6 +122,7 @@ async fn run_agent_loop(
         consecutive_stream_cuts: 0,
         previous_diagnostic_failure: false,
         messages,
+        history_stub: super::output::HistoryStubState::default(),
         checkpoint: super::coding_checkpoint::CodingCheckpoint::with_authority(
             authority_refusal_context,
         ),
@@ -174,6 +175,7 @@ async fn run_agent_loop(
                 state.provider,
                 &state.request.model,
                 &mut state.messages,
+                &mut state.history_stub,
                 &mut state.ordinary_history_pairs,
                 &mut state.protected_prefix_len,
                 &[],
@@ -305,6 +307,9 @@ pub(super) struct RunState<'a> {
     /// failure. A second consecutive one thinks medium instead of high.
     pub(super) previous_diagnostic_failure: bool,
     pub(super) messages: Vec<ChatMessage>,
+    /// Where the history policy's settled region ends, remembered across
+    /// requests so a batch rewrite happens rarely.
+    pub(super) history_stub: super::output::HistoryStubState,
     pub(super) checkpoint: super::coding_checkpoint::CodingCheckpoint,
     pub(super) ordinary_history_pairs: usize,
     pub(super) protected_prefix_len: usize,

@@ -26,6 +26,7 @@ pub(super) async fn execute(
                 state.provider,
                 &state.request.model,
                 &mut state.messages,
+                &mut state.history_stub,
                 &mut state.ordinary_history_pairs,
                 &mut state.protected_prefix_len,
                 &assistant.tool_calls,
