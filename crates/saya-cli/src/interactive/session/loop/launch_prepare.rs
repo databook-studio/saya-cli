@@ -118,7 +118,7 @@ fn prepare_launch(cli: Cli) -> Result<LaunchContext, Box<dyn std::error::Error>>
     // states another for this session. Always seeded, including on a resumed
     // session, because the ceiling is a guard for this process, not a fact of
     // the record.
-    state.session_cost_limit_micros = runtime.resolved.limits.session_cost_micros;
+    state.session_cost_limit_micros = crate::agent::limits::session_cost_micros(&runtime);
     // Reflect the configured default profile so the status bar and @-references
     // match the database the agent actually queries.
     if state.profile.is_none() {
