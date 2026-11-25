@@ -102,13 +102,19 @@ impl NativeCodingJob {
     /// session that said nothing but a slash command leaves no job of its own.
     /// A run that took a turn is closed only — its record is the session's, and
     /// the session keeps it.
+    ///
+    /// The close gives the folder up for every run, whichever way it ends: the
+    /// advisory precompute holds the job it was planned for, so the slot is
+    /// cleared and the lease released here, at the run's end, rather than left
+    /// to the job object's drop — which a precompute still holding the job
+    /// would postpone for the rest of the process.
     pub(crate) async fn end_prepared_run(&self) -> Result<(), CodingError> {
         self.run_close().await;
+        self.forget_readiness_precompute();
+        self.release_folder_lease();
         if self.root_run.turns() > 0 {
             return Ok(());
         }
-        self.forget_readiness_precompute();
-        self.release_folder_lease();
         super::super::job_records::discard_prepared(&self.application.state_root, self.job_id())
     }
 
@@ -156,6 +162,10 @@ impl NativeCodingJob {
         // for, so giving the slot back is what lets a dropped job — and, in
         // place, its folder lease — go.
         self.forget_readiness_precompute();
+        // The folder is the run's, and the run has ended: give it up here, so a
+        // job this run started holds it from this instant rather than whenever
+        // the job object happens to be dropped.
+        self.release_folder_lease();
         result.map(|_| ())
     }
 }

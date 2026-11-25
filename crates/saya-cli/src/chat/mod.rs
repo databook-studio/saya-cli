@@ -260,6 +260,10 @@ mod rollover_tests;
 mod rollover_clear_tests;
 
 #[cfg(all(test, unix))]
+#[path = "rollover_lease_tests.rs"]
+mod rollover_lease_tests;
+
+#[cfg(all(test, unix))]
 #[path = "compact_provider.rs"]
 mod compact_provider;
 

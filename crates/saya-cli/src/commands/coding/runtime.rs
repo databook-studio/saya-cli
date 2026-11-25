@@ -24,10 +24,12 @@ pub struct NativeCodingJob {
         Option<Arc<saya_harness::coding::local::before_image::BeforeImageStore>>,
     /// The one-live-job lease over an in-place root. Held for the job's
     /// lifetime; `None` for a managed checkout, and for a run that states no
-    /// write scope. Behind a lock so a run's end can give it back on the spot:
-    /// the lease a job holds is released when the job goes, and a prepared run
-    /// no line adopted is given up while its own handles are still alive.
-    pub(super) in_place_lease: std::sync::Mutex<Option<super::in_place_lease::InPlaceLease>>,
+    /// write scope. Behind a shared cell so the folder's descriptor can be
+    /// handed into a dependent job's slot without closing it, and a run's end
+    /// can give it back on the spot: the lease a job holds is released when the
+    /// job goes, and a prepared run no line adopted is given up while its own
+    /// handles are still alive.
+    pub(super) in_place_lease: Option<super::in_place_lease::LeaseCell>,
     /// The one `[tools] allow` list this job runs under: what its request
     /// stated, or — when it stated none — the default that narrows nothing.
     /// Resolved once here from the persisted request, so a resume runs the set
@@ -127,23 +129,26 @@ impl NativeCodingJob {
         self.epoch
     }
     /// Whether this run still holds its one folder lease, as a run that ended
-    /// no longer does: the lease is the run's, never a turn's.
-    #[allow(dead_code)] // read only by the lease tests: no surface asks it yet
+    /// no longer does: the lease is the run's, never a turn's. A rollover and a
+    /// reopened run read it before giving the run up, to know whether the folder
+    /// must be read again after it has let it go.
     pub(crate) fn holds_folder_lease(&self) -> bool {
-        self.in_place_lease
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some()
+        self.in_place_lease.as_ref().is_some_and(|cell| {
+            cell.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some()
+        })
     }
     /// Gives the folder's lease back now, rather than when the job object goes:
     /// dropping the lease closes its descriptor and clears this process's own
-    /// record of it, so the folder is free for the next job over it.
+    /// record of it — or hands it to a dependent job still running — so the
+    /// folder is free for the next job over it.
     pub(super) fn release_folder_lease(&self) {
-        let lease = self
-            .in_place_lease
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
+        let lease = self.in_place_lease.as_ref().and_then(|cell| {
+            cell.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+        });
         drop(lease);
     }
     pub fn cancel(&self) {

@@ -12,8 +12,10 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{LazyLock, Mutex, PoisonError},
+    sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError, Weak},
 };
+
+use super::in_place_lease::{InPlaceLease, LeaseCell};
 
 /// The in-place root ids whose lease this process holds, and the session each
 /// one names. The holder is not always a job id: a root a session's run leases
@@ -63,6 +65,75 @@ pub(super) fn leased_here(root_id: &str) -> bool {
 /// tell the session's own folder from a stranger's.
 pub(crate) fn lease_owner(root_id: &str) -> Option<String> {
     lock(&LEASED).get(root_id).cloned()
+}
+
+/// One job admitted beside a session's lease, and the cell that would receive
+/// the lease if the session ends while the job still runs. The cell is weak: a
+/// job that goes away is not a place to hand a folder to.
+struct Dependent {
+    job: String,
+    cell: Weak<Mutex<Option<InPlaceLease>>>,
+}
+
+/// The jobs this process admitted beside a session's lease, by root id.
+static DEPENDENTS: LazyLock<Mutex<BTreeMap<String, Vec<Dependent>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+fn lock_dependents() -> MutexGuard<'static, BTreeMap<String, Vec<Dependent>>> {
+    DEPENDENTS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Records that `job` runs beside `root_id`'s lease and may inherit it when the
+/// lease's session ends. `cell` is the job's own lease slot, so the handover
+/// binds the authorized value — the job this process admitted — and never a
+/// second read of the folder's owner.
+pub(super) fn dependent(root_id: &str, job: &str, cell: &LeaseCell) {
+    lock_dependents()
+        .entry(root_id.to_owned())
+        .or_default()
+        .push(Dependent {
+            job: job.to_owned(),
+            cell: Arc::downgrade(cell),
+        });
+}
+
+/// Hands `lease` to the first live dependent of `root_id`, atomically: the
+/// descriptor is moved into the job's slot, never closed and reopened, so the
+/// folder has a holder at every instant. A job whose slot no longer holds its
+/// own non-holding lease has given the folder up, and the next one is asked.
+/// Reports whether a job took the lease.
+pub(super) fn hand_over(root_id: &str, lease: InPlaceLease) -> bool {
+    let mut lease = Some(lease);
+    while let Some((job, cell)) = take_dependent(root_id) {
+        let mut slot = cell.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.as_ref().is_some_and(InPlaceLease::is_dependent)
+            && let Some(mut adopted) = lease.take()
+        {
+            // The job now holds the folder and may hand it onward in turn.
+            adopted.adopt_handover();
+            *slot = Some(adopted);
+            drop(slot);
+            leased(root_id, &job);
+            return true;
+        }
+    }
+    false
+}
+
+/// The next registered dependent of `root_id` whose job still lives, removed
+/// from the registry as it is taken.
+fn take_dependent(root_id: &str) -> Option<(String, LeaseCell)> {
+    let mut map = lock_dependents();
+    loop {
+        let next = map.get_mut(root_id)?.pop();
+        let Some(dependent) = next else {
+            map.remove(root_id);
+            return None;
+        };
+        if let Some(cell) = dependent.cell.upgrade() {
+            return Some((dependent.job, cell));
+        }
+    }
 }
 
 /// Records that `job`'s root run opened: its composition and its own event

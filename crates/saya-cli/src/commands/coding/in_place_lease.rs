@@ -14,12 +14,18 @@
 //! caller gets today's refusal.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use saya_harness::coding::local::JobBaseline;
 use saya_harness::coding::local::before_image::BeforeImageStore;
 
 use super::CodingError;
+
+/// One job's lease slot: the lease while the job holds or is admitted beside
+/// one, empty once it has given the folder up. An `Arc` so the process's
+/// dependent registry can hand the folder's descriptor into it without closing
+/// it.
+pub(crate) type LeaseCell = Arc<Mutex<Option<InPlaceLease>>>;
 
 /// The parts an in-place job carries for edit-time recovery: its shared
 /// before-image store and, when `take_lease` is set, the root lease. A
@@ -35,7 +41,8 @@ pub(super) fn job_parts(
     take_lease: bool,
     owner: &str,
     parent: Option<&str>,
-) -> Result<(Option<Arc<BeforeImageStore>>, Option<InPlaceLease>), CodingError> {
+    job_id: &str,
+) -> Result<(Option<Arc<BeforeImageStore>>, Option<LeaseCell>), CodingError> {
     match plan {
         JobBaseline::InPlace(baseline) => {
             let store = BeforeImageStore::open(records).map_err(CodingError::owner)?;
@@ -46,6 +53,7 @@ pub(super) fn job_parts(
                         baseline.repository_id().as_str(),
                         owner,
                         parent,
+                        job_id,
                     )
                 })
                 .transpose()?;
@@ -58,13 +66,18 @@ pub(super) fn job_parts(
 /// One held in-place root lease. Dropping it closes the descriptor and
 /// releases the lock — unless it is the session's dependent, whose own drop
 /// closes nothing.
-pub(super) struct InPlaceLease {
+pub(crate) struct InPlaceLease {
     /// The root this lease is over, so the process-local record of what it
     /// holds names the same folder the lock file does.
     root_id: String,
     /// Whether this lease is the one that holds the lock. A dependent's is not:
     /// the session's run keeps the folder until it ends.
     holds_lock: bool,
+    /// Whether dropping this lease offers the folder to a dependent job. A
+    /// holder starts `true`; the transient copy a handover moves is `false`
+    /// until a dependent adopts it, so an offer that nobody takes closes the
+    /// descriptor instead of offering it again.
+    handover: bool,
     #[cfg(unix)]
     _lock: Option<std::os::fd::OwnedFd>,
     #[cfg(windows)]
@@ -73,9 +86,51 @@ pub(super) struct InPlaceLease {
 
 impl Drop for InPlaceLease {
     fn drop(&mut self) {
-        if self.holds_lock {
-            super::live_runs::released(&self.root_id);
+        if !self.holds_lock {
+            return;
         }
+        // A dependent job still running is the folder's next holder: the
+        // descriptor moves into its slot, so the lock is never given up between
+        // the session that held it and the job that carries on.
+        if self.handover
+            && let Some(lease) = self.take_lock()
+            && super::live_runs::hand_over(&self.root_id, lease)
+        {
+            return;
+        }
+        super::live_runs::released(&self.root_id);
+    }
+}
+
+impl InPlaceLease {
+    /// Whether this lease is a dependent's: admitted beside the session's run,
+    /// holding no descriptor of its own.
+    pub(crate) fn is_dependent(&self) -> bool {
+        !self.holds_lock
+    }
+
+    /// Lets the lease a dependent adopted offer the folder onward when it ends.
+    pub(crate) fn adopt_handover(&mut self) {
+        self.handover = true;
+    }
+
+    /// The same lease with its descriptor taken out for a handover, or `None`
+    /// when there is nothing to move. The descriptor stays open in the returned
+    /// value: the caller hands it to a dependent or lets it close.
+    #[cfg(any(unix, windows))]
+    fn take_lock(&mut self) -> Option<Self> {
+        let lock = self._lock.take()?;
+        Some(Self {
+            root_id: self.root_id.clone(),
+            holds_lock: true,
+            handover: false,
+            _lock: Some(lock),
+        })
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    fn take_lock(&mut self) -> Option<Self> {
+        None
     }
 }
 
@@ -86,21 +141,26 @@ impl InPlaceLease {
     /// A second live job over the same root gets [`CodingError::InPlaceRootBusy`]
     /// — unless it states the `parent` this process already leases the root for,
     /// in which case it is that session's dependent and takes no lock of its own.
-    pub(super) fn acquire(
+    /// The dependent's slot is registered under `job_id`, so if the session ends
+    /// while the job still runs the folder is handed to it rather than released.
+    pub(crate) fn acquire(
         state_root: &Path,
         root_id: &str,
         owner: &str,
         parent: Option<&str>,
-    ) -> Result<Self, CodingError> {
+        job_id: &str,
+    ) -> Result<LeaseCell, CodingError> {
         match super::live_runs::lease_owner(root_id) {
             Some(lease_owner) if parent == Some(lease_owner.as_str()) => {
-                Ok(Self::dependent(root_id))
+                let cell: LeaseCell = Arc::new(Mutex::new(Some(Self::dependent(root_id))));
+                super::live_runs::dependent(root_id, job_id, &cell);
+                Ok(cell)
             }
             Some(_) => Err(CodingError::InPlaceRootBusy),
             None => {
                 let lease = Self::lock(state_root, root_id)?;
                 super::live_runs::leased(&lease.root_id, owner);
-                Ok(lease)
+                Ok(Arc::new(Mutex::new(Some(lease))))
             }
         }
     }
@@ -111,6 +171,7 @@ impl InPlaceLease {
         Self {
             root_id: root_id.to_owned(),
             holds_lock: false,
+            handover: false,
             _lock: None,
         }
     }
@@ -143,6 +204,7 @@ impl InPlaceLease {
             Ok(Self {
                 root_id: root_id.to_owned(),
                 holds_lock: true,
+                handover: true,
                 _lock: Some(file.into()),
             })
         }
@@ -174,6 +236,7 @@ impl InPlaceLease {
                 Ok(()) => Ok(Self {
                     root_id: root_id.to_owned(),
                     holds_lock: true,
+                    handover: true,
                     _lock: Some(file),
                 }),
                 Err(TryLockError::WouldBlock) => Err(CodingError::InPlaceRootBusy),
