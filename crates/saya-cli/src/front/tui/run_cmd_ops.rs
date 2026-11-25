@@ -6,10 +6,12 @@
 //! A context change is the line's own operation, performed on the line's thread
 //! ([`super::line_surface`]): `/clear` and `/compact` are the chat layer's
 //! rollover and go there as they are, and a state change — the model, the
-//! provider, the connection, the privacy setting — gives the run up before its
-//! first turn, as the line front gives up the run it prepared ahead of its first
-//! line. What stays here is the port's side: the words the session-command layer
-//! stated, said now, and the operation handed on.
+//! provider, the connection, the privacy setting — rolls the open run into a
+//! successor composed from the state the command stated, seeded with the
+//! conversation so far; before the first turn it gives the run up instead, as
+//! the line front gives up the run it prepared ahead of its first line. What
+//! stays here is the port's side: the words the session-command layer stated,
+//! said now, and the operation handed on.
 
 use std::sync::Arc;
 
@@ -52,7 +54,8 @@ impl SessionPort {
             ContextChange::Resume => self.resume(request.value.unwrap_or_default()),
             // The run already open cannot absorb one: its request, its prompt
             // prefix and its provider were composed once, at open
-            // (`chat::rollover`).
+            // (`chat::rollover`). The line rolls it into a successor composed
+            // from the new state, seeded with the conversation so far.
             ContextChange::Connect
             | ContextChange::Include
             | ContextChange::Exclude

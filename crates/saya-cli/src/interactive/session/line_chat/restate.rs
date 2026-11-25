@@ -22,6 +22,11 @@ impl Line {
     ///   so the next request carries every settled turn and the state the command
     ///   stated.
     ///
+    /// A command stated while a turn is running waits for that turn to end: both
+    /// fronts perform the line's operations in the order they were asked for, so
+    /// the change is the state the request after the running turn is composed
+    /// from.
+    ///
     /// A command that states what the session already holds says nothing and moves
     /// nothing. A change that cannot be prepared leaves the run the session is on
     /// exactly as it was, and says why.

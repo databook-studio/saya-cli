@@ -13,9 +13,10 @@
 //! opened ahead of the first line that is not a slash command — while the
 //! operator is still at the prompt ([`LineChat::prepare`]) — and that line, and
 //! every later one, is a turn of the same run: on the lease, epoch and provider
-//! it took at open, until a compaction or `/clear` rolls it over, and the line
-//! after it is a turn of the new job. A line that is a slash command never
-//! reaches this module, and gives up a prepared run it made stale.
+//! it took at open, until a compaction, `/clear` or a state change (`/model`,
+//! `/provider`, `/connect`, `/include`, `/exclude`, `/privacy`) rolls it over,
+//! and the line after it is a turn of the new job. A line that is a slash
+//! command never reaches this module, and gives up a prepared run it made stale.
 //!
 //! **One runtime per session.** The run's composition, its lease and its
 //! timers belong to the tokio runtime that opened them, so every turn of one
