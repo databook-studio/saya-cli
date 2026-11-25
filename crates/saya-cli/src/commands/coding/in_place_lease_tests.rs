@@ -162,3 +162,44 @@ fn a_session_run_dropped_without_a_close_hands_the_folder_to_its_job() {
     );
     let _ = fs::remove_dir_all(&base);
 }
+
+/// A read that asks right after a release rides out a descriptor a child forked
+/// by another thread still holds: the folder reads held only until that
+/// inherited copy closes, then free.
+#[test]
+fn a_release_still_held_by_an_inherited_descriptor_reads_free_once_it_closes() {
+    let base = case("release-handoff");
+    let (folder, state) = (base.join("site"), base.join("state"));
+    let root = LocalRoot::open(&folder, &state).expect("the folder is an in-place root");
+    let root_id = root.id().as_str().to_owned();
+    let lease = InPlaceLease::acquire(&state, &root_id, SESSION, None, SESSION)
+        .expect("the session takes the folder's lease");
+    // A child forked by another thread keeps an inherited copy of the lock's
+    // descriptor until it execs; `dup` makes that same copy in this process.
+    let inherited = {
+        let slot = lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let fd = slot
+            .as_ref()
+            .expect("the lease holds the lock")
+            .lock_fd()
+            .expect("the held lease has a descriptor");
+        // SAFETY: `fd` is a live descriptor the lease owns for this call.
+        unsafe { libc::dup(fd) }
+    };
+    assert!(inherited >= 0, "the lock's descriptor is duplicated");
+    drop(lease);
+    // The inherited copy is the only holder now; closing it frees the folder.
+    let closes = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        // SAFETY: `inherited` is the descriptor this case duplicated, closed once.
+        unsafe { libc::close(inherited) };
+    });
+    assert!(
+        !super::in_place_lease::leased(&state, &root_id).expect("the folder's lease is readable"),
+        "the folder is free once the inherited copy closes"
+    );
+    closes.join().expect("the holder closes its copy");
+    let _ = fs::remove_dir_all(&base);
+}
