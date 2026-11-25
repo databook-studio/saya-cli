@@ -2,6 +2,10 @@
 mod compaction;
 #[path = "tests/history_budget.rs"]
 mod history_budget;
+#[path = "tests/history_policy.rs"]
+mod history_policy;
+#[path = "tests/history_stub.rs"]
+mod history_stub;
 #[path = "tests/hysteresis.rs"]
 mod hysteresis;
 #[path = "tests/limits.rs"]

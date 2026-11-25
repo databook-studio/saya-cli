@@ -49,6 +49,13 @@ impl RequestPreflightConfig {
         self
     }
 
+    /// The resolved model window in tokens, when the provider reports one.
+    /// The history policy derives its byte budget from this; an unknown window
+    /// falls back to that policy's fixed ceiling.
+    pub fn model_window_tokens(&self) -> Option<u64> {
+        self.model_window_tokens.map(NonZeroU64::get)
+    }
+
     /// Tokens at which the conversation compacts, or `None` when the model
     /// window is unknown. This is the token estimate's comparison point; the
     /// conversation byte budget remains a separate hard ceiling.

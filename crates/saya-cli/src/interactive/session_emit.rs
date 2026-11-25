@@ -75,8 +75,11 @@ pub(crate) fn emit_action(
         | SessionAction::Reload
         // `/status` is intercepted in the session loop: it reads the runtime's
         // settings, the instruction sources and the stored record's size. The
-        // arm keeps the match exhaustive.
+        // arm keeps the match exhaustive. `/usage` is intercepted there too:
+        // the context share needs the runtime's model window, and `--limit`
+        // moves the session's ceiling.
         | SessionAction::Status
+        | SessionAction::Usage(_)
         | SessionAction::Exit => {}
         SessionAction::Cancelled => emit(
             TerminalEvent::Diagnostic {

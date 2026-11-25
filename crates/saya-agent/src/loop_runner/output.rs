@@ -4,6 +4,8 @@ mod compaction_pass;
 mod context_budget;
 #[path = "output/group_trim.rs"]
 mod group_trim;
+#[path = "output/history_stub.rs"]
+mod history_stub;
 #[path = "output/limits.rs"]
 mod limits;
 #[path = "output/trim_envelope.rs"]
@@ -13,6 +15,7 @@ mod trim_envelope;
 use context_budget::TRUNCATED_MARKER;
 pub(super) use context_budget::message_size;
 pub(super) use context_budget::{ContextBudget, completion_summary, trim_to_budget};
+pub(super) use history_stub::{HistoryStubState, stub_old_tool_results};
 pub use limits::budgets_from_env;
 pub use limits::{AgentError, AgentLimits, AgentOutput, DESIGNATE_ANSWER_TOOL, EnvBudgets};
 pub use limits::{

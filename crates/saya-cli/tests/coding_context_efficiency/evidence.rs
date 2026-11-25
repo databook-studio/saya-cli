@@ -12,22 +12,39 @@ pub(super) fn child_requests(bodies: &[Value]) -> Vec<Value> {
         .cloned()
         .collect()
 }
+
+/// Leading sentinel the history policy writes on a bounded old result.
+pub(super) const STUB_MARKER: &str = "…[history-stub:";
+
+/// The actual result for every call. The first request that carries a result
+/// carries it whole; later requests may carry the history policy's bounded
+/// stub, so the first occurrence is the one to read.
 pub(super) fn results(bodies: &[Value]) -> BTreeMap<String, String> {
-    bodies
-        .iter()
-        .flat_map(|body| {
-            body["messages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(|message| {
-                    Some((
-                        message["tool_call_id"].as_str()?.to_owned(),
-                        message["content"].as_str()?.to_owned(),
-                    ))
-                })
-        })
-        .collect()
+    let mut results = BTreeMap::new();
+    for body in bodies {
+        for message in body["messages"].as_array().unwrap() {
+            let (Some(id), Some(content)) = (
+                message["tool_call_id"].as_str(),
+                message["content"].as_str(),
+            ) else {
+                continue;
+            };
+            results
+                .entry(id.to_owned())
+                .or_insert_with(|| content.to_owned());
+        }
+    }
+    results
+}
+
+/// Whether a request carries at least one bounded old result.
+pub(super) fn has_stub(body: &Value) -> bool {
+    body["messages"].as_array().unwrap().iter().any(|message| {
+        message["role"] == "tool"
+            && message["content"]
+                .as_str()
+                .is_some_and(|content| content.starts_with(STUB_MARKER))
+    })
 }
 /// The file's own bytes behind the numbered rendering: drop the six-column
 /// number and `→` that begins each delivered line.

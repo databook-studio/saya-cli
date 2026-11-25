@@ -18,7 +18,10 @@
 // store-open bug in `saya-store`.
 //
 // What is lost: the TUI-paints assertion covers macOS and Linux only; Windows
-// painting stays unverified.
+// painting stays unverified here. The cross-platform check that asks the same
+// question of ConPTY — one launch, the welcome, status row and composer, a
+// slash palette, Esc and `/exit` — is `tests/tui_screen_smoke.rs`, which runs
+// on all three platforms.
 #![cfg(not(windows))]
 
 //! Smoke test that the full-screen TUI actually paints, from a real process.
@@ -73,6 +76,7 @@ const READ_TIMEOUT: Duration = Duration::from_millis(250);
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
 
+include!("support/provider_env.rs");
 include!("tui_pty_smoke/cases/splash.rs");
 include!("tui_pty_smoke/support/screen.rs");
 include!("tui_pty_smoke/support/config.rs");

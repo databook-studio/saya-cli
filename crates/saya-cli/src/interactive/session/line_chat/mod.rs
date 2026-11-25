@@ -13,9 +13,10 @@
 //! opened ahead of the first line that is not a slash command — while the
 //! operator is still at the prompt ([`LineChat::prepare`]) — and that line, and
 //! every later one, is a turn of the same run: on the lease, epoch and provider
-//! it took at open, until a compaction or `/clear` rolls it over, and the line
-//! after it is a turn of the new job. A line that is a slash command never
-//! reaches this module, and gives up a prepared run it made stale.
+//! it took at open, until a compaction, `/clear` or a state change (`/model`,
+//! `/provider`, `/connect`, `/include`, `/exclude`, `/privacy`) rolls it over,
+//! and the line after it is a turn of the new job. A line that is a slash
+//! command never reaches this module, and gives up a prepared run it made stale.
 //!
 //! **One runtime per session.** The run's composition, its lease and its
 //! timers belong to the tokio runtime that opened them, so every turn of one
@@ -175,6 +176,15 @@ impl LineChat {
     pub(crate) fn clear(&self) -> Said {
         let mut line = self.lock();
         self.runtime.block_on(line.clear())
+    }
+
+    /// A command changed the facts a run is composed from — the model, the
+    /// provider, the connection, the privacy setting: the next message is a
+    /// turn of the run the session states from now on, with the conversation
+    /// so far replayed into it.
+    pub(crate) fn restate(&self, overrides: crate::agent::turn_config::PromptOverrides) -> Said {
+        let mut line = self.lock();
+        self.runtime.block_on(line.restate(overrides))
     }
 
     /// The tool tally of every turn this session ran, for the scripted run's

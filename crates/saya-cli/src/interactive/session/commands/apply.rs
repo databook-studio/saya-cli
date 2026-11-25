@@ -144,7 +144,9 @@ impl SessionState {
                 )
             }
             SlashCommand::Doctor => SessionAction::Doctor,
-            SlashCommand::Usage => section_answer(self, Note::Usage, Section::Model),
+            // `/usage` reads the runtime's window and the session's books, so
+            // the loop performs it; this arm only carries the request.
+            SlashCommand::Usage(request) => SessionAction::Usage(request),
             SlashCommand::Workspace => section_answer(self, Note::Workspace, Section::Workspace),
             SlashCommand::Thinking(value) => {
                 if let Some(value) = value {

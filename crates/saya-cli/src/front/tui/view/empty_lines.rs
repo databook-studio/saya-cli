@@ -114,7 +114,7 @@ pub(super) fn no_workspace_rows(facts: &EmptyFacts, width: usize) -> Vec<Line<'s
         Line::default(),
     ];
     rows.extend(sentence(
-        "File tools are off here. Start Saya inside a project to edit code.",
+        "File tools are off here. Next: run `saya` inside a project.",
         Token::Fg,
         facts,
         width,

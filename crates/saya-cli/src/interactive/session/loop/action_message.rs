@@ -19,6 +19,19 @@ fn handle_message(
     let save_refused = &mut ctx.save_refused;
     let state = &mut *ctx.state;
     let session = &mut *ctx.session;
+    // A turn starts only while the session's reported spend sits below its
+    // ceiling. The check is at the boundary and reads spend the provider has
+    // already reported: an unreported cost never trips it.
+    if let Some(sentence) = crate::interactive::ceiling_stop(
+        state.usage.cost_micros(),
+        state.session_cost_limit_micros,
+    ) {
+        session_emit::emit_action(SessionAction::Message(sentence), format, state, store)?;
+        if let Some(outcome) = persist(state, store, format, save_refused)? {
+            return Ok(outcome);
+        }
+        return Ok(TurnOutcome::Completed);
+    }
     // The session's live task list: the cell the run's `checklist` writes
     // through. The record re-seeds it here, so a resumed session's list rides
     // its next request, and the cell is synced back after the turn however the
@@ -84,6 +97,14 @@ fn handle_message(
             .record
             .totals
             .fold_into(&mut state.usage, &settled.outcome);
+        // What the turn's last request sent, and what the provider priced it
+        // at: the two figures the context share and the spend are read from.
+        // The line front folds them here, as the full-screen front's meter
+        // does at the same settlement.
+        state.usage.note_request(
+            settled.record.totals.latest.map(|usage| usage.input_tokens),
+            settled.record.totals.cost_micros,
+        );
         if matches!(settled.outcome, ChatOutcome::Answered) {
             state.record_turn(line, settled.record.answer.clone(), false, Vec::new());
             // What the turn's tools observed settles into the session record the

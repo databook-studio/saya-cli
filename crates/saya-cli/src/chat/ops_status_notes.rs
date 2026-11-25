@@ -54,8 +54,6 @@ impl Section {
 /// The one-line note a deprecated spelling states, once per session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Note {
-    /// `/usage` — the panel's Model section.
-    Usage,
     /// `/workspace` — the panel's Workspace section.
     Workspace,
     /// `/context` — the panel's Instructions section.
@@ -72,8 +70,7 @@ pub(crate) enum Note {
 
 impl Note {
     /// Every note, in the order the enum declares them.
-    pub(crate) const ALL: [Note; 7] = [
-        Note::Usage,
+    pub(crate) const ALL: [Note; 6] = [
         Note::Workspace,
         Note::Context,
         Note::History,
@@ -86,10 +83,6 @@ impl Note {
     /// this release as the last one that answers the old one.
     pub(crate) const fn text(self) -> &'static str {
         match self {
-            Note::Usage => {
-                "note: /usage is now the Model section of /status — this release is the last to \
-                 answer it"
-            }
             Note::Workspace => {
                 "note: /workspace is now the Workspace section of /status — this release is the \
                  last to answer it"
@@ -118,13 +111,12 @@ impl Note {
     /// records that it has been said.
     pub(crate) const fn index(self) -> usize {
         match self {
-            Note::Usage => 0,
-            Note::Workspace => 1,
-            Note::Context => 2,
-            Note::History => 3,
-            Note::Rotate => 4,
-            Note::Grants => 5,
-            Note::Report => 6,
+            Note::Workspace => 0,
+            Note::Context => 1,
+            Note::History => 2,
+            Note::Rotate => 3,
+            Note::Grants => 4,
+            Note::Report => 5,
         }
     }
 }

@@ -132,13 +132,14 @@ impl CodingApplication {
         // the session the surface stated for it, if any.
         let parent = self.session_parent();
         let owner = parent.as_deref().unwrap_or(job.as_str());
-        let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
+        let (before_images, in_place_lease) = super::in_place_lease::job_parts(
             &plan,
             &records,
             &self.state_root,
             lease,
             owner,
             parent.as_deref(),
+            job.as_str(),
         )?;
         let workspace = Workspace::open(self.root_path()).map_err(CodingError::owner)?;
         let project = self.capture_original_project_context(&workspace).await?;
@@ -202,7 +203,7 @@ impl CodingApplication {
             project,
             records,
             before_images,
-            in_place_lease: std::sync::Mutex::new(_in_place_lease),
+            in_place_lease,
             tools,
             cancellation: token.clone(),
             failure: std::sync::Mutex::new(super::failure::FailureState::default()),

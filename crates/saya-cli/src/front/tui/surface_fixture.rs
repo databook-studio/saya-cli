@@ -28,7 +28,9 @@ use crate::interactive::SessionState;
 use crate::interactive::session::runtime::SessionRuntime;
 
 #[allow(unused_imports)]
-pub(crate) use super::surface_fixture_launch::surface;
+pub(crate) use super::surface_fixture_launch::{
+    DATABASE, surface, surface_connected, surface_profile,
+};
 
 /// The model the session opens on.
 pub(crate) const MODEL: &str = "surface-model";

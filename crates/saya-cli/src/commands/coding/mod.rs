@@ -93,7 +93,7 @@ mod host_root;
 // exists, and must never take the lease to ask about it: `chat::workspace_shape`
 // is their one reader outside this module.
 pub(crate) use host_root::resolve_in_place;
-mod in_place_lease;
+pub(crate) mod in_place_lease;
 pub(crate) use in_place_lease::leased as folder_lease_held;
 mod integrate;
 mod live_runs;

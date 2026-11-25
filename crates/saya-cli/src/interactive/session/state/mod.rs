@@ -110,6 +110,13 @@ pub struct SessionState {
     /// a resumed session starts with a fresh total. `/clear` resets it.
     #[serde(skip)]
     pub(crate) usage: SessionUsage,
+    /// This session's cost ceiling in micro-USD, seeded from
+    /// `[limits] session_cost_usd` and movable by `/usage --limit <usd>`.
+    /// `None` means no ceiling. In-memory only (`#[serde(skip)]`, the `usage`
+    /// precedent): the ceiling is a spend guard for the session process, and a
+    /// resumed session re-seeds it from the configuration in force.
+    #[serde(skip)]
+    pub(crate) session_cost_limit_micros: Option<u64>,
     /// Whether the host-command lane composed for this session: the status
     /// header's `host:` segment reads this. In-memory only — a resumed
     /// session recomposes the lane from its launch statement, never from

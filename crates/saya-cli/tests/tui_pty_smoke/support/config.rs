@@ -13,8 +13,9 @@ enum Memory {
 }
 
 /// Writes a minimal, offline config + connections file under `home`. No
-/// `--env-file`, no provider key, and a single `demo` profile pointing at a
-/// scratch SQLite file the test never queries. The profile name leads the
+/// `--env-file`, the offline `ollama` provider stated so the ready screen
+/// paints, and a single `demo` profile pointing at a scratch SQLite file the
+/// test never queries. The profile name leads the
 /// status line as `demo │ smoke`. When `memory` is
 /// `Assisted` the config adds `[memory] mode = 'assisted'`, the suspect path
 /// for defect #51; `Off` keeps the original no-`[memory]` shape.
@@ -34,9 +35,11 @@ fn write_scratch_config(home: &Path, memory: Memory) -> ScratchConfig {
     };
     std::fs::write(
         &config,
-        // [ai] model only; no provider key. Loads offline. The optional
-        // [memory] section is the only difference between the rungs.
-        format!("[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n{memory_section}"),
+        // An offline provider is stated so the ready screen paints whatever
+        // the host exports; `ollama` needs no credentials and no request is
+        // sent. The optional [memory] section is the only difference between
+        // the rungs.
+        format!("[ai]\nprovider = 'ollama'\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n{memory_section}"),
     )
     .unwrap();
 
@@ -73,9 +76,11 @@ fn write_docker_config(home: &Path) -> ScratchConfig {
     let config = home.join("config.toml");
     std::fs::write(
         &config,
-        // Memory on, default profile = docker_postgres. No provider key: the
-        // splash is offline and `connection schema --refresh` reads no model.
-        "[ai]\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n\n\
+        // Memory on, default profile = docker_postgres. The offline provider
+        // is stated so the ready screen paints whatever the host exports; the
+        // splash sends no request and `connection schema --refresh` reads no
+        // model.
+        "[ai]\nprovider = 'ollama'\nmodel = 'smoke'\n\n[run]\nmax_rows = 10\n\n\
          default_profile = 'docker_postgres'\n\n[memory]\nmode = 'assisted'\n",
     )
     .unwrap();

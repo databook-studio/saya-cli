@@ -116,7 +116,8 @@ alone. A provider that reports no usage emits no `usage` event at all: absence m
 "unknown", not zero, and an unreported cache figure serialises as `null` where a
 reported zero serialises as `0`. `/history` lists saved session IDs
 in recent-first order. The slash commands `/connect <profile>`, `/include <profile>`, and `/exclude <profile>` manage live database connections in interactive sessions: `/connect` sets the primary profile, `/include` adds secondary live read-only database connections (skipped if connection fails), and `/exclude` removes them. `/connect`, `/privacy`, `/model`, and
-`/provider` are per-session overrides used by the next prompt; supported
+`/provider` are per-session overrides that apply to the open conversation at
+once; supported
 providers are `ollama`, `openai`, `openai_compatible`, `anthropic`, and `gemini`.
 When attached to a terminal, each interactive prompt shows a one-line status
 header (active profile, any included databases, provider/model, approval mode,
@@ -260,7 +261,8 @@ is not in this table.
 | `/allow` | `<scopes…>` | Seed pre-authorised scopes into this session's grant store | — |
 | `/permissions` | — | One read-only view: the mode, the grant store, the deny list, the host lane and data sharing | `/grants` |
 | `/doctor` | — | Diagnose config: secrets, provider endpoint | — |
-| `/status` | — | One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks | `/usage`, `/workspace`, `/context` |
+| `/status` | — | One panel: the session, the model, the workspace, the instruction sources and the limits in force. It only reads; /doctor is the command that checks | `/workspace`, `/context` |
+| `/usage` | `[--limit <usd>]` | This session's requests, prompt, cached and completion tokens, reported cost and context share; --limit <usd> sets a cost ceiling | — |
 | `/thinking` | `[on\|off]` | Toggle display of the model's chain-of-thought | — |
 | `/tasks` | `[clear]` | Show the session's task list, or clear it with /tasks clear | — |
 | `/help` | `[command]` | Show help for slash commands | — |

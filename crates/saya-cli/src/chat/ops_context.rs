@@ -185,10 +185,14 @@ pub(crate) enum ReadOp {
     /// `/status` — the one panel: five sections, built from the facts this
     /// session already holds and never from a probe.
     Status,
-    /// One section of that panel, for the one-release aliases `/usage`
-    /// ([`Section::Model`]), `/workspace` ([`Section::Workspace`]) and
-    /// `/context` ([`Section::Instructions`]).
+    /// One section of that panel, for the one-release aliases `/workspace`
+    /// ([`Section::Workspace`]) and `/context` ([`Section::Instructions`]).
     StatusSection(Section),
+    /// `/usage [--limit <usd>]` — this session's usage panel, and the ceiling
+    /// the request states. Needs the runtime (the model's window) and the
+    /// session's own books, so the surface performs it through
+    /// [`crate::chat::usage_answer`].
+    Usage(crate::slash::UsageRequest),
     /// `/sessions` — the saved-session listing (`/history` is its one-release
     /// alias, and states the same read).
     Sessions,

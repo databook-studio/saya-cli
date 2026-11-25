@@ -238,7 +238,9 @@ impl NativeCodingJob {
         // helper makes is resolved by the job's one mode cell and put to the
         // job's operator under a line that names this helper. A job with no
         // operator has nobody to ask, so it composes none.
-        let write_ask = crate::agent::tools::write_ask::for_helper(self, &task.agent_id);
+        let helper_workspace = std::path::Path::new(before.path().as_str());
+        let write_ask =
+            crate::agent::tools::write_ask::for_helper(self, &task.agent_id, helper_workspace);
         let factory = composition
             .factory
             .with_write_ask(write_ask)

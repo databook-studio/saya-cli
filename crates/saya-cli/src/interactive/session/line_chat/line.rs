@@ -257,3 +257,10 @@ impl Line {
 // What a surface that drives its own turns reads and moves: the run it is on
 // now, and the boundary a turn of it crosses (`surface.rs`).
 include!("surface.rs");
+
+// The run a state change gives up (`restate.rs`), the session a `/resume`
+// opens in place of this one (`surface_resume.rs`), and the line loop's own
+// turn through the terminal front (`surface_send.rs`).
+include!("restate.rs");
+include!("surface_resume.rs");
+include!("surface_send.rs");

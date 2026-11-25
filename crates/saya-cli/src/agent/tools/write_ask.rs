@@ -8,7 +8,9 @@
 //! mode stated during the run decides the next call:
 //!
 //! - `bypass` and `accept-edits`: admitted without asking, which is what a
-//!   detached composition has always done;
+//!   detached composition has always done — except a write inside the
+//!   checkout's git directory, which both asking modes put to the operator
+//!   under its own question and no grant pre-answers;
 //! - `read-only` and `never`: refused, and nobody is asked — no answer could
 //!   widen the mode;
 //! - `ask`: admitted when the job's grant set already holds
@@ -28,6 +30,7 @@
 //! edit-capable mode, or one that refuses the call outright — exactly as
 //! before.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use saya_agent::{
@@ -56,21 +59,26 @@ pub(crate) fn line(caller: &Caller) -> String {
 /// The root's write ask, when an operator is attached to `job`: the shape a
 /// job started from a surface with a person in front of it runs in. A detached
 /// run has nobody to ask, so it composes none and keeps the consent it stated.
-pub(crate) fn for_root(job: &NativeCodingJob) -> Option<WriteAsk> {
+pub(crate) fn for_root(job: &NativeCodingJob, workspace: Option<&Path>) -> Option<WriteAsk> {
     let operator = job.operator()?;
     let caller = Caller::Root {
         job_id: job.job_id().clone(),
     };
     Some(
         WriteAsk::new(job.approval_mode(), operator, &caller)
-            .with_launch_grants(job.launch_grants()),
+            .with_launch_grants(job.launch_grants())
+            .with_workspace_root(workspace),
     )
 }
 
 /// One helper's write ask, under a line that names the helper: the same ask,
 /// the same mode cell, the same grant store. `None` where the job has nobody
 /// to ask, so a detached composition keeps the capability's answer.
-pub(crate) fn for_helper(job: &NativeCodingJob, agent_id: &AgentId) -> Option<Arc<WriteAsk>> {
+pub(crate) fn for_helper(
+    job: &NativeCodingJob,
+    agent_id: &AgentId,
+    workspace: &Path,
+) -> Option<Arc<WriteAsk>> {
     let operator = job.operator()?;
     let caller = Caller::Helper {
         agent_id: agent_id.clone(),
@@ -78,7 +86,8 @@ pub(crate) fn for_helper(job: &NativeCodingJob, agent_id: &AgentId) -> Option<Ar
     };
     Some(Arc::new(
         WriteAsk::new(job.approval_mode(), operator, &caller)
-            .with_launch_grants(job.launch_grants()),
+            .with_launch_grants(job.launch_grants())
+            .with_workspace_root(Some(workspace)),
     ))
 }
 
@@ -103,6 +112,10 @@ pub(crate) struct WriteAsk {
     /// exactly as the tool advertisement and the exact-write admission read
     /// that same store.
     launch: Option<SessionGrants>,
+    /// The checkout this ask writes into, when the composing surface states
+    /// one: a target inside the repository's git directory is put to the
+    /// operator in every mode but `bypass`.
+    workspace: Option<PathBuf>,
 }
 
 impl WriteAsk {
@@ -114,7 +127,16 @@ impl WriteAsk {
             mode,
             prompt: Prompt::new(operator, line(caller)).with_grants(grants),
             launch: None,
+            workspace: None,
         }
+    }
+
+    /// States the checkout this ask writes into. A target inside the
+    /// repository's git directory is the one write family that is not
+    /// pre-answered by `accept-edits` or by a held grant.
+    pub(crate) fn with_workspace_root(mut self, root: Option<&Path>) -> Self {
+        self.workspace = root.map(Path::to_path_buf);
+        self
     }
 
     /// States the launch's own seed store (`--allow`): a family it already
@@ -141,6 +163,19 @@ impl WriteAsk {
         self.mode.get() == ApprovalPolicy::Ask && !self.held()
     }
 
+    /// Whether this call would put the operator to work: a git-directory
+    /// write asks in both asking modes and never consults a grant, while
+    /// every other write keeps the mode-and-store answer above.
+    pub(crate) fn asks_for(&self, arguments: &Value) -> bool {
+        if self.git_write(arguments) {
+            return matches!(
+                self.mode.get(),
+                ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits
+            );
+        }
+        self.asks()
+    }
+
     /// One call's admission: the capability first, because a call it refuses is
     /// refused whatever the mode says, and then the mode's answer for a
     /// write-shaped call.
@@ -162,10 +197,46 @@ impl WriteAsk {
     /// The mode's answer for a write-shaped call the capability has already
     /// admitted.
     pub(crate) async fn resolve(&self, arguments: &Value) -> bool {
+        if self.git_write(arguments) {
+            return self.asked_git(arguments).await;
+        }
         match self.mode.get() {
             ApprovalPolicy::Bypass | ApprovalPolicy::AcceptEdits => true,
             ApprovalPolicy::ReadOnly | ApprovalPolicy::Never => false,
             ApprovalPolicy::Ask => self.asked(arguments).await,
+        }
+    }
+
+    /// Whether this call targets the repository's git directory. The git
+    /// configuration and hooks decide what the user's next `git` command
+    /// runs, so this family is never pre-answered — only `bypass` admits it
+    /// without a question.
+    fn git_write(&self, arguments: &Value) -> bool {
+        let Some(path) = arguments.get("path").and_then(Value::as_str) else {
+            return false;
+        };
+        super::git_write::targets_git_dir(self.workspace.as_deref(), path)
+    }
+
+    /// The git directory's own answer: `bypass` admits, the two refusing
+    /// modes refuse, and both asking modes put the call to the operator under
+    /// the plain git-directory question. Neither a held grant nor a
+    /// session-wide yes pre-answers or is recorded — one answer must not
+    /// widen the git directory for the rest of the run.
+    async fn asked_git(&self, arguments: &Value) -> bool {
+        match self.mode.get() {
+            ApprovalPolicy::Bypass => true,
+            ApprovalPolicy::ReadOnly | ApprovalPolicy::Never => false,
+            ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => {
+                match self
+                    .prompt
+                    .answer_as(super::git_write::QUESTION, arguments)
+                    .await
+                {
+                    Answer::Deny => false,
+                    Answer::Once | Answer::Session => true,
+                }
+            }
         }
     }
 
@@ -197,6 +268,6 @@ impl WriteAsk {
         if !is_write_tool(&tool.name) {
             return capability.would_ask(tool, arguments);
         }
-        Some(self.asks())
+        Some(self.asks_for(arguments))
     }
 }

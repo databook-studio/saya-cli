@@ -56,15 +56,29 @@ pub(super) struct Recording {
 
 impl Recording {
     pub(super) fn new(answer: Answer) -> Arc<Self> {
+        Self::granting(answer, &[])
+    }
+
+    /// An operator whose store already holds `tokens`, so a call they
+    /// pre-answer never reaches the question.
+    pub(super) fn granting(answer: Answer, tokens: &[&str]) -> Arc<Self> {
+        let grants = SessionGrants::default();
+        for token in tokens {
+            grants.grant(token);
+        }
         Arc::new(Self {
             answer,
-            grants: SessionGrants::default(),
+            grants,
             subjects: Mutex::new(Vec::new()),
         })
     }
 
     pub(super) fn calls(&self) -> usize {
         self.subjects.lock().unwrap().len()
+    }
+
+    pub(super) fn is_granted(&self, token: &str) -> bool {
+        self.grants.is_granted(token)
     }
 
     pub(super) fn subjects(&self) -> Vec<String> {

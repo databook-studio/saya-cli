@@ -174,6 +174,24 @@ fn the_compactions_state_their_rollovers() {
     }
 }
 
+/// `/usage --limit` states a ceiling the next turn is checked against, so it is
+/// applied on the surface's own thread before the command returns — never
+/// handed to a blocking task a message sent straight after could outrun.
+#[test]
+fn a_usage_limit_is_in_force_when_the_command_returns() {
+    let fixture = Fixture::new("usage-limit");
+    let asked = perform(&fixture.deps, command("/usage --limit 1"));
+    assert!(
+        matches!(asked, Asked::Notice(_)),
+        "`/usage --limit` answers on the surface's thread, not off it: {asked:?}"
+    );
+    assert_eq!(
+        fixture.state().session_cost_limit_micros,
+        Some(1_000_000),
+        "the stated ceiling is in force before the next send can read it"
+    );
+}
+
 /// The table never enters the run: every operation above stayed on the
 /// surface's side of the port.
 #[test]

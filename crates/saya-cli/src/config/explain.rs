@@ -90,6 +90,8 @@ fn source_text(layer: &SettingSource) -> String {
         SettingSource::EnvFile { var } => format!("env file ({var})"),
         SettingSource::Env { var } => format!("environment ({var})"),
         SettingSource::Cli { flag } => format!("command line ({flag})"),
+        SettingSource::AutoEnv { var } => format!("environment key ({var})"),
+        SettingSource::Prompt => "provider prompt".to_owned(),
     }
 }
 

@@ -52,10 +52,9 @@ pub(crate) fn mode_report(state: &SessionState) -> String {
     mode_message(PermissionMode::of(policy, state.agent_mode_parsed()))
 }
 
-/// One panel section plus its alias's note, as `/usage` (`Note::Usage`,
-/// `Section::Model`) and `/workspace` (`Note::Workspace`,
-/// `Section::Workspace`) answer: the one panel builder, so an alias can never
-/// disagree with `/status` about the fact it shows.
+/// One panel section plus its alias's note, as `/workspace`
+/// (`Note::Workspace`, `Section::Workspace`) answers: the one panel builder,
+/// so an alias can never disagree with `/status` about the fact it shows.
 pub(crate) fn section_answer(
     state: &mut SessionState,
     note: crate::chat::ops_status::Note,

@@ -56,6 +56,13 @@ pub(crate) fn answering_limits(
     }
 }
 
+/// The session's reported-spend ceiling in micro-USD, or `None` when the
+/// session is unlimited. The session seeds its own field with it at launch;
+/// `/usage --limit` may state another for the rest of the session.
+pub(crate) fn session_cost_micros(runtime: &RuntimeConfig) -> Option<u64> {
+    runtime.resolved.limits.session_cost_micros
+}
+
 /// The wall-clock deadline for one surface, or `None` when it is unlimited.
 pub(crate) fn answering_deadline(
     runtime: &RuntimeConfig,

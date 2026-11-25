@@ -259,8 +259,9 @@ pub(crate) fn argument_components(root: &Path, rel: &str) -> Result<Vec<String>,
     if comps[0].len() == 2 && comps[0].ends_with(':') {
         return Err(invalid());
     }
-    // `.git` is NOT special-cased here: a working checkout's git
-    // metadata is ordinary content, so an edit or a shell may write it. Every
+    // `.git` is NOT special-cased here: containment permits a working
+    // checkout's git metadata as ordinary content. The approval layer is what
+    // puts a change inside it to the operator (every mode but `bypass`). Every
     // containment rule that is about escaping the root — the `..`-depth walk
     // above, absolute forms, drive shapes — still refuses.
     Ok(comps)

@@ -17,6 +17,23 @@ pub(crate) use defaults::{
 };
 pub(crate) use recorder::{Recorder, record_endpoint_fields};
 
+impl crate::ResolvedConfig {
+    /// Whether a provider was chosen: stated by a layer, chosen from exactly
+    /// one provider key in the environment, or answered at the prompt.
+    ///
+    /// `false` is the first-run state — no config, no flag, no environment
+    /// variable named one — and the surface's welcome offers the next step
+    /// for it rather than a session that cannot answer.
+    pub fn provider_chosen(&self) -> bool {
+        self.provenance.get("ai.provider").is_some_and(|origin| {
+            !matches!(
+                origin.source,
+                SettingSource::Default | SettingSource::WindowDerived
+            )
+        })
+    }
+}
+
 #[cfg(test)]
 pub(crate) use defaults::USER_FACING;
 

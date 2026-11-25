@@ -45,6 +45,7 @@ pub struct ResolvedDiagnostics {
     /// The effective `[limits.session]` and `[limits.ask]` answering ceilings.
     /// `None` is the effective unlimited, stated by the key itself; `[limits.ask]`
     /// carries the session's value for every key it left unset.
+    pub limits_session_cost_usd: Option<f64>,
     pub limits_session_requests: Option<u64>,
     pub limits_session_tool_calls: Option<u64>,
     pub limits_session_elapsed_seconds: Option<u64>,
@@ -145,6 +146,10 @@ impl ResolvedConfig {
             max_rows: self.max_rows,
             read_only: self.read_only,
             candidates: self.candidates,
+            limits_session_cost_usd: self
+                .limits
+                .session_cost_micros
+                .map(|micros| micros as f64 / 1_000_000.0),
             limits_session_requests: self.limits.session.requests.value(),
             limits_session_tool_calls: self.limits.session.tool_calls.value(),
             limits_session_elapsed_seconds: self.limits.session.elapsed_seconds.value(),

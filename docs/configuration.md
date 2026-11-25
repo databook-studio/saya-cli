@@ -149,6 +149,7 @@ key below.
 | Surface | Table | Defaults |
 | --- | --- | --- |
 | A turn's database work | `[limits.database]` | 24 requests, 64 tool calls, 300 s, 250,000 known tokens |
+| A chat session's reported spend | `[limits] session_cost_usd` | unset (no ceiling) |
 | `saya ask` | `[limits.ask]` | every unset key falls back to `[limits.database]` |
 | Job | `[limits.job]` | bounded: 2,000 logical requests, 6,000 transport attempts, 10,000 tool calls, a 604,800 s deadline, unlimited per-loop tokens; no job-wide token ceiling |
 | `saya run` | `[limits.run]` | `turns`, `tool_calls` and `wall_clock_seconds` unset (no ceiling); `tokens_per_endpoint` unset |
@@ -159,6 +160,20 @@ work one turn may do, counted from its first database call. Its four keys are
 positive integer or the exact string `"unlimited"`. `[limits.ask]` is the
 one-shot `ask` surface's override of the same budget: every key it leaves
 unset keeps the database value.
+
+`[limits] session_cost_usd` is a chat session's cost ceiling, in US dollars.
+Unset means no ceiling. It is compared with the spend the provider reports:
+when the next request would start with reported spend at or above the ceiling,
+the turn stops with one sentence instead of running. `/usage --limit <usd>`
+sets or raises it for the session, and `/usage` states the ceiling in force.
+A provider that reports no cost leaves the spend unknown, and an unknown spend
+never trips the ceiling — `/usage` says so. The key is protected: a project
+layer cannot raise a ceiling the user set.
+
+```toml
+[limits]
+session_cost_usd = 2.50
+```
 
 `[limits.session]` is retired: it now maps onto `[limits.database]` for one
 release, and a config that states it is read with a diagnostic naming the
@@ -289,6 +304,30 @@ always news. Set `notifications = false` to turn the bell and the desktop
 notification off entirely.
 
 The `[ai]` table tunes the provider request the agent loop assembles.
+
+### Choosing a provider from the environment
+
+With no provider stated in any layer — no `[ai] provider`, no `--provider`, no
+`SAYA_PROVIDER` — and exactly one known provider key in the environment, Saya
+uses the provider that key belongs to and its default model:
+
+| key | provider | default model | endpoint |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | `openai` | `gpt-4o-mini` | OpenAI's default |
+| `ANTHROPIC_API_KEY` | `anthropic` | `claude-sonnet-4-5` | Anthropic's default |
+| `GEMINI_API_KEY` | `gemini` | `gemini-2.5-flash` | Gemini's default |
+| `OPENROUTER_API_KEY` | `openai_compatible` | `openai/gpt-4o-mini` | `https://openrouter.ai/api/v1` |
+| `DEEPSEEK_API_KEY` | `openai_compatible` | `deepseek-chat` | `https://api.deepseek.com/v1` |
+
+Saya prints one line naming the provider, the model, and how to change them.
+The key becomes the `ai.api_key` environment reference and is never written to
+a file or printed. Data sharing stays at its default, off. A model, base URL,
+or key a layer already stated is kept; only unset fields are filled from the
+key's row. Two or more known keys are never guessed between: an interactive
+terminal is asked to choose, and a non-interactive run refuses with a message
+naming every key and the `--provider`/`SAYA_PROVIDER` ways to choose. Any
+provider a layer states always wins over the environment.
+
 `context_byte_budget` is the ceiling on the approximate byte size of the whole
 conversation sent to the provider (system prompt, user question, history, and
 the tool results the loop appends). When unset and the model's context window
@@ -692,6 +731,19 @@ configuration names a program of its own (`core.fsmonitor`, `core.pager`,
 is unchanged by it — a denied program in the set is still refused — and
 `bypass`, `read-only` and `never` read exactly as before. Set it to `false` to
 answer every call yourself; the key can withhold the set, never state one.
+
+A change inside the repository's git directory is always yours to approve. A
+model `write`, `edit` or `delete` call whose target resolves inside `.git/` — or
+inside the gitdir a `.git` pointer file names, as in a linked worktree — is put
+to the operator under its own question in every mode but `bypass`; a
+session-wide yes records no grant, so the next such write asks again.
+`read-only` and `never` refuse it as they refuse every write. A `shell` command
+whose argument or redirect target names the git directory is put to the operator
+under `ask` and `accept-edits` even when an allow rule or a remembered answer
+would otherwise pre-answer it; the read-only set above is unchanged, since a
+read cannot change the git directory. The git configuration and hooks decide
+what the user's next `git` command runs, so no rule, grant or mode short of
+`bypass` pre-answers a change to them.
 
 `[permissions]` is protected whole, like `[tools]`: a project's
 `.saya/config.toml` cannot set it, and an attempt is reverted and reported as

@@ -23,6 +23,7 @@ pub(in crate::loop_runner) async fn receive(
         provider,
         model,
         messages,
+        history_stub,
         checkpoint,
         ordinary_history_pairs,
         protected_prefix_len,
@@ -52,6 +53,16 @@ pub(in crate::loop_runner) async fn receive(
             usage: recovered_usage,
         });
     }
+    // A history over its budget is rewritten to bounded stubs before the
+    // request is measured, so the projection is the bytes that will actually
+    // be sent. Below the budget nothing is touched; see `history_stub`.
+    let window_tokens = request_preflight.and_then(|config| config.model_window_tokens());
+    super::super::output::stub_old_tool_results(
+        messages,
+        *protected_prefix_len,
+        window_tokens,
+        history_stub,
+    );
     let projection_started = std::time::Instant::now();
     let fitted = preflight::fit_request(
         model,

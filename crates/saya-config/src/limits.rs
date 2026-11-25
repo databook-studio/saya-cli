@@ -51,6 +51,12 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LimitsFile {
+    /// The interactive session's cost ceiling in US dollars, across every
+    /// reported request. Absent means no ceiling. Protected like the
+    /// answering tables: a project layer must not raise a spend ceiling the
+    /// operator set.
+    #[serde(default)]
+    pub session_cost_usd: Option<toml::Value>,
     /// The interactive session's ceilings, and the fallback for every
     /// `[limits.ask]` key left unset.
     #[serde(default)]

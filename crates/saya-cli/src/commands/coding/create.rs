@@ -217,13 +217,14 @@ impl CodingApplication {
         // it beside the session's run.
         let parent = self.session_parent();
         let owner = parent.as_deref().unwrap_or(request.job_id.as_str());
-        let (before_images, _in_place_lease) = super::in_place_lease::job_parts(
+        let (before_images, in_place_lease) = super::in_place_lease::job_parts(
             &plan,
             &records,
             &self.state_root,
             request.has_write_scope()?,
             owner,
             parent.as_deref(),
+            request.job_id.as_str(),
         )?;
         let (root_steering, root_mailbox) = saya_agent::agent_mailbox();
         Ok(Arc::new(NativeCodingJob {
@@ -254,7 +255,7 @@ impl CodingApplication {
             project,
             records,
             before_images,
-            in_place_lease: std::sync::Mutex::new(_in_place_lease),
+            in_place_lease,
             tools,
             cancellation: token.clone(),
             // One prompt pending at a time, whatever asks: the root's

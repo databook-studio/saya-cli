@@ -19,7 +19,7 @@ use crate::chat::ops_status::Section;
 /// One shared operation the port performs off the loop's thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Work {
-    /// `/status`, and the three aliases that open one of its sections.
+    /// `/status`, and the two aliases that open one of its sections.
     Status(Option<Section>),
     /// `/schema [refresh]` — the schema view, or a refresh of it.
     Schema { refresh: bool },

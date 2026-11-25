@@ -131,7 +131,6 @@ fn the_status_aliases_open_their_sections() {
     use crate::chat::ops_status::Section;
     let harness = harness(ApprovalPolicy::Ask, false);
     for (text, section) in [
-        ("/usage", Section::Model),
         ("/workspace", Section::Workspace),
         ("/context", Section::Instructions),
     ] {
@@ -141,6 +140,11 @@ fn the_status_aliases_open_their_sections() {
             "{text} opens its section of the one panel"
         );
     }
+    assert_eq!(
+        harness.ops.run(command("/usage")),
+        OpResult::Read(ReadOp::Usage(crate::slash::UsageRequest::show())),
+        "`/usage` is its own panel now, not a section of `/status`"
+    );
     assert!(
         harness.port.calls().is_empty(),
         "no alias reaches the run: {:?}",

@@ -173,10 +173,11 @@ impl ChatOps {
             // One read-only view of the session's permissions, and the alias
             // that states the same read.
             SlashCommand::Permissions(request) => Op::Read(ReadOp::Permissions(*request)),
-            // The one panel, and the three aliases that open one of its
+            // The one panel, and the two aliases that open one of its
             // sections: one operation, one set of facts, one rendering.
+            // `/usage` is its own panel now, and its own read.
             SlashCommand::Status => Op::Read(ReadOp::Status),
-            SlashCommand::Usage => Op::Read(ReadOp::StatusSection(Section::Model)),
+            SlashCommand::Usage(request) => Op::Read(ReadOp::Usage(*request)),
             SlashCommand::Workspace => Op::Read(ReadOp::StatusSection(Section::Workspace)),
             SlashCommand::Context => Op::Read(ReadOp::StatusSection(Section::Instructions)),
             SlashCommand::Doctor => Op::Read(ReadOp::Doctor),

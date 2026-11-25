@@ -52,6 +52,7 @@ pub(super) async fn run(
         provider: state.provider,
         model: &state.request.model,
         messages: &mut state.messages,
+        history_stub: &mut state.history_stub,
         checkpoint: &state.checkpoint,
         ordinary_history_pairs: &mut state.ordinary_history_pairs,
         protected_prefix_len: &mut state.protected_prefix_len,

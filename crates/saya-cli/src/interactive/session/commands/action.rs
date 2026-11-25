@@ -21,6 +21,10 @@ pub enum SessionAction {
     /// size; the arm here keeps the match exhaustive. Nothing here probes —
     /// `/doctor` is the command that checks.
     Status,
+    /// `/usage [--limit <usd>]` — this session's usage panel, and the ceiling
+    /// the request states. Intercepted in both loops: the context share needs
+    /// the runtime's model window, and `--limit` moves the session's ceiling.
+    Usage(crate::slash::UsageRequest),
     Agent(AgentOutput),
     Cancelled,
     NotImplemented(String),

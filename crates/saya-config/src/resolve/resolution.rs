@@ -57,6 +57,15 @@ pub fn resolve(input: ResolutionInput) -> Result<ResolvedConfig, ConfigError> {
         &process_env_source,
     )?;
     apply_cli(&mut file, &input.cli, &mut recorder);
+    // The first-run choice: with no provider stated by any layer, one known
+    // provider key in the environment names it. Two or more are refused here,
+    // before any resolved setting is built, so no surface can guess.
+    crate::provider_auto::apply(
+        &mut file,
+        &input.process_env,
+        &mut recorder,
+        input.cli.prompted_provider,
+    )?;
     // `profile_name` mirrors the selection chain below: the flag, then the
     // process environment, then `default_profile` (as attributed by the
     // merge), then the single-profile inference as a plain default.

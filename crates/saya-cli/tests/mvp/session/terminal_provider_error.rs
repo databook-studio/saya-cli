@@ -205,7 +205,7 @@ fn terminal_provider_error_keeps_same_question_settled_usage_once() {
     wait_for_stream(&stdout, b"normal-marker", "normal completion marker");
     server.join().unwrap();
 
-    stdin.write_all(b"/usage\n/exit\n").unwrap();
+    stdin.write_all(b"/status\n/exit\n").unwrap();
     stdin.flush().unwrap();
     drop(stdin);
     let deadline = Instant::now() + Duration::from_secs(5);

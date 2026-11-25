@@ -12,6 +12,7 @@ mod session;
 mod session_auto_compact;
 mod session_budget_wording;
 mod session_cancel_metrics;
+mod session_cost_ceiling;
 mod session_line_chat;
 mod session_question_budget;
 mod session_verbose_metrics;

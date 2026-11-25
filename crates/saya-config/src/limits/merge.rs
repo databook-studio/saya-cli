@@ -13,6 +13,10 @@ pub(crate) fn merge(
     recorder: &mut Recorder,
     source: impl Fn(&str) -> SettingSource,
 ) {
+    if let Some(value) = &layer.session_cost_usd {
+        base.session_cost_usd = Some(value.clone());
+        recorder.record("limits.session_cost_usd", source("session_cost_usd"));
+    }
     merge_answering(
         &mut base.session,
         &layer.session,

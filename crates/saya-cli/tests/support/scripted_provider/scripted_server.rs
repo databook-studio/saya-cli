@@ -110,6 +110,13 @@ pub(crate) fn spawn_script_server_limit(
                 ScriptStep::NaturalWithUsage { input_tokens } => {
                     reply_finished(&mut stream, &answer_with_usage_body(input_tokens))
                 }
+                ScriptStep::NaturalWithCost {
+                    input_tokens,
+                    cost_usd,
+                } => reply_finished(
+                    &mut stream,
+                    &answer_with_cost_body(input_tokens, cost_usd),
+                ),
                 ScriptStep::NaturalNoUsage => reply_finished(&mut stream, &answer_no_usage_body()),
                 ScriptStep::Summary(text) => reply_finished(&mut stream, &summary_body(&text)),
                 ScriptStep::DelayedSummary { text, delay } => {

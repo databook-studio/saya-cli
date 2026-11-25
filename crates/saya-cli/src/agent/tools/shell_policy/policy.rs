@@ -157,6 +157,26 @@ impl ShellPolicy {
         decision
     }
 
+    /// Whether this command changes the checkout's git directory, as an
+    /// argument or a redirect target, without being one of the vetted
+    /// read-only commands. A read-only command cannot change the git
+    /// directory, so the set keeps its question-skipping answer; every other
+    /// command that names one is put to the operator however the rules and the
+    /// run's remembered answers read. The same reading the write tools use
+    /// decides the names, so a `.git` pointer file's gitdir is covered here
+    /// too.
+    fn git_write(&self, arguments: &Value) -> bool {
+        if self.decision(arguments) == CommandDecision::ReadOnly {
+            return false;
+        }
+        let Some(command) = arguments.get("command").and_then(Value::as_str) else {
+            return false;
+        };
+        saya_config::named_paths(command)
+            .iter()
+            .any(|path| super::super::git_write::targets_git_dir(self.workspace.as_deref(), path))
+    }
+
     /// Whether this job's remembered answers pre-answer this call without the
     /// operator: the call's own `shell:` token is one the store holds, or — for
     /// one release — the old `run_command` spelling's `command:<program>` token
@@ -194,7 +214,10 @@ impl ShellPolicy {
     /// the second. A deny rule refuses in every mode, `bypass` included. An
     /// allow rule that covers every segment of a substitution-free command
     /// pre-answers the host lane under the asking modes; it never widens
-    /// `read-only` or `never`. A command the vetted read-only set answers
+    /// `read-only` or `never`. A command that changes the checkout's git
+    /// directory is never pre-answered — neither by a rule nor by a remembered
+    /// answer — so the operator sees it in the asking modes. A command the
+    /// vetted read-only set answers
     /// ([`CommandDecision::ReadOnly`]) skips the same question — but only where
     /// an operator is there to answer it: the set skips a question, and with
     /// nobody to ask the lane falls back exactly as before. A `shell:` grant
@@ -223,7 +246,10 @@ impl ShellPolicy {
         match self.mode.get() {
             ApprovalPolicy::Bypass => Lane::Host(rule_allowed),
             ApprovalPolicy::Ask | ApprovalPolicy::AcceptEdits => {
-                let pre_answered = rule_allowed || self.remembered(arguments);
+                // A write into the git directory is never pre-answered by a
+                // rule or a remembered answer: the operator sees it.
+                let pre_answered =
+                    !self.git_write(arguments) && (rule_allowed || self.remembered(arguments));
                 // The vetted read-only set skips a question, not the consent
                 // path: with no operator to skip, today's fallback stands.
                 let read_only =

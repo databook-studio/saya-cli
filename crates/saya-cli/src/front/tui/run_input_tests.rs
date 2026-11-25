@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use tokio::sync::mpsc;
 
 use super::model::Model;
@@ -32,6 +32,30 @@ fn keys_pastes_and_resizes_become_the_messages_they_mean() {
             height: 24
         })
     ));
+}
+
+#[test]
+fn a_key_release_is_not_a_second_keystroke() {
+    // Windows reports a release for every key as well as the press. A release
+    // is not a keystroke: handling it again typed the trust answer into the
+    // composer and doubled every slash.
+    let release = KeyEvent::new_with_kind(
+        KeyCode::Char('n'),
+        KeyModifiers::NONE,
+        KeyEventKind::Release,
+    );
+    assert!(
+        msg_of(Event::Key(release)).is_none(),
+        "a key release is not a second keystroke"
+    );
+
+    // The press and a held key's repeat are keystrokes and still arrive.
+    let press =
+        KeyEvent::new_with_kind(KeyCode::Char('n'), KeyModifiers::NONE, KeyEventKind::Press);
+    assert!(matches!(msg_of(Event::Key(press)), Some(Msg::Key(_))));
+    let repeat =
+        KeyEvent::new_with_kind(KeyCode::Char('n'), KeyModifiers::NONE, KeyEventKind::Repeat);
+    assert!(matches!(msg_of(Event::Key(repeat)), Some(Msg::Key(_))));
 }
 
 #[test]
