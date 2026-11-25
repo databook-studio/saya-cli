@@ -36,15 +36,10 @@ fn full_screen_ui_draws_and_answers_slash_commands() {
     // Clean up the scratch HOME however this test ends.
     let _cleanup = HomeGuard(home.clone());
 
-    let mut tui = match launch(&home) {
-        Ok(tui) => tui,
-        Err(reason) => {
-            // Could not allocate a pty (e.g. a constrained runner). Skip
-            // cleanly rather than fail; the launch still had no terminal.
-            eprintln!("skipping tui_screen_smoke: {reason}");
-            return;
-        }
-    };
+    // A pty that cannot be allocated or a child that cannot be spawned is a
+    // failure of this check, not a reason to skip it: a green run has to mean
+    // the interface was actually painted.
+    let mut tui = launch(&home).expect("launch saya on a pty");
 
     // 1. The welcome screen paints: the session header names the product and
     //    says no workspace is bound, and the one line explains what is off.
