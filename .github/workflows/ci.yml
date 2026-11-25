@@ -188,6 +188,32 @@ jobs:
           tool: cargo-nextest
       - run: cargo nextest run -p saya-cli --locked --profile ci --test job_apply_e2e --test chat_session_line_e2e
 
+  # Proves the default full-screen interface paints under ConPTY, on the same
+  # runner as the suite. The Unix-only `tui_pty_smoke` suite cannot read what
+  # ConPTY emits, so this is the only check that the screen text a Windows
+  # operator sees is the one the interface promises: launch, welcome, status
+  # row and composer, the command palette, Esc, `/exit`. Focused so a failure
+  # names the painted words and quotes the raw ConPTY bytes, rather than
+  # burying it in the whole-workspace run.
+  windows-tui-screen:
+    name: windows TUI screen
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          shared-key: "tui-screen-${{ runner.os }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf # v2.87.2
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run -p saya-cli --locked --profile ci --test tui_screen_smoke
+
   postgres-live:
     name: PostgreSQL live contract
     runs-on: ubuntu-latest
