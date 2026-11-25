@@ -238,3 +238,28 @@ fn a_short_conversation_is_left_byte_identical() {
     assert_eq!(stub_old_tool_results(&mut messages, 2), 0);
     assert_eq!(messages, snapshot);
 }
+
+#[test]
+fn a_conversation_with_nothing_aged_out_builds_no_group_list() {
+    let mut messages = conversation(WHOLE_TOOL_TURNS);
+    work::reset();
+    assert_eq!(stub_old_tool_results(&mut messages, 2), 0);
+    assert_eq!(
+        work::taken().0,
+        0,
+        "a pass with no group older than the whole turns allocates no group list"
+    );
+}
+
+#[test]
+fn a_history_whose_old_results_are_all_stubbed_clones_no_call_set() {
+    let mut messages = conversation(6);
+    assert!(stub_old_tool_results(&mut messages, 2) > 0);
+    work::reset();
+    assert_eq!(stub_old_tool_results(&mut messages, 2), 0);
+    assert_eq!(
+        work::taken().1,
+        0,
+        "a group with nothing left to rewrite copies no call set"
+    );
+}

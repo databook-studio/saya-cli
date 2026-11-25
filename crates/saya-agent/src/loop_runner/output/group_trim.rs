@@ -70,6 +70,29 @@ pub(super) fn truncate_newest_group(
     }
 }
 
+/// Walks the complete tool-result groups in `messages` from
+/// `protected_prefix_len` on, handing each one's half-open `[start, end)` range
+/// to `visit` without building a list.
+fn for_each_group(
+    messages: &[crate::ChatMessage],
+    protected_prefix_len: usize,
+    mut visit: impl FnMut(std::ops::Range<usize>),
+) {
+    let mut i = protected_prefix_len;
+    while i < messages.len() {
+        if messages[i].tool_calls.is_empty() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < messages.len() && messages[i].role == "tool" {
+            i += 1;
+        }
+        visit(start..i);
+    }
+}
+
 /// Returns the index ranges of complete tool-result groups in `messages`: each
 /// is an assistant turn carrying tool calls followed by its consecutive `tool`
 /// messages. Ranges are half-open `[start, end)`, suitable for `Vec::drain`.
@@ -78,18 +101,18 @@ pub(super) fn tool_groups(
     protected_prefix_len: usize,
 ) -> Vec<std::ops::Range<usize>> {
     let mut groups = Vec::new();
-    let mut i = protected_prefix_len;
-    while i < messages.len() {
-        if !messages[i].tool_calls.is_empty() {
-            let start = i;
-            i += 1;
-            while i < messages.len() && messages[i].role == "tool" {
-                i += 1;
-            }
-            groups.push(start..i);
-        } else {
-            i += 1;
-        }
-    }
+    for_each_group(messages, protected_prefix_len, |range| groups.push(range));
     groups
+}
+
+/// How many groups [`tool_groups`] would return, counted without building the
+/// list: a caller that only needs to know whether any group has aged out does
+/// not allocate one.
+pub(super) fn count_tool_groups(
+    messages: &[crate::ChatMessage],
+    protected_prefix_len: usize,
+) -> usize {
+    let mut count = 0;
+    for_each_group(messages, protected_prefix_len, |_| count += 1);
+    count
 }
