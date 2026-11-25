@@ -34,6 +34,7 @@ pub(crate) const USER_FACING: &[&str] = &[
     "run.max_rows",
     "run.candidates",
     "run.query_timeout_seconds",
+    "limits.session_cost_usd",
     "limits.session.requests",
     "limits.session.tool_calls",
     "limits.session.elapsed_seconds",

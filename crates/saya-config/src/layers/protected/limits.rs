@@ -11,6 +11,7 @@ use crate::limits::{AnsweringLimitsFile, JobLimitsFile};
 /// sub-table by sub-table, is what stops one of them silently inheriting the
 /// other's answer.
 pub(super) struct ProtectedLimits {
+    session_cost_usd: Option<toml::Value>,
     session: AnsweringLimitsFile,
     ask: AnsweringLimitsFile,
     database: Option<AnsweringLimitsFile>,
@@ -19,6 +20,7 @@ pub(super) struct ProtectedLimits {
 
 pub(super) fn snapshot(file: &ConfigFile) -> ProtectedLimits {
     ProtectedLimits {
+        session_cost_usd: file.limits.session_cost_usd.clone(),
         session: file.limits.session.clone(),
         ask: file.limits.ask.clone(),
         database: file.limits.database.clone(),
@@ -32,6 +34,10 @@ pub(super) fn snapshot(file: &ConfigFile) -> ProtectedLimits {
 /// user which block to fix.
 pub(super) fn revert(file: &mut ConfigFile, trusted: &ProtectedLimits) -> Vec<String> {
     let mut ignored = Vec::new();
+    if file.limits.session_cost_usd != trusted.session_cost_usd {
+        file.limits.session_cost_usd = trusted.session_cost_usd.clone();
+        ignored.push("limits.session_cost_usd".into());
+    }
     if file.limits.session != trusted.session {
         file.limits.session = trusted.session.clone();
         ignored.push("limits.session".into());

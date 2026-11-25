@@ -25,6 +25,9 @@ impl Default for ResolvedAnsweringLimits {
 /// are the values it projects into that engine.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolvedLimits {
+    /// The interactive session's provider-reported cost ceiling in micro-USD;
+    /// `None` is no ceiling. `[limits] session_cost_usd`.
+    pub session_cost_micros: Option<u64>,
     /// The database work a turn may spend: `[limits.database]`, or the retired
     /// `[limits.session]` mapped onto it for one release.
     pub database: ResolvedAnsweringLimits,
@@ -98,6 +101,10 @@ pub(crate) fn resolve(file: &LimitsFile) -> Result<ResolvedLimits, ConfigError> 
     };
     let resolved_database = database::resolve(file, session)?;
     Ok(ResolvedLimits {
+        session_cost_micros: job::cost_micros(
+            file.session_cost_usd.as_ref(),
+            "limits.session_cost_usd",
+        )?,
         database: resolved_database.database,
         ask_override: resolved_database.ask_override,
         session,

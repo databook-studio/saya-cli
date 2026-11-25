@@ -36,6 +36,8 @@ provider = 'openai'
 model = 'endpoint-model'
 base_url = 'https://extra.test/v1'
 api_key = { env = 'SAYA_EXTRA_KEY' }
+[limits]
+session_cost_usd = 12.5
 [limits.session]
 requests = 8
 tool_calls = 12
@@ -202,6 +204,7 @@ fn provenance_serializes_as_a_value_free_map() {
 #[test]
 fn every_limits_key_is_explained_and_defaulted() {
     const LIMITS_KEYS: &[&str] = &[
+        "limits.session_cost_usd",
         "limits.session.requests",
         "limits.session.tool_calls",
         "limits.session.elapsed_seconds",

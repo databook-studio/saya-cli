@@ -49,6 +49,9 @@ pub struct RedactedDiagnostics {
     pub read_only: Option<bool>,
     pub max_rows: Option<usize>,
     pub candidates: Option<usize>,
+    /// The declared `[limits] session_cost_usd`, verbatim: US dollars as a
+    /// float or integer, and `None` when the file did not state it.
+    pub limits_session_cost_usd: Option<toml::Value>,
     /// The declared `[limits.session]` and `[limits.ask]` answering ceilings,
     /// verbatim: a dimension is an integer or the literal `"unlimited"`, and
     /// `None` means the file did not state it. Kept raw for the same reason as
@@ -150,6 +153,7 @@ impl RedactedDiagnostics {
             read_only: file.run.read_only,
             max_rows: file.run.max_rows,
             candidates: file.run.candidates,
+            limits_session_cost_usd: file.limits.session_cost_usd.clone(),
             limits_session_requests: file.limits.session.requests.clone(),
             limits_session_tool_calls: file.limits.session.tool_calls.clone(),
             limits_session_elapsed_seconds: file.limits.session.elapsed_seconds.clone(),
