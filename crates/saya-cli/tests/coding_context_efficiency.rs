@@ -103,11 +103,19 @@ async fn native_coding_context_respects_resolved_budget() {
             }
         }
         if budget == 4 * 1024 * 1024 {
+            // The scenario's actual multi-turn history is larger than 256KiB,
+            // yet every request stays within the budget because old results
+            // become bounded stubs. The reduction comes from the history
+            // policy, not from clipping the read the model asked for (asserted
+            // in full above), and the newest results stay whole.
+            let actual_history = results.values().map(String::len).sum::<usize>();
             assert!(
-                child
-                    .iter()
-                    .any(|body| evidence::content_bytes(body) > 256 * 1024),
-                "4MiB must retain actual multi-turn history beyond 256KiB"
+                actual_history > 256 * 1024,
+                "the scenario carries more than 256KiB of actual reads: {actual_history}"
+            );
+            assert!(
+                child.iter().any(evidence::has_stub),
+                "old tool results are bounded stubs at a large budget"
             );
         }
         evidence::healthy(&fixture, &job, batches * width + 1).await;

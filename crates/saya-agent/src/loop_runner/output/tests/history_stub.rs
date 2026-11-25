@@ -162,7 +162,10 @@ fn a_stub_carries_no_secret_shaped_value() {
         0,
         "shell",
         json!({"command": "psql postgres://admin:s3cr3t@db.internal/prod"}),
-        json!({"exit_code": 0, "stdout": "api_key=SUPERSECRETVALUE"}),
+        json!({
+            "exit_code": 0,
+            "stdout": format!("api_key=SUPERSECRETVALUE\n{}", "connection ok\n".repeat(200)),
+        }),
     ));
     messages.extend(read_group(1));
     messages.extend(read_group(2));
@@ -189,7 +192,7 @@ fn an_error_result_is_marked_as_an_error() {
         0,
         "bounded_sql_query",
         json!({"sql": "select 1"}),
-        json!({"error": "relation does not exist"}),
+        json!({"error": format!("relation does not exist: {}", "detail ".repeat(200))}),
     ));
     messages.extend(read_group(1));
     messages.extend(read_group(2));
@@ -200,6 +203,32 @@ fn an_error_result_is_marked_as_an_error() {
         stub.contains("re-read: run the same statement again with bounded_sql_query"),
         "{stub}"
     );
+}
+
+#[test]
+fn a_result_no_larger_than_a_stub_is_kept_whole() {
+    let mut messages = vec![
+        ChatMessage::text("system", "s"),
+        ChatMessage::text("user", "ask"),
+    ];
+    messages.extend(group(
+        0,
+        "checklist",
+        json!({"tasks": 2}),
+        json!({"tasks": 2}),
+    ));
+    messages.extend(read_group(1));
+    messages.extend(read_group(2));
+    messages.extend(read_group(3));
+    let small = messages[tool_at(0)].content.clone();
+    let stubbed = stub_old_tool_results(&mut messages, 2);
+    assert_eq!(stubbed, 1, "only the large old result is worth a stub");
+    assert_eq!(
+        messages[tool_at(0)].content,
+        small,
+        "a result no larger than a stub is cheaper whole"
+    );
+    assert!(messages[tool_at(1)].content.starts_with(STUB_SENTINEL));
 }
 
 #[test]

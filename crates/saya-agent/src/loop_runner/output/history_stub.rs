@@ -20,6 +20,10 @@
 //! because the stub preserves how to recover them. The latest
 //! [`WHOLE_TOOL_TURNS`] groups stay whole, so the turn the model is reasoning
 //! over is never reduced.
+//!
+//! Only a result larger than [`MAX_STUB_BYTES`] is stubbed. A stub is capped at
+//! that size, so a smaller result is cheaper to re-send whole than to replace;
+//! stubbing it would make the request bigger.
 
 use crate::{ChatMessage, ToolCall};
 use serde_json::Value;
@@ -45,7 +49,8 @@ const MAX_TOOL_NAME_BYTES: usize = 80;
 
 /// Replaces every tool result in a group older than the last
 /// [`WHOLE_TOOL_TURNS`] with a bounded stub, in place, and returns how many
-/// messages it rewrote. Idempotent: an already-stubbed message is left as is.
+/// messages it rewrote. A result no larger than [`MAX_STUB_BYTES`] stays whole,
+/// and an already-stubbed message is left as is (idempotent).
 pub(in crate::loop_runner) fn stub_old_tool_results(
     messages: &mut [ChatMessage],
     protected_prefix_len: usize,
@@ -60,7 +65,10 @@ pub(in crate::loop_runner) fn stub_old_tool_results(
         // calls before mutating the results so a tool message can find its own.
         let calls = messages[range.start].tool_calls.clone();
         for message in &mut messages[range.start + 1..range.end] {
-            if message.role != "tool" || message.content.starts_with(STUB_SENTINEL) {
+            if message.role != "tool"
+                || message.content.len() <= MAX_STUB_BYTES
+                || message.content.starts_with(STUB_SENTINEL)
+            {
                 continue;
             }
             let call = message
