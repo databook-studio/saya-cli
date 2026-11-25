@@ -55,6 +55,14 @@ pub enum ConfigError {
     ConfigFileTooLarge { bytes: usize, max_bytes: usize },
     #[error("invalid environment value for {name}: {reason}")]
     InvalidEnvironment { name: String, reason: String },
+    /// More than one known provider key is in the environment and no layer
+    /// chose a provider. Saya never guesses between them: the message names
+    /// every key and both ways to choose.
+    #[error(
+        "more than one AI provider key is set ({keys}); choose one with --provider <name> \
+         or SAYA_PROVIDER"
+    )]
+    AmbiguousProviderKeys { keys: String },
     #[error("no connection profile was selected")]
     MissingProfile,
     #[error("connection profile {0:?} was not found")]

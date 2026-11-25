@@ -54,12 +54,25 @@ pub struct RuntimeConfig {
 }
 
 pub fn load(options: &GlobalOptions, cwd: &Path) -> Result<RuntimeConfig, RuntimeError> {
-    let runtime = load_with_sources(
-        options,
-        cwd,
-        &super::sources::user_config_dir(),
-        super::sources::process_env(),
-    )?;
+    let user_dir = super::sources::user_config_dir();
+    let process = super::sources::process_env();
+    let runtime = match load_with_provider(options, cwd, &user_dir, process.clone(), None) {
+        Ok(runtime) => runtime,
+        // Two or more provider keys and no stated provider: ask the operator
+        // when there is a terminal to ask on, and otherwise report the
+        // ambiguity. The prompt's answer is a decision, so the retry states
+        // it rather than letting detection run again.
+        Err(
+            error @ RuntimeError::Config(saya_config::ConfigError::AmbiguousProviderKeys { .. }),
+        ) => {
+            let Some(key) = super::auto_provider::prompt_for_provider(&process) else {
+                return Err(error);
+            };
+            load_with_provider(options, cwd, &user_dir, process, Some(key))?
+        }
+        Err(error) => return Err(error),
+    };
+    super::auto_provider::announce(&runtime);
     warn_ignored_project_overrides(&runtime);
     warn_invalid_permission_rules(&runtime);
     Ok(runtime)
@@ -100,6 +113,19 @@ pub fn load_with_sources(
     cwd: &Path,
     user_dir: &Path,
     process: BTreeMap<String, String>,
+) -> Result<RuntimeConfig, RuntimeError> {
+    load_with_provider(options, cwd, user_dir, process, None)
+}
+
+/// The loader's body, with the provider prompt's answer when there is one.
+/// `None` is the ordinary path: the environment's keys may be consulted when
+/// no layer stated a provider.
+fn load_with_provider(
+    options: &GlobalOptions,
+    cwd: &Path,
+    user_dir: &Path,
+    process: BTreeMap<String, String>,
+    prompted: Option<&'static saya_config::ProviderKey>,
 ) -> Result<RuntimeConfig, RuntimeError> {
     // Anchor discovery at load time. Later application composition may use a
     // different cwd; keep the selected source path (including project symlinks)
@@ -175,6 +201,7 @@ pub fn load_with_sources(
         .with_cli(CliOverrides {
             profile: options.profile.clone(),
             provider,
+            prompted_provider: prompted,
             model: options.model.clone(),
             allow_data_sharing: if options.no_data_sharing {
                 Some(false)

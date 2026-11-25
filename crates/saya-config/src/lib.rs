@@ -21,6 +21,7 @@ mod permissions;
 mod postgres_env;
 mod profile_env;
 mod provenance;
+mod provider_auto;
 mod resolve;
 mod secret;
 mod sensitive;
@@ -67,6 +68,7 @@ pub use permissions::{
     PermissionsFile, ReadOnlySet, ResolvedPermissions, decide, named_paths,
 };
 pub use provenance::{SettingOrigin, SettingProvenance, SettingSource, user_facing_keys};
+pub use provider_auto::{ProviderKey, key_for_env, provider_keys_in_env};
 pub use resolve::{ResolvedAi, ResolvedConfig, resolve};
 pub use saya_types::{CodingBudgetMode, SecretRef};
 pub use secret::{MapSecretResolver, ResolvedSecret, SecretResolver};

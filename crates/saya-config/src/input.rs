@@ -25,6 +25,10 @@ pub struct CliOverrides {
     pub permissions: crate::PermissionsFile,
     pub profile: Option<String>,
     pub provider: Option<AiProvider>,
+    /// The environment key an interactive prompt paired with the provider.
+    /// Set only by the loader after the operator answers — never by a flag —
+    /// so its provenance names the prompt rather than `--provider`.
+    pub prompted_provider: Option<&'static crate::ProviderKey>,
     pub model: Option<String>,
     pub allow_data_sharing: Option<bool>,
     pub max_rows: Option<usize>,

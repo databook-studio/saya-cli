@@ -17,6 +17,8 @@ fn the_first_run_reads_as_02_9_1() {
             "                      ╭──────────────────────────────────────────────────────╮",
             "                      │  Welcome to Saya                                     │",
             "                      │  Saya needs an AI provider before it can answer.     │",
+            "                      │  Next: run `saya setup` to choose a provider,        │",
+            "                      │  or export OPENAI_API_KEY and run saya again.        │",
             "                      │                                                      │",
             "                      │  Enter  set up a provider (2 minutes)                │",
             "                      │  d      try the demo database first                  │",
@@ -30,6 +32,8 @@ fn the_first_run_reads_as_02_9_1() {
             "            ╭──────────────────────────────────────────────────────╮",
             "            │  Welcome to Saya                                     │",
             "            │  Saya needs an AI provider before it can answer.     │",
+            "            │  Next: run `saya setup` to choose a provider,        │",
+            "            │  or export OPENAI_API_KEY and run saya again.        │",
             "            │                                                      │",
             "            │  Enter  set up a provider (2 minutes)                │",
             "            │  d      try the demo database first                  │",
@@ -37,6 +41,15 @@ fn the_first_run_reads_as_02_9_1() {
             "            ╰──────────────────────────────────────────────────────╯",
         ]
     );
+}
+
+/// The first screen is never a dead end: it names the command and the key that
+/// move the operator on.
+#[test]
+fn the_first_run_names_the_next_step() {
+    let text = rendered(&empty_rows(&first_run(), 100, 30)).join("\n");
+    assert!(text.contains("saya setup"), "{text}");
+    assert!(text.contains("OPENAI_API_KEY"), "{text}");
 }
 
 /// `02` §9.2: ready, with no database — the header names the workspace and the
@@ -80,8 +93,15 @@ fn a_run_without_a_workspace_reads_as_02_9_4() {
     let rows = vec![
         "  Saya · no workspace (outside a git repository) · demo",
         "",
-        "  File tools are off here. Start Saya inside a project to edit code.",
+        "  File tools are off here. Next: run `saya` inside a project.",
     ];
     assert_eq!(rendered(&empty_rows(&no_workspace(), 100, 30)), rows);
     assert_eq!(rendered(&empty_rows(&no_workspace(), 80, 24)), rows);
+}
+
+/// The no-workspace screen names the exact next step, not only what is off.
+#[test]
+fn a_run_without_a_workspace_names_the_next_step() {
+    let text = rendered(&empty_rows(&no_workspace(), 100, 30)).join("\n");
+    assert!(text.contains("run `saya` inside a project"), "{text}");
 }

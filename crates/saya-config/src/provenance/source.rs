@@ -27,6 +27,15 @@ pub enum SettingSource {
     Cli {
         flag: String,
     },
+    /// No layer stated the setting; it was chosen from exactly one known
+    /// provider key in the environment (`OPENAI_API_KEY`, …). The variable is
+    /// named, never its value.
+    AutoEnv {
+        var: String,
+    },
+    /// The operator answered the provider prompt because two or more keys were
+    /// present. Distinct from `Cli`: no flag was passed.
+    Prompt,
 }
 
 /// One setting's winning origin; `reference` is the redacted label of a
