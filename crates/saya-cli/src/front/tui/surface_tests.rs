@@ -9,7 +9,7 @@
 #![cfg(unix)]
 
 use super::run_cmd::CmdPort;
-use super::surface_fixture::surface;
+use super::surface_fixture::{DATABASE, surface, surface_connected, surface_profile};
 
 /// The phrase the compaction's own request carries: the engine's prompt.
 const SUMMARISE: &str = "Summarise the following earlier conversation turns";
@@ -111,5 +111,101 @@ async fn a_model_change_before_the_first_turn_names_the_new_model() {
         fixture.state().model,
         "chosen-model",
         "the session's own fact moved with it"
+    );
+}
+
+/// `/model X` after the run has taken a turn: the next message is a turn of a
+/// run composed from the state the change stated — the new model — and the
+/// conversation so far is replayed into it.
+#[tokio::test]
+async fn a_model_change_after_the_first_turn_reaches_the_next_request() {
+    let fixture = surface("model-after-turn").await;
+    fixture.port.send("first message".to_owned());
+    fixture.settle(1).await;
+    fixture.op("/model chosen-model").await;
+
+    fixture.port.send("second message".to_owned());
+    fixture.settle(2).await;
+
+    let bodies = fixture.bodies();
+    let second = bodies.last().expect("the second turn's request arrived");
+    assert!(
+        second.contains("\"model\":\"chosen-model\"")
+            || second.contains("\"model\": \"chosen-model\""),
+        "the request after the change names the model the session states: {second}"
+    );
+    assert!(
+        second.contains("first message") && second.contains("turn 0 answered"),
+        "the conversation so far is replayed into the run after the change: {second}"
+    );
+}
+
+/// `/connect` after the run has taken a turn: the next message is a turn of a
+/// run composed over the profile the command named — its database tools are
+/// advertised — and the conversation so far is replayed into it.
+#[tokio::test]
+async fn a_connect_after_the_first_turn_reaches_the_next_request() {
+    let fixture = surface_profile("connect-after-turn").await;
+    fixture.port.send("first message".to_owned());
+    fixture.settle(1).await;
+    fixture.op(&format!("/connect {DATABASE}")).await;
+
+    fixture.port.send("second message".to_owned());
+    fixture.settle(2).await;
+
+    let bodies = fixture.bodies();
+    let first = bodies.first().expect("the first turn's request arrived");
+    assert!(
+        first.contains("other (sqlite)") && !first.contains(&format!("{DATABASE} (sqlite)")),
+        "the run opened on the configured default, not the profile the command names: {first}"
+    );
+    let second = bodies.last().expect("the second turn's request arrived");
+    assert!(
+        second.contains("use_database")
+            && second.contains(&format!("{DATABASE} (sqlite)"))
+            && !second.contains("other (sqlite)"),
+        "the request after the change targets the profile it named: {second}"
+    );
+    assert!(
+        second.contains("first message"),
+        "the conversation so far is replayed into the run after the change: {second}"
+    );
+}
+
+/// `/privacy on` after the run has taken a turn: the next message is a turn of
+/// a run that may send row values, so the query tools appear — and the
+/// conversation so far is replayed into it.
+#[tokio::test]
+async fn a_privacy_change_after_the_first_turn_reaches_the_next_request() {
+    let fixture = surface_connected("privacy-after-turn").await;
+    // Database work turns the family on: the schema tools are advertised, and
+    // the query tools are not while sharing is off.
+    fixture.port.send("query the demo database".to_owned());
+    fixture.settle(1).await;
+    fixture.op("/privacy on").await;
+
+    fixture
+        .port
+        .send("query the demo database again".to_owned());
+    fixture.settle(2).await;
+
+    let bodies = fixture.bodies();
+    let first = bodies.first().expect("the first turn's request arrived");
+    assert!(
+        first.contains("schema_discovery"),
+        "database work advertises the schema tools: {first}"
+    );
+    assert!(
+        !first.contains("bounded_sql_query"),
+        "sharing off advertises no query tool: {first}"
+    );
+    let second = bodies.last().expect("the second turn's request arrived");
+    assert!(
+        second.contains("bounded_sql_query"),
+        "the request after the change may send row values: {second}"
+    );
+    assert!(
+        second.contains("query the demo database"),
+        "the conversation so far is replayed into the run after the change: {second}"
     );
 }

@@ -177,6 +177,15 @@ impl LineChat {
         self.runtime.block_on(line.clear())
     }
 
+    /// A command changed the facts a run is composed from — the model, the
+    /// provider, the connection, the privacy setting: the next message is a
+    /// turn of the run the session states from now on, with the conversation
+    /// so far replayed into it.
+    pub(crate) fn restate(&self, overrides: crate::agent::turn_config::PromptOverrides) -> Said {
+        let mut line = self.lock();
+        self.runtime.block_on(line.restate(overrides))
+    }
+
     /// The tool tally of every turn this session ran, for the scripted run's
     /// one terminal result.
     pub(crate) fn tally(&self) -> ToolTally {

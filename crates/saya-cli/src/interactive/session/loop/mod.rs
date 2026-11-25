@@ -64,3 +64,4 @@ include!("tests/capacity_persist.rs");
 include!("tests/plain_env.rs");
 include!("tests/unbound_run.rs");
 include!("tests/bound_run.rs");
+include!("tests/state_change.rs");

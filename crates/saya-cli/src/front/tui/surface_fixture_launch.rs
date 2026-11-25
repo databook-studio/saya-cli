@@ -33,8 +33,65 @@ use crate::load_with_sources;
 use crate::render::RenderFormat;
 use crate::slash::user_commands::UserCommands;
 
+/// The profile a database fixture configures.
+pub(crate) const DATABASE: &str = "demo";
+
+/// The profile a database fixture states as the configured default, so the
+/// profile `/connect` names is configured but not the one the run opens on.
+const DEFAULT_PROFILE: &str = "other";
+
+/// Whether the fixture configures a database profile, and whether the session
+/// starts on it: what `/connect` moves, and what `/privacy` changes once the
+/// family is on.
+#[derive(Clone, Copy)]
+enum Profile {
+    None,
+    /// Two profiles, the default one: the session `/connect` starts on.
+    Configured,
+    /// Two profiles, the fixture's database selected: a session whose run
+    /// starts connected.
+    Selected,
+}
+
 /// A surface over a throwaway folder, answering from a scripted provider.
 pub(crate) async fn surface(label: &str) -> Fixture {
+    surface_with(label, Profile::None).await
+}
+
+/// A surface with a profile configured but not selected: the run the session
+/// starts has no database, and `/connect` is what binds one.
+pub(crate) async fn surface_profile(label: &str) -> Fixture {
+    surface_with(label, Profile::Configured).await
+}
+
+/// A surface whose session starts on the configured profile: its run is
+/// connected from the first turn, so `/privacy` is observable on the tools a
+/// request advertises once the family is on.
+pub(crate) async fn surface_connected(label: &str) -> Fixture {
+    surface_with(label, Profile::Selected).await
+}
+
+/// The throwaway database a database fixture's profile points at: a real,
+/// empty SQLite file, so the profile opens rather than being skipped.
+async fn database(root: &Path) -> PathBuf {
+    let path = root.join("data.sqlite3");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let pool = sqlx::SqlitePool::connect_with(options)
+        .await
+        .expect("the fixture database opens");
+    sqlx::query("CREATE TABLE fixture (id INTEGER)")
+        .execute(&pool)
+        .await
+        .expect("the fixture schema writes");
+    pool.close().await;
+    path
+}
+
+/// A surface over a throwaway folder, answering from a scripted provider, with
+/// the database profile `profile` states.
+async fn surface_with(label: &str, profile: Profile) -> Fixture {
     let provider = Scripted::start();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
@@ -48,13 +105,35 @@ pub(crate) async fn surface(label: &str) -> Fixture {
     fs::create_dir(&programs).expect("the fixture program directory creates");
     let config_home = root.join("config");
     fs::create_dir_all(&config_home).expect("the fixture config directory creates");
-    let mut runtime = load_with_sources(
-        &GlobalOptions::default(),
-        &folder,
-        &config_home,
-        BTreeMap::new(),
-    )
-    .expect("the fixture resolves a runtime");
+    // A database fixture states its profiles where the launch reads one: two of
+    // them, so the default the run opens on is not the one `/connect` names —
+    // the runtime resolves a lone profile as the default, which would leave a
+    // `/connect` nothing to move.
+    let options = match profile {
+        Profile::None => GlobalOptions::default(),
+        Profile::Configured | Profile::Selected => {
+            let database = database(&root).await;
+            let connections = config_home.join("connections.toml");
+            let entry = |name: &str| {
+                format!(
+                    "[profiles.{name}]\ntype = 'sqlite'\npath = '{}'\n",
+                    database.display()
+                )
+            };
+            fs::write(
+                &connections,
+                format!("{}{}", entry(DATABASE), entry(DEFAULT_PROFILE)),
+            )
+            .expect("the fixture connections file writes");
+            GlobalOptions {
+                connections: Some(connections),
+                profile: Some(DEFAULT_PROFILE.to_owned()),
+                ..GlobalOptions::default()
+            }
+        }
+    };
+    let mut runtime = load_with_sources(&options, &folder, &config_home, BTreeMap::new())
+        .expect("the fixture resolves a runtime");
     runtime.resolved.ai.provider = saya_config::AiProvider::OpenaiCompatible;
     runtime.resolved.ai.model = MODEL.into();
     runtime.resolved.ai.base_url = Some(provider.endpoint.clone());
@@ -96,6 +175,11 @@ pub(crate) async fn surface(label: &str) -> Fixture {
     opening.provider = "openai_compatible".to_owned();
     opening.provider_endpoint = Some(provider.endpoint.clone());
     opening.provider_endpoint_bound = true;
+    // A session that starts connected states the profile its run is composed
+    // from, so the run the launch opens holds a database from its first turn.
+    if matches!(profile, Profile::Selected) {
+        opening.profile = Some(DATABASE.to_owned());
+    }
     let state = Arc::new(Mutex::new(opening));
     let live = Arc::new(LiveRuntime::new(Arc::clone(&runtime)));
     let mut composed = surface_parts(
