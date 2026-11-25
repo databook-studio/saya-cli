@@ -1,6 +1,6 @@
 [package]
 name = "saya-connectors"
-version = "0.5.1"
+version = "0.5.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 async-trait.workspace = true
-saya-config = { path = "../saya-config", version = "0.5.1" }
-saya-types = { path = "../saya-types", version = "0.5.1" }
+saya-config = { path = "../saya-config", version = "0.5.2" }
+saya-types = { path = "../saya-types", version = "0.5.2" }
 futures-util.workspace = true
 serde_json.workspace = true
 sqlparser.workspace = true

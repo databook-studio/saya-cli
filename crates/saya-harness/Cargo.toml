@@ -1,6 +1,6 @@
 [package]
 name = "saya-harness"
-version = "0.5.1"
+version = "0.5.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,12 +11,12 @@ description = "Run engine for SAYA: run directories, paths, and the single-write
 workspace = true
 
 [dependencies]
-saya-agent = { path = "../saya-agent", version = "0.5.1" }
+saya-agent = { path = "../saya-agent", version = "0.5.2" }
 # The credential-shape table and the vetted read-only command set are config's
 # trusted policy; the harness reads them rather than keeping a second copy.
-saya-config = { path = "../saya-config", version = "0.5.1" }
-saya-store = { path = "../saya-store", version = "0.5.1" }
-saya-types = { path = "../saya-types", version = "0.5.1" }
+saya-config = { path = "../saya-config", version = "0.5.2" }
+saya-store = { path = "../saya-store", version = "0.5.2" }
+saya-types = { path = "../saya-types", version = "0.5.2" }
 async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -43,4 +43,4 @@ libc = "0.2"
 [dev-dependencies]
 proptest.workspace = true
 sqlx.workspace = true
-saya-connectors = { path = "../saya-connectors", version = "0.5.1" }
+saya-connectors = { path = "../saya-connectors", version = "0.5.2" }
