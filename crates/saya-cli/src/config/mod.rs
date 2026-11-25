@@ -1,3 +1,4 @@
+pub(crate) mod auto_provider;
 pub(crate) mod doctor;
 pub(crate) mod doctor_task;
 pub(crate) mod explain;
