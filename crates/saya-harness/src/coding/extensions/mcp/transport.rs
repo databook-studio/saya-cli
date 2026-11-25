@@ -10,6 +10,19 @@ use saya_agent::CancellationToken;
 use serde_json::{Value, json};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
+/// What this client calls itself in `initialize`. The version is the crate's
+/// own, so a release never has to remember a second copy of it.
+const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The `initialize` parameters this client sends: the protocol version, its
+/// capabilities, and the client's own name and version.
+fn initialize_params() -> Value {
+    json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": {},
+        "clientInfo": {"name": "saya", "version": CLIENT_VERSION}
+    })
+}
 
 /// One serialized, bounded MCP stdio connection. No external agent fallback.
 pub struct McpClient {
@@ -26,14 +39,7 @@ impl McpClient {
         }
         let mut process = ProtocolProcess::start(config, Framing::Lines)?;
         let response = match process
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion":PROTOCOL_VERSION, "capabilities":{},
-                    "clientInfo":{"name":"saya", "version":"0.5.0"}
-                }),
-                cancel,
-            )
+            .request("initialize", initialize_params(), cancel)
             .await
         {
             Ok(response) => response,
@@ -110,5 +116,20 @@ impl McpClient {
         mut self,
     ) -> Result<super::super::ExtensionProcessReceipt, ExtensionError> {
         self.process.shutdown_receipt().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_info_reports_the_crate_version() {
+        let params = initialize_params();
+        assert_eq!(
+            params["clientInfo"]["version"].as_str(),
+            Some(env!("CARGO_PKG_VERSION")),
+            "clientInfo.version must be this crate's version, not a hand-copied one"
+        );
     }
 }
