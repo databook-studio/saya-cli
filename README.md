@@ -160,7 +160,7 @@ The same works for `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
 never guessed between: an interactive run asks, and a headless run names every
 key and the `--provider` flag that chooses. A provider stated in
 `config.toml`, by `--provider`, or by `SAYA_PROVIDER` always wins. The numbered
-walkthrough below adds a database and a coding job.
+walkthrough below adds a database and a job.
 
 **1. Install** (any one):
 
