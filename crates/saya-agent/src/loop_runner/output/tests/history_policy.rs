@@ -259,9 +259,41 @@ fn rewrites_are_batched_across_many_over_budget_requests() {
         }
         previous = messages.clone();
     }
+    println!("prefix rewrites over 40 over-budget requests: {rewrites}");
     assert!(
         rewrites <= 4,
         "a 40-request over-budget job rewrites its prefix rarely, not every request: {rewrites}"
+    );
+}
+
+#[test]
+fn a_settled_region_is_not_rewritten_when_a_later_call_supersedes_it() {
+    let budget = 20_000;
+    let hard = 1_000_000;
+    let mut messages = base();
+    messages.extend(read_group(0, "src/a.rs", 1, 200));
+    for index in 1..=10 {
+        messages.extend(shell_group(index, &format!("cargo test -p module_{index}")));
+    }
+    let mut state = HistoryStubState::default();
+    stub_with_limits(&mut messages, 2, budget, hard, &mut state);
+    let settled = messages[tool_at(0)].content.clone();
+    assert!(!is_stub(&messages[tool_at(0)]));
+
+    // A later read supersedes the settled one; enough new output follows to
+    // cross the budget again. The settled prefix must not be rewritten.
+    messages.extend(read_group(11, "src/a.rs", 1, 200));
+    for index in 12..=25 {
+        messages.extend(shell_group(
+            index,
+            &format!("cargo build -p module_{index}"),
+        ));
+    }
+    stub_with_limits(&mut messages, 2, budget, hard, &mut state);
+    assert_eq!(
+        messages[tool_at(0)].content,
+        settled,
+        "a settled message is not rewritten by a later pass"
     );
 }
 
